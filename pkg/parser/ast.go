@@ -620,6 +620,16 @@ func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Token.Literal }
 func (sl *StringLiteral) String() string       { return "\"" + sl.Value + "\"" }
 
+// ByteStringLiteral represents a byte string literal (B"...")
+type ByteStringLiteral struct {
+	Token lexer.Token
+	Value string
+}
+
+func (bs *ByteStringLiteral) expressionNode()      {}
+func (bs *ByteStringLiteral) TokenLiteral() string { return bs.Token.Literal }
+func (bs *ByteStringLiteral) String() string       { return "B\"" + bs.Value + "\"" }
+
 // BooleanLiteral represents a boolean literal
 type BooleanLiteral struct {
 	Token lexer.Token

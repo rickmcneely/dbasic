@@ -240,5 +240,40 @@
       "IMPORT \"${1:package}\" AS ${2:alias}"
     ],
     "description": "Import a Go package with alias"
+  },
+  "Bytes Declaration": {
+    "prefix": "bytes",
+    "body": [
+      "DIM ${1:data} AS BYTES = B\"${2:value}\""
+    ],
+    "description": "Declare a byte array"
+  },
+  "BSTRING Declaration": {
+    "prefix": "bstring",
+    "body": [
+      "DIM ${1:data} AS BSTRING = B\"${2:value}\""
+    ],
+    "description": "Declare a BSTRING (byte string)"
+  },
+  "MakeBytes": {
+    "prefix": "makebytes",
+    "body": [
+      "DIM ${1:buffer} AS BYTES = MakeBytes(${2:1024})"
+    ],
+    "description": "Create a byte buffer of specified size"
+  },
+  "Encode String to Bytes": {
+    "prefix": "encode",
+    "body": [
+      "DIM ${1:bytes} AS BYTES = Encode(${2:stringVar})"
+    ],
+    "description": "Convert STRING to BYTES (UTF-8)"
+  },
+  "Decode Bytes to String": {
+    "prefix": "decode",
+    "body": [
+      "DIM ${1:str} AS STRING = Decode(${2:bytesVar})"
+    ],
+    "description": "Convert BYTES to STRING (UTF-8)"
   }
 }

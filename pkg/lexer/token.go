@@ -13,11 +13,12 @@ const (
 	TOKEN_COMMENT
 
 	// Literals
-	TOKEN_IDENT      // identifier
-	TOKEN_INT        // integer literal
-	TOKEN_FLOAT      // float literal
-	TOKEN_STRING     // string literal
-	TOKEN_LABEL      // label (identifier followed by :)
+	TOKEN_IDENT       // identifier
+	TOKEN_INT         // integer literal
+	TOKEN_FLOAT       // float literal
+	TOKEN_STRING      // string literal
+	TOKEN_BYTE_STRING // byte string literal B"..."
+	TOKEN_LABEL       // label (identifier followed by :)
 
 	// Operators
 	TOKEN_PLUS       // +
@@ -63,6 +64,8 @@ const (
 	TOKEN_STRING_TYPE
 	TOKEN_BOOLEAN
 	TOKEN_JSON
+	TOKEN_BYTES
+	TOKEN_BSTRING
 	TOKEN_POINTER
 	TOKEN_CHAN
 	TOKEN_TO
@@ -133,6 +136,7 @@ var tokenNames = map[TokenType]string{
 	TOKEN_INT:         "INT",
 	TOKEN_FLOAT:       "FLOAT",
 	TOKEN_STRING:      "STRING",
+	TOKEN_BYTE_STRING: "BYTE_STRING",
 	TOKEN_LABEL:       "LABEL",
 	TOKEN_PLUS:        "+",
 	TOKEN_MINUS:       "-",
@@ -171,6 +175,8 @@ var tokenNames = map[TokenType]string{
 	TOKEN_STRING_TYPE: "STRING",
 	TOKEN_BOOLEAN:     "BOOLEAN",
 	TOKEN_JSON:        "JSON",
+	TOKEN_BYTES:       "BYTES",
+	TOKEN_BSTRING:     "BSTRING",
 	TOKEN_POINTER:     "POINTER",
 	TOKEN_CHAN:        "CHAN",
 	TOKEN_TO:          "TO",
@@ -231,6 +237,8 @@ var Keywords = map[string]TokenType{
 	"STRING":    TOKEN_STRING_TYPE,
 	"BOOLEAN":   TOKEN_BOOLEAN,
 	"JSON":      TOKEN_JSON,
+	"BYTES":     TOKEN_BYTES,
+	"BSTRING":   TOKEN_BSTRING,
 	"POINTER":   TOKEN_POINTER,
 	"CHAN":      TOKEN_CHAN,
 	"TO":        TOKEN_TO,

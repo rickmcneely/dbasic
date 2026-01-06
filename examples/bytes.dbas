@@ -1,0 +1,32 @@
+' Bytes and BSTRING Example in DBasic
+' Demonstrates byte arrays and byte string literals
+
+SUB Main()
+    PRINT "=== BYTES and BSTRING Demo ==="
+    PRINT ""
+
+    ' Unicode string (default)
+    DIM greeting AS STRING = "Hello, World!"
+    PRINT "Unicode STRING: "; greeting
+
+    ' Byte string using BYTES type
+    DIM data AS BYTES = B"Hello"
+    PRINT "BYTES literal: B\"Hello\""
+
+    ' BSTRING alias (same as BYTES)
+    DIM legacy AS BSTRING = B"BASIC"
+    PRINT "BSTRING literal: "; legacy[0]; legacy[1]; legacy[2]; legacy[3]; legacy[4]
+
+    ' Access individual bytes
+    PRINT ""
+    PRINT "=== Byte Access ==="
+    PRINT "First byte of data: "; data[0]
+    PRINT "Second byte of data: "; data[1]
+
+    ' Modify bytes
+    data[0] = 74  ' Change 'H' to 'J'
+    PRINT "After data[0] = 74: first byte is now "; data[0]
+
+    PRINT ""
+    PRINT "Bytes demo complete!"
+END SUB

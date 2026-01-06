@@ -164,6 +164,15 @@ func (l *Lexer) NextToken() Token {
 		tok.Type = TOKEN_EOF
 	default:
 		if isLetter(l.ch) {
+			// Check for B"..." byte string literal
+			if (l.ch == 'B' || l.ch == 'b') && l.peekChar() == '"' {
+				l.readChar() // skip B
+				tok.Type = TOKEN_BYTE_STRING
+				tok.Literal = l.readString()
+				tok.Line = l.line
+				tok.Column = l.column
+				return tok
+			}
 			tok.Literal = l.readIdentifier()
 			tok.Type = LookupIdent(strings.ToUpper(tok.Literal))
 			tok.Line = l.line

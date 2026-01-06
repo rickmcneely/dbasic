@@ -742,7 +742,9 @@ func (a *Analyzer) analyzeIndexExpression(expr *parser.IndexExpression) *Type {
 	case TypeArray, TypeSlice:
 		return leftType.ElementType
 	case TypeString:
-		return IntegerType // byte
+		return IntegerType // character code
+	case TypeBytes:
+		return IntegerType // byte value
 	case TypeJSON:
 		return AnyType
 	default:

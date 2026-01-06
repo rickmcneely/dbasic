@@ -108,6 +108,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(lexer.TOKEN_INT, p.parseIntegerLiteral)
 	p.registerPrefix(lexer.TOKEN_FLOAT, p.parseFloatLiteral)
 	p.registerPrefix(lexer.TOKEN_STRING, p.parseStringLiteral)
+	p.registerPrefix(lexer.TOKEN_BYTE_STRING, p.parseByteStringLiteral)
 	p.registerPrefix(lexer.TOKEN_TRUE, p.parseBooleanLiteral)
 	p.registerPrefix(lexer.TOKEN_FALSE, p.parseBooleanLiteral)
 	p.registerPrefix(lexer.TOKEN_NIL, p.parseNilLiteral)
@@ -1050,6 +1051,10 @@ func (p *Parser) parseFloatLiteral() Expression {
 
 func (p *Parser) parseStringLiteral() Expression {
 	return &StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
+}
+
+func (p *Parser) parseByteStringLiteral() Expression {
+	return &ByteStringLiteral{Token: p.curToken, Value: p.curToken.Literal}
 }
 
 func (p *Parser) parseBooleanLiteral() Expression {

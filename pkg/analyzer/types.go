@@ -17,6 +17,7 @@ const (
 	TypeString
 	TypeBoolean
 	TypeJSON
+	TypeBytes     // Byte array (Go []byte) - also BSTRING
 	TypePointer
 	TypeChannel
 	TypeArray
@@ -46,6 +47,7 @@ var (
 	StringType  = &Type{Kind: TypeString, Name: "STRING"}
 	BooleanType = &Type{Kind: TypeBoolean, Name: "BOOLEAN"}
 	JSONType    = &Type{Kind: TypeJSON, Name: "JSON"}
+	BytesType   = &Type{Kind: TypeBytes, Name: "BYTES"}
 	VoidType    = &Type{Kind: TypeVoid, Name: "VOID"}
 	AnyType     = &Type{Kind: TypeAny, Name: "ANY"}
 )
@@ -67,6 +69,8 @@ func TypeFromName(name string) *Type {
 		return BooleanType
 	case "JSON":
 		return JSONType
+	case "BYTES", "BSTRING":
+		return BytesType
 	case "VOID":
 		return VoidType
 	case "ANY":
@@ -187,6 +191,8 @@ func (t *Type) GoType() string {
 		return "bool"
 	case TypeJSON:
 		return "map[string]interface{}"
+	case TypeBytes:
+		return "[]byte"
 	case TypePointer:
 		return "*" + t.ElementType.GoType()
 	case TypeChannel:
@@ -291,6 +297,8 @@ func (t *Type) DefaultValue() string {
 		return "false"
 	case TypeJSON:
 		return "make(map[string]interface{})"
+	case TypeBytes:
+		return "nil"
 	case TypePointer:
 		return "nil"
 	case TypeChannel:

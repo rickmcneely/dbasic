@@ -299,6 +299,28 @@ func Bool(val interface{}) bool {
 	}
 }
 
+// --- Byte/String Functions ---
+
+// Encode converts a STRING to BYTES (UTF-8 encoding)
+func Encode(s string) []byte {
+	return []byte(s)
+}
+
+// Decode converts BYTES to STRING (UTF-8 decoding)
+func Decode(b []byte) string {
+	return string(b)
+}
+
+// MakeBytes creates a byte array of the specified size
+func MakeBytes(size int32) []byte {
+	return make([]byte, size)
+}
+
+// LenBytes returns the length of a byte array
+func LenBytes(b []byte) int32 {
+	return int32(len(b))
+}
+
 // --- Math Functions ---
 
 // Abs returns the absolute value

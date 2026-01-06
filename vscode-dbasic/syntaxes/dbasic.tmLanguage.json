@@ -77,7 +77,7 @@
       "patterns": [
         {
           "name": "storage.type.dbasic",
-          "match": "(?i)\\b(INTEGER|LONG|SINGLE|DOUBLE|STRING|BOOLEAN|JSON|POINTER|CHAN|OF)\\b"
+          "match": "(?i)\\b(INTEGER|LONG|SINGLE|DOUBLE|STRING|BOOLEAN|JSON|BYTES|BSTRING|POINTER|CHAN|OF)\\b"
         }
       ]
     },
@@ -113,7 +113,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.dbasic",
-          "match": "(?i)\\b(Len|Left|Right|Mid|Instr|UCase|LCase|Trim|LTrim|RTrim|Str|Val|Chr|Asc|Abs|Sqr|Sin|Cos|Tan|Atn|Log|Exp|Int|Fix|Sgn|Pow|Min|Max|Rnd|RndInt|RndRange|Randomize|Timer|Now|Date|Year|Month|Day|Hour|Minute|Second|Sleep|FileExists|ReadFile|WriteFile|AppendFile|DeleteFile|MkDir|RmDir|ListDir)\\b"
+          "match": "(?i)\\b(Len|Left|Right|Mid|Instr|UCase|LCase|Trim|LTrim|RTrim|Str|Val|Chr|Asc|Abs|Sqr|Sin|Cos|Tan|Atn|Log|Exp|Int|Fix|Sgn|Pow|Min|Max|Rnd|RndInt|RndRange|Randomize|Timer|Now|Date|Year|Month|Day|Hour|Minute|Second|Sleep|FileExists|ReadFile|WriteFile|AppendFile|DeleteFile|MkDir|RmDir|ListDir|Encode|Decode|MakeBytes|LenBytes)\\b"
         }
       ]
     },

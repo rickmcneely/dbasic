@@ -631,6 +631,8 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 		return fmt.Sprintf("%v", e.Value)
 	case *parser.StringLiteral:
 		return fmt.Sprintf("%q", e.Value)
+	case *parser.ByteStringLiteral:
+		return fmt.Sprintf("[]byte(%q)", e.Value)
 	case *parser.BooleanLiteral:
 		if e.Value {
 			return "true"
@@ -773,6 +775,8 @@ func (g *Generator) typeSpecToGo(spec *parser.TypeSpec) string {
 		return "bool"
 	case "JSON":
 		return "map[string]interface{}"
+	case "BYTES", "BSTRING":
+		return "[]byte"
 	default:
 		return "interface{}"
 	}
