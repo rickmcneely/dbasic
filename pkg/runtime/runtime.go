@@ -47,6 +47,18 @@ func InputFloat(prompt string) float64 {
 	return val
 }
 
+// --- Output Functions ---
+
+// Printf prints formatted output (like C printf)
+func Printf(format string, args ...interface{}) {
+	fmt.Printf(format, args...)
+}
+
+// Sprintf returns formatted string (like C sprintf)
+func Sprintf(format string, args ...interface{}) string {
+	return fmt.Sprintf(format, args...)
+}
+
 // --- String Functions ---
 
 // Len returns the length of a string
