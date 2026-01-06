@@ -1,0 +1,244 @@
+{
+  "Sub Definition": {
+    "prefix": "sub",
+    "body": [
+      "SUB ${1:Name}(${2:params})",
+      "\t$0",
+      "END SUB"
+    ],
+    "description": "Define a subroutine"
+  },
+  "Main Sub": {
+    "prefix": "main",
+    "body": [
+      "SUB Main()",
+      "\t$0",
+      "END SUB"
+    ],
+    "description": "Define the Main subroutine"
+  },
+  "Function Definition": {
+    "prefix": "func",
+    "body": [
+      "FUNCTION ${1:Name}(${2:params}) AS ${3:INTEGER}",
+      "\t$0",
+      "\tRETURN ${4:value}",
+      "END FUNCTION"
+    ],
+    "description": "Define a function with return type"
+  },
+  "Function Multiple Returns": {
+    "prefix": "funcmulti",
+    "body": [
+      "FUNCTION ${1:Name}(${2:params}) AS (${3:INTEGER}, ${4:BOOLEAN})",
+      "\t$0",
+      "\tRETURN ${5:value}, ${6:TRUE}",
+      "END FUNCTION"
+    ],
+    "description": "Define a function with multiple return values"
+  },
+  "Dim Variable": {
+    "prefix": "dim",
+    "body": [
+      "DIM ${1:name} AS ${2:INTEGER}${3: = ${4:0}}"
+    ],
+    "description": "Declare a variable with DIM"
+  },
+  "Dim String": {
+    "prefix": "dims",
+    "body": [
+      "DIM ${1:name} AS STRING${2: = \"${3:value}\"}"
+    ],
+    "description": "Declare a string variable"
+  },
+  "Dim Array": {
+    "prefix": "dima",
+    "body": [
+      "DIM ${1:arr}(${2:10}) AS ${3:INTEGER}"
+    ],
+    "description": "Declare an array"
+  },
+  "Let Variable": {
+    "prefix": "let",
+    "body": [
+      "LET ${1:name} = ${2:value}"
+    ],
+    "description": "Declare a variable with type inference"
+  },
+  "Const": {
+    "prefix": "const",
+    "body": [
+      "CONST ${1:NAME} AS ${2:INTEGER} = ${3:value}"
+    ],
+    "description": "Define a constant"
+  },
+  "If Statement": {
+    "prefix": "if",
+    "body": [
+      "IF ${1:condition} THEN",
+      "\t$0",
+      "ENDIF"
+    ],
+    "description": "If statement"
+  },
+  "If Else Statement": {
+    "prefix": "ifelse",
+    "body": [
+      "IF ${1:condition} THEN",
+      "\t$2",
+      "ELSE",
+      "\t$0",
+      "ENDIF"
+    ],
+    "description": "If-Else statement"
+  },
+  "If ElseIf Else Statement": {
+    "prefix": "ifelseif",
+    "body": [
+      "IF ${1:condition1} THEN",
+      "\t$2",
+      "ELSEIF ${3:condition2} THEN",
+      "\t$4",
+      "ELSE",
+      "\t$0",
+      "ENDIF"
+    ],
+    "description": "If-ElseIf-Else statement"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": [
+      "FOR ${1:i} = ${2:1} TO ${3:10}",
+      "\t$0",
+      "NEXT"
+    ],
+    "description": "For loop"
+  },
+  "For Loop with Step": {
+    "prefix": "forstep",
+    "body": [
+      "FOR ${1:i} = ${2:10} TO ${3:0} STEP ${4:-1}",
+      "\t$0",
+      "NEXT"
+    ],
+    "description": "For loop with step"
+  },
+  "While Loop": {
+    "prefix": "while",
+    "body": [
+      "WHILE ${1:condition}",
+      "\t$0",
+      "WEND"
+    ],
+    "description": "While loop"
+  },
+  "Do While Loop": {
+    "prefix": "dowhile",
+    "body": [
+      "DO",
+      "\t$0",
+      "LOOP WHILE ${1:condition}"
+    ],
+    "description": "Do-While loop (post-condition)"
+  },
+  "Do Until Loop": {
+    "prefix": "dountil",
+    "body": [
+      "DO",
+      "\t$0",
+      "LOOP UNTIL ${1:condition}"
+    ],
+    "description": "Do-Until loop (post-condition)"
+  },
+  "Select Case": {
+    "prefix": "select",
+    "body": [
+      "SELECT CASE ${1:expression}",
+      "CASE ${2:value1}",
+      "\t$3",
+      "CASE ${4:value2}",
+      "\t$5",
+      "CASE ELSE",
+      "\t$0",
+      "END SELECT"
+    ],
+    "description": "Select Case statement"
+  },
+  "Print": {
+    "prefix": "print",
+    "body": [
+      "PRINT ${1:\"${2:text}\"}"
+    ],
+    "description": "Print statement"
+  },
+  "Print Variables": {
+    "prefix": "printv",
+    "body": [
+      "PRINT \"${1:label}: \"; ${2:variable}"
+    ],
+    "description": "Print with label and variable"
+  },
+  "Input": {
+    "prefix": "input",
+    "body": [
+      "INPUT \"${1:prompt}\"; ${2:variable}"
+    ],
+    "description": "Input statement"
+  },
+  "JSON Object": {
+    "prefix": "json",
+    "body": [
+      "DIM ${1:data} AS JSON = {${2:key}: ${3:value}}"
+    ],
+    "description": "Declare a JSON object"
+  },
+  "Channel": {
+    "prefix": "chan",
+    "body": [
+      "DIM ${1:ch} AS CHAN OF ${2:INTEGER} = MAKE_CHAN(${2:INTEGER}, ${3:10})"
+    ],
+    "description": "Declare a buffered channel"
+  },
+  "Spawn Goroutine": {
+    "prefix": "spawn",
+    "body": [
+      "SPAWN ${1:FunctionName}(${2:args})"
+    ],
+    "description": "Spawn a goroutine"
+  },
+  "Send to Channel": {
+    "prefix": "send",
+    "body": [
+      "SEND ${1:value} TO ${2:channel}"
+    ],
+    "description": "Send value to channel"
+  },
+  "Receive from Channel": {
+    "prefix": "receive",
+    "body": [
+      "RECEIVE ${1:variable} FROM ${2:channel}"
+    ],
+    "description": "Receive value from channel"
+  },
+  "Pointer": {
+    "prefix": "ptr",
+    "body": [
+      "DIM ${1:ptr} AS POINTER TO ${2:INTEGER} = @${3:variable}"
+    ],
+    "description": "Declare a pointer"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": [
+      "IMPORT \"${1:package}\""
+    ],
+    "description": "Import a Go package"
+  },
+  "Import with Alias": {
+    "prefix": "importas",
+    "body": [
+      "IMPORT \"${1:package}\" AS ${2:alias}"
+    ],
+    "description": "Import a Go package with alias"
+  }
+}

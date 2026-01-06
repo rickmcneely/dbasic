@@ -1,0 +1,133 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "DBasic",
+  "scopeName": "source.dbasic",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#operators" },
+    { "include": "#functions" },
+    { "include": "#constants" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.apostrophe.dbasic",
+          "match": "'.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.dbasic",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.dbasic",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.dbasic",
+          "match": "\\b\\d+\\.\\d*([eE][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.float.dbasic",
+          "match": "\\b\\.\\d+([eE][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.dbasic",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.dbasic",
+          "match": "(?i)\\b(IF|THEN|ELSE|ELSEIF|ENDIF|END\\s+IF|FOR|TO|STEP|NEXT|WHILE|WEND|DO|LOOP|UNTIL|SELECT|CASE|END\\s+SELECT|GOTO|GOSUB|EXIT|RETURN)\\b"
+        },
+        {
+          "name": "keyword.declaration.dbasic",
+          "match": "(?i)\\b(DIM|LET|CONST|AS|BYREF|BYVAL)\\b"
+        },
+        {
+          "name": "keyword.function.dbasic",
+          "match": "(?i)\\b(SUB|FUNCTION|END\\s+SUB|END\\s+FUNCTION)\\b"
+        },
+        {
+          "name": "keyword.other.dbasic",
+          "match": "(?i)\\b(IMPORT|PRINT|INPUT|SPAWN|SEND|RECEIVE|FROM|MAKE_CHAN)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.dbasic",
+          "match": "(?i)\\b(INTEGER|LONG|SINGLE|DOUBLE|STRING|BOOLEAN|JSON|POINTER|CHAN|OF)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.logical.dbasic",
+          "match": "(?i)\\b(AND|OR|NOT|XOR|MOD)\\b"
+        },
+        {
+          "name": "keyword.operator.comparison.dbasic",
+          "match": "<>|<=|>=|<|>|="
+        },
+        {
+          "name": "keyword.operator.arithmetic.dbasic",
+          "match": "[+\\-*/\\\\^&@]"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.dbasic",
+          "match": "(?i)\\b(TRUE|FALSE)\\b"
+        },
+        {
+          "name": "constant.language.null.dbasic",
+          "match": "(?i)\\bNIL\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.dbasic",
+          "match": "(?i)\\b(Len|Left|Right|Mid|Instr|UCase|LCase|Trim|LTrim|RTrim|Str|Val|Chr|Asc|Abs|Sqr|Sin|Cos|Tan|Atn|Log|Exp|Int|Fix|Sgn|Pow|Min|Max|Rnd|RndInt|RndRange|Randomize|Timer|Now|Date|Year|Month|Day|Hour|Minute|Second|Sleep|FileExists|ReadFile|WriteFile|AppendFile|DeleteFile|MkDir|RmDir|ListDir)\\b"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "entity.name.function.dbasic",
+          "match": "(?i)(?<=\\b(SUB|FUNCTION)\\s+)[a-zA-Z_][a-zA-Z0-9_]*"
+        },
+        {
+          "name": "variable.other.dbasic",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

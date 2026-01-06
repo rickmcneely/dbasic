@@ -10,23 +10,25 @@ import (
 
 // Generator generates Go code from a DBasic AST
 type Generator struct {
-	program    *parser.Program
-	symbols    *analyzer.SymbolTable
-	output     strings.Builder
-	indent     int
-	imports    map[string]bool
-	hasMain    bool
-	labelCount int
-	debugMode  bool
-	sourceFile string
+	program      *parser.Program
+	symbols      *analyzer.SymbolTable
+	currentScope *analyzer.Scope
+	output       strings.Builder
+	indent       int
+	imports      map[string]bool
+	hasMain      bool
+	labelCount   int
+	debugMode    bool
+	sourceFile   string
 }
 
 // New creates a new code generator
 func New(program *parser.Program, symbols *analyzer.SymbolTable) *Generator {
 	return &Generator{
-		program: program,
-		symbols: symbols,
-		imports: make(map[string]bool),
+		program:      program,
+		symbols:      symbols,
+		currentScope: symbols.GlobalScope,
+		imports:      make(map[string]bool),
 	}
 }
 
@@ -253,7 +255,20 @@ func (g *Generator) generateSubStatement(stmt *parser.SubStatement) {
 	params := g.generateParams(stmt.Params)
 	g.writeLine(fmt.Sprintf("func %s(%s) {", funcName, params))
 	g.indent++
+	// Track local variables for this sub
+	oldScope := g.currentScope
+	g.currentScope = analyzer.NewScope(stmt.Name.Value, g.symbols.GlobalScope)
+	// Add parameters to local scope
+	for _, p := range stmt.Params {
+		paramType := g.typeFromTypeSpec(p.Type)
+		g.currentScope.Define(&analyzer.Symbol{
+			Name: p.Name.Value,
+			Kind: analyzer.SymParameter,
+			Type: paramType,
+		})
+	}
 	g.generateBlockStatement(stmt.Body)
+	g.currentScope = oldScope
 	g.indent--
 	g.writeLine("}")
 }
@@ -265,7 +280,20 @@ func (g *Generator) generateFunctionStatement(stmt *parser.FunctionStatement) {
 	returns := g.generateReturnTypes(stmt.ReturnTypes)
 	g.writeLine(fmt.Sprintf("func %s(%s) %s {", funcName, params, returns))
 	g.indent++
+	// Track local variables for this function
+	oldScope := g.currentScope
+	g.currentScope = analyzer.NewScope(stmt.Name.Value, g.symbols.GlobalScope)
+	// Add parameters to local scope
+	for _, p := range stmt.Params {
+		paramType := g.typeFromTypeSpec(p.Type)
+		g.currentScope.Define(&analyzer.Symbol{
+			Name: p.Name.Value,
+			Kind: analyzer.SymParameter,
+			Type: paramType,
+		})
+	}
 	g.generateBlockStatement(stmt.Body)
+	g.currentScope = oldScope
 	g.indent--
 	g.writeLine("}")
 }
@@ -355,6 +383,14 @@ func (g *Generator) generateStatement(stmt parser.Statement) {
 func (g *Generator) generateLocalDim(stmt *parser.DimStatement) {
 	varName := g.toGoIdent(stmt.Name.Value)
 	varType := g.typeSpecToGo(stmt.Type)
+
+	// Track the variable type in current scope
+	t := g.typeFromTypeSpec(stmt.Type)
+	g.currentScope.Define(&analyzer.Symbol{
+		Name: stmt.Name.Value,
+		Kind: analyzer.SymVariable,
+		Type: t,
+	})
 
 	if stmt.ArraySize != nil {
 		g.writeLineWithSource(fmt.Sprintf("%s := make([]%s, %s)", varName, varType, g.exprToGo(stmt.ArraySize)), stmt.Token.Line)
@@ -615,7 +651,7 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 	case *parser.IndexExpression:
 		return fmt.Sprintf("%s[%s]", g.exprToGo(e.Left), g.exprToGo(e.Index))
 	case *parser.MemberExpression:
-		return fmt.Sprintf("%s.%s", g.exprToGo(e.Object), g.toGoIdent(e.Member.Value))
+		return g.memberExprToGo(e)
 	case *parser.AddressOfExpression:
 		return fmt.Sprintf("&%s", g.exprToGo(e.Value))
 	case *parser.DereferenceExpression:
@@ -740,6 +776,52 @@ func (g *Generator) typeSpecToGo(spec *parser.TypeSpec) string {
 	default:
 		return "interface{}"
 	}
+}
+
+// typeFromTypeSpec converts a parser.TypeSpec to an analyzer.Type
+func (g *Generator) typeFromTypeSpec(spec *parser.TypeSpec) *analyzer.Type {
+	if spec == nil {
+		return analyzer.AnyType
+	}
+
+	if spec.IsPointer {
+		return analyzer.NewPointerType(g.typeFromTypeSpec(spec.ElementType))
+	}
+
+	if spec.IsChannel {
+		return analyzer.NewChannelType(g.typeFromTypeSpec(spec.ElementType))
+	}
+
+	return analyzer.TypeFromName(spec.Name)
+}
+
+// isExprJSONType checks if an expression resolves to a JSON type
+func (g *Generator) isExprJSONType(expr parser.Expression) bool {
+	switch e := expr.(type) {
+	case *parser.Identifier:
+		sym := g.currentScope.Resolve(e.Value)
+		if sym != nil && sym.Type != nil {
+			return sym.Type.Kind == analyzer.TypeJSON
+		}
+	case *parser.MemberExpression:
+		// If we're accessing a member of something, check the object
+		return g.isExprJSONType(e.Object)
+	case *parser.IndexExpression:
+		return g.isExprJSONType(e.Left)
+	case *parser.JSONLiteral:
+		return true
+	}
+	return false
+}
+
+// memberExprToGo generates Go code for a member expression, handling JSON specially
+func (g *Generator) memberExprToGo(expr *parser.MemberExpression) string {
+	if g.isExprJSONType(expr.Object) {
+		// JSON access uses map bracket notation
+		return fmt.Sprintf("%s[%q]", g.exprToGo(expr.Object), expr.Member.Value)
+	}
+	// Regular struct/package access uses dot notation
+	return fmt.Sprintf("%s.%s", g.exprToGo(expr.Object), g.toGoIdent(expr.Member.Value))
 }
 
 func (g *Generator) toGoIdent(name string) string {

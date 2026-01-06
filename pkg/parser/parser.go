@@ -874,7 +874,9 @@ func (p *Parser) parseReceiveStatement() *ReceiveStatement {
 }
 
 func (p *Parser) parseAssignmentOrExpression() Statement {
-	left := p.parseExpression(LOWEST)
+	// Parse left-hand side at a higher precedence to avoid consuming '='
+	// This allows person.age = 31 to be parsed correctly
+	left := p.parseExpression(LESSGREATER)
 
 	// Check for assignment
 	if p.peekTokenIs(lexer.TOKEN_ASSIGN) {
@@ -883,6 +885,17 @@ func (p *Parser) parseAssignmentOrExpression() Statement {
 		p.nextToken()
 		value := p.parseExpression(LOWEST)
 		return &AssignmentStatement{Token: tok, Left: left, Value: value}
+	}
+
+	// If no assignment, we need to continue parsing any comparison/logical operators
+	// that may follow the left-hand side
+	for p.peekPrecedence() > LOWEST {
+		infix := p.infixParseFns[p.peekToken.Type]
+		if infix == nil {
+			break
+		}
+		p.nextToken()
+		left = infix(left)
 	}
 
 	// Check for multiple assignment: a, b = func()
