@@ -12,6 +12,7 @@ import (
 type Generator struct {
 	program      *parser.Program
 	symbols      *analyzer.SymbolTable
+	types        *analyzer.TypeRegistry
 	currentScope *analyzer.Scope
 	output       strings.Builder
 	indent       int
@@ -42,6 +43,11 @@ func (g *Generator) SetSourceFile(filename string) {
 	g.sourceFile = filename
 }
 
+// SetTypeRegistry sets the type registry for custom types
+func (g *Generator) SetTypeRegistry(types *analyzer.TypeRegistry) {
+	g.types = types
+}
+
 // Generate generates Go source code
 func (g *Generator) Generate() string {
 	// Collect imports from explicit IMPORT statements
@@ -61,10 +67,13 @@ func (g *Generator) Generate() string {
 	// Generate imports
 	g.generateImports()
 
+	// Generate type definitions (structs)
+	g.generateTypeDefinitions()
+
 	// Generate global variables
 	g.generateGlobalVariables()
 
-	// Generate functions and subs
+	// Generate functions, subs, and methods
 	g.generateFunctions()
 
 	// Generate main function if needed
@@ -191,6 +200,35 @@ func (g *Generator) generateImports() {
 	g.writeLine("")
 }
 
+func (g *Generator) generateTypeDefinitions() {
+	hasTypes := false
+	for _, stmt := range g.program.Statements {
+		if ts, ok := stmt.(*parser.TypeStatement); ok {
+			if !hasTypes {
+				hasTypes = true
+			}
+			g.generateTypeStatement(ts)
+		}
+	}
+	if hasTypes {
+		g.writeLine("")
+	}
+}
+
+func (g *Generator) generateTypeStatement(stmt *parser.TypeStatement) {
+	typeName := g.toGoIdent(stmt.Name.Value)
+	g.writeLine(fmt.Sprintf("type %s struct {", typeName))
+	g.indent++
+	for _, field := range stmt.Fields {
+		fieldName := g.toGoIdent(field.Name.Value)
+		fieldType := g.typeSpecToGo(field.Type)
+		g.writeLine(fmt.Sprintf("%s %s", fieldName, fieldType))
+	}
+	g.indent--
+	g.writeLine("}")
+	g.writeLine("")
+}
+
 func (g *Generator) generateGlobalVariables() {
 	hasGlobals := false
 
@@ -227,6 +265,8 @@ func (g *Generator) generateFunctions() {
 			g.generateSubStatement(s)
 		case *parser.FunctionStatement:
 			g.generateFunctionStatement(s)
+		case *parser.MethodStatement:
+			g.generateMethodStatement(s)
 		}
 	}
 }
@@ -292,6 +332,53 @@ func (g *Generator) generateFunctionStatement(stmt *parser.FunctionStatement) {
 			Type: paramType,
 		})
 	}
+	g.generateBlockStatement(stmt.Body)
+	g.currentScope = oldScope
+	g.indent--
+	g.writeLine("}")
+}
+
+func (g *Generator) generateMethodStatement(stmt *parser.MethodStatement) {
+	g.writeLine("")
+
+	// Generate receiver
+	receiverName := g.toGoIdent(stmt.ReceiverName.Value)
+	receiverType := g.typeSpecToGo(stmt.ReceiverType)
+
+	// Generate method name
+	methodName := g.toGoIdent(stmt.Name.Value)
+
+	// Generate parameters
+	params := g.generateParams(stmt.Params)
+
+	// Generate return types
+	returns := g.generateReturnTypes(stmt.ReturnTypes)
+
+	g.writeLine(fmt.Sprintf("func (%s %s) %s(%s) %s {", receiverName, receiverType, methodName, params, returns))
+	g.indent++
+
+	// Track local variables for this method
+	oldScope := g.currentScope
+	g.currentScope = analyzer.NewScope(stmt.Name.Value, g.symbols.GlobalScope)
+
+	// Add receiver to local scope
+	recvType := g.typeFromTypeSpec(stmt.ReceiverType)
+	g.currentScope.Define(&analyzer.Symbol{
+		Name: stmt.ReceiverName.Value,
+		Kind: analyzer.SymParameter,
+		Type: recvType,
+	})
+
+	// Add parameters to local scope
+	for _, p := range stmt.Params {
+		paramType := g.typeFromTypeSpec(p.Type)
+		g.currentScope.Define(&analyzer.Symbol{
+			Name: p.Name.Value,
+			Kind: analyzer.SymParameter,
+			Type: paramType,
+		})
+	}
+
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
 	g.indent--
@@ -778,7 +865,14 @@ func (g *Generator) typeSpecToGo(spec *parser.TypeSpec) string {
 	case "BYTES", "BSTRING":
 		return "[]byte"
 	default:
-		return "interface{}"
+		// Check for custom type
+		if g.types != nil {
+			if t := g.types.Lookup(spec.Name); t != nil {
+				return t.Name
+			}
+		}
+		// Could be a custom type name
+		return spec.Name
 	}
 }
 
@@ -796,7 +890,19 @@ func (g *Generator) typeFromTypeSpec(spec *parser.TypeSpec) *analyzer.Type {
 		return analyzer.NewChannelType(g.typeFromTypeSpec(spec.ElementType))
 	}
 
-	return analyzer.TypeFromName(spec.Name)
+	// Try built-in type first
+	if t := analyzer.TypeFromName(spec.Name); t != nil {
+		return t
+	}
+
+	// Try custom type
+	if g.types != nil {
+		if t := g.types.Lookup(spec.Name); t != nil {
+			return t
+		}
+	}
+
+	return analyzer.AnyType
 }
 
 // isExprJSONType checks if an expression resolves to a JSON type

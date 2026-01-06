@@ -65,7 +65,7 @@
         },
         {
           "name": "keyword.function.dbasic",
-          "match": "(?i)\\b(SUB|FUNCTION|END\\s+SUB|END\\s+FUNCTION)\\b"
+          "match": "(?i)\\b(SUB|FUNCTION|TYPE|END\\s+SUB|END\\s+FUNCTION|END\\s+TYPE)\\b"
         },
         {
           "name": "keyword.other.dbasic",

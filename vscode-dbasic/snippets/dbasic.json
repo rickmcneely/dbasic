@@ -275,5 +275,34 @@
       "DIM ${1:str} AS STRING = Decode(${2:bytesVar})"
     ],
     "description": "Convert BYTES to STRING (UTF-8)"
+  },
+  "Type Definition": {
+    "prefix": "type",
+    "body": [
+      "TYPE ${1:TypeName}",
+      "\tDIM ${2:field1} AS ${3:INTEGER}",
+      "\t$0",
+      "END TYPE"
+    ],
+    "description": "Define a struct/record type"
+  },
+  "Method Function": {
+    "prefix": "method",
+    "body": [
+      "FUNCTION (${1:self} AS POINTER TO ${2:TypeName}) ${3:MethodName}(${4:params}) AS ${5:INTEGER}",
+      "\t$0",
+      "\tRETURN ${6:value}",
+      "END FUNCTION"
+    ],
+    "description": "Define a method with receiver"
+  },
+  "Method Sub": {
+    "prefix": "methodsub",
+    "body": [
+      "SUB (${1:self} AS POINTER TO ${2:TypeName}) ${3:MethodName}(${4:params})",
+      "\t$0",
+      "END SUB"
+    ],
+    "description": "Define a method sub with receiver"
   }
 }

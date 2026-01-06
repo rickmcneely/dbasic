@@ -9,16 +9,18 @@ import (
 
 // Analyzer performs semantic analysis on the AST
 type Analyzer struct {
-	symbols *SymbolTable
-	errors  []string
-	program *parser.Program
-	lines   []string // source lines for error context
+	symbols  *SymbolTable
+	types    *TypeRegistry
+	errors   []string
+	program  *parser.Program
+	lines    []string // source lines for error context
 }
 
 // New creates a new Analyzer
 func New() *Analyzer {
 	return &Analyzer{
 		symbols: NewSymbolTable(),
+		types:   NewTypeRegistry(),
 		errors:  []string{},
 	}
 }
@@ -40,24 +42,38 @@ func (a *Analyzer) getSourceLine(lineNum int) string {
 func (a *Analyzer) Analyze(program *parser.Program) (*SymbolTable, []string) {
 	a.program = program
 
-	// First pass: collect all function/sub declarations
+	// First pass: collect all type definitions
+	for _, stmt := range program.Statements {
+		if ts, ok := stmt.(*parser.TypeStatement); ok {
+			a.declareType(ts)
+		}
+	}
+
+	// Second pass: collect all function/sub/method declarations
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
 		case *parser.SubStatement:
 			a.declareSubOrFunction(s.Name.Value, s.Params, nil, s)
 		case *parser.FunctionStatement:
 			a.declareSubOrFunction(s.Name.Value, s.Params, s.ReturnTypes, s)
+		case *parser.MethodStatement:
+			a.declareMethod(s)
 		case *parser.ImportStatement:
 			a.symbols.AddImport(s.Package, s.Alias)
 		}
 	}
 
-	// Second pass: analyze all statements
+	// Third pass: analyze all statements
 	for _, stmt := range program.Statements {
 		a.analyzeStatement(stmt)
 	}
 
 	return a.symbols, a.errors
+}
+
+// TypeRegistry returns the type registry
+func (a *Analyzer) TypeRegistry() *TypeRegistry {
+	return a.types
 }
 
 // Errors returns the list of errors
@@ -95,6 +111,56 @@ func (a *Analyzer) errorWithHint(line int, format string, hint string, args ...i
 	}
 
 	a.errors = append(a.errors, sb.String())
+}
+
+func (a *Analyzer) declareType(stmt *parser.TypeStatement) {
+	var fields []*StructField
+	for _, f := range stmt.Fields {
+		fieldType := a.resolveTypeSpec(f.Type)
+		fields = append(fields, &StructField{
+			Name: f.Name.Value,
+			Type: fieldType,
+		})
+	}
+
+	structType := NewStructType(stmt.Name.Value, fields)
+	a.types.Register(stmt.Name.Value, structType)
+}
+
+func (a *Analyzer) declareMethod(stmt *parser.MethodStatement) {
+	// Get the receiver type name
+	var receiverTypeName string
+	if stmt.ReceiverType.IsPointer {
+		receiverTypeName = stmt.ReceiverType.ElementType.Name
+	} else {
+		receiverTypeName = stmt.ReceiverType.Name
+	}
+
+	// Method name is TypeName.MethodName for symbol table
+	methodName := receiverTypeName + "." + stmt.Name.Value
+
+	var paramTypes []*Type
+	for _, p := range stmt.Params {
+		paramTypes = append(paramTypes, a.resolveTypeSpec(p.Type))
+	}
+
+	var retTypes []*Type
+	for _, rt := range stmt.ReturnTypes {
+		retTypes = append(retTypes, a.resolveTypeSpec(rt))
+	}
+
+	symType := NewFunctionType(paramTypes, retTypes)
+
+	sym := &Symbol{
+		Name: methodName,
+		Kind: SymFunction,
+		Type: symType,
+		Node: stmt,
+	}
+
+	if err := a.symbols.DefineGlobal(sym); err != nil {
+		a.error(stmt.Token.Line, "duplicate method definition: %s", methodName)
+	}
 }
 
 func (a *Analyzer) declareSubOrFunction(name string, params []*parser.Parameter, returnTypes []*parser.TypeSpec, node parser.Node) {
@@ -146,7 +212,12 @@ func (a *Analyzer) resolveTypeSpec(spec *parser.TypeSpec) *Type {
 		return NewChannelType(elemType)
 	}
 
+	// Try built-in types first
 	baseType := TypeFromName(spec.Name)
+	if baseType == nil {
+		// Try user-defined types
+		baseType = a.types.Lookup(spec.Name)
+	}
 	if baseType == nil {
 		a.error(spec.Token.Line, "unknown type: %s", spec.Name)
 		return AnyType
@@ -192,10 +263,14 @@ func (a *Analyzer) analyzeStatement(stmt parser.Statement) {
 		a.analyzeDoLoopStatement(s)
 	case *parser.SelectStatement:
 		a.analyzeSelectStatement(s)
+	case *parser.TypeStatement:
+		// Already handled in first pass
 	case *parser.SubStatement:
 		a.analyzeSubStatement(s)
 	case *parser.FunctionStatement:
 		a.analyzeFunctionStatement(s)
+	case *parser.MethodStatement:
+		a.analyzeMethodStatement(s)
 	case *parser.ReturnStatement:
 		a.analyzeReturnStatement(s)
 	case *parser.ExitStatement:
@@ -447,6 +522,43 @@ func (a *Analyzer) analyzeSubStatement(stmt *parser.SubStatement) {
 func (a *Analyzer) analyzeFunctionStatement(stmt *parser.FunctionStatement) {
 	a.symbols.EnterScope(stmt.Name.Value)
 	defer a.symbols.ExitScope()
+
+	// Define parameters
+	for _, param := range stmt.Params {
+		paramType := a.resolveTypeSpec(param.Type)
+		sym := &Symbol{
+			Name:    param.Name.Value,
+			Kind:    SymParameter,
+			Type:    paramType,
+			IsByRef: param.ByRef,
+		}
+		a.symbols.Define(sym)
+	}
+
+	a.analyzeBlockStatement(stmt.Body)
+}
+
+func (a *Analyzer) analyzeMethodStatement(stmt *parser.MethodStatement) {
+	// Get the receiver type name for scope naming
+	var receiverTypeName string
+	if stmt.ReceiverType.IsPointer {
+		receiverTypeName = stmt.ReceiverType.ElementType.Name
+	} else {
+		receiverTypeName = stmt.ReceiverType.Name
+	}
+
+	scopeName := receiverTypeName + "." + stmt.Name.Value
+	a.symbols.EnterScope(scopeName)
+	defer a.symbols.ExitScope()
+
+	// Define the receiver as a parameter
+	receiverType := a.resolveTypeSpec(stmt.ReceiverType)
+	receiverSym := &Symbol{
+		Name: stmt.ReceiverName.Value,
+		Kind: SymParameter,
+		Type: receiverType,
+	}
+	a.symbols.Define(receiverSym)
 
 	// Define parameters
 	for _, param := range stmt.Params {
@@ -765,6 +877,29 @@ func (a *Analyzer) analyzeMemberExpression(expr *parser.MemberExpression) *Type 
 	}
 
 	if objType.Kind == TypeJSON {
+		return AnyType
+	}
+
+	// Handle struct field access
+	if objType.Kind == TypeStruct {
+		for _, field := range objType.Fields {
+			if strings.EqualFold(field.Name, expr.Member.Value) {
+				return field.Type
+			}
+		}
+		a.error(expr.Token.Line, "type %s has no field %s", objType.Name, expr.Member.Value)
+		return AnyType
+	}
+
+	// Handle pointer to struct field access
+	if objType.Kind == TypePointer && objType.ElementType != nil && objType.ElementType.Kind == TypeStruct {
+		structType := objType.ElementType
+		for _, field := range structType.Fields {
+			if strings.EqualFold(field.Name, expr.Member.Value) {
+				return field.Type
+			}
+		}
+		a.error(expr.Token.Line, "type %s has no field %s", structType.Name, expr.Member.Value)
 		return AnyType
 	}
 

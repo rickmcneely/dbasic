@@ -26,16 +26,24 @@ const (
 	TypeAny       // For Go interface{} interop
 	TypeFunction
 	TypeSub
+	TypeStruct    // User-defined struct type
 )
+
+// StructField represents a field in a struct type
+type StructField struct {
+	Name string
+	Type *Type
+}
 
 // Type represents a DBasic type
 type Type struct {
 	Kind        TypeKind
-	Name        string      // Original type name
-	ElementType *Type       // For pointers, channels, arrays
-	ArraySize   int         // For fixed-size arrays (-1 for dynamic)
-	ParamTypes  []*Type     // For function/sub types
-	ReturnTypes []*Type     // For function types
+	Name        string         // Original type name
+	ElementType *Type          // For pointers, channels, arrays
+	ArraySize   int            // For fixed-size arrays (-1 for dynamic)
+	ParamTypes  []*Type        // For function/sub types
+	ReturnTypes []*Type        // For function types
+	Fields      []*StructField // For struct types
 }
 
 // Predefined types
@@ -135,6 +143,42 @@ func NewSubType(params []*Type) *Type {
 	}
 }
 
+// NewStructType creates a new struct type
+func NewStructType(name string, fields []*StructField) *Type {
+	return &Type{
+		Kind:   TypeStruct,
+		Name:   name,
+		Fields: fields,
+	}
+}
+
+// TypeRegistry holds user-defined types
+type TypeRegistry struct {
+	types map[string]*Type
+}
+
+// NewTypeRegistry creates a new type registry
+func NewTypeRegistry() *TypeRegistry {
+	return &TypeRegistry{
+		types: make(map[string]*Type),
+	}
+}
+
+// Register adds a type to the registry
+func (r *TypeRegistry) Register(name string, t *Type) {
+	r.types[strings.ToUpper(name)] = t
+}
+
+// Lookup finds a type by name
+func (r *TypeRegistry) Lookup(name string) *Type {
+	return r.types[strings.ToUpper(name)]
+}
+
+// All returns all registered types
+func (r *TypeRegistry) All() map[string]*Type {
+	return r.types
+}
+
 // String returns the string representation of the type
 func (t *Type) String() string {
 	if t == nil {
@@ -165,6 +209,8 @@ func (t *Type) String() string {
 			params = append(params, p.String())
 		}
 		return fmt.Sprintf("SUB(%s)", strings.Join(params, ", "))
+	case TypeStruct:
+		return t.Name
 	default:
 		return t.Name
 	}
@@ -205,6 +251,8 @@ func (t *Type) GoType() string {
 		return ""
 	case TypeAny:
 		return "interface{}"
+	case TypeStruct:
+		return t.Name
 	default:
 		return "interface{}"
 	}

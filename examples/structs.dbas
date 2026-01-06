@@ -1,0 +1,47 @@
+' DBasic Structs and Methods Example
+' Demonstrates TYPE definitions and method syntax
+
+' Define a Point type
+TYPE Point
+    DIM X AS DOUBLE
+    DIM Y AS DOUBLE
+END TYPE
+
+' Define a Rectangle type
+TYPE Rectangle
+    DIM Width AS DOUBLE
+    DIM Height AS DOUBLE
+END TYPE
+
+' Method on Point to calculate distance from origin
+FUNCTION (p AS POINTER TO Point) Distance() AS DOUBLE
+    RETURN p.X * p.X + p.Y * p.Y
+END FUNCTION
+
+' Method on Point to move by offset
+SUB (p AS POINTER TO Point) Move(dx AS DOUBLE, dy AS DOUBLE)
+    p.X = p.X + dx
+    p.Y = p.Y + dy
+END SUB
+
+' Method on Rectangle to calculate area
+FUNCTION (r AS POINTER TO Rectangle) Area() AS DOUBLE
+    RETURN r.Width * r.Height
+END FUNCTION
+
+SUB Main()
+    ' Create a point
+    DIM pt AS Point
+    pt.X = 3.0
+    pt.Y = 4.0
+
+    PRINT "Point: ("; pt.X; ", "; pt.Y; ")"
+
+    ' Create a rectangle
+    DIM rect AS Rectangle
+    rect.Width = 10.0
+    rect.Height = 5.0
+
+    PRINT "Rectangle width: "; rect.Width
+    PRINT "Rectangle height: "; rect.Height
+END SUB

@@ -509,6 +509,95 @@ func (fs *FunctionStatement) String() string {
 	return sb.String()
 }
 
+// MethodStatement represents a method definition with receiver
+// FUNCTION (recv AS POINTER TO Type) Name(params) AS ReturnType
+type MethodStatement struct {
+	Token        lexer.Token
+	ReceiverName *Identifier
+	ReceiverType *TypeSpec
+	Name         *Identifier
+	Params       []*Parameter
+	ReturnTypes  []*TypeSpec
+	Body         *BlockStatement
+}
+
+func (ms *MethodStatement) statementNode()       {}
+func (ms *MethodStatement) TokenLiteral() string { return ms.Token.Literal }
+func (ms *MethodStatement) String() string {
+	var sb strings.Builder
+	sb.WriteString("FUNCTION (")
+	sb.WriteString(ms.ReceiverName.String())
+	sb.WriteString(" AS ")
+	sb.WriteString(ms.ReceiverType.String())
+	sb.WriteString(") ")
+	sb.WriteString(ms.Name.String())
+	sb.WriteString("(")
+	for i, p := range ms.Params {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(p.Name.String())
+		sb.WriteString(" AS ")
+		sb.WriteString(p.Type.String())
+	}
+	sb.WriteString(")")
+	if len(ms.ReturnTypes) > 0 {
+		sb.WriteString(" AS ")
+		if len(ms.ReturnTypes) > 1 {
+			sb.WriteString("(")
+			for i, t := range ms.ReturnTypes {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(t.String())
+			}
+			sb.WriteString(")")
+		} else {
+			sb.WriteString(ms.ReturnTypes[0].String())
+		}
+	}
+	sb.WriteString("\n")
+	sb.WriteString(ms.Body.String())
+	sb.WriteString("END FUNCTION")
+	return sb.String()
+}
+
+// TypeStatement represents a TYPE definition (struct)
+type TypeStatement struct {
+	Token  lexer.Token
+	Name   *Identifier
+	Fields []*FieldDeclaration
+}
+
+func (ts *TypeStatement) statementNode()       {}
+func (ts *TypeStatement) TokenLiteral() string { return ts.Token.Literal }
+func (ts *TypeStatement) String() string {
+	var sb strings.Builder
+	sb.WriteString("TYPE ")
+	sb.WriteString(ts.Name.String())
+	sb.WriteString("\n")
+	for _, f := range ts.Fields {
+		sb.WriteString("    ")
+		sb.WriteString(f.String())
+		sb.WriteString("\n")
+	}
+	sb.WriteString("END TYPE")
+	return sb.String()
+}
+
+// FieldDeclaration represents a field in a TYPE definition
+type FieldDeclaration struct {
+	Token lexer.Token
+	Name  *Identifier
+	Type  *TypeSpec
+}
+
+func (fd *FieldDeclaration) statementNode()       {}
+func (fd *FieldDeclaration) TokenLiteral() string { return fd.Token.Literal }
+func (fd *FieldDeclaration) String() string {
+	return "DIM " + fd.Name.String() + " AS " + fd.Type.String()
+}
+
 // SpawnStatement represents a SPAWN statement (goroutine)
 type SpawnStatement struct {
 	Token lexer.Token

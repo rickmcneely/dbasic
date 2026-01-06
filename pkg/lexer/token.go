@@ -55,6 +55,7 @@ const (
 	TOKEN_AS
 	TOKEN_LET
 	TOKEN_CONST
+	TOKEN_TYPE
 
 	// Keywords - Types
 	TOKEN_INTEGER
@@ -168,6 +169,7 @@ var tokenNames = map[TokenType]string{
 	TOKEN_AS:          "AS",
 	TOKEN_LET:         "LET",
 	TOKEN_CONST:       "CONST",
+	TOKEN_TYPE:        "TYPE",
 	TOKEN_INTEGER:     "INTEGER",
 	TOKEN_LONG:        "LONG",
 	TOKEN_SINGLE:      "SINGLE",
@@ -230,6 +232,7 @@ var Keywords = map[string]TokenType{
 	"AS":        TOKEN_AS,
 	"LET":       TOKEN_LET,
 	"CONST":     TOKEN_CONST,
+	"TYPE":      TOKEN_TYPE,
 	"INTEGER":   TOKEN_INTEGER,
 	"LONG":      TOKEN_LONG,
 	"SINGLE":    TOKEN_SINGLE,

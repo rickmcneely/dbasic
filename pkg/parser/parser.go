@@ -274,6 +274,8 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseDoLoopStatement()
 	case lexer.TOKEN_SELECT:
 		return p.parseSelectStatement()
+	case lexer.TOKEN_TYPE:
+		return p.parseTypeStatement()
 	case lexer.TOKEN_SUB:
 		return p.parseSubStatement()
 	case lexer.TOKEN_FUNCTION:
@@ -653,8 +655,62 @@ func (p *Parser) parseSelectStatement() *SelectStatement {
 	return stmt
 }
 
-func (p *Parser) parseSubStatement() *SubStatement {
-	stmt := &SubStatement{Token: p.curToken}
+func (p *Parser) parseTypeStatement() *TypeStatement {
+	stmt := &TypeStatement{Token: p.curToken}
+
+	if !p.expectPeek(lexer.TOKEN_IDENT) {
+		return nil
+	}
+
+	stmt.Name = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	p.nextToken()
+	p.skipNewlines()
+
+	// Parse field declarations until END TYPE
+	for !p.curTokenIs(lexer.TOKEN_EOF) {
+		if p.curTokenIs(lexer.TOKEN_END) {
+			if p.peekTokenIs(lexer.TOKEN_TYPE) {
+				p.nextToken() // consume TYPE
+				break
+			}
+		}
+
+		// Expect DIM statements for fields
+		if p.curTokenIs(lexer.TOKEN_DIM) {
+			field := &FieldDeclaration{Token: p.curToken}
+
+			if !p.expectPeek(lexer.TOKEN_IDENT) {
+				return nil
+			}
+
+			field.Name = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+			if !p.expectPeek(lexer.TOKEN_AS) {
+				return nil
+			}
+
+			p.nextToken()
+			field.Type = p.parseTypeSpec()
+			stmt.Fields = append(stmt.Fields, field)
+		}
+
+		p.nextToken()
+		p.skipNewlines()
+	}
+
+	return stmt
+}
+
+func (p *Parser) parseSubStatement() Statement {
+	subToken := p.curToken
+
+	// Check for method syntax: SUB (recv AS Type) Name(params)
+	if p.peekTokenIs(lexer.TOKEN_LPAREN) {
+		return p.parseSubMethodStatement(subToken)
+	}
+
+	stmt := &SubStatement{Token: subToken}
 
 	if !p.expectPeek(lexer.TOKEN_IDENT) {
 		return nil
@@ -678,8 +734,69 @@ func (p *Parser) parseSubStatement() *SubStatement {
 	return stmt
 }
 
-func (p *Parser) parseFunctionStatement() *FunctionStatement {
-	stmt := &FunctionStatement{Token: p.curToken}
+func (p *Parser) parseSubMethodStatement(subToken lexer.Token) *MethodStatement {
+	stmt := &MethodStatement{Token: subToken}
+
+	// Expect opening paren for receiver
+	if !p.expectPeek(lexer.TOKEN_LPAREN) {
+		return nil
+	}
+
+	// Parse receiver name
+	if !p.expectPeek(lexer.TOKEN_IDENT) {
+		return nil
+	}
+	stmt.ReceiverName = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	// Expect AS
+	if !p.expectPeek(lexer.TOKEN_AS) {
+		return nil
+	}
+
+	// Parse receiver type
+	p.nextToken()
+	stmt.ReceiverType = p.parseTypeSpec()
+
+	// Expect closing paren for receiver
+	if !p.expectPeek(lexer.TOKEN_RPAREN) {
+		return nil
+	}
+
+	// Parse method name
+	if !p.expectPeek(lexer.TOKEN_IDENT) {
+		return nil
+	}
+	stmt.Name = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	// Parse parameter list
+	if !p.expectPeek(lexer.TOKEN_LPAREN) {
+		return nil
+	}
+
+	stmt.Params = p.parseParameters()
+
+	if !p.expectPeek(lexer.TOKEN_RPAREN) {
+		return nil
+	}
+
+	// SUB methods have no return types, use empty slice
+	stmt.ReturnTypes = nil
+
+	p.nextToken()
+	stmt.Body = p.parseBlockStatementUntilEnd("SUB")
+
+	return stmt
+}
+
+func (p *Parser) parseFunctionStatement() Statement {
+	funcToken := p.curToken
+
+	// Check for method syntax: FUNCTION (recv AS Type) Name(params)
+	if p.peekTokenIs(lexer.TOKEN_LPAREN) {
+		return p.parseMethodStatement(funcToken)
+	}
+
+	stmt := &FunctionStatement{Token: funcToken}
 
 	if !p.expectPeek(lexer.TOKEN_IDENT) {
 		return nil
@@ -715,6 +832,77 @@ func (p *Parser) parseFunctionStatement() *FunctionStatement {
 		}
 	} else {
 		stmt.ReturnTypes = append(stmt.ReturnTypes, p.parseTypeSpec())
+	}
+
+	p.nextToken()
+	stmt.Body = p.parseBlockStatementUntilEnd("FUNCTION")
+
+	return stmt
+}
+
+func (p *Parser) parseMethodStatement(funcToken lexer.Token) *MethodStatement {
+	stmt := &MethodStatement{Token: funcToken}
+
+	// Expect opening paren for receiver
+	if !p.expectPeek(lexer.TOKEN_LPAREN) {
+		return nil
+	}
+
+	// Parse receiver name
+	if !p.expectPeek(lexer.TOKEN_IDENT) {
+		return nil
+	}
+	stmt.ReceiverName = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	// Expect AS
+	if !p.expectPeek(lexer.TOKEN_AS) {
+		return nil
+	}
+
+	// Parse receiver type
+	p.nextToken()
+	stmt.ReceiverType = p.parseTypeSpec()
+
+	// Expect closing paren for receiver
+	if !p.expectPeek(lexer.TOKEN_RPAREN) {
+		return nil
+	}
+
+	// Parse method name
+	if !p.expectPeek(lexer.TOKEN_IDENT) {
+		return nil
+	}
+	stmt.Name = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	// Parse parameter list
+	if !p.expectPeek(lexer.TOKEN_LPAREN) {
+		return nil
+	}
+
+	stmt.Params = p.parseParameters()
+
+	if !p.expectPeek(lexer.TOKEN_RPAREN) {
+		return nil
+	}
+
+	// Check for return type(s)
+	if p.peekTokenIs(lexer.TOKEN_AS) {
+		p.nextToken()
+		p.nextToken()
+
+		// Check for multiple return types
+		if p.curTokenIs(lexer.TOKEN_LPAREN) {
+			p.nextToken()
+			for !p.curTokenIs(lexer.TOKEN_RPAREN) {
+				stmt.ReturnTypes = append(stmt.ReturnTypes, p.parseTypeSpec())
+				if p.peekTokenIs(lexer.TOKEN_COMMA) {
+					p.nextToken()
+				}
+				p.nextToken()
+			}
+		} else {
+			stmt.ReturnTypes = append(stmt.ReturnTypes, p.parseTypeSpec())
+		}
 	}
 
 	p.nextToken()
