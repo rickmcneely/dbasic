@@ -1,0 +1,63 @@
+' Variables and Types Example in DBasic
+' Demonstrates all supported data types and variable operations
+
+SUB Main()
+    ' Integer types
+    DIM smallNum AS INTEGER = 42
+    DIM bigNum AS LONG = 9999999999
+
+    ' Floating point types
+    DIM floatNum AS SINGLE = 3.14
+    DIM doubleNum AS DOUBLE = 3.14159265358979
+
+    ' String type
+    DIM greeting AS STRING = "Hello, DBasic!"
+
+    ' Boolean type
+    DIM isReady AS BOOLEAN = TRUE
+
+    ' Type inference with LET
+    LET inferred = 100
+    LET message = "This type was inferred"
+
+    ' Print all values
+    PRINT "Integer: "; smallNum
+    PRINT "Long: "; bigNum
+    PRINT "Single: "; floatNum
+    PRINT "Double: "; doubleNum
+    PRINT "String: "; greeting
+    PRINT "Boolean: "; isReady
+    PRINT "Inferred int: "; inferred
+    PRINT "Inferred string: "; message
+
+    ' String concatenation
+    DIM firstName AS STRING = "John"
+    DIM lastName AS STRING = "Doe"
+    DIM fullName AS STRING = firstName & " " & lastName
+    PRINT "Full name: "; fullName
+
+    ' Arithmetic operations
+    DIM a AS INTEGER = 10
+    DIM b AS INTEGER = 3
+    PRINT "Addition: "; a + b
+    PRINT "Subtraction: "; a - b
+    PRINT "Multiplication: "; a * b
+    PRINT "Division: "; a / b
+    PRINT "Integer Division: "; a \ b
+    PRINT "Modulo: "; a MOD b
+    PRINT "Power: "; a ^ b
+
+    ' Comparison operations
+    PRINT "10 > 3: "; a > b
+    PRINT "10 < 3: "; a < b
+    PRINT "10 = 10: "; a = a
+    PRINT "10 <> 3: "; a <> b
+
+    ' Logical operations
+    DIM x AS BOOLEAN = TRUE
+    DIM y AS BOOLEAN = FALSE
+    PRINT "TRUE AND FALSE: "; x AND y
+    PRINT "TRUE OR FALSE: "; x OR y
+    PRINT "NOT TRUE: "; NOT x
+    PRINT "TRUE XOR FALSE: "; x XOR y
+END SUB

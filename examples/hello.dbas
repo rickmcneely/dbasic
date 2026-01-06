@@ -1,0 +1,18 @@
+' Hello World example in DBasic
+
+SUB Main()
+    PRINT "Hello, World!"
+    PRINT "Welcome to DBasic"
+
+    DIM name AS STRING
+    PRINT "What is your name? ";
+    INPUT name
+
+    PRINT "Hello, "; name; "!"
+
+    ' Demonstrate a loop
+    DIM i AS INTEGER
+    FOR i = 1 TO 5
+        PRINT "Count: "; i
+    NEXT
+END SUB

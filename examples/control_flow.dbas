@@ -1,0 +1,105 @@
+' Control Flow Example in DBasic
+' Demonstrates IF, FOR, WHILE, DO-LOOP, and SELECT CASE
+
+SUB Main()
+    ' IF-THEN-ELSE
+    PRINT "=== IF Statement ==="
+    DIM age AS INTEGER = 25
+
+    IF age >= 18 THEN
+        PRINT "You are an adult"
+    ELSE
+        PRINT "You are a minor"
+    ENDIF
+
+    ' IF-ELSEIF-ELSE
+    DIM score AS INTEGER = 85
+
+    IF score >= 90 THEN
+        PRINT "Grade: A"
+    ELSEIF score >= 80 THEN
+        PRINT "Grade: B"
+    ELSEIF score >= 70 THEN
+        PRINT "Grade: C"
+    ELSEIF score >= 60 THEN
+        PRINT "Grade: D"
+    ELSE
+        PRINT "Grade: F"
+    ENDIF
+
+    ' FOR loop
+    PRINT ""
+    PRINT "=== FOR Loop ==="
+    DIM i AS INTEGER
+    FOR i = 1 TO 5
+        PRINT "Counting: "; i
+    NEXT
+
+    ' FOR loop with STEP
+    PRINT ""
+    PRINT "=== FOR Loop with STEP ==="
+    FOR i = 10 TO 0 STEP -2
+        PRINT "Countdown: "; i
+    NEXT
+
+    ' WHILE loop
+    PRINT ""
+    PRINT "=== WHILE Loop ==="
+    DIM counter AS INTEGER = 0
+    WHILE counter < 5
+        PRINT "While counter: "; counter
+        counter = counter + 1
+    WEND
+
+    ' DO-LOOP WHILE (post-condition)
+    PRINT ""
+    PRINT "=== DO-LOOP WHILE ==="
+    counter = 0
+    DO
+        PRINT "Do counter: "; counter
+        counter = counter + 1
+    LOOP WHILE counter < 3
+
+    ' DO WHILE-LOOP (pre-condition)
+    PRINT ""
+    PRINT "=== DO WHILE-LOOP ==="
+    counter = 0
+    DO WHILE counter < 3
+        PRINT "Do while counter: "; counter
+        counter = counter + 1
+    LOOP
+
+    ' DO-LOOP UNTIL
+    PRINT ""
+    PRINT "=== DO-LOOP UNTIL ==="
+    counter = 0
+    DO
+        PRINT "Until counter: "; counter
+        counter = counter + 1
+    LOOP UNTIL counter = 3
+
+    ' SELECT CASE
+    PRINT ""
+    PRINT "=== SELECT CASE ==="
+    DIM day AS INTEGER = 3
+
+    SELECT CASE day
+    CASE 1
+        PRINT "Monday"
+    CASE 2
+        PRINT "Tuesday"
+    CASE 3
+        PRINT "Wednesday"
+    CASE 4
+        PRINT "Thursday"
+    CASE 5
+        PRINT "Friday"
+    CASE 6, 7
+        PRINT "Weekend!"
+    CASE ELSE
+        PRINT "Invalid day"
+    END SELECT
+
+    PRINT ""
+    PRINT "Control flow demo complete!"
+END SUB

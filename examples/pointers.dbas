@@ -1,0 +1,55 @@
+' Pointers Example in DBasic
+' Demonstrates pointer operations: address-of (@) and dereference (^)
+
+' Swap two values using pointers
+SUB Swap(a AS POINTER TO INTEGER, b AS POINTER TO INTEGER)
+    DIM temp AS INTEGER
+    temp = ^a
+    ^a = ^b
+    ^b = temp
+END SUB
+
+' Increment value through pointer
+SUB Increment(ptr AS POINTER TO INTEGER)
+    ^ptr = ^ptr + 1
+END SUB
+
+SUB Main()
+    PRINT "=== Basic Pointer Operations ==="
+
+    ' Create a variable and a pointer to it
+    DIM value AS INTEGER = 42
+    DIM ptr AS POINTER TO INTEGER = @value
+
+    PRINT "Original value: "; value
+    PRINT "Value via pointer: "; ^ptr
+
+    ' Modify through pointer
+    ^ptr = 100
+    PRINT "After modification via pointer: "; value
+
+    ' Swap example
+    PRINT ""
+    PRINT "=== Swap Example ==="
+    DIM x AS INTEGER = 10
+    DIM y AS INTEGER = 20
+
+    PRINT "Before swap: x = "; x; ", y = "; y
+    Swap(@x, @y)
+    PRINT "After swap: x = "; x; ", y = "; y
+
+    ' Increment example
+    PRINT ""
+    PRINT "=== Increment via Pointer ==="
+    DIM counter AS INTEGER = 0
+    PRINT "Initial counter: "; counter
+
+    DIM i AS INTEGER
+    FOR i = 1 TO 5
+        Increment(@counter)
+        PRINT "After increment "; i; ": "; counter
+    NEXT
+
+    PRINT ""
+    PRINT "Pointers demo complete!"
+END SUB

@@ -1,0 +1,35 @@
+' Functions example in DBasic
+
+' Function with multiple return values
+FUNCTION Divide(a AS INTEGER, b AS INTEGER) AS (INTEGER, BOOLEAN)
+    IF b = 0 THEN
+        RETURN 0, FALSE
+    ENDIF
+    RETURN a / b, TRUE
+END FUNCTION
+
+' Simple function
+FUNCTION Square(n AS INTEGER) AS INTEGER
+    RETURN n * n
+END FUNCTION
+
+' Recursive function
+FUNCTION Factorial(n AS LONG) AS LONG
+    IF n <= 1 THEN
+        RETURN 1
+    ENDIF
+    RETURN n * Factorial(n - 1)
+END FUNCTION
+
+SUB Main()
+    DIM result AS INTEGER
+    DIM ok AS BOOLEAN
+
+    result, ok = Divide(10, 2)
+    IF ok THEN
+        PRINT "10 / 2 = "; result
+    ENDIF
+
+    PRINT "5 squared = "; Square(5)
+    PRINT "5! = "; Factorial(5)
+END SUB

@@ -1,0 +1,52 @@
+' Arrays Example in DBasic
+' Demonstrates array declaration, access, and manipulation
+
+SUB Main()
+    ' Array literal syntax (creates a slice)
+    PRINT "=== Array Literals ==="
+    LET primes = [2, 3, 5, 7, 11, 13]
+    PRINT "First prime: "; primes[0]
+    PRINT "Second prime: "; primes[1]
+    PRINT "Third prime: "; primes[2]
+
+    ' String array
+    PRINT ""
+    PRINT "=== String Array ==="
+    LET names = ["Alice", "Bob", "Charlie"]
+    DIM i AS INTEGER
+    FOR i = 0 TO 2
+        PRINT "Hello, "; names[i]; "!"
+    NEXT
+
+    ' Creating arrays with expressions
+    PRINT ""
+    PRINT "=== Computed Array ==="
+    LET computed = [1 * 1, 2 * 2, 3 * 3, 4 * 4, 5 * 5]
+    FOR i = 0 TO 4
+        PRINT "Square "; i + 1; " = "; computed[i]
+    NEXT
+
+    ' Mixed expressions
+    PRINT ""
+    PRINT "=== Working with Array Elements ==="
+    LET values = [10, 20, 30, 40, 50]
+
+    ' Sum of array elements
+    DIM sum AS INTEGER = 0
+    FOR i = 0 TO 4
+        sum = sum + values[i]
+    NEXT
+    PRINT "Sum: "; sum
+
+    ' Find max
+    DIM maxVal AS INTEGER = values[0]
+    FOR i = 1 TO 4
+        IF values[i] > maxVal THEN
+            maxVal = values[i]
+        ENDIF
+    NEXT
+    PRINT "Max: "; maxVal
+
+    PRINT ""
+    PRINT "Arrays demo complete!"
+END SUB

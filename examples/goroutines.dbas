@@ -1,0 +1,54 @@
+' Goroutines and Channels Example in DBasic
+' Demonstrates SPAWN (goroutines), channels, SEND, and RECEIVE
+
+SUB Worker(id AS INTEGER, jobs AS CHAN OF INTEGER, results AS CHAN OF INTEGER)
+    DIM job AS INTEGER
+    WHILE TRUE
+        RECEIVE job FROM jobs
+        IF job < 0 THEN
+            EXIT WHILE
+        ENDIF
+        PRINT "Worker "; id; " processing job "; job
+        SEND job * 2 TO results
+    WEND
+END SUB
+
+SUB Main()
+    PRINT "=== Goroutines and Channels Demo ==="
+    PRINT ""
+
+    ' Create buffered channels
+    DIM jobs AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 10)
+    DIM results AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 10)
+
+    ' Start 3 worker goroutines
+    PRINT "Starting 3 workers..."
+    DIM w AS INTEGER
+    FOR w = 1 TO 3
+        SPAWN Worker(w, jobs, results)
+    NEXT
+
+    ' Send 5 jobs
+    PRINT "Sending 5 jobs..."
+    DIM j AS INTEGER
+    FOR j = 1 TO 5
+        SEND j TO jobs
+    NEXT
+
+    ' Collect results
+    PRINT ""
+    PRINT "Collecting results..."
+    DIM r AS INTEGER
+    FOR j = 1 TO 5
+        RECEIVE r FROM results
+        PRINT "Result: "; r
+    NEXT
+
+    ' Signal workers to stop
+    FOR w = 1 TO 3
+        SEND -1 TO jobs
+    NEXT
+
+    PRINT ""
+    PRINT "Goroutines demo complete!"
+END SUB

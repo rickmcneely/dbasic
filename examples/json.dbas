@@ -1,0 +1,35 @@
+' JSON Example in DBasic
+' Demonstrates JSON type and dot notation access
+
+SUB Main()
+    PRINT "=== JSON in DBasic ==="
+    PRINT ""
+
+    ' Create a simple JSON object
+    DIM person AS JSON = {name: "John Doe", age: 30, active: TRUE}
+
+    ' Access JSON properties using dot notation
+    PRINT "Name: "; person.name
+    PRINT "Age: "; person.age
+    PRINT "Active: "; person.active
+
+    ' Modify JSON properties
+    person.age = 31
+    person.active = FALSE
+    PRINT ""
+    PRINT "After modification:"
+    PRINT "Age: "; person.age
+    PRINT "Active: "; person.active
+
+    ' Another JSON object
+    PRINT ""
+    PRINT "=== Configuration Example ==="
+    DIM config AS JSON = {host: "localhost", port: 8080, debug: TRUE}
+
+    PRINT "Host: "; config.host
+    PRINT "Port: "; config.port
+    PRINT "Debug: "; config.debug
+
+    PRINT ""
+    PRINT "JSON demo complete!"
+END SUB
