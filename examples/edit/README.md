@@ -1,12 +1,52 @@
-# EDIT.COM Clone
+# EDIT.COM Clone - Go Package Integration Example
 
-A TUI text editor inspired by MS-DOS EDIT.COM, built with Go and Bubble Tea.
+A TUI text editor demonstrating how to use Go packages (Bubble Tea, Lip Gloss) from DBasic.
+
+## Overview
+
+This example shows how DBasic can integrate with Go's ecosystem by importing and using external packages. The editor uses:
+
+- **github.com/charmbracelet/bubbletea** - Terminal UI framework
+- **github.com/charmbracelet/lipgloss** - Style definitions
 
 ## Files
 
-- `main.go` - Full-featured Go TUI editor using Bubble Tea
-- `edit.dbas` - Simple DBasic wrapper
-- `edit_enhanced.dbas` - Enhanced DBasic editor implementation
+- `edit.dbas` - DBasic source using Go package imports
+- `main.go` - Reference Go implementation for comparison
+- `go.mod` / `go.sum` - Go module dependencies
+
+## Key DBasic Features Demonstrated
+
+### Importing Go Packages
+
+```basic
+IMPORT "github.com/charmbracelet/bubbletea" AS tea
+IMPORT "github.com/charmbracelet/lipgloss"
+```
+
+### Using Go Types
+
+```basic
+DIM model AS tea.Model
+DIM style AS lipgloss.Style
+```
+
+### Calling Go Package Functions
+
+```basic
+tea.NewProgram(model)
+lipgloss.NewStyle().Background(lipgloss.Color("12"))
+```
+
+## Building
+
+```bash
+# From DBasic root directory
+./dbasic build examples/edit/edit.dbas -o edit
+
+# Run the editor
+./edit [filename]
+```
 
 ## Features
 
@@ -16,24 +56,6 @@ A TUI text editor inspired by MS-DOS EDIT.COM, built with Go and Bubble Tea.
 - Search: Find, Find Next, Replace
 - Keyboard shortcuts (Ctrl+S, Ctrl+O, Ctrl+Q, etc.)
 - Classic blue theme reminiscent of MS-DOS EDIT
-
-## Building
-
-```bash
-# Build the Go version directly
-cd examples/edit
-go build -o edit main.go
-
-# Or build the DBasic version
-cd ../..
-./dbasic build examples/edit/edit_enhanced.dbas -o edit_dbas
-```
-
-## Running
-
-```bash
-./edit [filename]
-```
 
 ## Keyboard Shortcuts
 
