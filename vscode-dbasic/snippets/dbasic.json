@@ -304,5 +304,76 @@
       "END SUB"
     ],
     "description": "Define a method sub with receiver"
+  },
+  "Slice Declaration": {
+    "prefix": "slice",
+    "body": [
+      "DIM ${1:items} AS []${2:STRING}"
+    ],
+    "description": "Declare a slice (dynamic array)"
+  },
+  "Slice of Integers": {
+    "prefix": "sliceint",
+    "body": [
+      "DIM ${1:numbers} AS []INTEGER"
+    ],
+    "description": "Declare an integer slice"
+  },
+  "Slice of Structs": {
+    "prefix": "slicetype",
+    "body": [
+      "DIM ${1:items} AS []${2:TypeName}"
+    ],
+    "description": "Declare a slice of user-defined type"
+  },
+  "Array Literal": {
+    "prefix": "arrlit",
+    "body": [
+      "${1:items} = [${2:value1}, ${3:value2}, ${4:value3}]"
+    ],
+    "description": "Array/slice literal"
+  },
+  "Append to Slice": {
+    "prefix": "append",
+    "body": [
+      "${1:slice} = APPEND(${1:slice}, ${2:element})"
+    ],
+    "description": "Append element to slice"
+  },
+  "Struct Literal": {
+    "prefix": "structlit",
+    "body": [
+      "${1:TypeName}{${2:Field1}: ${3:value1}, ${4:Field2}: ${5:value2}}"
+    ],
+    "description": "Struct literal initialization"
+  },
+  "Dim with Struct Literal": {
+    "prefix": "dimstruct",
+    "body": [
+      "DIM ${1:varname} AS ${2:TypeName}",
+      "${1:varname} = ${2:TypeName}{${3:Field}: ${4:value}}"
+    ],
+    "description": "Declare and initialize struct variable"
+  },
+  "Slice Operation": {
+    "prefix": "sliceop",
+    "body": [
+      "${1:result} = ${2:slice}[${3:start}:${4:end}]"
+    ],
+    "description": "Get slice subset [start:end]"
+  },
+  "Slice From Start": {
+    "prefix": "slicefrom",
+    "body": [
+      "${1:result} = ${2:slice}[${3:start}:]"
+    ],
+    "description": "Get slice from start index to end"
+  },
+  "Slice To End": {
+    "prefix": "sliceto",
+    "body": [
+      "${1:result} = ${2:slice}[:${3:end}]"
+    ],
+    "description": "Get slice from beginning to end index"
   }
 }

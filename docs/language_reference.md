@@ -10,13 +10,14 @@ This document provides a complete reference for the DBasic programming language.
 4. [Operators](#operators)
 5. [Control Flow](#control-flow)
 6. [Subroutines and Functions](#subroutines-and-functions)
-7. [Arrays](#arrays)
-8. [Pointers](#pointers)
-9. [Channels and Concurrency](#channels-and-concurrency)
-10. [JSON](#json)
-11. [Go Package Integration](#go-package-integration)
-12. [Built-in Functions](#built-in-functions)
-13. [Keywords](#keywords)
+7. [Arrays and Slices](#arrays-and-slices)
+8. [Structs and Struct Literals](#structs-and-struct-literals)
+9. [Pointers](#pointers)
+10. [Channels and Concurrency](#channels-and-concurrency)
+11. [JSON](#json)
+12. [Go Package Integration](#go-package-integration)
+13. [Built-in Functions](#built-in-functions)
+14. [Keywords](#keywords)
 
 ---
 
@@ -104,7 +105,7 @@ NIL
 
 | Type | Description | Go Equivalent | Range |
 |------|-------------|---------------|-------|
-| INTEGER | 32-bit integer | int32 | -2,147,483,648 to 2,147,483,647 |
+| INTEGER | Platform integer | int | Platform dependent (typically 64-bit) |
 | LONG | 64-bit integer | int64 | -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807 |
 | SINGLE | 32-bit float | float32 | ±1.18e-38 to ±3.4e38 |
 | DOUBLE | 64-bit float | float64 | ±2.23e-308 to ±1.80e308 |
@@ -118,6 +119,21 @@ NIL
 | JSON | JSON object | map[string]interface{} |
 | POINTER TO X | Pointer to type X | *X |
 | CHAN OF X | Channel of type X | chan X |
+| []X | Slice of type X | []X |
+
+### User-Defined Types (Structs)
+
+```basic
+TYPE Person
+    DIM Name AS STRING
+    DIM Age AS INTEGER
+END TYPE
+
+TYPE Rectangle
+    DIM Width AS DOUBLE
+    DIM Height AS DOUBLE
+END TYPE
+```
 
 ---
 
@@ -409,26 +425,128 @@ END SUB
 
 ---
 
-## Arrays
+## Arrays and Slices
+
+### Slice Type Declaration
+
+Slices are dynamic arrays that can grow:
+
+```basic
+DIM names AS []STRING
+DIM numbers AS []INTEGER
+DIM people AS []Person
+```
 
 ### Array Literals
 
 ```basic
 LET numbers = [1, 2, 3, 4, 5]
 LET names = ["Alice", "Bob", "Charlie"]
+
+' Assign to typed slice
+DIM scores AS []INTEGER
+scores = [100, 95, 87, 92]
 ```
 
-### Array Access
+### Array/Slice Access
 
 ```basic
 PRINT numbers[0]    ' First element
 numbers[1] = 100    ' Modify element
 ```
 
-### Array Declaration (Fixed Size)
+### Slice Operations
+
+DBasic supports Go-style slice operations:
+
+```basic
+DIM data AS []INTEGER
+data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+' Get first 3 elements
+DIM first3 AS []INTEGER
+first3 = data[0:3]      ' [1, 2, 3]
+
+' Get from index 5 to end
+DIM rest AS []INTEGER
+rest = data[5:]         ' [6, 7, 8, 9, 10]
+
+' Get from start to index 3
+DIM start AS []INTEGER
+start = data[:3]        ' [1, 2, 3]
+
+' Copy entire slice
+DIM copy AS []INTEGER
+copy = data[:]
+```
+
+### APPEND Function
+
+Add elements to a slice:
+
+```basic
+DIM names AS []STRING
+names = APPEND(names, "Alice")
+names = APPEND(names, "Bob")
+names = APPEND(names, "Charlie")
+
+PRINT Len(names)  ' Prints 3
+```
+
+### Fixed-Size Array Declaration
 
 ```basic
 DIM arr(10) AS INTEGER
+```
+
+---
+
+## Structs and Struct Literals
+
+### Defining Types
+
+```basic
+TYPE Person
+    DIM Name AS STRING
+    DIM Age AS INTEGER
+END TYPE
+
+TYPE MenuItem
+    DIM Label AS STRING
+    DIM Shortcut AS STRING
+END TYPE
+```
+
+### Struct Literals
+
+Create struct instances with field initialization:
+
+```basic
+DIM p AS Person
+p = Person{Name: "John", Age: 30}
+
+DIM item AS MenuItem
+item = MenuItem{Label: "New", Shortcut: "Ctrl+N"}
+```
+
+### Accessing Fields
+
+```basic
+PRINT p.Name      ' "John"
+PRINT p.Age       ' 30
+
+p.Age = 31        ' Modify field
+```
+
+### Slices of Structs
+
+```basic
+DIM people AS []Person
+people = APPEND(people, Person{Name: "Alice", Age: 25})
+people = APPEND(people, Person{Name: "Bob", Age: 35})
+
+PRINT people[0].Name  ' "Alice"
+PRINT people[1].Age   ' 35
 ```
 
 ---
@@ -589,6 +707,18 @@ END SUB
 
 The runtime library provides these built-in functions:
 
+### Slice/Collection Functions
+
+| Function | Description |
+|----------|-------------|
+| `APPEND(slice, elem)` | Append element to slice, returns new slice |
+| `Len(s)` | Length of string, slice, array, or map |
+| `CAP(slice)` | Capacity of slice |
+| `COPY(dst, src)` | Copy slice elements, returns count copied |
+| `MAKE(type, len, cap)` | Create slice/map/channel |
+| `DELETE(map, key)` | Delete key from map |
+| `CLOSE(channel)` | Close a channel |
+
 ### String Functions
 
 | Function | Description |
@@ -671,16 +801,18 @@ The runtime library provides these built-in functions:
 Reserved keywords in DBasic:
 
 ```
-AND       AS        BOOLEAN   BYREF     BYVAL     CASE
-CHAN      CHANNEL   CONST     DIM       DO        DOUBLE
-ELSE      ELSEIF    END       ENDIF     EXIT      FALSE
-FOR       FROM      FUNCTION  GOSUB     GOTO      IF
-IMPORT    INPUT     INTEGER   JSON      LET       LONG
-LOOP      MAKE_CHAN MOD       NEXT      NIL       NOT
-OF        OR        POINTER   PRINT     RECEIVE   RETURN
-SELECT    SEND      SINGLE    SPAWN     STEP      STRING
-SUB       THEN      TO        TRUE      UNTIL     WEND
-WHILE     XOR
+AND       APPEND    AS        BOOLEAN   BSTRING   BYREF
+BYVAL     BYTES     CAP       CASE      CHAN      CHANNEL
+CLOSE     CONST     COPY      DELETE    DIM       DO
+DOUBLE    ELSE      ELSEIF    END       ENDIF     EXIT
+FALSE     FOR       FROM      FUNCTION  GOSUB     GOTO
+IF        IMPORT    INPUT     INTEGER   JSON      LEN
+LET       LONG      LOOP      MAKE      MAKE_CHAN MOD
+NEW       NEXT      NIL       NOT       OF        OR
+POINTER   PRINT     RECEIVE   RETURN    SELECT    SEND
+SINGLE    SPAWN     STEP      STRING    SUB       THEN
+TO        TRUE      TYPE      UNTIL     WEND      WHILE
+XOR
 ```
 
 ---

@@ -2,7 +2,7 @@
   "name": "dbasic",
   "displayName": "DBasic",
   "description": "DBasic language support - BASIC-to-Go transpiler",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "zditech",
   "engines": {
     "vscode": "^1.75.0"

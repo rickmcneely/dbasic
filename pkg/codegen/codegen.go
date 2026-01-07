@@ -111,6 +111,7 @@ func (g *Generator) scanStatementForImports(stmt parser.Statement) {
 	case *parser.InputStatement:
 		g.imports["bufio"] = ""
 		g.imports["os"] = ""
+		g.imports["strings"] = ""
 	}
 }
 
@@ -123,6 +124,7 @@ func (g *Generator) scanBlockForImports(block *parser.BlockStatement) {
 		case *parser.InputStatement:
 			g.imports["bufio"] = ""
 			g.imports["os"] = ""
+			g.imports["strings"] = ""
 		case *parser.IfStatement:
 			g.scanBlockForImports(s.Consequence)
 			for _, elseif := range s.ElseIfs {
@@ -156,6 +158,24 @@ func (g *Generator) scanExpressionForImports(stmt parser.Statement) {
 	case *parser.ExpressionStatement:
 		if s.Expression != nil && g.exprNeedsMath(s.Expression) {
 			g.imports["math"] = ""
+		}
+	case *parser.DimStatement:
+		if s.Value != nil && g.exprNeedsMath(s.Value) {
+			g.imports["math"] = ""
+		}
+	case *parser.PrintStatement:
+		for _, v := range s.Values {
+			if g.exprNeedsMath(v) {
+				g.imports["math"] = ""
+				break
+			}
+		}
+	case *parser.ReturnStatement:
+		for _, v := range s.Values {
+			if g.exprNeedsMath(v) {
+				g.imports["math"] = ""
+				break
+			}
 		}
 	}
 }

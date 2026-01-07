@@ -78,11 +78,26 @@ code --install-extension dbasic-0.1.0.vsix
 | `ptr` | Pointer declaration |
 | `import` | Import Go package |
 | `importas` | Import with alias |
+| `type` | User-defined type (struct) |
+| `method` | Method with receiver |
+| `slice` | Slice declaration |
+| `sliceint` | Integer slice |
+| `slicetype` | Slice of user type |
+| `arrlit` | Array/slice literal |
+| `append` | Append to slice |
+| `structlit` | Struct literal |
+| `dimstruct` | Declare and init struct |
+| `sliceop` | Slice operation [start:end] |
+| `bytes` | Byte array |
 
 ## Language Features
 
 DBasic supports:
 - Strong typing with INTEGER, LONG, SINGLE, DOUBLE, STRING, BOOLEAN, JSON
+- Slices (dynamic arrays) with `[]TYPE` syntax
+- User-defined types with TYPE/END TYPE
+- Struct literal initialization: `Person{Name: "John", Age: 30}`
+- Slice operations: `slice[start:end]`, `APPEND(slice, elem)`
 - SUB and FUNCTION with multiple return values
 - Pointers with `@` (address-of) and `^` (dereference)
 - Goroutines via `SPAWN` and channels
@@ -94,6 +109,15 @@ DBasic supports:
 - Visual Studio Code 1.75.0 or higher
 
 ## Release Notes
+
+### 0.2.0
+
+- Added slice type syntax highlighting (`[]TYPE`)
+- Added struct literal syntax highlighting (`Type{field: value}`)
+- Added new keywords: APPEND, MAKE, COPY, DELETE, CLOSE, NEW
+- Added new built-in functions: CAP, Atn2, Log10, Lng, Sng, Dbl, Bool, Floor, Ceil, Round, Clamp, PI, JSONParse, JSONStringify, Replace, Space
+- Added snippets for slices, struct literals, and slice operations
+- Updated type conversion function highlighting
 
 ### 0.1.0
 

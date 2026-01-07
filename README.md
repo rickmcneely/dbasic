@@ -7,6 +7,8 @@ A modern BASIC-to-Go transpiler with native JSON support, goroutines, channels, 
 - **BASIC Syntax**: Familiar BASIC-style programming with labels instead of line numbers
 - **Go Transpilation**: Compiles to Go source code for cross-platform executables
 - **Type System**: Strong typing with INTEGER, LONG, SINGLE, DOUBLE, STRING, BOOLEAN, JSON
+- **Slices**: Go-style dynamic arrays with `[]TYPE` syntax, APPEND, and slice operations
+- **Structs**: User-defined types with TYPE/END TYPE and struct literal initialization
 - **Functions**: SUB and FUNCTION with multiple parameters and return values
 - **Pointers**: Go-style pointer operations with `@` (address-of) and `^` (dereference)
 - **Concurrency**: Goroutines via `SPAWN`, channels with `SEND` and `RECEIVE`
@@ -93,13 +95,14 @@ LET message = "Hi"  ' Inferred as STRING
 
 | DBasic Type | Go Type | Description |
 |-------------|---------|-------------|
-| INTEGER | int32 | 32-bit integer |
+| INTEGER | int | Platform integer |
 | LONG | int64 | 64-bit integer |
 | SINGLE | float32 | 32-bit float |
 | DOUBLE | float64 | 64-bit float |
 | STRING | string | Text string |
 | BOOLEAN | bool | TRUE or FALSE |
 | JSON | map[string]interface{} | JSON object |
+| []X | []X | Slice (dynamic array) |
 | POINTER TO X | *X | Pointer type |
 | CHAN OF X | chan X | Channel type |
 
@@ -196,6 +199,37 @@ RECEIVE value FROM ch
 SPAWN Worker(ch)
 ```
 
+### Slices and Structs
+
+```basic
+' Define a struct type
+TYPE Person
+    DIM Name AS STRING
+    DIM Age AS INTEGER
+END TYPE
+
+' Slice declaration
+DIM names AS []STRING
+names = ["Alice", "Bob", "Charlie"]
+
+' APPEND to slice
+names = APPEND(names, "David")
+
+' Slice operations
+DIM first2 AS []STRING
+first2 = names[0:2]     ' ["Alice", "Bob"]
+
+' Struct literals
+DIM p AS Person
+p = Person{Name: "John", Age: 30}
+
+' Slice of structs
+DIM people AS []Person
+people = APPEND(people, Person{Name: "Alice", Age: 25})
+people = APPEND(people, Person{Name: "Bob", Age: 35})
+PRINT people[0].Name    ' "Alice"
+```
+
 ### JSON Support
 
 ```basic
@@ -231,9 +265,12 @@ The `examples/` directory contains sample programs:
 - `control_flow.dbas` - IF, FOR, WHILE, SELECT CASE
 - `arrays.dbas` - Array operations
 - `functions.dbas` - Functions and multiple returns
+- `structs.dbas` - User-defined types
 - `pointers.dbas` - Pointer operations
 - `json.dbas` - JSON support
+- `bytes.dbas` - Byte arrays and BSTRING
 - `goroutines.dbas` - Concurrency with SPAWN and channels
+- `new_features.dbas` - Slices, struct literals, APPEND
 
 Run an example:
 
