@@ -1,0 +1,78 @@
+' EDIT.COM Clone - DBasic Text Editor
+' Demonstrates Bubble Tea TUI with type assertions, method calls, and IF statements
+
+IMPORT "github.com/charmbracelet/bubbletea" AS tea
+IMPORT "fmt" AS fmt
+
+' Editor state structure
+TYPE EditorModel IMPLEMENTS tea.Model
+    DIM cursorX AS INTEGER
+    DIM cursorY AS INTEGER
+    DIM width AS INTEGER
+    DIM height AS INTEGER
+    DIM content AS STRING
+    DIM message AS STRING
+END TYPE
+
+' Initialize the model
+FUNCTION (m AS EditorModel) Init() AS tea.Cmd
+    RETURN NIL
+END FUNCTION
+
+' Update handles all messages using type assertions
+FUNCTION (m AS EditorModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    ' Use two-value type assertion with ok pattern
+    DIM keyMsg AS tea.KeyMsg
+    DIM ok AS BOOLEAN
+    keyMsg, ok = msg.(tea.KeyMsg)
+
+    IF ok THEN
+        DIM keyStr AS STRING
+        keyStr = keyMsg.String()
+        m.message = keyStr
+
+        ' Handle arrow keys for cursor movement
+        IF keyStr = "left" THEN
+            IF m.cursorX > 0 THEN
+                m.cursorX = m.cursorX - 1
+            END IF
+        ELSEIF keyStr = "right" THEN
+            m.cursorX = m.cursorX + 1
+        ELSEIF keyStr = "up" THEN
+            IF m.cursorY > 0 THEN
+                m.cursorY = m.cursorY - 1
+            END IF
+        ELSEIF keyStr = "down" THEN
+            m.cursorY = m.cursorY + 1
+        ELSEIF keyStr = "ctrl+c" THEN
+            RETURN m, tea.Quit
+        END IF
+    END IF
+
+    DIM cmd AS tea.Cmd
+    RETURN m, cmd
+END FUNCTION
+
+' View renders the editor
+FUNCTION (m AS EditorModel) View() AS STRING
+    DIM view AS STRING
+    view = "=== DBASIC EDIT ===" & Chr(10) & Chr(10)
+    view = view & "Content: " & m.content & Chr(10) & Chr(10)
+    view = view & fmt.Sprintf("Cursor: %d, %d", m.cursorX + 1, m.cursorY + 1) & Chr(10)
+    view = view & "Last key: " & m.message & Chr(10)
+    view = view & Chr(10) & "Arrow keys to move, Ctrl+C to quit"
+    RETURN view
+END FUNCTION
+
+' Main entry point
+SUB Main()
+    DIM model AS EditorModel
+    model.cursorX = 0
+    model.cursorY = 0
+    model.width = 80
+    model.height = 24
+    model.content = "Hello from DBasic Edit!"
+    model.message = "Ready"
+
+    tea.NewProgram(model).Run()
+END SUB

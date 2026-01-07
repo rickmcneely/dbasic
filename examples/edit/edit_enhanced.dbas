@@ -1,0 +1,448 @@
+' Enhanced EDIT.COM Clone - DBasic Text Editor
+' Demonstrates Bubble Tea TUI with extended features within DBasic constraints
+' Note: Full multi-line editing with slices requires Go; this shows what's achievable in DBasic
+
+IMPORT "github.com/charmbracelet/bubbletea" AS tea
+IMPORT "github.com/charmbracelet/lipgloss" AS lipgloss
+IMPORT "fmt" AS fmt
+
+' Constants for dialog modes
+CONST DIALOG_NONE AS INTEGER = 0
+CONST DIALOG_HELP AS INTEGER = 1
+CONST DIALOG_ABOUT AS INTEGER = 2
+
+' Helper to pad string to width
+FUNCTION PadRight(s AS STRING, width AS INTEGER) AS STRING
+    DIM result AS STRING = s
+    WHILE Len(result) < width
+        result = result & " "
+    WEND
+    RETURN result
+END FUNCTION
+
+' Helper to create spaces
+FUNCTION Spaces(count AS INTEGER) AS STRING
+    DIM result AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 1 TO count
+        result = result & " "
+    NEXT
+    RETURN result
+END FUNCTION
+
+' Editor state structure
+TYPE EditorModel IMPLEMENTS tea.Model
+    ' Cursor position
+    DIM CursorX AS INTEGER
+    DIM CursorY AS INTEGER
+
+    ' Screen dimensions
+    DIM Width AS INTEGER
+    DIM Height AS INTEGER
+
+    ' Text content (single string with newlines)
+    DIM Content AS STRING
+
+    ' Status message
+    DIM Message AS STRING
+
+    ' UI state
+    DIM ShowLineNumbers AS BOOLEAN
+    DIM DialogMode AS INTEGER
+
+    ' Scroll position
+    DIM ScrollY AS INTEGER
+
+    ' Modified flag
+    DIM Modified AS BOOLEAN
+END TYPE
+
+' Styles
+DIM titleStyle AS lipgloss.Style
+DIM statusStyle AS lipgloss.Style
+DIM lineNumStyle AS lipgloss.Style
+DIM textStyle AS lipgloss.Style
+DIM cursorStyle AS lipgloss.Style
+DIM dialogStyle AS lipgloss.Style
+
+' Initialize styles
+SUB InitStyles()
+    titleStyle = lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(TRUE)
+    statusStyle = lipgloss.NewStyle().Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
+    lineNumStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+    textStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("15"))
+    cursorStyle = lipgloss.NewStyle().Background(lipgloss.Color("15")).Foreground(lipgloss.Color("0"))
+    dialogStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("12")).Padding(1, 2)
+END SUB
+
+' Count lines in content
+FUNCTION CountLines(content AS STRING) AS INTEGER
+    IF Len(content) = 0 THEN
+        RETURN 1
+    END IF
+    DIM count AS INTEGER = 1
+    DIM i AS INTEGER
+    FOR i = 1 TO Len(content)
+        IF Mid(content, i, 1) = Chr(10) THEN
+            count = count + 1
+        END IF
+    NEXT
+    RETURN count
+END FUNCTION
+
+' Get a specific line from content (1-indexed)
+FUNCTION GetLine(content AS STRING, lineNum AS INTEGER) AS STRING
+    DIM currentLine AS INTEGER = 1
+    DIM startPos AS INTEGER = 1
+    DIM i AS INTEGER
+
+    ' Find start of requested line
+    FOR i = 1 TO Len(content)
+        IF currentLine = lineNum THEN
+            startPos = i
+            EXIT FOR
+        END IF
+        IF Mid(content, i, 1) = Chr(10) THEN
+            currentLine = currentLine + 1
+        END IF
+    NEXT
+
+    IF currentLine < lineNum THEN
+        RETURN ""
+    END IF
+
+    ' Find end of line
+    DIM result AS STRING = ""
+    FOR i = startPos TO Len(content)
+        DIM ch AS STRING = Mid(content, i, 1)
+        IF ch = Chr(10) THEN
+            EXIT FOR
+        END IF
+        result = result & ch
+    NEXT
+
+    RETURN result
+END FUNCTION
+
+' Get line length
+FUNCTION GetLineLength(content AS STRING, lineNum AS INTEGER) AS INTEGER
+    RETURN Len(GetLine(content, lineNum))
+END FUNCTION
+
+' Initialize the model
+FUNCTION (m AS EditorModel) Init() AS tea.Cmd
+    InitStyles()
+    RETURN NIL
+END FUNCTION
+
+' Update handles all messages
+FUNCTION (m AS EditorModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    ' Handle window size
+    DIM sizeMsg AS tea.WindowSizeMsg
+    DIM sizeOk AS BOOLEAN
+    sizeMsg, sizeOk = msg.(tea.WindowSizeMsg)
+    IF sizeOk THEN
+        m.Width = Int(sizeMsg.Width)
+        m.Height = Int(sizeMsg.Height)
+        RETURN m, NIL
+    END IF
+
+    ' Handle key messages
+    DIM keyMsg AS tea.KeyMsg
+    DIM ok AS BOOLEAN
+    keyMsg, ok = msg.(tea.KeyMsg)
+
+    IF NOT ok THEN
+        RETURN m, NIL
+    END IF
+
+    DIM keyStr AS STRING
+    keyStr = keyMsg.String()
+
+    ' Dialog mode key handling
+    IF m.DialogMode <> DIALOG_NONE THEN
+        IF keyStr = "esc" OR keyStr = "enter" OR keyStr = "q" THEN
+            m.DialogMode = DIALOG_NONE
+        END IF
+        RETURN m, NIL
+    END IF
+
+    DIM totalLines AS INTEGER = CountLines(m.Content)
+    DIM currentLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
+
+    ' Handle navigation and commands
+    IF keyStr = "ctrl+c" OR keyStr = "ctrl+q" THEN
+        RETURN m, tea.Quit
+
+    ELSEIF keyStr = "f1" THEN
+        m.DialogMode = DIALOG_HELP
+        m.Message = "Help"
+
+    ELSEIF keyStr = "f10" THEN
+        m.DialogMode = DIALOG_ABOUT
+        m.Message = "About"
+
+    ELSEIF keyStr = "ctrl+l" THEN
+        m.ShowLineNumbers = NOT m.ShowLineNumbers
+        IF m.ShowLineNumbers THEN
+            m.Message = "Line numbers ON"
+        ELSE
+            m.Message = "Line numbers OFF"
+        END IF
+
+    ELSEIF keyStr = "left" THEN
+        IF m.CursorX > 0 THEN
+            m.CursorX = m.CursorX - 1
+        ELSEIF m.CursorY > 0 THEN
+            ' Move to end of previous line
+            m.CursorY = m.CursorY - 1
+            m.CursorX = GetLineLength(m.Content, m.CursorY + 1)
+        END IF
+        m.Message = ""
+
+    ELSEIF keyStr = "right" THEN
+        IF m.CursorX < currentLineLen THEN
+            m.CursorX = m.CursorX + 1
+        ELSEIF m.CursorY < totalLines - 1 THEN
+            ' Move to start of next line
+            m.CursorY = m.CursorY + 1
+            m.CursorX = 0
+        END IF
+        m.Message = ""
+
+    ELSEIF keyStr = "up" THEN
+        IF m.CursorY > 0 THEN
+            m.CursorY = m.CursorY - 1
+            ' Clamp cursor to line length
+            DIM upLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
+            IF m.CursorX > upLineLen THEN
+                m.CursorX = upLineLen
+            END IF
+        END IF
+        m.Message = ""
+
+    ELSEIF keyStr = "down" THEN
+        IF m.CursorY < totalLines - 1 THEN
+            m.CursorY = m.CursorY + 1
+            ' Clamp cursor to line length
+            DIM downLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
+            IF m.CursorX > downLineLen THEN
+                m.CursorX = downLineLen
+            END IF
+        END IF
+        m.Message = ""
+
+    ELSEIF keyStr = "home" THEN
+        m.CursorX = 0
+        m.Message = ""
+
+    ELSEIF keyStr = "end" THEN
+        m.CursorX = currentLineLen
+        m.Message = ""
+
+    ELSEIF keyStr = "ctrl+home" THEN
+        m.CursorX = 0
+        m.CursorY = 0
+        m.ScrollY = 0
+        m.Message = "Top of file"
+
+    ELSEIF keyStr = "ctrl+end" THEN
+        m.CursorY = totalLines - 1
+        m.CursorX = GetLineLength(m.Content, totalLines)
+        m.Message = "End of file"
+
+    ELSEIF keyStr = "pgup" THEN
+        DIM pgUpSize AS INTEGER = m.Height - 4
+        IF pgUpSize < 1 THEN
+            pgUpSize = 1
+        END IF
+        m.CursorY = m.CursorY - pgUpSize
+        IF m.CursorY < 0 THEN
+            m.CursorY = 0
+        END IF
+        m.Message = ""
+
+    ELSEIF keyStr = "pgdown" THEN
+        DIM pgDownSize AS INTEGER = m.Height - 4
+        IF pgDownSize < 1 THEN
+            pgDownSize = 1
+        END IF
+        m.CursorY = m.CursorY + pgDownSize
+        IF m.CursorY >= totalLines THEN
+            m.CursorY = totalLines - 1
+        END IF
+        m.Message = ""
+
+    ELSE
+        m.Message = "Key: " & keyStr
+    END IF
+
+    ' Update scroll to keep cursor visible
+    DIM visibleLines AS INTEGER = m.Height - 4
+    IF visibleLines < 1 THEN
+        visibleLines = 1
+    END IF
+
+    IF m.CursorY < m.ScrollY THEN
+        m.ScrollY = m.CursorY
+    ELSEIF m.CursorY >= m.ScrollY + visibleLines THEN
+        m.ScrollY = m.CursorY - visibleLines + 1
+    END IF
+
+    RETURN m, NIL
+END FUNCTION
+
+' View renders the editor
+FUNCTION (m AS EditorModel) View() AS STRING
+    DIM view AS STRING = ""
+    DIM totalLines AS INTEGER = CountLines(m.Content)
+
+    ' Title bar
+    DIM title AS STRING = " DBASIC EDIT "
+    IF m.Modified THEN
+        title = title & "[Modified] "
+    END IF
+    DIM padding AS STRING = Spaces(m.Width - Len(title))
+    view = titleStyle.Render(title & padding) & Chr(10)
+
+    ' Calculate content area
+    DIM contentHeight AS INTEGER = m.Height - 3
+    IF contentHeight < 1 THEN
+        contentHeight = 1
+    END IF
+
+    ' Render content lines
+    DIM lineNumWidth AS INTEGER = 0
+    IF m.ShowLineNumbers THEN
+        lineNumWidth = 5
+    END IF
+
+    DIM i AS INTEGER
+    FOR i = 0 TO contentHeight - 1
+        DIM lineIdx AS INTEGER = m.ScrollY + i
+        DIM lineText AS STRING = ""
+
+        IF lineIdx < totalLines THEN
+            lineText = GetLine(m.Content, lineIdx + 1)
+        END IF
+
+        ' Line number
+        IF m.ShowLineNumbers THEN
+            IF lineIdx < totalLines THEN
+                view = view & lineNumStyle.Render(fmt.Sprintf("%4d ", lineIdx + 1))
+            ELSE
+                view = view & lineNumStyle.Render("     ")
+            END IF
+        END IF
+
+        ' Content with cursor
+        IF lineIdx = m.CursorY THEN
+            ' This line has the cursor
+            DIM beforeCursor AS STRING = ""
+            DIM cursorChar AS STRING = " "
+            DIM afterCursor AS STRING = ""
+
+            IF m.CursorX > 0 AND Len(lineText) > 0 THEN
+                IF m.CursorX <= Len(lineText) THEN
+                    beforeCursor = Left(lineText, m.CursorX)
+                ELSE
+                    beforeCursor = lineText
+                END IF
+            END IF
+
+            IF m.CursorX < Len(lineText) THEN
+                cursorChar = Mid(lineText, m.CursorX + 1, 1)
+                IF m.CursorX + 1 < Len(lineText) THEN
+                    afterCursor = Mid(lineText, m.CursorX + 2, Len(lineText) - m.CursorX - 1)
+                END IF
+            END IF
+
+            view = view & textStyle.Render(beforeCursor)
+            view = view & cursorStyle.Render(cursorChar)
+            view = view & textStyle.Render(afterCursor)
+        ELSE
+            view = view & textStyle.Render(lineText)
+        END IF
+
+        ' Pad to width and add newline
+        DIM currentLen AS INTEGER = Len(lineText) + lineNumWidth
+        IF lineIdx = m.CursorY AND m.CursorX >= Len(lineText) THEN
+            currentLen = currentLen + 1
+        END IF
+        IF currentLen < m.Width THEN
+            view = view & Spaces(m.Width - currentLen)
+        END IF
+        view = view & Chr(10)
+    NEXT
+
+    ' Status bar
+    DIM status AS STRING = fmt.Sprintf(" Ln %d, Col %d | Lines: %d", m.CursorY + 1, m.CursorX + 1, totalLines)
+    IF Len(m.Message) > 0 THEN
+        status = status & " | " & m.Message
+    END IF
+    DIM statusPad AS STRING = Spaces(m.Width - Len(status))
+    view = view & statusStyle.Render(status & statusPad) & Chr(10)
+
+    ' Help line
+    view = view & " F1=Help  Ctrl+L=Line#  Ctrl+Q=Quit"
+
+    ' Render dialog if open
+    IF m.DialogMode = DIALOG_HELP THEN
+        view = view & Chr(10) & Chr(10)
+        DIM helpText AS STRING = "DBASIC EDIT - Keyboard Shortcuts" & Chr(10) & Chr(10)
+        helpText = helpText & "Navigation:" & Chr(10)
+        helpText = helpText & "  Arrow keys    Move cursor" & Chr(10)
+        helpText = helpText & "  Home/End      Start/end of line" & Chr(10)
+        helpText = helpText & "  PgUp/PgDn     Page up/down" & Chr(10)
+        helpText = helpText & "  Ctrl+Home     Start of file" & Chr(10)
+        helpText = helpText & "  Ctrl+End      End of file" & Chr(10) & Chr(10)
+        helpText = helpText & "Commands:" & Chr(10)
+        helpText = helpText & "  F1            This help" & Chr(10)
+        helpText = helpText & "  F10           About" & Chr(10)
+        helpText = helpText & "  Ctrl+L        Toggle line numbers" & Chr(10)
+        helpText = helpText & "  Ctrl+Q/C      Quit" & Chr(10) & Chr(10)
+        helpText = helpText & "Press any key to close"
+        view = dialogStyle.Render(helpText)
+    ELSEIF m.DialogMode = DIALOG_ABOUT THEN
+        view = view & Chr(10) & Chr(10)
+        DIM aboutText AS STRING = "DBASIC EDIT" & Chr(10) & Chr(10)
+        aboutText = aboutText & "A text editor demonstration" & Chr(10)
+        aboutText = aboutText & "written in DBasic using" & Chr(10)
+        aboutText = aboutText & "the Bubble Tea TUI framework." & Chr(10) & Chr(10)
+        aboutText = aboutText & "This showcases DBasic's ability" & Chr(10)
+        aboutText = aboutText & "to implement Go interfaces and" & Chr(10)
+        aboutText = aboutText & "use external packages." & Chr(10) & Chr(10)
+        aboutText = aboutText & "Press any key to close"
+        view = dialogStyle.Render(aboutText)
+    END IF
+
+    RETURN view
+END FUNCTION
+
+' Main entry point
+SUB Main()
+    DIM model AS EditorModel
+    model.CursorX = 0
+    model.CursorY = 0
+    model.Width = 80
+    model.Height = 24
+    model.ScrollY = 0
+    model.ShowLineNumbers = TRUE
+    model.DialogMode = DIALOG_NONE
+    model.Modified = FALSE
+    model.Message = "Welcome to DBasic Edit!"
+
+    ' Sample content
+    model.Content = "' Welcome to DBASIC EDIT" & Chr(10)
+    model.Content = model.Content & "' A simple text editor written in DBasic" & Chr(10)
+    model.Content = model.Content & Chr(10)
+    model.Content = model.Content & "SUB Main()" & Chr(10)
+    model.Content = model.Content & "    PRINT \"Hello, World!\"" & Chr(10)
+    model.Content = model.Content & "END SUB" & Chr(10)
+    model.Content = model.Content & Chr(10)
+    model.Content = model.Content & "' Use arrow keys to navigate" & Chr(10)
+    model.Content = model.Content & "' Press F1 for help" & Chr(10)
+    model.Content = model.Content & "' Press Ctrl+Q to quit"
+
+    tea.NewProgram(model, tea.WithAltScreen()).Run()
+END SUB
