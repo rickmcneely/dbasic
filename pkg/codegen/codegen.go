@@ -361,25 +361,160 @@ func ReadFile(path string) string {
 func WriteFile(path, content string) {
 	os.WriteFile(path, []byte(content), 0644)
 }`,
+	"JSONParse": `// JSONParse parses a JSON string into a map
+func JSONParse(s string) map[string]interface{} {
+	var result map[string]interface{}
+	json.Unmarshal([]byte(s), &result)
+	return result
+}`,
+	"JSONStringify": `// JSONStringify converts a map to JSON string
+func JSONStringify(data map[string]interface{}) string {
+	b, _ := json.Marshal(data)
+	return string(b)
+}`,
+	"JSONPretty": `// JSONPretty converts a map to pretty-printed JSON string
+func JSONPretty(data map[string]interface{}) string {
+	b, _ := json.MarshalIndent(data, "", "  ")
+	return string(b)
+}`,
+	"JSONGet": `// JSONGet retrieves a value from a JSON map by path
+func JSONGet(data map[string]interface{}, path string) interface{} {
+	parts := strings.Split(path, ".")
+	var current interface{} = data
+	for _, part := range parts {
+		switch v := current.(type) {
+		case map[string]interface{}:
+			current = v[part]
+		default:
+			return nil
+		}
+	}
+	return current
+}`,
+	"JSONSet": `// JSONSet sets a value in a JSON map by path
+func JSONSet(data map[string]interface{}, path string, value interface{}) {
+	parts := strings.Split(path, ".")
+	current := data
+	for i := 0; i < len(parts)-1; i++ {
+		part := parts[i]
+		if _, ok := current[part]; !ok {
+			current[part] = make(map[string]interface{})
+		}
+		current = current[part].(map[string]interface{})
+	}
+	current[parts[len(parts)-1]] = value
+}`,
+	"StructToJSON": `// StructToJSON converts a struct to a JSON map
+func StructToJSON(v interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	val := reflect.ValueOf(v)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return result
+	}
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		fieldVal := val.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		name := field.Tag.Get("json")
+		if name == "" {
+			name = field.Name
+		}
+		result[name] = fieldVal.Interface()
+	}
+	return result
+}`,
+	"JSONToStruct": `// JSONToStruct populates a struct from a JSON map
+func JSONToStruct(data map[string]interface{}, v interface{}) interface{} {
+	val := reflect.ValueOf(v)
+	if val.Kind() != reflect.Ptr {
+		return v
+	}
+	val = val.Elem()
+	if val.Kind() != reflect.Struct {
+		return v
+	}
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		fieldVal := val.Field(i)
+		if field.PkgPath != "" || !fieldVal.CanSet() {
+			continue
+		}
+		name := field.Tag.Get("json")
+		if name == "" {
+			name = field.Name
+		}
+		jsonVal, ok := data[name]
+		if !ok {
+			continue
+		}
+		if jsonVal != nil {
+			setJSONFieldValue(fieldVal, jsonVal)
+		}
+	}
+	return v
+}
+
+func setJSONFieldValue(field reflect.Value, value interface{}) {
+	if value == nil {
+		return
+	}
+	switch field.Kind() {
+	case reflect.String:
+		if s, ok := value.(string); ok {
+			field.SetString(s)
+		}
+	case reflect.Int, reflect.Int32, reflect.Int64:
+		switch v := value.(type) {
+		case float64:
+			field.SetInt(int64(v))
+		case int:
+			field.SetInt(int64(v))
+		case int64:
+			field.SetInt(v)
+		}
+	case reflect.Float32, reflect.Float64:
+		if f, ok := value.(float64); ok {
+			field.SetFloat(f)
+		}
+	case reflect.Bool:
+		if b, ok := value.(bool); ok {
+			field.SetBool(b)
+		}
+	}
+}`,
 }
 
 // runtimeFuncImports maps runtime functions to required imports
 var runtimeFuncImports = map[string][]string{
-	"Sleep":      {"time"},
-	"Sqr":        {"math"},
-	"Abs":        {"math"},
-	"Sin":        {"math"},
-	"Cos":        {"math"},
-	"Val":        {"strconv", "strings"},
-	"UCase":      {"strings"},
-	"LCase":      {"strings"},
-	"Trim":       {"strings"},
-	"Rnd":        {"math/rand"},
-	"RndInt":     {"math/rand"},
-	"Instr":      {"strings"},
-	"FileExists": {"os"},
-	"ReadFile":   {"os"},
-	"WriteFile":  {"os"},
+	"Sleep":         {"time"},
+	"Sqr":           {"math"},
+	"Abs":           {"math"},
+	"Sin":           {"math"},
+	"Cos":           {"math"},
+	"Val":           {"strconv", "strings"},
+	"UCase":         {"strings"},
+	"LCase":         {"strings"},
+	"Trim":          {"strings"},
+	"Rnd":           {"math/rand"},
+	"RndInt":        {"math/rand"},
+	"Instr":         {"strings"},
+	"FileExists":    {"os"},
+	"ReadFile":      {"os"},
+	"WriteFile":     {"os"},
+	"JSONParse":     {"encoding/json"},
+	"JSONStringify": {"encoding/json"},
+	"JSONPretty":    {"encoding/json"},
+	"JSONGet":       {"strings"},
+	"JSONSet":       {"strings"},
+	"StructToJSON":  {"reflect"},
+	"JSONToStruct":  {"reflect"},
 }
 
 // scanForRuntimeFunctions scans the AST for calls to runtime functions

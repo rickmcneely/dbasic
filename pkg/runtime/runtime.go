@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -591,6 +592,141 @@ func JSONSet(data map[string]interface{}, path string, value interface{}) {
 	}
 
 	current[parts[len(parts)-1]] = value
+}
+
+// StructToJSON converts a struct to a JSON map
+func StructToJSON(v interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	val := reflect.ValueOf(v)
+
+	// Handle pointer to struct
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Struct {
+		return result
+	}
+
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		fieldVal := val.Field(i)
+
+		// Skip unexported fields
+		if field.PkgPath != "" {
+			continue
+		}
+
+		// Use json tag if available, otherwise use field name
+		name := field.Tag.Get("json")
+		if name == "" {
+			name = field.Name
+		}
+
+		result[name] = fieldVal.Interface()
+	}
+
+	return result
+}
+
+// JSONToStruct populates a struct from a JSON map
+// Usage: JSONToStruct(jsonData, &myStruct)
+func JSONToStruct(data map[string]interface{}, v interface{}) interface{} {
+	val := reflect.ValueOf(v)
+
+	// Must be a pointer
+	if val.Kind() != reflect.Ptr {
+		return v
+	}
+
+	val = val.Elem()
+	if val.Kind() != reflect.Struct {
+		return v
+	}
+
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		fieldVal := val.Field(i)
+
+		// Skip unexported fields
+		if field.PkgPath != "" || !fieldVal.CanSet() {
+			continue
+		}
+
+		// Use json tag if available, otherwise use field name
+		name := field.Tag.Get("json")
+		if name == "" {
+			name = field.Name
+		}
+
+		// Get value from JSON map
+		jsonVal, ok := data[name]
+		if !ok {
+			continue
+		}
+
+		// Convert and set the value
+		if jsonVal != nil {
+			setFieldValue(fieldVal, jsonVal)
+		}
+	}
+
+	return v
+}
+
+// setFieldValue sets a reflect.Value from an interface{} value
+func setFieldValue(field reflect.Value, value interface{}) {
+	if value == nil {
+		return
+	}
+
+	switch field.Kind() {
+	case reflect.String:
+		if s, ok := value.(string); ok {
+			field.SetString(s)
+		}
+	case reflect.Int, reflect.Int32, reflect.Int64:
+		switch v := value.(type) {
+		case float64:
+			field.SetInt(int64(v))
+		case int:
+			field.SetInt(int64(v))
+		case int64:
+			field.SetInt(v)
+		}
+	case reflect.Float32, reflect.Float64:
+		if f, ok := value.(float64); ok {
+			field.SetFloat(f)
+		}
+	case reflect.Bool:
+		if b, ok := value.(bool); ok {
+			field.SetBool(b)
+		}
+	case reflect.Slice:
+		if arr, ok := value.([]interface{}); ok {
+			slice := reflect.MakeSlice(field.Type(), len(arr), len(arr))
+			for i, elem := range arr {
+				setFieldValue(slice.Index(i), elem)
+			}
+			field.Set(slice)
+		}
+	case reflect.Map:
+		if m, ok := value.(map[string]interface{}); ok {
+			newMap := reflect.MakeMap(field.Type())
+			for k, v := range m {
+				newMap.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
+			}
+			field.Set(newMap)
+		}
+	case reflect.Struct:
+		if m, ok := value.(map[string]interface{}); ok {
+			ptr := reflect.New(field.Type())
+			JSONToStruct(m, ptr.Interface())
+			field.Set(ptr.Elem())
+		}
+	}
 }
 
 // --- Array Functions ---

@@ -1,0 +1,78 @@
+' Advanced JSON functions demo
+' Demonstrates: JSONParse, JSONStringify, JSONPretty, JSONGet, JSONSet,
+'               StructToJSON, JSONToStruct
+
+TYPE Person
+    DIM Name AS STRING
+    DIM Age AS INTEGER
+    DIM Active AS BOOLEAN
+END TYPE
+
+SUB Main()
+    ' === Basic JSON Functions ===
+    PRINT "=== Basic JSON Functions ==="
+
+    ' Create JSON object directly
+    DIM data AS JSON = {name: "John", age: 30, city: "NYC"}
+    PRINT "Name:"; data.name
+    PRINT "Age:"; data.age
+
+    ' Stringify to JSON
+    DIM output AS STRING
+    output = JSONStringify(data)
+    PRINT "Stringified:"; output
+
+    ' Pretty print
+    PRINT ""
+    PRINT "Pretty printed:"
+    PRINT JSONPretty(data)
+
+    ' === JSONGet and JSONSet ===
+    PRINT ""
+    PRINT "=== JSONGet and JSONSet ==="
+
+    ' Create nested JSON
+    DIM config AS JSON = {server: {host: "localhost", port: 8080}, debug: TRUE}
+
+    ' Get nested value using path
+    PRINT "Server host:"; JSONGet(config, "server.host")
+    PRINT "Server port:"; JSONGet(config, "server.port")
+    PRINT "Debug:"; JSONGet(config, "debug")
+
+    ' Set nested value using path
+    JSONSet(config, "server.port", 9000)
+    JSONSet(config, "server.ssl", TRUE)
+    PRINT "Updated port:"; JSONGet(config, "server.port")
+    PRINT "New SSL setting:"; JSONGet(config, "server.ssl")
+
+    ' === Struct to JSON Conversion ===
+    PRINT ""
+    PRINT "=== Struct to JSON ==="
+
+    DIM person AS Person
+    person.Name = "Alice"
+    person.Age = 28
+    person.Active = TRUE
+
+    ' Convert struct to JSON
+    DIM personJSON AS JSON
+    personJSON = StructToJSON(person)
+    PRINT "Struct as JSON:"; JSONStringify(personJSON)
+    PRINT "Name from JSON:"; personJSON.Name
+    PRINT "Age from JSON:"; personJSON.Age
+
+    ' === JSON to Struct Conversion ===
+    PRINT ""
+    PRINT "=== JSON to Struct ==="
+
+    DIM inputJSON AS JSON = {Name: "Bob", Age: 35, Active: FALSE}
+    DIM newPerson AS Person
+    JSONToStruct(inputJSON, @newPerson)
+
+    PRINT "Name from struct:"; newPerson.Name
+    PRINT "Age from struct:"; newPerson.Age
+    PRINT "Active from struct:"; newPerson.Active
+
+    PRINT ""
+    PRINT "=== All JSON tests complete! ==="
+END SUB

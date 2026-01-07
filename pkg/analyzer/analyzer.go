@@ -116,6 +116,13 @@ func (a *Analyzer) registerBuiltins() {
 	// JSON functions
 	a.addBuiltin("JSONParse", []*Type{StringType}, []*Type{JSONType})
 	a.addBuiltin("JSONStringify", []*Type{JSONType}, []*Type{StringType})
+	a.addBuiltin("JSONPretty", []*Type{JSONType}, []*Type{StringType})
+	a.addBuiltin("JSONGet", []*Type{JSONType, StringType}, []*Type{AnyType})
+	a.addBuiltin("JSONSet", []*Type{JSONType, StringType, AnyType}, []*Type{})
+
+	// Struct/JSON conversion functions
+	a.addBuiltin("StructToJSON", []*Type{AnyType}, []*Type{JSONType})
+	a.addBuiltin("JSONToStruct", []*Type{JSONType, AnyType}, []*Type{AnyType})
 }
 
 func (a *Analyzer) addBuiltin(name string, params []*Type, returns []*Type) {
