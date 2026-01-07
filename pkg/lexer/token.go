@@ -119,6 +119,7 @@ const (
 	// Keywords - Go Integration
 	TOKEN_IMPORT
 	TOKEN_SPAWN
+	TOKEN_IMPLEMENTS
 
 	// Keywords - Channels
 	TOKEN_CHANNEL
@@ -219,6 +220,7 @@ var tokenNames = map[TokenType]string{
 	TOKEN_INPUT:       "INPUT",
 	TOKEN_IMPORT:      "IMPORT",
 	TOKEN_SPAWN:       "SPAWN",
+	TOKEN_IMPLEMENTS:  "IMPLEMENTS",
 	TOKEN_CHANNEL:     "CHANNEL",
 	TOKEN_SEND:        "SEND",
 	TOKEN_RECEIVE:     "RECEIVE",
@@ -281,7 +283,8 @@ var Keywords = map[string]TokenType{
 	"PRINT":     TOKEN_PRINT,
 	"INPUT":     TOKEN_INPUT,
 	"IMPORT":    TOKEN_IMPORT,
-	"SPAWN":     TOKEN_SPAWN,
+	"SPAWN":      TOKEN_SPAWN,
+	"IMPLEMENTS": TOKEN_IMPLEMENTS,
 	"CHANNEL":   TOKEN_CHANNEL,
 	"SEND":      TOKEN_SEND,
 	"RECEIVE":   TOKEN_RECEIVE,

@@ -27,6 +27,7 @@ const (
 	TypeFunction
 	TypeSub
 	TypeStruct    // User-defined struct type
+	TypeExternal  // External Go type (e.g., tea.Cmd)
 )
 
 // StructField represents a field in a struct type
@@ -44,6 +45,9 @@ type Type struct {
 	ParamTypes  []*Type        // For function/sub types
 	ReturnTypes []*Type        // For function types
 	Fields      []*StructField // For struct types
+	Implements  string         // Go interface this type implements (e.g., "tea.Model")
+	PackagePath string         // For external types: the full import path
+	PackageAlias string        // For external types: the alias used in code (e.g., "tea")
 }
 
 // Predefined types
@@ -152,6 +156,16 @@ func NewStructType(name string, fields []*StructField) *Type {
 	}
 }
 
+// NewExternalType creates a new external Go type
+func NewExternalType(alias, typeName, packagePath string) *Type {
+	return &Type{
+		Kind:         TypeExternal,
+		Name:         alias + "." + typeName,
+		PackageAlias: alias,
+		PackagePath:  packagePath,
+	}
+}
+
 // TypeRegistry holds user-defined types
 type TypeRegistry struct {
 	types map[string]*Type
@@ -224,7 +238,7 @@ func (t *Type) GoType() string {
 
 	switch t.Kind {
 	case TypeInteger:
-		return "int32"
+		return "int"
 	case TypeLong:
 		return "int64"
 	case TypeSingle:
@@ -253,6 +267,8 @@ func (t *Type) GoType() string {
 		return "interface{}"
 	case TypeStruct:
 		return t.Name
+	case TypeExternal:
+		return t.Name  // e.g., "tea.Cmd"
 	default:
 		return "interface{}"
 	}

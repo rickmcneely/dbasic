@@ -564,9 +564,10 @@ func (ms *MethodStatement) String() string {
 
 // TypeStatement represents a TYPE definition (struct)
 type TypeStatement struct {
-	Token  lexer.Token
-	Name   *Identifier
-	Fields []*FieldDeclaration
+	Token      lexer.Token
+	Name       *Identifier
+	Implements string // Go interface this type implements (e.g., "tea.Model")
+	Fields     []*FieldDeclaration
 }
 
 func (ts *TypeStatement) statementNode()       {}
@@ -575,6 +576,10 @@ func (ts *TypeStatement) String() string {
 	var sb strings.Builder
 	sb.WriteString("TYPE ")
 	sb.WriteString(ts.Name.String())
+	if ts.Implements != "" {
+		sb.WriteString(" IMPLEMENTS ")
+		sb.WriteString(ts.Implements)
+	}
 	sb.WriteString("\n")
 	for _, f := range ts.Fields {
 		sb.WriteString("    ")
@@ -775,6 +780,23 @@ func (al *ArrayLiteral) String() string {
 	return "[" + strings.Join(elements, ", ") + "]"
 }
 
+// StructLiteral represents a struct literal (TypeName{field: value, ...})
+type StructLiteral struct {
+	Token    lexer.Token
+	TypeName string                // The struct type name
+	Fields   map[string]Expression // field: value pairs
+}
+
+func (sl *StructLiteral) expressionNode()      {}
+func (sl *StructLiteral) TokenLiteral() string { return sl.Token.Literal }
+func (sl *StructLiteral) String() string {
+	var pairs []string
+	for k, v := range sl.Fields {
+		pairs = append(pairs, k+": "+v.String())
+	}
+	return sl.TypeName + "{" + strings.Join(pairs, ", ") + "}"
+}
+
 // PrefixExpression represents a prefix expression (NOT, -, @, ^)
 type PrefixExpression struct {
 	Token    lexer.Token
@@ -819,16 +841,29 @@ func (ce *CallExpression) String() string {
 	return ce.Function.String() + "(" + strings.Join(args, ", ") + ")"
 }
 
-// IndexExpression represents array/slice indexing
+// IndexExpression represents array/slice indexing or slicing
 type IndexExpression struct {
-	Token lexer.Token
-	Left  Expression
-	Index Expression
+	Token   lexer.Token
+	Left    Expression
+	Index   Expression // For simple indexing or slice start
+	End     Expression // For slice end (nil if simple indexing)
+	IsSlice bool       // True if this is a slice operation [start:end]
 }
 
 func (ie *IndexExpression) expressionNode()      {}
 func (ie *IndexExpression) TokenLiteral() string { return ie.Token.Literal }
 func (ie *IndexExpression) String() string {
+	if ie.IsSlice {
+		start := ""
+		end := ""
+		if ie.Index != nil {
+			start = ie.Index.String()
+		}
+		if ie.End != nil {
+			end = ie.End.String()
+		}
+		return "(" + ie.Left.String() + "[" + start + ":" + end + "])"
+	}
 	return "(" + ie.Left.String() + "[" + ie.Index.String() + "])"
 }
 
@@ -843,6 +878,19 @@ func (me *MemberExpression) expressionNode()      {}
 func (me *MemberExpression) TokenLiteral() string { return me.Token.Literal }
 func (me *MemberExpression) String() string {
 	return me.Object.String() + "." + me.Member.String()
+}
+
+// TypeAssertionExpression represents a type assertion: value.(Type)
+type TypeAssertionExpression struct {
+	Token      lexer.Token // The '.' token
+	Value      Expression  // The expression being asserted
+	TargetType *TypeSpec   // The target type
+}
+
+func (ta *TypeAssertionExpression) expressionNode()      {}
+func (ta *TypeAssertionExpression) TokenLiteral() string { return ta.Token.Literal }
+func (ta *TypeAssertionExpression) String() string {
+	return ta.Value.String() + ".(" + ta.TargetType.String() + ")"
 }
 
 // MakeChanExpression represents MAKE_CHAN(TYPE, size)

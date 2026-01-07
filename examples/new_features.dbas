@@ -1,0 +1,80 @@
+' Test file for new DBasic features
+' Demonstrates: slice types, struct literals, APPEND, slice operations
+
+' Define a simple struct type
+TYPE Person
+    DIM Name AS STRING
+    DIM Age AS INTEGER
+END TYPE
+
+' Define a MenuItem type for testing struct literals
+TYPE MenuItem
+    DIM Label AS STRING
+    DIM Shortcut AS STRING
+END TYPE
+
+SUB Main()
+    ' Test 1: Slice type declaration
+    PRINT "=== Slice Types ==="
+    DIM names AS []STRING
+    names = ["Alice", "Bob", "Charlie"]
+    PRINT "Initial names:"
+    PRINT names[0]
+    PRINT names[1]
+    PRINT names[2]
+
+    ' Test 2: APPEND to slice
+    PRINT ""
+    PRINT "=== APPEND ==="
+    names = APPEND(names, "David")
+    names = APPEND(names, "Eve")
+    PRINT "After append, length:"; Len(names)
+
+    ' Test 3: Slice operations
+    PRINT ""
+    PRINT "=== Slice Operations ==="
+    DIM numbers AS []INTEGER
+    numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    ' Get first 3 elements
+    DIM first3 AS []INTEGER
+    first3 = numbers[0:3]
+    PRINT "First 3:"; first3[0]; first3[1]; first3[2]
+
+    ' Get last 3 elements
+    DIM last3 AS []INTEGER
+    last3 = numbers[7:]
+    PRINT "Last 3:"; last3[0]; last3[1]; last3[2]
+
+    ' Get middle elements
+    DIM middle AS []INTEGER
+    middle = numbers[3:7]
+    PRINT "Middle (indices 3-6):"; middle[0]; middle[1]; middle[2]; middle[3]
+
+    ' Test 4: Struct literals
+    PRINT ""
+    PRINT "=== Struct Literals ==="
+    DIM p AS Person
+    p = Person{Name: "John", Age: 30}
+    PRINT "Person:"; p.Name; "age"; p.Age
+
+    ' Test with MenuItem
+    DIM item AS MenuItem
+    item = MenuItem{Label: "New", Shortcut: "Ctrl+N"}
+    PRINT "Menu item:"; item.Label; "-"; item.Shortcut
+
+    ' Test 5: Slice of structs
+    PRINT ""
+    PRINT "=== Slice of Structs ==="
+    DIM people AS []Person
+    people = APPEND(people, Person{Name: "Alice", Age: 25})
+    people = APPEND(people, Person{Name: "Bob", Age: 35})
+    people = APPEND(people, Person{Name: "Charlie", Age: 28})
+
+    PRINT "People count:"; Len(people)
+    PRINT "First person:"; people[0].Name; "age"; people[0].Age
+    PRINT "Second person:"; people[1].Name; "age"; people[1].Age
+
+    PRINT ""
+    PRINT "=== All tests complete! ==="
+END SUB

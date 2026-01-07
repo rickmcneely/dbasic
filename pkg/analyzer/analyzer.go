@@ -18,11 +18,120 @@ type Analyzer struct {
 
 // New creates a new Analyzer
 func New() *Analyzer {
-	return &Analyzer{
+	a := &Analyzer{
 		symbols: NewSymbolTable(),
 		types:   NewTypeRegistry(),
 		errors:  []string{},
 	}
+	a.registerBuiltins()
+	return a
+}
+
+// registerBuiltins adds built-in runtime functions to the symbol table
+func (a *Analyzer) registerBuiltins() {
+	// String functions
+	a.addBuiltin("Len", []*Type{StringType}, []*Type{IntegerType})
+	a.addBuiltin("Left", []*Type{StringType, IntegerType}, []*Type{StringType})
+	a.addBuiltin("Right", []*Type{StringType, IntegerType}, []*Type{StringType})
+	a.addBuiltin("Mid", []*Type{StringType, IntegerType, IntegerType}, []*Type{StringType})
+	a.addBuiltin("Instr", []*Type{StringType, StringType}, []*Type{IntegerType})
+	a.addBuiltin("UCase", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("LCase", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("Trim", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("LTrim", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("RTrim", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("Replace", []*Type{StringType, StringType, StringType}, []*Type{StringType})
+	a.addBuiltin("Str", []*Type{AnyType}, []*Type{StringType})
+	a.addBuiltin("Val", []*Type{StringType}, []*Type{DoubleType})
+	a.addBuiltin("Asc", []*Type{StringType}, []*Type{IntegerType})
+	a.addBuiltin("Chr", []*Type{IntegerType}, []*Type{StringType})
+	a.addBuiltin("Space", []*Type{IntegerType}, []*Type{StringType})
+
+	// Type conversion
+	a.addBuiltin("Int", []*Type{AnyType}, []*Type{IntegerType})
+	a.addBuiltin("Lng", []*Type{AnyType}, []*Type{LongType})
+	a.addBuiltin("Sng", []*Type{AnyType}, []*Type{SingleType})
+	a.addBuiltin("Dbl", []*Type{AnyType}, []*Type{DoubleType})
+	a.addBuiltin("Bool", []*Type{AnyType}, []*Type{BooleanType})
+
+	// Byte functions
+	a.addBuiltin("Encode", []*Type{StringType}, []*Type{BytesType})
+	a.addBuiltin("Decode", []*Type{BytesType}, []*Type{StringType})
+	a.addBuiltin("MakeBytes", []*Type{IntegerType}, []*Type{BytesType})
+	a.addBuiltin("LenBytes", []*Type{BytesType}, []*Type{IntegerType})
+
+	// Math functions
+	a.addBuiltin("Abs", []*Type{DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Sqr", []*Type{DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Sin", []*Type{DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Cos", []*Type{DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Tan", []*Type{DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Atn", []*Type{DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Atn2", []*Type{DoubleType, DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Log", []*Type{DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Log10", []*Type{DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Exp", []*Type{DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Pow", []*Type{DoubleType, DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Sgn", []*Type{DoubleType}, []*Type{IntegerType})
+	a.addBuiltin("Fix", []*Type{DoubleType}, []*Type{LongType})
+	a.addBuiltin("Floor", []*Type{DoubleType}, []*Type{LongType})
+	a.addBuiltin("Ceil", []*Type{DoubleType}, []*Type{LongType})
+	a.addBuiltin("Round", []*Type{DoubleType}, []*Type{LongType})
+	a.addBuiltin("Min", []*Type{DoubleType, DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Max", []*Type{DoubleType, DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("Clamp", []*Type{DoubleType, DoubleType, DoubleType}, []*Type{DoubleType})
+	a.addBuiltin("PI", []*Type{}, []*Type{DoubleType})
+
+	// Random functions
+	a.addBuiltin("Rnd", []*Type{}, []*Type{DoubleType})
+	a.addBuiltin("RndInt", []*Type{IntegerType}, []*Type{IntegerType})
+	a.addBuiltin("RndRange", []*Type{IntegerType, IntegerType}, []*Type{IntegerType})
+	a.addBuiltin("Randomize", []*Type{LongType}, []*Type{})
+
+	// Date/Time functions
+	a.addBuiltin("Timer", []*Type{}, []*Type{DoubleType})
+	a.addBuiltin("Now", []*Type{}, []*Type{LongType})
+	a.addBuiltin("Date", []*Type{}, []*Type{StringType})
+	a.addBuiltin("Year", []*Type{}, []*Type{IntegerType})
+	a.addBuiltin("Month", []*Type{}, []*Type{IntegerType})
+	a.addBuiltin("Day", []*Type{}, []*Type{IntegerType})
+	a.addBuiltin("Hour", []*Type{}, []*Type{IntegerType})
+	a.addBuiltin("Minute", []*Type{}, []*Type{IntegerType})
+	a.addBuiltin("Second", []*Type{}, []*Type{IntegerType})
+	a.addBuiltin("Sleep", []*Type{IntegerType}, []*Type{})
+
+	// File functions
+	a.addBuiltin("FileExists", []*Type{StringType}, []*Type{BooleanType})
+	a.addBuiltin("ReadFile", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("WriteFile", []*Type{StringType, StringType}, []*Type{})
+	a.addBuiltin("AppendFile", []*Type{StringType, StringType}, []*Type{})
+	a.addBuiltin("DeleteFile", []*Type{StringType}, []*Type{})
+	a.addBuiltin("MkDir", []*Type{StringType}, []*Type{})
+	a.addBuiltin("RmDir", []*Type{StringType}, []*Type{})
+
+	// Printf functions
+	a.addBuiltin("Printf", []*Type{StringType}, []*Type{}) // variadic
+	a.addBuiltin("Sprintf", []*Type{StringType}, []*Type{StringType}) // variadic
+
+	// JSON functions
+	a.addBuiltin("JSONParse", []*Type{StringType}, []*Type{JSONType})
+	a.addBuiltin("JSONStringify", []*Type{JSONType}, []*Type{StringType})
+}
+
+func (a *Analyzer) addBuiltin(name string, params []*Type, returns []*Type) {
+	var symType *Type
+	if len(returns) > 0 {
+		symType = NewFunctionType(params, returns)
+	} else {
+		symType = NewSubType(params)
+	}
+
+	sym := &Symbol{
+		Name: name,
+		Kind: SymFunction,
+		Type: symType,
+	}
+	a.symbols.DefineGlobal(sym)
 }
 
 // SetSource sets the source code for error context
@@ -124,6 +233,7 @@ func (a *Analyzer) declareType(stmt *parser.TypeStatement) {
 	}
 
 	structType := NewStructType(stmt.Name.Value, fields)
+	structType.Implements = stmt.Implements // Copy interface info
 	a.types.Register(stmt.Name.Value, structType)
 }
 
@@ -212,6 +322,42 @@ func (a *Analyzer) resolveTypeSpec(spec *parser.TypeSpec) *Type {
 		return NewChannelType(elemType)
 	}
 
+	// Handle slice/array types with []TYPE syntax
+	if spec.IsArray {
+		var elemType *Type
+		if spec.ElementType != nil {
+			// New syntax: []TYPE - element type is in ElementType
+			elemType = a.resolveTypeSpec(spec.ElementType)
+		} else {
+			// Legacy: TYPE() syntax - element type comes from Name
+			elemType = TypeFromName(spec.Name)
+			if elemType == nil {
+				elemType = a.types.Lookup(spec.Name)
+			}
+			if elemType == nil {
+				a.error(spec.Token.Line, "unknown type: %s", spec.Name)
+				return AnyType
+			}
+		}
+		return NewSliceType(elemType)
+	}
+
+	// Check for external Go type (package.Type syntax)
+	if strings.Contains(spec.Name, ".") {
+		parts := strings.SplitN(spec.Name, ".", 2)
+		alias := parts[0]
+		typeName := parts[1]
+
+		// Verify the import exists
+		importInfo := a.symbols.GetImport(alias)
+		if importInfo == nil {
+			a.error(spec.Token.Line, "unknown package: %s", alias)
+			return AnyType
+		}
+
+		return NewExternalType(alias, typeName, importInfo.Path)
+	}
+
 	// Try built-in types first
 	baseType := TypeFromName(spec.Name)
 	if baseType == nil {
@@ -221,15 +367,6 @@ func (a *Analyzer) resolveTypeSpec(spec *parser.TypeSpec) *Type {
 	if baseType == nil {
 		a.error(spec.Token.Line, "unknown type: %s", spec.Name)
 		return AnyType
-	}
-
-	if spec.IsArray {
-		if spec.ArraySize != nil {
-			// Fixed-size array - we'd need to evaluate the constant expression
-			// For now, treat as slice
-			return NewSliceType(baseType)
-		}
-		return NewSliceType(baseType)
 	}
 
 	return baseType
@@ -364,10 +501,37 @@ func (a *Analyzer) analyzeAssignmentStatement(stmt *parser.AssignmentStatement) 
 }
 
 func (a *Analyzer) analyzeMultiAssignmentStatement(stmt *parser.MultiAssignmentStatement) {
+	// Check for type assertion with ok pattern: value, ok = expr.(Type)
+	if typeAssert, ok := stmt.Value.(*parser.TypeAssertionExpression); ok {
+		if len(stmt.Targets) != 2 {
+			a.error(stmt.Token.Line, "type assertion with ok pattern requires exactly 2 targets (value, ok)")
+			return
+		}
+		// Analyze the type assertion value
+		a.analyzeExpression(typeAssert.Value)
+		// Analyze both targets
+		for _, target := range stmt.Targets {
+			a.analyzeExpression(target)
+		}
+		return
+	}
+
 	// Get the types of the right-hand side (should be a function call)
 	call, ok := stmt.Value.(*parser.CallExpression)
 	if !ok {
-		a.error(stmt.Token.Line, "multiple assignment requires function call on right side")
+		a.error(stmt.Token.Line, "multiple assignment requires function call or type assertion on right side")
+		return
+	}
+
+	// Check if this is an external Go method call - skip validation
+	if _, isMember := call.Function.(*parser.MemberExpression); isMember {
+		// External Go function call - analyze arguments and targets but don't validate return count
+		for _, arg := range call.Arguments {
+			a.analyzeExpression(arg)
+		}
+		for _, target := range stmt.Targets {
+			a.analyzeExpression(target)
+		}
 		return
 	}
 
@@ -688,6 +852,24 @@ func (a *Analyzer) analyzeExpression(expr parser.Expression) *Type {
 			return AnyType
 		}
 		return chanType.ElementType
+	case *parser.TypeAssertionExpression:
+		// Analyze the value being asserted
+		a.analyzeExpression(e.Value)
+		// Return the target type
+		return a.resolveTypeSpec(e.TargetType)
+	case *parser.StructLiteral:
+		// Analyze struct literal fields
+		for _, fieldExpr := range e.Fields {
+			a.analyzeExpression(fieldExpr)
+		}
+		// Look up the struct type
+		if a.types != nil {
+			if t := a.types.Lookup(e.TypeName); t != nil {
+				return t
+			}
+		}
+		// Return a placeholder struct type
+		return &Type{Kind: TypeStruct, Name: e.TypeName}
 	default:
 		return AnyType
 	}
@@ -788,6 +970,78 @@ func (a *Analyzer) analyzeInfixExpression(expr *parser.InfixExpression) *Type {
 }
 
 func (a *Analyzer) analyzeCallExpression(call *parser.CallExpression) *Type {
+	// Check if this is an external Go package function call
+	if _, ok := call.Function.(*parser.MemberExpression); ok {
+		// External Go function call - analyze arguments but don't check types
+		for _, arg := range call.Arguments {
+			a.analyzeExpression(arg)
+		}
+		return AnyType
+	}
+
+	// Check for Go builtin functions that need special handling
+	if ident, ok := call.Function.(*parser.Identifier); ok {
+		switch strings.ToUpper(ident.Value) {
+		case "APPEND":
+			// APPEND(slice, element...) returns the same slice type
+			if len(call.Arguments) >= 1 {
+				sliceType := a.analyzeExpression(call.Arguments[0])
+				for _, arg := range call.Arguments[1:] {
+					a.analyzeExpression(arg)
+				}
+				return sliceType
+			}
+			return AnyType
+		case "LEN":
+			// LEN works on strings, slices, arrays, maps, channels
+			if len(call.Arguments) == 1 {
+				argType := a.analyzeExpression(call.Arguments[0])
+				switch argType.Kind {
+				case TypeString, TypeSlice, TypeArray, TypeJSON, TypeChannel, TypeBytes:
+					return IntegerType
+				}
+			}
+			// Fall through to regular Len builtin for strings
+		case "CAP":
+			// CAP works on slices, arrays, channels
+			if len(call.Arguments) == 1 {
+				a.analyzeExpression(call.Arguments[0])
+				return IntegerType
+			}
+			return AnyType
+		case "MAKE":
+			// MAKE(type, len, cap) - type determines return
+			for _, arg := range call.Arguments {
+				a.analyzeExpression(arg)
+			}
+			return AnyType
+		case "COPY":
+			// COPY(dst, src) returns int
+			for _, arg := range call.Arguments {
+				a.analyzeExpression(arg)
+			}
+			return IntegerType
+		case "DELETE":
+			// DELETE(map, key) returns nothing
+			for _, arg := range call.Arguments {
+				a.analyzeExpression(arg)
+			}
+			return VoidType
+		case "CLOSE":
+			// CLOSE(channel) returns nothing
+			for _, arg := range call.Arguments {
+				a.analyzeExpression(arg)
+			}
+			return VoidType
+		case "PANIC", "RECOVER", "NEW", "STRING", "RUNE", "BYTE":
+			// Handle other Go builtins
+			for _, arg := range call.Arguments {
+				a.analyzeExpression(arg)
+			}
+			return AnyType
+		}
+	}
+
 	sym := a.resolveFunctionCall(call)
 	if sym == nil {
 		return AnyType
@@ -844,12 +1098,39 @@ func (a *Analyzer) resolveFunctionCall(call *parser.CallExpression) *Symbol {
 
 func (a *Analyzer) analyzeIndexExpression(expr *parser.IndexExpression) *Type {
 	leftType := a.analyzeExpression(expr.Left)
-	indexType := a.analyzeExpression(expr.Index)
 
-	if !indexType.IsInteger() {
-		a.error(expr.Token.Line, "array index must be integer")
+	// Analyze index if present
+	if expr.Index != nil {
+		indexType := a.analyzeExpression(expr.Index)
+		if !indexType.IsInteger() {
+			a.error(expr.Token.Line, "array index must be integer")
+		}
 	}
 
+	// Analyze end index if present (for slice operations)
+	if expr.End != nil {
+		endType := a.analyzeExpression(expr.End)
+		if !endType.IsInteger() {
+			a.error(expr.Token.Line, "slice end index must be integer")
+		}
+	}
+
+	// For slice operations [start:end], return the same slice/array type
+	if expr.IsSlice {
+		switch leftType.Kind {
+		case TypeArray, TypeSlice:
+			return NewSliceType(leftType.ElementType)
+		case TypeString:
+			return StringType
+		case TypeBytes:
+			return BytesType
+		default:
+			a.error(expr.Token.Line, "cannot slice type %s", leftType.String())
+			return AnyType
+		}
+	}
+
+	// For regular indexing [index], return the element type
 	switch leftType.Kind {
 	case TypeArray, TypeSlice:
 		return leftType.ElementType
@@ -900,6 +1181,22 @@ func (a *Analyzer) analyzeMemberExpression(expr *parser.MemberExpression) *Type 
 			}
 		}
 		a.error(expr.Token.Line, "type %s has no field %s", structType.Name, expr.Member.Value)
+		return AnyType
+	}
+
+	// Handle external Go type field/method access
+	// We can't validate these at compile time, let Go handle it
+	if objType.Kind == TypeExternal {
+		return AnyType
+	}
+
+	// Handle pointer to external type field access
+	if objType.Kind == TypePointer && objType.ElementType != nil && objType.ElementType.Kind == TypeExternal {
+		return AnyType
+	}
+
+	// Allow member access on AnyType (for chained access on external types)
+	if objType.Kind == TypeAny {
 		return AnyType
 	}
 

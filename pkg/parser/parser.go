@@ -299,6 +299,14 @@ func (p *Parser) parseStatement() Statement {
 		}
 		// Otherwise it's an assignment or expression
 		return p.parseAssignmentOrExpression()
+	case lexer.TOKEN_LPAREN:
+		// Could be a grouped expression that's assigned to
+		// e.g., (^ptr).field = value
+		return p.parseAssignmentOrExpression()
+	case lexer.TOKEN_CARET:
+		// Could be a dereference that's assigned to
+		// e.g., ^ptr = value
+		return p.parseAssignmentOrExpression()
 	default:
 		return p.parseExpressionStatement()
 	}
@@ -410,6 +418,18 @@ func (p *Parser) parseTypeSpec() *TypeSpec {
 	spec := &TypeSpec{Token: p.curToken}
 
 	switch p.curToken.Type {
+	case lexer.TOKEN_LBRACKET:
+		// Slice type: []TYPE
+		if !p.expectPeek(lexer.TOKEN_RBRACKET) {
+			return nil
+		}
+		p.nextToken() // move to element type
+		spec.IsArray = true
+		spec.ArraySize = nil // nil means slice (dynamic)
+		spec.ElementType = p.parseTypeSpec()
+		if spec.ElementType != nil {
+			spec.Name = "[]" + spec.ElementType.Name
+		}
 	case lexer.TOKEN_POINTER:
 		spec.IsPointer = true
 		if !p.expectPeek(lexer.TOKEN_TO) {
@@ -425,7 +445,16 @@ func (p *Parser) parseTypeSpec() *TypeSpec {
 		p.nextToken()
 		spec.ElementType = p.parseTypeSpec()
 	default:
-		spec.Name = strings.ToUpper(p.curToken.Literal)
+		typeName := p.curToken.Literal
+		// Check for package.Type syntax (e.g., tea.Model)
+		if p.peekTokenIs(lexer.TOKEN_DOT) {
+			p.nextToken() // consume dot
+			p.nextToken() // consume type name
+			typeName = typeName + "." + p.curToken.Literal
+			spec.Name = typeName // Keep original case for Go types
+		} else {
+			spec.Name = strings.ToUpper(typeName)
+		}
 	}
 
 	return spec
@@ -663,6 +692,21 @@ func (p *Parser) parseTypeStatement() *TypeStatement {
 	}
 
 	stmt.Name = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	// Check for IMPLEMENTS clause
+	if p.peekTokenIs(lexer.TOKEN_IMPLEMENTS) {
+		p.nextToken() // consume IMPLEMENTS
+		p.nextToken() // move to interface name
+
+		// Parse interface name (could be package.Interface like tea.Model)
+		interfaceName := p.curToken.Literal
+		if p.peekTokenIs(lexer.TOKEN_DOT) {
+			p.nextToken() // consume dot
+			p.nextToken() // consume interface name
+			interfaceName += "." + p.curToken.Literal
+		}
+		stmt.Implements = interfaceName
+	}
 
 	p.nextToken()
 	p.skipNewlines()
@@ -1172,6 +1216,11 @@ func (p *Parser) isEndToken(tokens ...lexer.TokenType) bool {
 		if p.curTokenIs(t) {
 			return true
 		}
+		// Support "END IF" as alternative to "ENDIF"
+		if t == lexer.TOKEN_ENDIF && p.curTokenIs(lexer.TOKEN_END) && p.peekTokenIs(lexer.TOKEN_IF) {
+			p.nextToken() // consume IF
+			return true
+		}
 	}
 	return false
 }
@@ -1202,7 +1251,68 @@ func (p *Parser) parseExpression(precedence int) Expression {
 }
 
 func (p *Parser) parseIdentifier() Expression {
-	return &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	ident := &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	// Check for struct literal: TypeName{field: value, ...}
+	if p.peekTokenIs(lexer.TOKEN_LBRACE) {
+		return p.parseStructLiteral(ident)
+	}
+
+	return ident
+}
+
+func (p *Parser) parseStructLiteral(typeName *Identifier) Expression {
+	lit := &StructLiteral{
+		Token:    typeName.Token,
+		TypeName: typeName.Value,
+		Fields:   make(map[string]Expression),
+	}
+
+	if !p.expectPeek(lexer.TOKEN_LBRACE) {
+		return nil
+	}
+
+	// Handle empty struct literal
+	if p.peekTokenIs(lexer.TOKEN_RBRACE) {
+		p.nextToken()
+		return lit
+	}
+
+	// Parse field: value pairs
+	for {
+		p.nextToken() // move to field name
+
+		if !p.curTokenIs(lexer.TOKEN_IDENT) {
+			msg := p.formatError(p.curToken.Line, p.curToken.Column,
+				"expected field name in struct literal",
+				"struct literals use field: value syntax")
+			p.errors = append(p.errors, msg)
+			return nil
+		}
+
+		fieldName := p.curToken.Literal
+
+		if !p.expectPeek(lexer.TOKEN_COLON) {
+			return nil
+		}
+
+		p.nextToken() // move to value
+		lit.Fields[fieldName] = p.parseExpression(LOWEST)
+
+		if p.peekTokenIs(lexer.TOKEN_RBRACE) {
+			break
+		}
+
+		if !p.expectPeek(lexer.TOKEN_COMMA) {
+			return nil
+		}
+	}
+
+	if !p.expectPeek(lexer.TOKEN_RBRACE) {
+		return nil
+	}
+
+	return lit
 }
 
 func (p *Parser) parseIntegerLiteral() Expression {
@@ -1402,7 +1512,36 @@ func (p *Parser) parseIndexExpression(left Expression) Expression {
 	exp := &IndexExpression{Token: p.curToken, Left: left}
 
 	p.nextToken()
-	exp.Index = p.parseExpression(LOWEST)
+
+	// Check for slice syntax: [:end], [start:], [start:end], [:]
+	if p.curTokenIs(lexer.TOKEN_COLON) {
+		// [:end] or [:]
+		exp.IsSlice = true
+		exp.Index = nil // start is omitted
+		if p.peekTokenIs(lexer.TOKEN_RBRACKET) {
+			// [:] - full slice
+			exp.End = nil
+		} else {
+			p.nextToken()
+			exp.End = p.parseExpression(LOWEST)
+		}
+	} else {
+		// Parse the first expression (index or start)
+		exp.Index = p.parseExpression(LOWEST)
+
+		// Check if this is a slice operation
+		if p.peekTokenIs(lexer.TOKEN_COLON) {
+			p.nextToken() // consume the colon
+			exp.IsSlice = true
+			if p.peekTokenIs(lexer.TOKEN_RBRACKET) {
+				// [start:] - slice from start to end
+				exp.End = nil
+			} else {
+				p.nextToken()
+				exp.End = p.parseExpression(LOWEST)
+			}
+		}
+	}
 
 	if !p.expectPeek(lexer.TOKEN_RBRACKET) {
 		return nil
@@ -1412,13 +1551,67 @@ func (p *Parser) parseIndexExpression(left Expression) Expression {
 }
 
 func (p *Parser) parseMemberExpression(left Expression) Expression {
-	exp := &MemberExpression{Token: p.curToken, Object: left}
+	dotToken := p.curToken
 
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	p.nextToken()
+
+	// Check for type assertion: value.(Type)
+	if p.curTokenIs(lexer.TOKEN_LPAREN) {
+		return p.parseTypeAssertion(left, dotToken)
+	}
+
+	// After a dot, accept identifiers OR keywords as member names
+	// This allows calling Go methods like .String(), .Error(), .Type(), etc.
+	if !p.curTokenIs(lexer.TOKEN_IDENT) && !p.isKeywordToken(p.curToken.Type) {
+		msg := p.formatError(p.curToken.Line, p.curToken.Column,
+			fmt.Sprintf("expected member name, got %s instead", p.curToken.Type),
+			"member access requires an identifier after the dot")
+		p.errors = append(p.errors, msg)
 		return nil
 	}
 
+	exp := &MemberExpression{Token: dotToken, Object: left}
 	exp.Member = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
 	return exp
+}
+
+// parseTypeAssertion parses a type assertion expression: value.(Type)
+func (p *Parser) parseTypeAssertion(value Expression, dotToken lexer.Token) Expression {
+	exp := &TypeAssertionExpression{Token: dotToken, Value: value}
+
+	// Current token is '(', move to the type
+	p.nextToken()
+
+	// Parse the target type
+	exp.TargetType = p.parseTypeSpec()
+	if exp.TargetType == nil {
+		return nil
+	}
+
+	// Expect closing paren
+	if !p.expectPeek(lexer.TOKEN_RPAREN) {
+		return nil
+	}
+
+	return exp
+}
+
+// isKeywordToken returns true if the token type is a keyword that can be used as a member name
+func (p *Parser) isKeywordToken(t lexer.TokenType) bool {
+	switch t {
+	case lexer.TOKEN_STRING_TYPE, lexer.TOKEN_INTEGER, lexer.TOKEN_LONG,
+		lexer.TOKEN_SINGLE, lexer.TOKEN_DOUBLE, lexer.TOKEN_BOOLEAN,
+		lexer.TOKEN_TYPE, lexer.TOKEN_TRUE, lexer.TOKEN_FALSE,
+		lexer.TOKEN_NIL, lexer.TOKEN_AND, lexer.TOKEN_OR, lexer.TOKEN_NOT,
+		lexer.TOKEN_IF, lexer.TOKEN_THEN, lexer.TOKEN_ELSE, lexer.TOKEN_END,
+		lexer.TOKEN_FOR, lexer.TOKEN_NEXT, lexer.TOKEN_WHILE, lexer.TOKEN_DO,
+		lexer.TOKEN_RETURN, lexer.TOKEN_SELECT, lexer.TOKEN_CASE,
+		lexer.TOKEN_SUB, lexer.TOKEN_FUNCTION, lexer.TOKEN_DIM,
+		lexer.TOKEN_PRINT, lexer.TOKEN_INPUT, lexer.TOKEN_EXIT,
+		lexer.TOKEN_IMPORT, lexer.TOKEN_AS, lexer.TOKEN_TO, lexer.TOKEN_STEP:
+		return true
+	default:
+		return false
+	}
 }

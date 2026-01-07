@@ -1,0 +1,2 @@
+' Simple slice test
+DIM names AS []STRING

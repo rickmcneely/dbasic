@@ -10,17 +10,18 @@ import (
 
 // Generator generates Go code from a DBasic AST
 type Generator struct {
-	program      *parser.Program
-	symbols      *analyzer.SymbolTable
-	types        *analyzer.TypeRegistry
-	currentScope *analyzer.Scope
-	output       strings.Builder
-	indent       int
-	imports      map[string]bool
-	hasMain      bool
-	labelCount   int
-	debugMode    bool
-	sourceFile   string
+	program         *parser.Program
+	symbols         *analyzer.SymbolTable
+	types           *analyzer.TypeRegistry
+	currentScope    *analyzer.Scope
+	output          strings.Builder
+	indent          int
+	imports         map[string]string // path -> alias (empty string if no alias)
+	runtimeFuncs    map[string]bool   // Runtime functions that need to be embedded
+	hasMain         bool
+	labelCount      int
+	debugMode       bool
+	sourceFile      string
 }
 
 // New creates a new code generator
@@ -29,7 +30,8 @@ func New(program *parser.Program, symbols *analyzer.SymbolTable) *Generator {
 		program:      program,
 		symbols:      symbols,
 		currentScope: symbols.GlobalScope,
-		imports:      make(map[string]bool),
+		imports:      make(map[string]string),
+		runtimeFuncs: make(map[string]bool),
 	}
 }
 
@@ -53,8 +55,9 @@ func (g *Generator) Generate() string {
 	// Collect imports from explicit IMPORT statements
 	g.collectImports()
 
-	// Pre-scan for additional required imports
+	// Pre-scan for additional required imports and runtime functions
 	g.scanForRequiredImports()
+	g.scanForRuntimeFunctions()
 
 	// Check for Main sub
 	mainSym := g.symbols.GlobalScope.Resolve("Main")
@@ -66,6 +69,9 @@ func (g *Generator) Generate() string {
 
 	// Generate imports
 	g.generateImports()
+
+	// Generate runtime helper functions
+	g.generateRuntimeFunctions()
 
 	// Generate type definitions (structs)
 	g.generateTypeDefinitions()
@@ -103,8 +109,8 @@ func (g *Generator) scanStatementForImports(stmt parser.Statement) {
 	case *parser.FunctionStatement:
 		g.scanBlockForImports(s.Body)
 	case *parser.InputStatement:
-		g.imports["bufio"] = true
-		g.imports["os"] = true
+		g.imports["bufio"] = ""
+		g.imports["os"] = ""
 	}
 }
 
@@ -115,8 +121,8 @@ func (g *Generator) scanBlockForImports(block *parser.BlockStatement) {
 	for _, stmt := range block.Statements {
 		switch s := stmt.(type) {
 		case *parser.InputStatement:
-			g.imports["bufio"] = true
-			g.imports["os"] = true
+			g.imports["bufio"] = ""
+			g.imports["os"] = ""
 		case *parser.IfStatement:
 			g.scanBlockForImports(s.Consequence)
 			for _, elseif := range s.ElseIfs {
@@ -145,11 +151,11 @@ func (g *Generator) scanExpressionForImports(stmt parser.Statement) {
 	switch s := stmt.(type) {
 	case *parser.AssignmentStatement:
 		if g.exprNeedsMath(s.Value) {
-			g.imports["math"] = true
+			g.imports["math"] = ""
 		}
 	case *parser.ExpressionStatement:
 		if s.Expression != nil && g.exprNeedsMath(s.Expression) {
-			g.imports["math"] = true
+			g.imports["math"] = ""
 		}
 	}
 }
@@ -170,19 +176,334 @@ func (g *Generator) exprNeedsMath(expr parser.Expression) bool {
 			}
 		}
 	case *parser.IndexExpression:
-		return g.exprNeedsMath(e.Left) || g.exprNeedsMath(e.Index)
+		result := g.exprNeedsMath(e.Left)
+		if e.Index != nil {
+			result = result || g.exprNeedsMath(e.Index)
+		}
+		if e.End != nil {
+			result = result || g.exprNeedsMath(e.End)
+		}
+		return result
 	}
 	return false
 }
 
 func (g *Generator) collectImports() {
 	// Always include fmt for PRINT
-	g.imports["fmt"] = true
+	g.imports["fmt"] = ""
 
-	// Add user imports
+	// Add user imports with their aliases
 	for _, imp := range g.symbols.AllImports() {
-		g.imports[imp.Path] = true
+		g.imports[imp.Path] = imp.Alias
 	}
+}
+
+// runtimeFuncDefs contains the Go source for runtime functions
+var runtimeFuncDefs = map[string]string{
+	"Int": `// Int converts to int
+func Int(val interface{}) int {
+	switch v := val.(type) {
+	case int:
+		return v
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case float32:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}`,
+	"Sleep": `// Sleep pauses execution for specified milliseconds
+func Sleep(ms int) {
+	time.Sleep(time.Duration(ms) * time.Millisecond)
+}`,
+	"Sqr": `// Sqr returns the square root
+func Sqr(val float64) float64 {
+	return math.Sqrt(val)
+}`,
+	"Abs": `// Abs returns the absolute value
+func Abs(val float64) float64 {
+	return math.Abs(val)
+}`,
+	"Sin": `// Sin returns the sine
+func Sin(val float64) float64 {
+	return math.Sin(val)
+}`,
+	"Cos": `// Cos returns the cosine
+func Cos(val float64) float64 {
+	return math.Cos(val)
+}`,
+	"Len": `// Len returns the length of a string
+func Len(s string) int {
+	return len(s)
+}`,
+	"Left": `// Left returns the leftmost n characters
+func Left(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	return s[:n]
+}`,
+	"Right": `// Right returns the rightmost n characters
+func Right(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	return s[len(s)-n:]
+}`,
+	"Mid": `// Mid returns a substring starting at position start with length ln
+func Mid(s string, start, ln int) string {
+	if start < 1 {
+		start = 1
+	}
+	startIdx := start - 1
+	if startIdx >= len(s) {
+		return ""
+	}
+	endIdx := startIdx + ln
+	if endIdx > len(s) {
+		endIdx = len(s)
+	}
+	return s[startIdx:endIdx]
+}`,
+	"Str": `// Str converts a number to string
+func Str(val interface{}) string {
+	return fmt.Sprintf("%v", val)
+}`,
+	"Val": `// Val converts a string to float64
+func Val(s string) float64 {
+	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return v
+}`,
+	"UCase": `// UCase converts to uppercase
+func UCase(s string) string {
+	return strings.ToUpper(s)
+}`,
+	"LCase": `// LCase converts to lowercase
+func LCase(s string) string {
+	return strings.ToLower(s)
+}`,
+	"Trim": `// Trim removes leading and trailing whitespace
+func Trim(s string) string {
+	return strings.TrimSpace(s)
+}`,
+	"Rnd": `// Rnd returns a random float64 between 0 and 1
+func Rnd() float64 {
+	return rand.Float64()
+}`,
+	"RndInt": `// RndInt returns a random integer between 0 and max-1
+func RndInt(max int) int {
+	return rand.Intn(max)
+}`,
+	"Instr": `// Instr finds the position of substring in string (1-based)
+func Instr(s, substr string) int {
+	idx := strings.Index(s, substr)
+	if idx == -1 {
+		return 0
+	}
+	return idx + 1
+}`,
+	"Chr": `// Chr returns the character for an ASCII code
+func Chr(code int) string {
+	return string(rune(code))
+}`,
+	"Asc": `// Asc returns the ASCII code of the first character
+func Asc(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+	return int(s[0])
+}`,
+	"FileExists": `// FileExists checks if a file exists
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}`,
+	"ReadFile": `// ReadFile reads entire file contents
+func ReadFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}`,
+	"WriteFile": `// WriteFile writes string to file
+func WriteFile(path, content string) {
+	os.WriteFile(path, []byte(content), 0644)
+}`,
+}
+
+// runtimeFuncImports maps runtime functions to required imports
+var runtimeFuncImports = map[string][]string{
+	"Sleep":      {"time"},
+	"Sqr":        {"math"},
+	"Abs":        {"math"},
+	"Sin":        {"math"},
+	"Cos":        {"math"},
+	"Val":        {"strconv", "strings"},
+	"UCase":      {"strings"},
+	"LCase":      {"strings"},
+	"Trim":       {"strings"},
+	"Rnd":        {"math/rand"},
+	"RndInt":     {"math/rand"},
+	"Instr":      {"strings"},
+	"FileExists": {"os"},
+	"ReadFile":   {"os"},
+	"WriteFile":  {"os"},
+}
+
+// scanForRuntimeFunctions scans the AST for calls to runtime functions
+func (g *Generator) scanForRuntimeFunctions() {
+	for _, stmt := range g.program.Statements {
+		g.scanStatementForRuntimeFuncs(stmt)
+	}
+}
+
+func (g *Generator) scanStatementForRuntimeFuncs(stmt parser.Statement) {
+	switch s := stmt.(type) {
+	case *parser.SubStatement:
+		g.scanBlockForRuntimeFuncs(s.Body)
+	case *parser.FunctionStatement:
+		g.scanBlockForRuntimeFuncs(s.Body)
+	case *parser.MethodStatement:
+		g.scanBlockForRuntimeFuncs(s.Body)
+	}
+}
+
+func (g *Generator) scanBlockForRuntimeFuncs(block *parser.BlockStatement) {
+	if block == nil {
+		return
+	}
+	for _, stmt := range block.Statements {
+		g.scanStmtExprForRuntimeFuncs(stmt)
+		// Recurse into nested blocks
+		switch s := stmt.(type) {
+		case *parser.IfStatement:
+			g.scanBlockForRuntimeFuncs(s.Consequence)
+			for _, elseif := range s.ElseIfs {
+				g.scanBlockForRuntimeFuncs(elseif.Consequence)
+			}
+			g.scanBlockForRuntimeFuncs(s.Alternative)
+		case *parser.ForStatement:
+			g.scanBlockForRuntimeFuncs(s.Body)
+		case *parser.WhileStatement:
+			g.scanBlockForRuntimeFuncs(s.Body)
+		case *parser.DoLoopStatement:
+			g.scanBlockForRuntimeFuncs(s.Body)
+		case *parser.SelectStatement:
+			for _, c := range s.Cases {
+				g.scanBlockForRuntimeFuncs(c.Body)
+			}
+			g.scanBlockForRuntimeFuncs(s.Default)
+		}
+	}
+}
+
+func (g *Generator) scanStmtExprForRuntimeFuncs(stmt parser.Statement) {
+	switch s := stmt.(type) {
+	case *parser.AssignmentStatement:
+		g.scanExprForRuntimeFuncs(s.Value)
+		g.scanExprForRuntimeFuncs(s.Left)
+	case *parser.DimStatement:
+		if s.Value != nil {
+			g.scanExprForRuntimeFuncs(s.Value)
+		}
+	case *parser.PrintStatement:
+		for _, v := range s.Values {
+			g.scanExprForRuntimeFuncs(v)
+		}
+	case *parser.ExpressionStatement:
+		if s.Expression != nil {
+			g.scanExprForRuntimeFuncs(s.Expression)
+		}
+	case *parser.ReturnStatement:
+		for _, v := range s.Values {
+			g.scanExprForRuntimeFuncs(v)
+		}
+	case *parser.IfStatement:
+		g.scanExprForRuntimeFuncs(s.Condition)
+	case *parser.WhileStatement:
+		g.scanExprForRuntimeFuncs(s.Condition)
+	case *parser.ForStatement:
+		g.scanExprForRuntimeFuncs(s.Start)
+		g.scanExprForRuntimeFuncs(s.End)
+		if s.Step != nil {
+			g.scanExprForRuntimeFuncs(s.Step)
+		}
+	}
+}
+
+func (g *Generator) scanExprForRuntimeFuncs(expr parser.Expression) {
+	if expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *parser.CallExpression:
+		// Check if this is a runtime function call
+		if ident, ok := e.Function.(*parser.Identifier); ok {
+			if _, isRuntime := runtimeFuncDefs[ident.Value]; isRuntime {
+				g.runtimeFuncs[ident.Value] = true
+				// Add required imports for this runtime function
+				if imports, ok := runtimeFuncImports[ident.Value]; ok {
+					for _, imp := range imports {
+						g.imports[imp] = ""
+					}
+				}
+			}
+		}
+		// Scan arguments
+		for _, arg := range e.Arguments {
+			g.scanExprForRuntimeFuncs(arg)
+		}
+	case *parser.InfixExpression:
+		g.scanExprForRuntimeFuncs(e.Left)
+		g.scanExprForRuntimeFuncs(e.Right)
+	case *parser.PrefixExpression:
+		g.scanExprForRuntimeFuncs(e.Right)
+	case *parser.IndexExpression:
+		g.scanExprForRuntimeFuncs(e.Left)
+		if e.Index != nil {
+			g.scanExprForRuntimeFuncs(e.Index)
+		}
+		if e.End != nil {
+			g.scanExprForRuntimeFuncs(e.End)
+		}
+	case *parser.MemberExpression:
+		g.scanExprForRuntimeFuncs(e.Object)
+	case *parser.DereferenceExpression:
+		g.scanExprForRuntimeFuncs(e.Value)
+	case *parser.AddressOfExpression:
+		g.scanExprForRuntimeFuncs(e.Value)
+	}
+}
+
+func (g *Generator) generateRuntimeFunctions() {
+	if len(g.runtimeFuncs) == 0 {
+		return
+	}
+
+	g.writeLine("// Runtime helper functions")
+	for funcName := range g.runtimeFuncs {
+		if def, ok := runtimeFuncDefs[funcName]; ok {
+			g.writeLine("")
+			// Write each line of the function definition
+			for _, line := range strings.Split(def, "\n") {
+				g.output.WriteString(line)
+				g.output.WriteString("\n")
+			}
+		}
+	}
+	g.writeLine("")
 }
 
 func (g *Generator) generateImports() {
@@ -192,8 +513,12 @@ func (g *Generator) generateImports() {
 
 	g.writeLine("import (")
 	g.indent++
-	for imp := range g.imports {
-		g.writeLine(fmt.Sprintf(`"%s"`, imp))
+	for path, alias := range g.imports {
+		if alias != "" {
+			g.writeLine(fmt.Sprintf(`%s "%s"`, alias, path))
+		} else {
+			g.writeLine(fmt.Sprintf(`"%s"`, path))
+		}
 	}
 	g.indent--
 	g.writeLine(")")
@@ -531,8 +856,9 @@ func (g *Generator) generatePrint(stmt *parser.PrintStatement) {
 }
 
 func (g *Generator) generateInput(stmt *parser.InputStatement) {
-	g.imports["bufio"] = true
-	g.imports["os"] = true
+	g.imports["bufio"] = ""
+	g.imports["os"] = ""
+	g.imports["strings"] = ""
 
 	varName := g.toGoIdent(stmt.Variable.Value)
 
@@ -542,7 +868,7 @@ func (g *Generator) generateInput(stmt *parser.InputStatement) {
 
 	g.writeLine("_reader := bufio.NewReader(os.Stdin)")
 	g.writeLine(fmt.Sprintf("%s, _ = _reader.ReadString('\\n')", varName))
-	g.writeLine(fmt.Sprintf("%s = %s[:len(%s)-1]", varName, varName, varName))
+	g.writeLine(fmt.Sprintf("%s = strings.TrimRight(%s, \"\\r\\n\")", varName, varName))
 }
 
 func (g *Generator) generateIf(stmt *parser.IfStatement) {
@@ -731,6 +1057,8 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 		return g.jsonLiteralToGo(e)
 	case *parser.ArrayLiteral:
 		return g.arrayLiteralToGo(e)
+	case *parser.StructLiteral:
+		return g.structLiteralToGo(e)
 	case *parser.PrefixExpression:
 		return g.prefixExprToGo(e)
 	case *parser.InfixExpression:
@@ -738,13 +1066,27 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 	case *parser.CallExpression:
 		return g.callExprToGo(e)
 	case *parser.IndexExpression:
+		if e.IsSlice {
+			// Slice operation: [start:end], [start:], [:end], [:]
+			start := ""
+			end := ""
+			if e.Index != nil {
+				start = g.exprToGo(e.Index)
+			}
+			if e.End != nil {
+				end = g.exprToGo(e.End)
+			}
+			return fmt.Sprintf("%s[%s:%s]", g.exprToGo(e.Left), start, end)
+		}
 		return fmt.Sprintf("%s[%s]", g.exprToGo(e.Left), g.exprToGo(e.Index))
 	case *parser.MemberExpression:
 		return g.memberExprToGo(e)
 	case *parser.AddressOfExpression:
 		return fmt.Sprintf("&%s", g.exprToGo(e.Value))
 	case *parser.DereferenceExpression:
-		return fmt.Sprintf("*%s", g.exprToGo(e.Value))
+		// Wrap in parentheses to ensure correct precedence with member access
+		// e.g., (*ptr).field instead of *ptr.field
+		return fmt.Sprintf("(*%s)", g.exprToGo(e.Value))
 	case *parser.MakeChanExpression:
 		chanType := g.typeSpecToGo(e.ChannelType)
 		if e.Size != nil {
@@ -753,6 +1095,9 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 		return fmt.Sprintf("make(chan %s)", chanType)
 	case *parser.ReceiveExpression:
 		return fmt.Sprintf("<-%s", g.exprToGo(e.Channel))
+	case *parser.TypeAssertionExpression:
+		targetType := g.typeSpecToGo(e.TargetType)
+		return fmt.Sprintf("%s.(%s)", g.exprToGo(e.Value), targetType)
 	default:
 		return "/* unknown expression */"
 	}
@@ -775,11 +1120,63 @@ func (g *Generator) arrayLiteralToGo(lit *parser.ArrayLiteral) string {
 		return "[]interface{}{}"
 	}
 
+	// Infer the element type from the first element
+	elemType := g.inferElementType(lit.Elements[0])
+
 	var elems []string
 	for _, e := range lit.Elements {
 		elems = append(elems, g.exprToGo(e))
 	}
-	return fmt.Sprintf("[]interface{}{%s}", strings.Join(elems, ", "))
+	return fmt.Sprintf("[]%s{%s}", elemType, strings.Join(elems, ", "))
+}
+
+// inferElementType determines the Go type from an expression
+func (g *Generator) inferElementType(expr parser.Expression) string {
+	switch e := expr.(type) {
+	case *parser.StringLiteral:
+		return "string"
+	case *parser.IntegerLiteral:
+		return "int"
+	case *parser.FloatLiteral:
+		return "float64"
+	case *parser.BooleanLiteral:
+		return "bool"
+	case *parser.StructLiteral:
+		return e.TypeName
+	case *parser.Identifier:
+		// Try to look up the type in the symbol table
+		if g.symbols != nil {
+			if sym := g.symbols.Resolve(e.Value); sym != nil && sym.Type != nil {
+				return sym.Type.GoType()
+			}
+		}
+		return "interface{}"
+	default:
+		return "interface{}"
+	}
+}
+
+func (g *Generator) structLiteralToGo(lit *parser.StructLiteral) string {
+	typeName := lit.TypeName
+
+	// Check if this is a user-defined type
+	if g.types != nil {
+		if t := g.types.Lookup(typeName); t != nil {
+			typeName = t.Name
+		}
+	}
+
+	if len(lit.Fields) == 0 {
+		return typeName + "{}"
+	}
+
+	var pairs []string
+	for k, v := range lit.Fields {
+		// Convert field name to Go identifier (capitalize first letter)
+		goFieldName := g.toGoIdent(k)
+		pairs = append(pairs, fmt.Sprintf("%s: %s", goFieldName, g.exprToGo(v)))
+	}
+	return fmt.Sprintf("%s{%s}", typeName, strings.Join(pairs, ", "))
 }
 
 func (g *Generator) prefixExprToGo(expr *parser.PrefixExpression) string {
@@ -815,7 +1212,7 @@ func (g *Generator) infixExprToGo(expr *parser.InfixExpression) string {
 	case "&":
 		return fmt.Sprintf("(%s + %s)", left, right) // String concatenation
 	case "^":
-		g.imports["math"] = true
+		g.imports["math"] = ""
 		return fmt.Sprintf("math.Pow(float64(%s), float64(%s))", left, right)
 	case "\\":
 		return fmt.Sprintf("(%s / %s)", left, right) // Integer division
@@ -831,6 +1228,58 @@ func (g *Generator) callExprToGo(call *parser.CallExpression) string {
 	}
 
 	funcName := g.exprToGo(call.Function)
+
+	// Handle builtin functions that map directly to Go
+	switch strings.ToUpper(funcName) {
+	case "APPEND":
+		// APPEND(slice, elem) -> append(slice, elem)
+		return fmt.Sprintf("append(%s)", strings.Join(args, ", "))
+	case "LEN":
+		// LEN can work on strings, slices, maps, etc.
+		if len(args) == 1 {
+			return fmt.Sprintf("len(%s)", args[0])
+		}
+	case "CAP":
+		// CAP for slice capacity
+		if len(args) == 1 {
+			return fmt.Sprintf("cap(%s)", args[0])
+		}
+	case "MAKE":
+		// MAKE([]TYPE, len) or MAKE([]TYPE, len, cap)
+		return fmt.Sprintf("make(%s)", strings.Join(args, ", "))
+	case "COPY":
+		// COPY(dst, src) -> copy(dst, src)
+		return fmt.Sprintf("copy(%s)", strings.Join(args, ", "))
+	case "DELETE":
+		// DELETE(map, key) -> delete(map, key)
+		return fmt.Sprintf("delete(%s)", strings.Join(args, ", "))
+	case "CLOSE":
+		// CLOSE(channel) -> close(channel)
+		return fmt.Sprintf("close(%s)", strings.Join(args, ", "))
+	case "PANIC":
+		// PANIC(msg) -> panic(msg)
+		return fmt.Sprintf("panic(%s)", strings.Join(args, ", "))
+	case "RECOVER":
+		// RECOVER() -> recover()
+		return "recover()"
+	case "NEW":
+		// NEW(Type) -> new(Type)
+		return fmt.Sprintf("new(%s)", strings.Join(args, ", "))
+	case "STRING":
+		// STRING(bytes) or STRING(runes) -> string(...)
+		return fmt.Sprintf("string(%s)", strings.Join(args, ", "))
+	case "RUNE":
+		// RUNE(int) -> rune(int)
+		if len(args) == 1 {
+			return fmt.Sprintf("rune(%s)", args[0])
+		}
+	case "BYTE":
+		// BYTE(int) -> byte(int)
+		if len(args) == 1 {
+			return fmt.Sprintf("byte(%s)", args[0])
+		}
+	}
+
 	return fmt.Sprintf("%s(%s)", funcName, strings.Join(args, ", "))
 }
 
@@ -847,9 +1296,18 @@ func (g *Generator) typeSpecToGo(spec *parser.TypeSpec) string {
 		return "chan " + g.typeSpecToGo(spec.ElementType)
 	}
 
+	if spec.IsArray {
+		// Slice type (dynamic array)
+		if spec.ArraySize == nil {
+			return "[]" + g.typeSpecToGo(spec.ElementType)
+		}
+		// Fixed-size array
+		return fmt.Sprintf("[%s]%s", g.exprToGo(spec.ArraySize), g.typeSpecToGo(spec.ElementType))
+	}
+
 	switch strings.ToUpper(spec.Name) {
 	case "INTEGER":
-		return "int32"
+		return "int"
 	case "LONG":
 		return "int64"
 	case "SINGLE":
@@ -888,6 +1346,15 @@ func (g *Generator) typeFromTypeSpec(spec *parser.TypeSpec) *analyzer.Type {
 
 	if spec.IsChannel {
 		return analyzer.NewChannelType(g.typeFromTypeSpec(spec.ElementType))
+	}
+
+	if spec.IsArray {
+		elemType := g.typeFromTypeSpec(spec.ElementType)
+		if spec.ArraySize == nil {
+			return analyzer.NewSliceType(elemType)
+		}
+		// Fixed array - we'd need to evaluate the size
+		return analyzer.NewSliceType(elemType)
 	}
 
 	// Try built-in type first

@@ -27,8 +27,8 @@ func TestGenerateVariableDeclaration(t *testing.T) {
 	code := compile(input)
 
 	// Variables are generated in a var block
-	if !strings.Contains(code, "x int32 = 42") {
-		t.Errorf("expected 'x int32 = 42', got:\n%s", code)
+	if !strings.Contains(code, "x int = 42") {
+		t.Errorf("expected 'x int = 42', got:\n%s", code)
 	}
 }
 
@@ -37,7 +37,7 @@ func TestGenerateTypeMappings(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"DIM a AS INTEGER", "a int32"},
+		{"DIM a AS INTEGER", "a int"},
 		{"DIM b AS LONG", "b int64"},
 		{"DIM c AS SINGLE", "c float32"},
 		{"DIM d AS DOUBLE", "d float64"},
@@ -60,7 +60,7 @@ END FUNCTION`
 
 	code := compile(input)
 
-	if !strings.Contains(code, "func Add(a int32, b int32) int32") {
+	if !strings.Contains(code, "func Add(a int, b int) int") {
 		t.Errorf("expected function signature, got:\n%s", code)
 	}
 
@@ -217,7 +217,7 @@ END SUB`
 		t.Errorf("expected switch statement, got:\n%s", code)
 	}
 
-	if !strings.Contains(code, "case 1:") && !strings.Contains(code, "case int32(1):") {
+	if !strings.Contains(code, "case 1:") && !strings.Contains(code, "case int(1):") {
 		t.Errorf("expected case clause, got:\n%s", code)
 	}
 
@@ -252,7 +252,7 @@ END SUB`
 
 	code := compile(input)
 
-	if !strings.Contains(code, "chan int32") {
+	if !strings.Contains(code, "chan int") {
 		t.Errorf("expected channel type, got:\n%s", code)
 	}
 
@@ -274,7 +274,7 @@ END SUB`
 
 	code := compile(input)
 
-	if !strings.Contains(code, "*int32") {
+	if !strings.Contains(code, "*int") {
 		t.Errorf("expected pointer type, got:\n%s", code)
 	}
 
@@ -376,11 +376,11 @@ func TestGenerateArrayDeclaration(t *testing.T) {
 
 	code := compile(input)
 
-	if !strings.Contains(code, "[]int32") {
+	if !strings.Contains(code, "[]int") {
 		t.Errorf("expected slice type, got:\n%s", code)
 	}
 
-	if !strings.Contains(code, "make([]int32, 10)") {
+	if !strings.Contains(code, "make([]int, 10)") {
 		t.Errorf("expected make call, got:\n%s", code)
 	}
 }
@@ -405,7 +405,7 @@ END FUNCTION`
 
 	code := compile(input)
 
-	if !strings.Contains(code, "(int32, bool)") {
+	if !strings.Contains(code, "(int, bool)") {
 		t.Errorf("expected multiple return types, got:\n%s", code)
 	}
 
@@ -449,7 +449,7 @@ END SUB`
 	if !strings.Contains(code, "// line") && !strings.Contains(code, "// test.dbas") {
 		// Debug comments may only appear in function bodies
 		// Just verify the code generated correctly
-		if !strings.Contains(code, "x int32 = 42") {
+		if !strings.Contains(code, "x int = 42") {
 			t.Errorf("expected variable declaration, got:\n%s", code)
 		}
 	}
