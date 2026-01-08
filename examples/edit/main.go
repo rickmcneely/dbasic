@@ -1,65 +1,19 @@
 package main
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
+	lipgloss "github.com/charmbracelet/lipgloss"
 	"strings"
 	"os"
 	"strconv"
 	fmt "fmt"
-	tea "github.com/charmbracelet/bubbletea"
-	lipgloss "github.com/charmbracelet/lipgloss"
 )
 
 // Runtime helper functions
 
-// ReadFile reads entire file contents
-func ReadFile(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
-// WriteFile writes string to file
-func WriteFile(path, content string) {
-	os.WriteFile(path, []byte(content), 0644)
-}
-
-// Instr finds the position of substring in string (1-based)
-func Instr(s, substr string) int {
-	idx := strings.Index(s, substr)
-	if idx == -1 {
-		return 0
-	}
-	return idx + 1
-}
-
-// Val converts a string to float64
-func Val(s string) float64 {
-	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	return v
-}
-
 // Len returns the length of a string
 func Len(s string) int {
 	return len(s)
-}
-
-// Left returns the leftmost n characters
-func Left(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	if n >= len(s) {
-		return s
-	}
-	return s[:n]
-}
-
-// FileExists checks if a file exists
-func FileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 // Mid returns a substring starting at position start with length ln
@@ -99,6 +53,52 @@ func Int(val interface{}) int {
 	default:
 		return 0
 	}
+}
+
+// FileExists checks if a file exists
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// Instr finds the position of substring in string (1-based)
+func Instr(s, substr string) int {
+	idx := strings.Index(s, substr)
+	if idx == -1 {
+		return 0
+	}
+	return idx + 1
+}
+
+// Left returns the leftmost n characters
+func Left(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	return s[:n]
+}
+
+// ReadFile reads entire file contents
+func ReadFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// WriteFile writes string to file
+func WriteFile(path, content string) {
+	os.WriteFile(path, []byte(content), 0644)
+}
+
+// Val converts a string to float64
+func Val(s string) float64 {
+	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return v
 }
 
 type EditorModel struct {
@@ -155,6 +155,8 @@ var (
 	menuBarStyle lipgloss.Style
 	menuItemStyle lipgloss.Style
 	menuItemSelectedStyle lipgloss.Style
+	menuHotkeyStyle lipgloss.Style
+	menuHotkeySelectedStyle lipgloss.Style
 	menuDropdownStyle lipgloss.Style
 	textAreaStyle lipgloss.Style
 	statusBarStyle lipgloss.Style
@@ -168,8 +170,10 @@ var (
 
 func InitStyles() {
 	menuBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
-	menuItemStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0")).Padding(0, 1)
-	menuItemSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("7")).Padding(0, 1)
+	menuItemStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
+	menuItemSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("7"))
+	menuHotkeyStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("1"))
+	menuHotkeySelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("9"))
 	menuDropdownStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("15"))
 	textAreaStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15"))
 	statusBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
@@ -467,10 +471,82 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return HandleEditorInput(m, key)
 }
 
+func StartSelection(m *EditorModel) {
+	if !((*m).Selecting) {
+		(*m).Selecting = true
+		(*m).SelectStartX = (*m).CursorX
+		(*m).SelectStartY = (*m).CursorY
+	}
+}
+
+func ClearSelection(m *EditorModel) {
+	(*m).Selecting = false
+}
+
 func HandleEditorInput(m EditorModel, key string) (tea.Model, tea.Cmd) {
 	var totalLines int = CountLines(m.Content)
 	var currentLineLen int = GetLineLength(m.Content, (m.CursorY + 1))
+	if (key == "shift+left") {
+		StartSelection(&m)
+		if (m.CursorX > 0) {
+			m.CursorX = (m.CursorX - 1)
+		} else if (m.CursorY > 0) {
+			m.CursorY = (m.CursorY - 1)
+			m.CursorX = GetLineLength(m.Content, (m.CursorY + 1))
+		}
+		m.SelectEndX = m.CursorX
+		m.SelectEndY = m.CursorY
+		return m, nil
+	} else if (key == "shift+right") {
+		StartSelection(&m)
+		if (m.CursorX < currentLineLen) {
+			m.CursorX = (m.CursorX + 1)
+		} else if (m.CursorY < (totalLines - 1)) {
+			m.CursorY = (m.CursorY + 1)
+			m.CursorX = 0
+		}
+		m.SelectEndX = m.CursorX
+		m.SelectEndY = m.CursorY
+		return m, nil
+	} else if (key == "shift+up") {
+		StartSelection(&m)
+		if (m.CursorY > 0) {
+			m.CursorY = (m.CursorY - 1)
+			var upLen int = GetLineLength(m.Content, (m.CursorY + 1))
+			if (m.CursorX > upLen) {
+				m.CursorX = upLen
+			}
+		}
+		m.SelectEndX = m.CursorX
+		m.SelectEndY = m.CursorY
+		return m, nil
+	} else if (key == "shift+down") {
+		StartSelection(&m)
+		if (m.CursorY < (totalLines - 1)) {
+			m.CursorY = (m.CursorY + 1)
+			var downLen int = GetLineLength(m.Content, (m.CursorY + 1))
+			if (m.CursorX > downLen) {
+				m.CursorX = downLen
+			}
+		}
+		m.SelectEndX = m.CursorX
+		m.SelectEndY = m.CursorY
+		return m, nil
+	} else if (key == "shift+home") {
+		StartSelection(&m)
+		m.CursorX = 0
+		m.SelectEndX = m.CursorX
+		m.SelectEndY = m.CursorY
+		return m, nil
+	} else if (key == "shift+end") {
+		StartSelection(&m)
+		m.CursorX = currentLineLen
+		m.SelectEndX = m.CursorX
+		m.SelectEndY = m.CursorY
+		return m, nil
+	}
 	if (key == "left") {
+		ClearSelection(&m)
 		if (m.CursorX > 0) {
 			m.CursorX = (m.CursorX - 1)
 		} else if (m.CursorY > 0) {
@@ -479,6 +555,7 @@ func HandleEditorInput(m EditorModel, key string) (tea.Model, tea.Cmd) {
 		}
 		m.Message = ""
 	} else if (key == "right") {
+		ClearSelection(&m)
 		if (m.CursorX < currentLineLen) {
 			m.CursorX = (m.CursorX + 1)
 		} else if (m.CursorY < (totalLines - 1)) {
@@ -487,6 +564,7 @@ func HandleEditorInput(m EditorModel, key string) (tea.Model, tea.Cmd) {
 		}
 		m.Message = ""
 	} else if (key == "up") {
+		ClearSelection(&m)
 		if (m.CursorY > 0) {
 			m.CursorY = (m.CursorY - 1)
 			var upLineLen int = GetLineLength(m.Content, (m.CursorY + 1))
@@ -496,6 +574,7 @@ func HandleEditorInput(m EditorModel, key string) (tea.Model, tea.Cmd) {
 		}
 		m.Message = ""
 	} else if (key == "down") {
+		ClearSelection(&m)
 		if (m.CursorY < (totalLines - 1)) {
 			m.CursorY = (m.CursorY + 1)
 			var downLineLen int = GetLineLength(m.Content, (m.CursorY + 1))
@@ -505,9 +584,11 @@ func HandleEditorInput(m EditorModel, key string) (tea.Model, tea.Cmd) {
 		}
 		m.Message = ""
 	} else if (key == "home") {
+		ClearSelection(&m)
 		m.CursorX = 0
 		m.Message = ""
 	} else if (key == "end") {
+		ClearSelection(&m)
 		m.CursorX = currentLineLen
 		m.Message = ""
 	} else if (key == "ctrl+home") {
@@ -679,8 +760,9 @@ func GetMenuItemCount(menu int) int {
 }
 
 func ExecuteMenuItem(m EditorModel) (tea.Model, tea.Cmd) {
+	var currentMenu int = m.MenuOpen
 	m.MenuOpen = MENU_NONE
-	if (m.MenuOpen == MENU_FILE) {
+	if (currentMenu == MENU_FILE) {
 		if (m.MenuIndex == 0) {
 			return DoNewFile(m)
 		} else if (m.MenuIndex == 1) {
@@ -700,7 +782,7 @@ func ExecuteMenuItem(m EditorModel) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		}
-	} else if (m.MenuOpen == MENU_EDIT) {
+	} else if (currentMenu == MENU_EDIT) {
 		if (m.MenuIndex == 0) {
 			return DoCut(m)
 		} else if (m.MenuIndex == 1) {
@@ -710,7 +792,7 @@ func ExecuteMenuItem(m EditorModel) (tea.Model, tea.Cmd) {
 		} else if (m.MenuIndex == 4) {
 			return DoSelectAll(m)
 		}
-	} else if (m.MenuOpen == MENU_SEARCH) {
+	} else if (currentMenu == MENU_SEARCH) {
 		if (m.MenuIndex == 0) {
 			m.DialogMode = DIALOG_FIND
 			m.DialogInput = m.SearchText
@@ -726,20 +808,19 @@ func ExecuteMenuItem(m EditorModel) (tea.Model, tea.Cmd) {
 			m.DialogInput = ""
 			m.DialogCursor = 0
 		}
-	} else if (m.MenuOpen == MENU_OPTIONS) {
+	} else if (currentMenu == MENU_OPTIONS) {
 		if (m.MenuIndex == 0) {
 			m.ShowLineNumbers = !(m.ShowLineNumbers)
 		} else if (m.MenuIndex == 1) {
 			m.InsertMode = !(m.InsertMode)
 		}
-	} else if (m.MenuOpen == MENU_HELP) {
+	} else if (currentMenu == MENU_HELP) {
 		if (m.MenuIndex == 0) {
 			m.DialogMode = DIALOG_HELP
 		} else if (m.MenuIndex == 1) {
 			m.DialogMode = DIALOG_ABOUT
 		}
 	}
-	m.MenuOpen = MENU_NONE
 	return m, nil
 }
 
@@ -871,42 +952,166 @@ func DoSaveFile(m EditorModel) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func IsInSelection(m EditorModel, row int, col int) bool {
+	if !(m.Selecting) {
+		return false
+	}
+	var startY int
+	var startX int
+	var endY int
+	var endX int
+	startY, startX, endY, endX = GetSelectionBounds(m)
+	if ((row < startY) || (row > endY)) {
+		return false
+	}
+	if ((row == startY) && (row == endY)) {
+		return ((col >= startX) && (col < endX))
+	} else if (row == startY) {
+		return (col >= startX)
+	} else if (row == endY) {
+		return (col < endX)
+	} else {
+		return true
+	}
+}
+
+func GetSelectionBounds(m EditorModel) (int, int, int, int) {
+	var startY int = m.SelectStartY
+	var startX int = m.SelectStartX
+	var endY int = m.SelectEndY
+	var endX int = m.SelectEndX
+	if ((endY < startY) || ((endY == startY) && (endX < startX))) {
+		var tmpY int = startY
+		var tmpX int = startX
+		startY = endY
+		startX = endX
+		endY = tmpY
+		endX = tmpX
+	}
+	return startY, startX, endY, endX
+}
+
+func GetSelectedText(m EditorModel) string {
+	if !(m.Selecting) {
+		return ""
+	}
+	var startY int
+	var startX int
+	var endY int
+	var endX int
+	startY, startX, endY, endX = GetSelectionBounds(m)
+	var result string = ""
+	var y int
+	for y = startY; y <= endY; y += 1 {
+		var line string = GetLine(m.Content, (y + 1))
+		var lineStart int = 0
+		var lineEnd int = len(line)
+		if (y == startY) {
+			lineStart = startX
+		}
+		if (y == endY) {
+			lineEnd = endX
+		}
+		if (lineEnd > lineStart) {
+			result = (result + Mid(line, (lineStart + 1), (lineEnd - lineStart)))
+		}
+		if (y < endY) {
+			result = (result + Chr(10))
+		}
+	}
+	return result
+}
+
+func DeleteSelection(m *EditorModel) (int, int) {
+	if !((*m).Selecting) {
+		return (*m).CursorX, (*m).CursorY
+	}
+	var startY int
+	var startX int
+	var endY int
+	var endX int
+	startY, startX, endY, endX = GetSelectionBounds((*m))
+	var totalLines int = CountLines((*m).Content)
+	var newContent string = ""
+	var y int
+	for y = 0; y <= (totalLines - 1); y += 1 {
+		var line string = GetLine((*m).Content, (y + 1))
+		if ((y < startY) || (y > endY)) {
+			if (len(newContent) > 0) {
+				newContent = (newContent + Chr(10))
+			}
+			newContent = (newContent + line)
+		} else if ((y == startY) && (y == endY)) {
+			if (len(newContent) > 0) {
+				newContent = (newContent + Chr(10))
+			}
+			newContent = ((newContent + Left(line, startX)) + Mid(line, (endX + 1), (len(line) - endX)))
+		} else if (y == startY) {
+			if (len(newContent) > 0) {
+				newContent = (newContent + Chr(10))
+			}
+			newContent = (newContent + Left(line, startX))
+		} else if (y == endY) {
+			newContent = (newContent + Mid(line, (endX + 1), (len(line) - endX)))
+		}
+	}
+	(*m).Content = newContent
+	(*m).Selecting = false
+	(*m).Modified = true
+	return startX, startY
+}
+
 func DoCopy(m EditorModel) (tea.Model, tea.Cmd) {
-	m.Clipboard = GetLine(m.Content, (m.CursorY + 1))
-	m.Message = "Line copied"
+	if m.Selecting {
+		m.Clipboard = GetSelectedText(m)
+		m.Message = "Copied"
+	} else {
+		m.Clipboard = GetLine(m.Content, (m.CursorY + 1))
+		m.Message = "Line copied"
+	}
 	return m, nil
 }
 
 func DoCut(m EditorModel) (tea.Model, tea.Cmd) {
-	m.Clipboard = GetLine(m.Content, (m.CursorY + 1))
-	var totalLines int = CountLines(m.Content)
-	if (totalLines == 1) {
-		m.Content = ""
+	if m.Selecting {
+		m.Clipboard = GetSelectedText(m)
+		var newX int
+		var newY int
+		newX, newY = DeleteSelection(&m)
+		m.CursorX = newX
+		m.CursorY = newY
+		m.Message = "Cut"
 	} else {
-		var newContent string = ""
-		var i int
-		for i = 1; i <= totalLines; i += 1 {
-			if (i != (m.CursorY + 1)) {
-				if (len(newContent) > 0) {
-					newContent = (newContent + Chr(10))
+		m.Clipboard = GetLine(m.Content, (m.CursorY + 1))
+		var totalLines int = CountLines(m.Content)
+		if (totalLines == 1) {
+			m.Content = ""
+		} else {
+			var newContent string = ""
+			var i int
+			for i = 1; i <= totalLines; i += 1 {
+				if (i != (m.CursorY + 1)) {
+					if (len(newContent) > 0) {
+						newContent = (newContent + Chr(10))
+					}
+					newContent = (newContent + GetLine(m.Content, i))
 				}
-				newContent = (newContent + GetLine(m.Content, i))
+			}
+			m.Content = newContent
+		}
+		if (m.CursorY >= CountLines(m.Content)) {
+			m.CursorY = (CountLines(m.Content) - 1)
+			if (m.CursorY < 0) {
+				m.CursorY = 0
 			}
 		}
-		m.Content = newContent
-	}
-	if (m.CursorY >= CountLines(m.Content)) {
-		m.CursorY = (CountLines(m.Content) - 1)
-		if (m.CursorY < 0) {
-			m.CursorY = 0
+		var newLineLen int = GetLineLength(m.Content, (m.CursorY + 1))
+		if (m.CursorX > newLineLen) {
+			m.CursorX = newLineLen
 		}
+		m.Modified = true
+		m.Message = "Line cut"
 	}
-	var newLineLen int = GetLineLength(m.Content, (m.CursorY + 1))
-	if (m.CursorX > newLineLen) {
-		m.CursorX = newLineLen
-	}
-	m.Modified = true
-	m.Message = "Line cut"
 	return m, nil
 }
 
@@ -915,28 +1120,67 @@ func DoPaste(m EditorModel) (tea.Model, tea.Cmd) {
 		m.Message = "Clipboard empty"
 		return m, nil
 	}
-	var totalLines int = CountLines(m.Content)
-	var newContent string = ""
-	var i int
-	for i = 1; i <= totalLines; i += 1 {
-		if (len(newContent) > 0) {
-			newContent = (newContent + Chr(10))
-		}
-		newContent = (newContent + GetLine(m.Content, i))
-		if (i == (m.CursorY + 1)) {
-			newContent = ((newContent + Chr(10)) + m.Clipboard)
-		}
+	if m.Selecting {
+		var delX int
+		var delY int
+		delX, delY = DeleteSelection(&m)
+		m.CursorX = delX
+		m.CursorY = delY
 	}
-	m.Content = newContent
-	m.CursorY = (m.CursorY + 1)
-	m.CursorX = 0
+	var clipLines int = CountLines(m.Clipboard)
+	if (clipLines == 1) {
+		var line string = GetLine(m.Content, (m.CursorY + 1))
+		var newLine string = ((Left(line, m.CursorX) + m.Clipboard) + Mid(line, (m.CursorX + 1), (len(line) - m.CursorX)))
+		m.Content = SetLine(m.Content, (m.CursorY + 1), newLine)
+		m.CursorX = (m.CursorX + len(m.Clipboard))
+	} else {
+		var currentLine string = GetLine(m.Content, (m.CursorY + 1))
+		var beforeCursor string = Left(currentLine, m.CursorX)
+		var afterCursor string = Mid(currentLine, (m.CursorX + 1), (len(currentLine) - m.CursorX))
+		var newContent string = ""
+		var totalLines int = CountLines(m.Content)
+		var y int
+		for y = 1; y <= totalLines; y += 1 {
+			if (y == (m.CursorY + 1)) {
+				var clipY int
+				for clipY = 1; clipY <= clipLines; clipY += 1 {
+					if (len(newContent) > 0) {
+						newContent = (newContent + Chr(10))
+					}
+					if (clipY == 1) {
+						newContent = ((newContent + beforeCursor) + GetLine(m.Clipboard, clipY))
+					} else if (clipY == clipLines) {
+						newContent = ((newContent + GetLine(m.Clipboard, clipY)) + afterCursor)
+					} else {
+						newContent = (newContent + GetLine(m.Clipboard, clipY))
+					}
+				}
+			} else {
+				if (len(newContent) > 0) {
+					newContent = (newContent + Chr(10))
+				}
+				newContent = (newContent + GetLine(m.Content, y))
+			}
+		}
+		m.Content = newContent
+		m.CursorY = ((m.CursorY + clipLines) - 1)
+		m.CursorX = len(GetLine(m.Clipboard, clipLines))
+	}
 	m.Modified = true
 	m.Message = "Pasted"
 	return m, nil
 }
 
 func DoSelectAll(m EditorModel) (tea.Model, tea.Cmd) {
-	m.Message = "Select All not yet implemented"
+	var totalLines int = CountLines(m.Content)
+	m.Selecting = true
+	m.SelectStartX = 0
+	m.SelectStartY = 0
+	m.SelectEndY = (totalLines - 1)
+	m.SelectEndX = GetLineLength(m.Content, totalLines)
+	m.CursorY = m.SelectEndY
+	m.CursorX = m.SelectEndX
+	m.Message = "All selected"
 	return m, nil
 }
 
@@ -1037,34 +1281,26 @@ func (m EditorModel) View() string {
 				view = (view + lineNumStyle.Render("      "))
 			}
 		}
-		if (lineIdx == m.CursorY) {
-			var cursorCol int = (m.CursorX - m.ScrollX)
-			var beforeCursor string = ""
-			var cursorChar string = " "
-			var afterCursor string = ""
-			if ((cursorCol > 0) && (len(lineText) > 0)) {
-				if (cursorCol <= len(lineText)) {
-					beforeCursor = Left(lineText, cursorCol)
-				} else {
-					beforeCursor = (lineText + RepeatChar(" ", (cursorCol - len(lineText))))
-				}
+		var lineContent string = ""
+		var col int
+		var cursorCol int = (m.CursorX - m.ScrollX)
+		var renderedLen int = 0
+		for col = 0; col <= (contentWidth - 1); col += 1 {
+			var actualCol int = (m.ScrollX + col)
+			var ch string = " "
+			if (col < len(lineText)) {
+				ch = Mid(lineText, (col + 1), 1)
 			}
-			if ((cursorCol >= 0) && (cursorCol < len(lineText))) {
-				cursorChar = Mid(lineText, (cursorCol + 1), 1)
-				if ((cursorCol + 1) < len(lineText)) {
-					afterCursor = Mid(lineText, (cursorCol + 2), ((len(lineText) - cursorCol) - 1))
-				}
+			if ((lineIdx == m.CursorY) && (col == cursorCol)) {
+				lineContent = (lineContent + cursorStyle.Render(ch))
+			} else if IsInSelection(m, lineIdx, actualCol) {
+				lineContent = (lineContent + selectedStyle.Render(ch))
+			} else {
+				lineContent = (lineContent + textAreaStyle.Render(ch))
 			}
-			var lineContent string = ((textAreaStyle.Render(beforeCursor) + cursorStyle.Render(cursorChar)) + textAreaStyle.Render(afterCursor))
-			var displayLen int = ((len(beforeCursor) + 1) + len(afterCursor))
-			if (displayLen < contentWidth) {
-				lineContent = (lineContent + textAreaStyle.Render(RepeatChar(" ", (contentWidth - displayLen))))
-			}
-			view = (view + lineContent)
-		} else {
-			var paddedLine string = PadRight(lineText, contentWidth)
-			view = (view + textAreaStyle.Render(paddedLine))
+			renderedLen = (renderedLen + 1)
 		}
+		view = (view + lineContent)
 		view = (view + Chr(10))
 	}
 	var status string = ""
@@ -1091,40 +1327,29 @@ func (m EditorModel) View() string {
 	return view
 }
 
+func RenderMenuItemWithHotkey(name string, hotkeyPos int, selected bool) string {
+	var before string = Left(name, (hotkeyPos - 1))
+	var hotkey string = Mid(name, hotkeyPos, 1)
+	var after string = Mid(name, (hotkeyPos + 1), (len(name) - hotkeyPos))
+	if selected {
+		return ((menuItemSelectedStyle.Render((" " + before)) + menuHotkeySelectedStyle.Render(hotkey)) + menuItemSelectedStyle.Render((after + " ")))
+	} else {
+		return ((menuItemStyle.Render((" " + before)) + menuHotkeyStyle.Render(hotkey)) + menuItemStyle.Render((after + " ")))
+	}
+}
+
 func RenderMenuBar(m EditorModel) string {
-	var bar string = " "
-	if (m.MenuOpen == MENU_FILE) {
-		bar = (bar + menuItemSelectedStyle.Render("File"))
-	} else {
-		bar = (bar + menuItemStyle.Render("File"))
+	var bar string = ""
+	bar = (bar + RenderMenuItemWithHotkey("File", 1, (m.MenuOpen == MENU_FILE)))
+	bar = (bar + RenderMenuItemWithHotkey("Edit", 1, (m.MenuOpen == MENU_EDIT)))
+	bar = (bar + RenderMenuItemWithHotkey("Search", 1, (m.MenuOpen == MENU_SEARCH)))
+	bar = (bar + RenderMenuItemWithHotkey("Options", 1, (m.MenuOpen == MENU_OPTIONS)))
+	bar = (bar + RenderMenuItemWithHotkey("Help", 1, (m.MenuOpen == MENU_HELP)))
+	var currentLen int = 38
+	if (m.Width > currentLen) {
+		bar = (bar + menuBarStyle.Render(RepeatChar(" ", (m.Width - currentLen))))
 	}
-	bar = (bar + " ")
-	if (m.MenuOpen == MENU_EDIT) {
-		bar = (bar + menuItemSelectedStyle.Render("Edit"))
-	} else {
-		bar = (bar + menuItemStyle.Render("Edit"))
-	}
-	bar = (bar + " ")
-	if (m.MenuOpen == MENU_SEARCH) {
-		bar = (bar + menuItemSelectedStyle.Render("Search"))
-	} else {
-		bar = (bar + menuItemStyle.Render("Search"))
-	}
-	bar = (bar + " ")
-	if (m.MenuOpen == MENU_OPTIONS) {
-		bar = (bar + menuItemSelectedStyle.Render("Options"))
-	} else {
-		bar = (bar + menuItemStyle.Render("Options"))
-	}
-	bar = (bar + " ")
-	if (m.MenuOpen == MENU_HELP) {
-		bar = (bar + menuItemSelectedStyle.Render("Help"))
-	} else {
-		bar = (bar + menuItemStyle.Render("Help"))
-	}
-	var currentLen int = 40
-	bar = (bar + menuBarStyle.Render(RepeatChar(" ", (m.Width - currentLen))))
-	return menuBarStyle.Render(bar)
+	return bar
 }
 
 func RenderDropdown(m EditorModel) string {

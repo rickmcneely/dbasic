@@ -89,6 +89,8 @@ END TYPE
 DIM menuBarStyle AS lipgloss.Style
 DIM menuItemStyle AS lipgloss.Style
 DIM menuItemSelectedStyle AS lipgloss.Style
+DIM menuHotkeyStyle AS lipgloss.Style
+DIM menuHotkeySelectedStyle AS lipgloss.Style
 DIM menuDropdownStyle AS lipgloss.Style
 DIM textAreaStyle AS lipgloss.Style
 DIM statusBarStyle AS lipgloss.Style
@@ -102,8 +104,11 @@ DIM selectedStyle AS lipgloss.Style
 SUB InitStyles()
     ' Menu bar - white on gray (like DOS)
     menuBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
-    menuItemStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0")).Padding(0, 1)
-    menuItemSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("7")).Padding(0, 1)
+    menuItemStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
+    menuItemSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("7"))
+    ' Hotkey - red on gray for unselected, red on black for selected
+    menuHotkeyStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("1"))
+    menuHotkeySelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("9"))
 
     ' Dropdown menu - white on blue
     menuDropdownStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("15"))
@@ -470,12 +475,94 @@ FUNCTION (m AS EditorModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     RETURN HandleEditorInput(m, key)
 END FUNCTION
 
+' Start or extend selection
+SUB StartSelection(m AS POINTER TO EditorModel)
+    IF NOT (^m).Selecting THEN
+        (^m).Selecting = TRUE
+        (^m).SelectStartX = (^m).CursorX
+        (^m).SelectStartY = (^m).CursorY
+    ENDIF
+END SUB
+
+' Clear selection
+SUB ClearSelection(m AS POINTER TO EditorModel)
+    (^m).Selecting = FALSE
+END SUB
+
 ' Handle editor input (navigation and text editing)
 FUNCTION HandleEditorInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.Cmd)
     DIM totalLines AS INTEGER = CountLines(m.Content)
     DIM currentLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
 
+    ' Shift+arrow selection
+    IF key = "shift+left" THEN
+        StartSelection(@m)
+        IF m.CursorX > 0 THEN
+            m.CursorX = m.CursorX - 1
+        ELSEIF m.CursorY > 0 THEN
+            m.CursorY = m.CursorY - 1
+            m.CursorX = GetLineLength(m.Content, m.CursorY + 1)
+        ENDIF
+        m.SelectEndX = m.CursorX
+        m.SelectEndY = m.CursorY
+        RETURN m, NIL
+
+    ELSEIF key = "shift+right" THEN
+        StartSelection(@m)
+        IF m.CursorX < currentLineLen THEN
+            m.CursorX = m.CursorX + 1
+        ELSEIF m.CursorY < totalLines - 1 THEN
+            m.CursorY = m.CursorY + 1
+            m.CursorX = 0
+        ENDIF
+        m.SelectEndX = m.CursorX
+        m.SelectEndY = m.CursorY
+        RETURN m, NIL
+
+    ELSEIF key = "shift+up" THEN
+        StartSelection(@m)
+        IF m.CursorY > 0 THEN
+            m.CursorY = m.CursorY - 1
+            DIM upLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
+            IF m.CursorX > upLen THEN
+                m.CursorX = upLen
+            ENDIF
+        ENDIF
+        m.SelectEndX = m.CursorX
+        m.SelectEndY = m.CursorY
+        RETURN m, NIL
+
+    ELSEIF key = "shift+down" THEN
+        StartSelection(@m)
+        IF m.CursorY < totalLines - 1 THEN
+            m.CursorY = m.CursorY + 1
+            DIM downLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
+            IF m.CursorX > downLen THEN
+                m.CursorX = downLen
+            ENDIF
+        ENDIF
+        m.SelectEndX = m.CursorX
+        m.SelectEndY = m.CursorY
+        RETURN m, NIL
+
+    ELSEIF key = "shift+home" THEN
+        StartSelection(@m)
+        m.CursorX = 0
+        m.SelectEndX = m.CursorX
+        m.SelectEndY = m.CursorY
+        RETURN m, NIL
+
+    ELSEIF key = "shift+end" THEN
+        StartSelection(@m)
+        m.CursorX = currentLineLen
+        m.SelectEndX = m.CursorX
+        m.SelectEndY = m.CursorY
+        RETURN m, NIL
+    ENDIF
+
+    ' Regular movement (clears selection)
     IF key = "left" THEN
+        ClearSelection(@m)
         IF m.CursorX > 0 THEN
             m.CursorX = m.CursorX - 1
         ELSEIF m.CursorY > 0 THEN
@@ -485,6 +572,7 @@ FUNCTION HandleEditorInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.C
         m.Message = ""
 
     ELSEIF key = "right" THEN
+        ClearSelection(@m)
         IF m.CursorX < currentLineLen THEN
             m.CursorX = m.CursorX + 1
         ELSEIF m.CursorY < totalLines - 1 THEN
@@ -494,6 +582,7 @@ FUNCTION HandleEditorInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.C
         m.Message = ""
 
     ELSEIF key = "up" THEN
+        ClearSelection(@m)
         IF m.CursorY > 0 THEN
             m.CursorY = m.CursorY - 1
             DIM upLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
@@ -504,6 +593,7 @@ FUNCTION HandleEditorInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.C
         m.Message = ""
 
     ELSEIF key = "down" THEN
+        ClearSelection(@m)
         IF m.CursorY < totalLines - 1 THEN
             m.CursorY = m.CursorY + 1
             DIM downLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
@@ -514,10 +604,12 @@ FUNCTION HandleEditorInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.C
         m.Message = ""
 
     ELSEIF key = "home" THEN
+        ClearSelection(@m)
         m.CursorX = 0
         m.Message = ""
 
     ELSEIF key = "end" THEN
+        ClearSelection(@m)
         m.CursorX = currentLineLen
         m.Message = ""
 
@@ -714,9 +806,10 @@ END FUNCTION
 
 ' Execute menu item
 FUNCTION ExecuteMenuItem(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    DIM currentMenu AS INTEGER = m.MenuOpen
     m.MenuOpen = MENU_NONE
 
-    IF m.MenuOpen = MENU_FILE THEN
+    IF currentMenu = MENU_FILE THEN
         IF m.MenuIndex = 0 THEN
             RETURN DoNewFile(m)
         ELSEIF m.MenuIndex = 1 THEN
@@ -736,7 +829,7 @@ FUNCTION ExecuteMenuItem(m AS EditorModel) AS (tea.Model, tea.Cmd)
                 RETURN m, tea.Quit
             ENDIF
         ENDIF
-    ELSEIF m.MenuOpen = MENU_EDIT THEN
+    ELSEIF currentMenu = MENU_EDIT THEN
         IF m.MenuIndex = 0 THEN
             RETURN DoCut(m)
         ELSEIF m.MenuIndex = 1 THEN
@@ -746,7 +839,7 @@ FUNCTION ExecuteMenuItem(m AS EditorModel) AS (tea.Model, tea.Cmd)
         ELSEIF m.MenuIndex = 4 THEN
             RETURN DoSelectAll(m)
         ENDIF
-    ELSEIF m.MenuOpen = MENU_SEARCH THEN
+    ELSEIF currentMenu = MENU_SEARCH THEN
         IF m.MenuIndex = 0 THEN
             m.DialogMode = DIALOG_FIND
             m.DialogInput = m.SearchText
@@ -762,13 +855,13 @@ FUNCTION ExecuteMenuItem(m AS EditorModel) AS (tea.Model, tea.Cmd)
             m.DialogInput = ""
             m.DialogCursor = 0
         ENDIF
-    ELSEIF m.MenuOpen = MENU_OPTIONS THEN
+    ELSEIF currentMenu = MENU_OPTIONS THEN
         IF m.MenuIndex = 0 THEN
             m.ShowLineNumbers = NOT m.ShowLineNumbers
         ELSEIF m.MenuIndex = 1 THEN
             m.InsertMode = NOT m.InsertMode
         ENDIF
-    ELSEIF m.MenuOpen = MENU_HELP THEN
+    ELSEIF currentMenu = MENU_HELP THEN
         IF m.MenuIndex = 0 THEN
             m.DialogMode = DIALOG_HELP
         ELSEIF m.MenuIndex = 1 THEN
@@ -776,8 +869,6 @@ FUNCTION ExecuteMenuItem(m AS EditorModel) AS (tea.Model, tea.Cmd)
         ENDIF
     ENDIF
 
-    ' Reset menu state after checking
-    m.MenuOpen = MENU_NONE
     RETURN m, NIL
 END FUNCTION
 
@@ -922,49 +1013,202 @@ FUNCTION DoSaveFile(m AS EditorModel) AS (tea.Model, tea.Cmd)
     RETURN m, NIL
 END FUNCTION
 
+' Check if a position is within selection
+FUNCTION IsInSelection(m AS EditorModel, row AS INTEGER, col AS INTEGER) AS BOOLEAN
+    IF NOT m.Selecting THEN
+        RETURN FALSE
+    ENDIF
+
+    DIM startY AS INTEGER
+    DIM startX AS INTEGER
+    DIM endY AS INTEGER
+    DIM endX AS INTEGER
+    startY, startX, endY, endX = GetSelectionBounds(m)
+
+    IF row < startY OR row > endY THEN
+        RETURN FALSE
+    ENDIF
+
+    IF row = startY AND row = endY THEN
+        RETURN col >= startX AND col < endX
+    ELSEIF row = startY THEN
+        RETURN col >= startX
+    ELSEIF row = endY THEN
+        RETURN col < endX
+    ELSE
+        RETURN TRUE
+    ENDIF
+END FUNCTION
+
+' Get normalized selection bounds (start before end)
+FUNCTION GetSelectionBounds(m AS EditorModel) AS (INTEGER, INTEGER, INTEGER, INTEGER)
+    DIM startY AS INTEGER = m.SelectStartY
+    DIM startX AS INTEGER = m.SelectStartX
+    DIM endY AS INTEGER = m.SelectEndY
+    DIM endX AS INTEGER = m.SelectEndX
+
+    ' Swap if end is before start
+    IF endY < startY OR (endY = startY AND endX < startX) THEN
+        DIM tmpY AS INTEGER = startY
+        DIM tmpX AS INTEGER = startX
+        startY = endY
+        startX = endX
+        endY = tmpY
+        endX = tmpX
+    ENDIF
+
+    RETURN startY, startX, endY, endX
+END FUNCTION
+
+' Get selected text
+FUNCTION GetSelectedText(m AS EditorModel) AS STRING
+    IF NOT m.Selecting THEN
+        RETURN ""
+    ENDIF
+
+    DIM startY AS INTEGER
+    DIM startX AS INTEGER
+    DIM endY AS INTEGER
+    DIM endX AS INTEGER
+    startY, startX, endY, endX = GetSelectionBounds(m)
+
+    DIM result AS STRING = ""
+    DIM y AS INTEGER
+
+    FOR y = startY TO endY
+        DIM line AS STRING = GetLine(m.Content, y + 1)
+        DIM lineStart AS INTEGER = 0
+        DIM lineEnd AS INTEGER = Len(line)
+
+        IF y = startY THEN
+            lineStart = startX
+        ENDIF
+        IF y = endY THEN
+            lineEnd = endX
+        ENDIF
+
+        IF lineEnd > lineStart THEN
+            result = result & Mid(line, lineStart + 1, lineEnd - lineStart)
+        ENDIF
+
+        IF y < endY THEN
+            result = result & Chr(10)
+        ENDIF
+    NEXT
+
+    RETURN result
+END FUNCTION
+
+' Delete selected text and return the position to place cursor
+FUNCTION DeleteSelection(m AS POINTER TO EditorModel) AS (INTEGER, INTEGER)
+    IF NOT (^m).Selecting THEN
+        RETURN (^m).CursorX, (^m).CursorY
+    ENDIF
+
+    DIM startY AS INTEGER
+    DIM startX AS INTEGER
+    DIM endY AS INTEGER
+    DIM endX AS INTEGER
+    startY, startX, endY, endX = GetSelectionBounds(^m)
+
+    ' Build new content without selected text
+    DIM totalLines AS INTEGER = CountLines((^m).Content)
+    DIM newContent AS STRING = ""
+    DIM y AS INTEGER
+
+    FOR y = 0 TO totalLines - 1
+        DIM line AS STRING = GetLine((^m).Content, y + 1)
+
+        IF y < startY OR y > endY THEN
+            ' Line not in selection - keep as is
+            IF Len(newContent) > 0 THEN
+                newContent = newContent & Chr(10)
+            ENDIF
+            newContent = newContent & line
+        ELSEIF y = startY AND y = endY THEN
+            ' Selection within one line
+            IF Len(newContent) > 0 THEN
+                newContent = newContent & Chr(10)
+            ENDIF
+            newContent = newContent & Left(line, startX) & Mid(line, endX + 1, Len(line) - endX)
+        ELSEIF y = startY THEN
+            ' First line of multi-line selection
+            IF Len(newContent) > 0 THEN
+                newContent = newContent & Chr(10)
+            ENDIF
+            newContent = newContent & Left(line, startX)
+        ELSEIF y = endY THEN
+            ' Last line of multi-line selection - join with first line
+            newContent = newContent & Mid(line, endX + 1, Len(line) - endX)
+        ENDIF
+        ' Lines between startY and endY are skipped entirely
+    NEXT
+
+    (^m).Content = newContent
+    (^m).Selecting = FALSE
+    (^m).Modified = TRUE
+
+    RETURN startX, startY
+END FUNCTION
+
 ' Edit operations
 FUNCTION DoCopy(m AS EditorModel) AS (tea.Model, tea.Cmd)
-    ' For simplicity, copy current line
-    m.Clipboard = GetLine(m.Content, m.CursorY + 1)
-    m.Message = "Line copied"
+    IF m.Selecting THEN
+        m.Clipboard = GetSelectedText(m)
+        m.Message = "Copied"
+    ELSE
+        ' Copy current line
+        m.Clipboard = GetLine(m.Content, m.CursorY + 1)
+        m.Message = "Line copied"
+    ENDIF
     RETURN m, NIL
 END FUNCTION
 
 FUNCTION DoCut(m AS EditorModel) AS (tea.Model, tea.Cmd)
-    m.Clipboard = GetLine(m.Content, m.CursorY + 1)
-
-    ' Remove current line
-    DIM totalLines AS INTEGER = CountLines(m.Content)
-    IF totalLines = 1 THEN
-        m.Content = ""
+    IF m.Selecting THEN
+        m.Clipboard = GetSelectedText(m)
+        DIM newX AS INTEGER
+        DIM newY AS INTEGER
+        newX, newY = DeleteSelection(@m)
+        m.CursorX = newX
+        m.CursorY = newY
+        m.Message = "Cut"
     ELSE
-        DIM newContent AS STRING = ""
-        DIM i AS INTEGER
-        FOR i = 1 TO totalLines
-            IF i <> m.CursorY + 1 THEN
-                IF Len(newContent) > 0 THEN
-                    newContent = newContent & Chr(10)
+        m.Clipboard = GetLine(m.Content, m.CursorY + 1)
+
+        ' Remove current line
+        DIM totalLines AS INTEGER = CountLines(m.Content)
+        IF totalLines = 1 THEN
+            m.Content = ""
+        ELSE
+            DIM newContent AS STRING = ""
+            DIM i AS INTEGER
+            FOR i = 1 TO totalLines
+                IF i <> m.CursorY + 1 THEN
+                    IF Len(newContent) > 0 THEN
+                        newContent = newContent & Chr(10)
+                    ENDIF
+                    newContent = newContent & GetLine(m.Content, i)
                 ENDIF
-                newContent = newContent & GetLine(m.Content, i)
-            ENDIF
-        NEXT
-        m.Content = newContent
-    ENDIF
-
-    IF m.CursorY >= CountLines(m.Content) THEN
-        m.CursorY = CountLines(m.Content) - 1
-        IF m.CursorY < 0 THEN
-            m.CursorY = 0
+            NEXT
+            m.Content = newContent
         ENDIF
-    ENDIF
 
-    DIM newLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
-    IF m.CursorX > newLineLen THEN
-        m.CursorX = newLineLen
-    ENDIF
+        IF m.CursorY >= CountLines(m.Content) THEN
+            m.CursorY = CountLines(m.Content) - 1
+            IF m.CursorY < 0 THEN
+                m.CursorY = 0
+            ENDIF
+        ENDIF
 
-    m.Modified = TRUE
-    m.Message = "Line cut"
+        DIM newLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
+        IF m.CursorX > newLineLen THEN
+            m.CursorX = newLineLen
+        ENDIF
+
+        m.Modified = TRUE
+        m.Message = "Line cut"
+    ENDIF
     RETURN m, NIL
 END FUNCTION
 
@@ -974,31 +1218,78 @@ FUNCTION DoPaste(m AS EditorModel) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     ENDIF
 
-    ' Insert clipboard as new line below cursor
-    DIM totalLines AS INTEGER = CountLines(m.Content)
-    DIM newContent AS STRING = ""
-    DIM i AS INTEGER
+    ' Delete selection first if any
+    IF m.Selecting THEN
+        DIM delX AS INTEGER
+        DIM delY AS INTEGER
+        delX, delY = DeleteSelection(@m)
+        m.CursorX = delX
+        m.CursorY = delY
+    ENDIF
 
-    FOR i = 1 TO totalLines
-        IF Len(newContent) > 0 THEN
-            newContent = newContent & Chr(10)
-        ENDIF
-        newContent = newContent & GetLine(m.Content, i)
-        IF i = m.CursorY + 1 THEN
-            newContent = newContent & Chr(10) & m.Clipboard
-        ENDIF
-    NEXT
+    ' Insert clipboard at cursor position
+    DIM clipLines AS INTEGER = CountLines(m.Clipboard)
 
-    m.Content = newContent
-    m.CursorY = m.CursorY + 1
-    m.CursorX = 0
+    IF clipLines = 1 THEN
+        ' Single line paste - insert at cursor
+        DIM line AS STRING = GetLine(m.Content, m.CursorY + 1)
+        DIM newLine AS STRING = Left(line, m.CursorX) & m.Clipboard & Mid(line, m.CursorX + 1, Len(line) - m.CursorX)
+        m.Content = SetLine(m.Content, m.CursorY + 1, newLine)
+        m.CursorX = m.CursorX + Len(m.Clipboard)
+    ELSE
+        ' Multi-line paste
+        DIM currentLine AS STRING = GetLine(m.Content, m.CursorY + 1)
+        DIM beforeCursor AS STRING = Left(currentLine, m.CursorX)
+        DIM afterCursor AS STRING = Mid(currentLine, m.CursorX + 1, Len(currentLine) - m.CursorX)
+
+        DIM newContent AS STRING = ""
+        DIM totalLines AS INTEGER = CountLines(m.Content)
+        DIM y AS INTEGER
+
+        FOR y = 1 TO totalLines
+            IF y = m.CursorY + 1 THEN
+                ' Insert clipboard here
+                DIM clipY AS INTEGER
+                FOR clipY = 1 TO clipLines
+                    IF Len(newContent) > 0 THEN
+                        newContent = newContent & Chr(10)
+                    ENDIF
+                    IF clipY = 1 THEN
+                        newContent = newContent & beforeCursor & GetLine(m.Clipboard, clipY)
+                    ELSEIF clipY = clipLines THEN
+                        newContent = newContent & GetLine(m.Clipboard, clipY) & afterCursor
+                    ELSE
+                        newContent = newContent & GetLine(m.Clipboard, clipY)
+                    ENDIF
+                NEXT
+            ELSE
+                IF Len(newContent) > 0 THEN
+                    newContent = newContent & Chr(10)
+                ENDIF
+                newContent = newContent & GetLine(m.Content, y)
+            ENDIF
+        NEXT
+
+        m.Content = newContent
+        m.CursorY = m.CursorY + clipLines - 1
+        m.CursorX = Len(GetLine(m.Clipboard, clipLines))
+    ENDIF
+
     m.Modified = TRUE
     m.Message = "Pasted"
     RETURN m, NIL
 END FUNCTION
 
 FUNCTION DoSelectAll(m AS EditorModel) AS (tea.Model, tea.Cmd)
-    m.Message = "Select All not yet implemented"
+    DIM totalLines AS INTEGER = CountLines(m.Content)
+    m.Selecting = TRUE
+    m.SelectStartX = 0
+    m.SelectStartY = 0
+    m.SelectEndY = totalLines - 1
+    m.SelectEndX = GetLineLength(m.Content, totalLines)
+    m.CursorY = m.SelectEndY
+    m.CursorX = m.SelectEndX
+    m.Message = "All selected"
     RETURN m, NIL
 END FUNCTION
 
@@ -1126,38 +1417,32 @@ FUNCTION (m AS EditorModel) View() AS STRING
             ENDIF
         ENDIF
 
-        ' Content with cursor
-        IF lineIdx = m.CursorY THEN
-            DIM cursorCol AS INTEGER = m.CursorX - m.ScrollX
-            DIM beforeCursor AS STRING = ""
-            DIM cursorChar AS STRING = " "
-            DIM afterCursor AS STRING = ""
+        ' Render content with selection highlighting and cursor
+        DIM lineContent AS STRING = ""
+        DIM col AS INTEGER
+        DIM cursorCol AS INTEGER = m.CursorX - m.ScrollX
+        DIM renderedLen AS INTEGER = 0
 
-            IF cursorCol > 0 AND Len(lineText) > 0 THEN
-                IF cursorCol <= Len(lineText) THEN
-                    beforeCursor = Left(lineText, cursorCol)
-                ELSE
-                    beforeCursor = lineText & RepeatChar(" ", cursorCol - Len(lineText))
-                ENDIF
+        FOR col = 0 TO contentWidth - 1
+            DIM actualCol AS INTEGER = m.ScrollX + col
+            DIM ch AS STRING = " "
+
+            IF col < Len(lineText) THEN
+                ch = Mid(lineText, col + 1, 1)
             ENDIF
 
-            IF cursorCol >= 0 AND cursorCol < Len(lineText) THEN
-                cursorChar = Mid(lineText, cursorCol + 1, 1)
-                IF cursorCol + 1 < Len(lineText) THEN
-                    afterCursor = Mid(lineText, cursorCol + 2, Len(lineText) - cursorCol - 1)
-                ENDIF
+            ' Check if cursor is here
+            IF lineIdx = m.CursorY AND col = cursorCol THEN
+                lineContent = lineContent & cursorStyle.Render(ch)
+            ELSEIF IsInSelection(m, lineIdx, actualCol) THEN
+                lineContent = lineContent & selectedStyle.Render(ch)
+            ELSE
+                lineContent = lineContent & textAreaStyle.Render(ch)
             ENDIF
+            renderedLen = renderedLen + 1
+        NEXT
 
-            DIM lineContent AS STRING = textAreaStyle.Render(beforeCursor) & cursorStyle.Render(cursorChar) & textAreaStyle.Render(afterCursor)
-            DIM displayLen AS INTEGER = Len(beforeCursor) + 1 + Len(afterCursor)
-            IF displayLen < contentWidth THEN
-                lineContent = lineContent & textAreaStyle.Render(RepeatChar(" ", contentWidth - displayLen))
-            ENDIF
-            view = view & lineContent
-        ELSE
-            DIM paddedLine AS STRING = PadRight(lineText, contentWidth)
-            view = view & textAreaStyle.Render(paddedLine)
-        ENDIF
+        view = view & lineContent
 
         view = view & Chr(10)
     NEXT
@@ -1192,53 +1477,45 @@ FUNCTION (m AS EditorModel) View() AS STRING
     RETURN view
 END FUNCTION
 
+' Render a menu item with highlighted hotkey
+FUNCTION RenderMenuItemWithHotkey(name AS STRING, hotkeyPos AS INTEGER, selected AS BOOLEAN) AS STRING
+    DIM before AS STRING = Left(name, hotkeyPos - 1)
+    DIM hotkey AS STRING = Mid(name, hotkeyPos, 1)
+    DIM after AS STRING = Mid(name, hotkeyPos + 1, Len(name) - hotkeyPos)
+
+    IF selected THEN
+        RETURN menuItemSelectedStyle.Render(" " & before) & menuHotkeySelectedStyle.Render(hotkey) & menuItemSelectedStyle.Render(after & " ")
+    ELSE
+        RETURN menuItemStyle.Render(" " & before) & menuHotkeyStyle.Render(hotkey) & menuItemStyle.Render(after & " ")
+    ENDIF
+END FUNCTION
+
 ' Render menu bar
 FUNCTION RenderMenuBar(m AS EditorModel) AS STRING
-    DIM bar AS STRING = " "
+    DIM bar AS STRING = ""
 
-    IF m.MenuOpen = MENU_FILE THEN
-        bar = bar & menuItemSelectedStyle.Render("File")
-    ELSE
-        bar = bar & menuItemStyle.Render("File")
-    ENDIF
+    ' File (F is hotkey at position 1)
+    bar = bar & RenderMenuItemWithHotkey("File", 1, m.MenuOpen = MENU_FILE)
 
-    bar = bar & " "
+    ' Edit (E is hotkey at position 1)
+    bar = bar & RenderMenuItemWithHotkey("Edit", 1, m.MenuOpen = MENU_EDIT)
 
-    IF m.MenuOpen = MENU_EDIT THEN
-        bar = bar & menuItemSelectedStyle.Render("Edit")
-    ELSE
-        bar = bar & menuItemStyle.Render("Edit")
-    ENDIF
+    ' Search (S is hotkey at position 1)
+    bar = bar & RenderMenuItemWithHotkey("Search", 1, m.MenuOpen = MENU_SEARCH)
 
-    bar = bar & " "
+    ' Options (O is hotkey at position 1)
+    bar = bar & RenderMenuItemWithHotkey("Options", 1, m.MenuOpen = MENU_OPTIONS)
 
-    IF m.MenuOpen = MENU_SEARCH THEN
-        bar = bar & menuItemSelectedStyle.Render("Search")
-    ELSE
-        bar = bar & menuItemStyle.Render("Search")
-    ENDIF
-
-    bar = bar & " "
-
-    IF m.MenuOpen = MENU_OPTIONS THEN
-        bar = bar & menuItemSelectedStyle.Render("Options")
-    ELSE
-        bar = bar & menuItemStyle.Render("Options")
-    ENDIF
-
-    bar = bar & " "
-
-    IF m.MenuOpen = MENU_HELP THEN
-        bar = bar & menuItemSelectedStyle.Render("Help")
-    ELSE
-        bar = bar & menuItemStyle.Render("Help")
-    ENDIF
+    ' Help (H is hotkey at position 1)
+    bar = bar & RenderMenuItemWithHotkey("Help", 1, m.MenuOpen = MENU_HELP)
 
     ' Pad to full width
-    DIM currentLen AS INTEGER = 40
-    bar = bar & menuBarStyle.Render(RepeatChar(" ", m.Width - currentLen))
+    DIM currentLen AS INTEGER = 38
+    IF m.Width > currentLen THEN
+        bar = bar & menuBarStyle.Render(RepeatChar(" ", m.Width - currentLen))
+    ENDIF
 
-    RETURN menuBarStyle.Render(bar)
+    RETURN bar
 END FUNCTION
 
 ' Render dropdown menu
