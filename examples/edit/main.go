@@ -1,15 +1,44 @@
 package main
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
-	lipgloss "github.com/charmbracelet/lipgloss"
-	"strings"
 	"os"
 	"strconv"
 	fmt "fmt"
+	tea "github.com/charmbracelet/bubbletea"
+	lipgloss "github.com/charmbracelet/lipgloss"
+	"strings"
 )
 
 // Runtime helper functions
+
+// Left returns the leftmost n characters
+func Left(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	return s[:n]
+}
+
+// ReadFile reads entire file contents
+func ReadFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// Instr finds the position of substring in string (1-based)
+func Instr(s, substr string) int {
+	idx := strings.Index(s, substr)
+	if idx == -1 {
+		return 0
+	}
+	return idx + 1
+}
 
 // Len returns the length of a string
 func Len(s string) int {
@@ -59,35 +88,6 @@ func Int(val interface{}) int {
 func FileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-// Instr finds the position of substring in string (1-based)
-func Instr(s, substr string) int {
-	idx := strings.Index(s, substr)
-	if idx == -1 {
-		return 0
-	}
-	return idx + 1
-}
-
-// Left returns the leftmost n characters
-func Left(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	if n >= len(s) {
-		return s
-	}
-	return s[:n]
-}
-
-// ReadFile reads entire file contents
-func ReadFile(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(data)
 }
 
 // WriteFile writes string to file
@@ -1243,14 +1243,31 @@ func DoGotoLine(m EditorModel) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func GetDropdownHeight(menu int) int {
+	if (menu == MENU_FILE) {
+		return 8
+	} else if (menu == MENU_EDIT) {
+		return 8
+	} else if (menu == MENU_SEARCH) {
+		return 6
+	} else if (menu == MENU_OPTIONS) {
+		return 4
+	} else if (menu == MENU_HELP) {
+		return 4
+	}
+	return 0
+}
+
 func (m EditorModel) View() string {
 	var view string = ""
 	var totalLines int = CountLines(m.Content)
 	view = (RenderMenuBar(m) + Chr(10))
+	var dropdownHeight int = 0
 	if (m.MenuOpen != MENU_NONE) {
 		view = (view + RenderDropdown(m))
+		dropdownHeight = GetDropdownHeight(m.MenuOpen)
 	}
-	var contentHeight int = (m.Height - 3)
+	var contentHeight int = ((m.Height - 3) - dropdownHeight)
 	if (contentHeight < 1) {
 		contentHeight = 1
 	}

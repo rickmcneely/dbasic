@@ -1362,6 +1362,22 @@ FUNCTION DoGotoLine(m AS EditorModel) AS (tea.Model, tea.Cmd)
     RETURN m, NIL
 END FUNCTION
 
+' Get dropdown height for a menu
+FUNCTION GetDropdownHeight(menu AS INTEGER) AS INTEGER
+    IF menu = MENU_FILE THEN
+        RETURN 8   ' 6 items + 2 border lines
+    ELSEIF menu = MENU_EDIT THEN
+        RETURN 8
+    ELSEIF menu = MENU_SEARCH THEN
+        RETURN 6
+    ELSEIF menu = MENU_OPTIONS THEN
+        RETURN 4
+    ELSEIF menu = MENU_HELP THEN
+        RETURN 4
+    ENDIF
+    RETURN 0
+END FUNCTION
+
 ' View renders the editor
 FUNCTION (m AS EditorModel) View() AS STRING
     DIM view AS STRING = ""
@@ -1371,12 +1387,14 @@ FUNCTION (m AS EditorModel) View() AS STRING
     view = RenderMenuBar(m) & Chr(10)
 
     ' Render dropdown if menu is open
+    DIM dropdownHeight AS INTEGER = 0
     IF m.MenuOpen <> MENU_NONE THEN
         view = view & RenderDropdown(m)
+        dropdownHeight = GetDropdownHeight(m.MenuOpen)
     ENDIF
 
-    ' Calculate content area
-    DIM contentHeight AS INTEGER = m.Height - 3
+    ' Calculate content area (subtract dropdown height if menu open)
+    DIM contentHeight AS INTEGER = m.Height - 3 - dropdownHeight
     IF contentHeight < 1 THEN
         contentHeight = 1
     ENDIF
