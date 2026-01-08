@@ -92,6 +92,10 @@ DIM menuItemSelectedStyle AS lipgloss.Style
 DIM menuHotkeyStyle AS lipgloss.Style
 DIM menuHotkeySelectedStyle AS lipgloss.Style
 DIM menuDropdownStyle AS lipgloss.Style
+DIM dropdownItemStyle AS lipgloss.Style
+DIM dropdownItemSelectedStyle AS lipgloss.Style
+DIM dropdownHotkeyStyle AS lipgloss.Style
+DIM dropdownHotkeySelectedStyle AS lipgloss.Style
 DIM textAreaStyle AS lipgloss.Style
 DIM statusBarStyle AS lipgloss.Style
 DIM dialogStyle AS lipgloss.Style
@@ -112,6 +116,13 @@ SUB InitStyles()
 
     ' Dropdown menu - white on blue
     menuDropdownStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("15"))
+
+    ' Dropdown item styles - white on blue, selected is black on white
+    dropdownItemStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15"))
+    dropdownItemSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
+    ' Dropdown hotkey - red on blue for normal, red on white for selected
+    dropdownHotkeyStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("9"))
+    dropdownHotkeySelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("1"))
 
     ' Text area - white on blue (classic DOS look)
     textAreaStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15"))
@@ -785,6 +796,73 @@ FUNCTION HandleMenuInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.Cmd
         RETURN ExecuteMenuItem(m)
     ENDIF
 
+    ' Handle hotkey shortcuts for menu items
+    IF m.MenuOpen = MENU_FILE THEN
+        IF key = "n" OR key = "N" THEN
+            m.MenuIndex = 0
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "o" OR key = "O" THEN
+            m.MenuIndex = 1
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "s" OR key = "S" THEN
+            m.MenuIndex = 2
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "a" OR key = "A" THEN
+            m.MenuIndex = 3
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "x" OR key = "X" THEN
+            m.MenuIndex = 5
+            RETURN ExecuteMenuItem(m)
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_EDIT THEN
+        IF key = "t" OR key = "T" THEN
+            m.MenuIndex = 0
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "c" OR key = "C" THEN
+            m.MenuIndex = 1
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "p" OR key = "P" THEN
+            m.MenuIndex = 2
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "a" OR key = "A" THEN
+            m.MenuIndex = 4
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "l" OR key = "L" THEN
+            m.MenuIndex = 5
+            RETURN ExecuteMenuItem(m)
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_SEARCH THEN
+        IF key = "f" OR key = "F" THEN
+            m.MenuIndex = 0
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "n" OR key = "N" THEN
+            m.MenuIndex = 1
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "r" OR key = "R" THEN
+            m.MenuIndex = 2
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "g" OR key = "G" THEN
+            m.MenuIndex = 3
+            RETURN ExecuteMenuItem(m)
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_OPTIONS THEN
+        IF key = "l" OR key = "L" THEN
+            m.MenuIndex = 0
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "i" OR key = "I" THEN
+            m.MenuIndex = 1
+            RETURN ExecuteMenuItem(m)
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_HELP THEN
+        IF key = "h" OR key = "H" THEN
+            m.MenuIndex = 0
+            RETURN ExecuteMenuItem(m)
+        ELSEIF key = "a" OR key = "A" THEN
+            m.MenuIndex = 1
+            RETURN ExecuteMenuItem(m)
+        ENDIF
+    ENDIF
+
     RETURN m, NIL
 END FUNCTION
 
@@ -1364,33 +1442,35 @@ END FUNCTION
 
 ' Get dropdown lines as an array of strings (without padding - positioning handled in View)
 ' All menu items are exactly 18 characters to fit in 20-char box (1 border + 18 content + 1 border)
+' Hotkeys: N=New, O=Open, S=Save, A=SaveAs, X=Exit, T=Cut, C=Copy, P=Paste, L=SelectAll, E=Clear
+'          F=Find, N=FindNext, R=Replace, G=GoTo, L=LineNumbers, I=InsertMode, H=Help, A=About
 FUNCTION GetDropdownLines(m AS EditorModel) AS []STRING
     DIM lines AS []STRING
 
     IF m.MenuOpen = MENU_FILE THEN
         lines = APPEND(lines, "┌──────────────────┐")
-        lines = APPEND(lines, "│" & RenderMenuItem("New         Ctrl+N", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Open        Ctrl+O", m.MenuIndex = 1) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Save        Ctrl+S", m.MenuIndex = 2) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Save As...        ", m.MenuIndex = 3) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("New         Ctrl+N", 1, m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Open        Ctrl+O", 1, m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Save        Ctrl+S", 1, m.MenuIndex = 2) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Save As...        ", 6, m.MenuIndex = 3) & "│")
         lines = APPEND(lines, "│" & RenderMenuItem("──────────────────", FALSE) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Exit        Alt+X ", m.MenuIndex = 5) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Exit        Alt+X ", 2, m.MenuIndex = 5) & "│")
         lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_EDIT THEN
         lines = APPEND(lines, "┌──────────────────┐")
-        lines = APPEND(lines, "│" & RenderMenuItem("Cut         Ctrl+X", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Copy        Ctrl+C", m.MenuIndex = 1) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Paste       Ctrl+V", m.MenuIndex = 2) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Cut         Ctrl+X", 3, m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Copy        Ctrl+C", 1, m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Paste       Ctrl+V", 1, m.MenuIndex = 2) & "│")
         lines = APPEND(lines, "│" & RenderMenuItem("──────────────────", FALSE) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Select All  Ctrl+A", m.MenuIndex = 4) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Clear             ", m.MenuIndex = 5) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Select All  Ctrl+A", 8, m.MenuIndex = 4) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Clear             ", 2, m.MenuIndex = 5) & "│")
         lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_SEARCH THEN
         lines = APPEND(lines, "┌──────────────────┐")
-        lines = APPEND(lines, "│" & RenderMenuItem("Find        Ctrl+F", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Find Next   F3    ", m.MenuIndex = 1) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Replace     Ctrl+H", m.MenuIndex = 2) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Go to Line  Ctrl+G", m.MenuIndex = 3) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Find        Ctrl+F", 1, m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Find Next   F3    ", 6, m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Replace     Ctrl+H", 1, m.MenuIndex = 2) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Go to Line  Ctrl+G", 1, m.MenuIndex = 3) & "│")
         lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_OPTIONS THEN
         DIM lineNumCheck AS STRING = "[ ]"
@@ -1402,13 +1482,13 @@ FUNCTION GetDropdownLines(m AS EditorModel) AS []STRING
             insertCheck = "[X]"
         ENDIF
         lines = APPEND(lines, "┌──────────────────┐")
-        lines = APPEND(lines, "│" & RenderMenuItem(lineNumCheck & " Line Numbers  ", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem(insertCheck & " Insert Mode   ", m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem(lineNumCheck & " Line Numbers  ", 5, m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem(insertCheck & " Insert Mode   ", 5, m.MenuIndex = 1) & "│")
         lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_HELP THEN
         lines = APPEND(lines, "┌──────────────────┐")
-        lines = APPEND(lines, "│" & RenderMenuItem("Help          F1  ", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("About             ", m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("Help          F1  ", 1, m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderDropdownItem("About             ", 1, m.MenuIndex = 1) & "│")
         lines = APPEND(lines, "└──────────────────┘")
     ENDIF
 
@@ -1634,12 +1714,26 @@ FUNCTION GetDropdownWidth(menu AS INTEGER) AS INTEGER
     RETURN 20
 END FUNCTION
 
-' Render a single menu item
+' Render a single menu item (no hotkey)
 FUNCTION RenderMenuItem(text AS STRING, selected AS BOOLEAN) AS STRING
     IF selected THEN
-        RETURN menuItemSelectedStyle.Render(text)
+        RETURN dropdownItemSelectedStyle.Render(text)
     ENDIF
-    RETURN text
+    RETURN dropdownItemStyle.Render(text)
+END FUNCTION
+
+' Render a dropdown menu item with highlighted hotkey
+' hotkeyPos is 1-indexed position of the hotkey character
+FUNCTION RenderDropdownItem(text AS STRING, hotkeyPos AS INTEGER, selected AS BOOLEAN) AS STRING
+    DIM before AS STRING = Left(text, hotkeyPos - 1)
+    DIM hotkey AS STRING = Mid(text, hotkeyPos, 1)
+    DIM after AS STRING = Mid(text, hotkeyPos + 1, Len(text) - hotkeyPos)
+
+    IF selected THEN
+        RETURN dropdownItemSelectedStyle.Render(before) & dropdownHotkeySelectedStyle.Render(hotkey) & dropdownItemSelectedStyle.Render(after)
+    ELSE
+        RETURN dropdownItemStyle.Render(before) & dropdownHotkeyStyle.Render(hotkey) & dropdownItemStyle.Render(after)
+    ENDIF
 END FUNCTION
 
 ' Render dialog box
