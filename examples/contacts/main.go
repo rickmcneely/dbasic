@@ -271,28 +271,6 @@ func (app *Application) Run() error {
 				},
 			},
 		},
-		ToolBar: ToolBar{
-			ButtonStyle: ToolBarButtonTextOnly,
-			Items: []MenuItem{
-				Action{
-					Text:        "New",
-					OnTriggered: app.onNewContact,
-				},
-				Action{
-					Text:        "Edit",
-					OnTriggered: app.onEditContact,
-				},
-				Action{
-					Text:        "Delete",
-					OnTriggered: app.onDeleteContact,
-				},
-				Separator{},
-				Action{
-					Text:        "Refresh",
-					OnTriggered: app.onRefresh,
-				},
-			},
-		},
 		Children: []Widget{
 			Composite{
 				Layout: HBox{},
