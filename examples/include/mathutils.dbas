@@ -1,0 +1,57 @@
+' Math Utilities Library
+' Demonstrates shared code via INCLUDE
+
+' Calculate factorial
+FUNCTION Factorial(n AS LONG) AS LONG
+    IF n <= 1 THEN
+        RETURN 1
+    ENDIF
+    RETURN n * Factorial(n - 1)
+END FUNCTION
+
+' Calculate fibonacci number
+FUNCTION Fibonacci(n AS LONG) AS LONG
+    IF n <= 1 THEN
+        RETURN n
+    ENDIF
+    DIM a AS LONG = 0
+    DIM b AS LONG = 1
+    DIM i AS LONG
+    FOR i = 2 TO n
+        DIM temp AS LONG = a + b
+        a = b
+        b = temp
+    NEXT
+    RETURN b
+END FUNCTION
+
+' Check if a number is prime
+FUNCTION IsPrime(n AS INTEGER) AS BOOLEAN
+    IF n < 2 THEN
+        RETURN FALSE
+    ENDIF
+    IF n = 2 THEN
+        RETURN TRUE
+    ENDIF
+    IF n MOD 2 = 0 THEN
+        RETURN FALSE
+    ENDIF
+    DIM i AS INTEGER
+    DIM limit AS INTEGER = Int(Sqr(Dbl(n)))
+    FOR i = 3 TO limit STEP 2
+        IF n MOD i = 0 THEN
+            RETURN FALSE
+        ENDIF
+    NEXT
+    RETURN TRUE
+END FUNCTION
+
+' Greatest common divisor
+FUNCTION GCD(a AS INTEGER, b AS INTEGER) AS INTEGER
+    WHILE b <> 0
+        DIM temp AS INTEGER = b
+        b = a MOD b
+        a = temp
+    WEND
+    RETURN a
+END FUNCTION

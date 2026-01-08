@@ -124,6 +124,9 @@ const (
 	TOKEN_SPAWN
 	TOKEN_IMPLEMENTS
 
+	// Keywords - File Inclusion
+	TOKEN_INCLUDE
+
 	// Keywords - Channels
 	TOKEN_CHANNEL
 	TOKEN_SEND
@@ -227,6 +230,7 @@ var tokenNames = map[TokenType]string{
 	TOKEN_IMPORT:      "IMPORT",
 	TOKEN_SPAWN:       "SPAWN",
 	TOKEN_IMPLEMENTS:  "IMPLEMENTS",
+	TOKEN_INCLUDE:     "INCLUDE",
 	TOKEN_CHANNEL:     "CHANNEL",
 	TOKEN_SEND:        "SEND",
 	TOKEN_RECEIVE:     "RECEIVE",
@@ -294,6 +298,7 @@ var Keywords = map[string]TokenType{
 	"IMPORT":    TOKEN_IMPORT,
 	"SPAWN":      TOKEN_SPAWN,
 	"IMPLEMENTS": TOKEN_IMPLEMENTS,
+	"INCLUDE":    TOKEN_INCLUDE,
 	"CHANNEL":   TOKEN_CHANNEL,
 	"SEND":      TOKEN_SEND,
 	"RECEIVE":   TOKEN_RECEIVE,

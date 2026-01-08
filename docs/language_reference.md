@@ -15,9 +15,10 @@ This document provides a complete reference for the DBasic programming language.
 9. [Pointers](#pointers)
 10. [Channels and Concurrency](#channels-and-concurrency)
 11. [JSON](#json)
-12. [Go Package Integration](#go-package-integration)
-13. [Built-in Functions](#built-in-functions)
-14. [Keywords](#keywords)
+12. [File Inclusion](#file-inclusion)
+13. [Go Package Integration](#go-package-integration)
+14. [Built-in Functions](#built-in-functions)
+15. [Keywords](#keywords)
 
 ---
 
@@ -678,6 +679,79 @@ PRINT data.user.name
 
 ---
 
+## File Inclusion
+
+The `INCLUDE` directive allows you to include other DBasic source files, enabling code reuse and modular organization.
+
+### Basic Usage
+
+```basic
+INCLUDE "mathutils.dbas"
+INCLUDE "stringutils.dbas"
+
+SUB Main()
+    ' Use functions from included files
+    PRINT Factorial(5)
+    PRINT ReverseStr("Hello")
+END SUB
+```
+
+### Path Resolution
+
+- Paths are relative to the including file's directory
+- Absolute paths are also supported
+- File extension should be `.dbas`
+
+```basic
+' Relative to current file
+INCLUDE "utils/helpers.dbas"
+
+' Parent directory
+INCLUDE "../common/shared.dbas"
+```
+
+### Circular Include Prevention
+
+The preprocessor automatically detects and prevents circular includes:
+
+```basic
+' File: a.dbas
+INCLUDE "b.dbas"  ' OK
+
+' File: b.dbas
+INCLUDE "a.dbas"  ' Error: circular include detected
+```
+
+### Best Practices
+
+1. **Library files**: Create reusable utility functions in separate files
+2. **No Main() in libraries**: Include files typically contain only functions and types, not the Main() subroutine
+3. **One responsibility**: Each include file should focus on related functionality
+
+### Example: Modular Project Structure
+
+```
+project/
+├── main.dbas           ' Main program with SUB Main()
+├── mathutils.dbas      ' Math utility functions
+├── stringutils.dbas    ' String utility functions
+└── types.dbas          ' Shared type definitions
+```
+
+**main.dbas:**
+```basic
+INCLUDE "types.dbas"
+INCLUDE "mathutils.dbas"
+INCLUDE "stringutils.dbas"
+
+SUB Main()
+    DIM result AS INTEGER = Factorial(5)
+    PRINT result
+END SUB
+```
+
+---
+
 ## Go Package Integration
 
 ### Importing Packages
@@ -894,13 +968,13 @@ BYVAL     BYTES     CAP       CASE      CHAN      CHANNEL
 CLOSE     CONST     COPY      DELETE    DIM       DO
 DOUBLE    ELSE      ELSEIF    END       ENDIF     EXIT
 FALSE     FOR       FROM      FUNCTION  GOSUB     GOTO
-IF        IMPORT    INPUT     INTEGER   JSON      LEN
-LET       LONG      LOOP      MAKE      MAKE_CHAN MOD
-NEW       NEXT      NIL       NOT       OF        OR
-POINTER   PRINT     RECEIVE   RETURN    SELECT    SEND
-SINGLE    SPAWN     STEP      STRING    SUB       THEN
-TO        TRUE      TYPE      UNTIL     WEND      WHILE
-XOR
+IF        IMPORT    INCLUDE   INPUT     INTEGER   JSON
+LEN       LET       LONG      LOOP      MAKE      MAKE_CHAN
+MOD       NEW       NEXT      NIL       NOT       OF
+OR        POINTER   PRINT     RECEIVE   RETURN    SELECT
+SEND      SINGLE    SPAWN     STEP      STRING    SUB
+THEN      TO        TRUE      TYPE      UNTIL     WEND
+WHILE     XOR
 ```
 
 ---

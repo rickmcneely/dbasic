@@ -1,0 +1,32 @@
+' Main Program - Demonstrates INCLUDE directive
+' Include utility libraries
+
+INCLUDE "mathutils.dbas"
+INCLUDE "stringutils.dbas"
+
+SUB Main()
+    PRINT "=== DBasic INCLUDE Demo ==="
+    PRINT ""
+
+    ' Test math utilities
+    PRINT "--- Math Utilities ---"
+    Printf("Factorial(5) = %d\n", Factorial(5))
+    Printf("Factorial(10) = %d\n", Factorial(10))
+    Printf("Fibonacci(10) = %d\n", Fibonacci(10))
+    Printf("Fibonacci(20) = %d\n", Fibonacci(20))
+    Printf("IsPrime(17) = %v\n", IsPrime(17))
+    Printf("IsPrime(18) = %v\n", IsPrime(18))
+    Printf("GCD(48, 18) = %d\n", GCD(48, 18))
+    PRINT ""
+
+    ' Test string utilities
+    PRINT "--- String Utilities ---"
+    Printf("RepeatStr(\"ab\", 5) = %s\n", RepeatStr("ab", 5))
+    Printf("ReverseStr(\"Hello\") = %s\n", ReverseStr("Hello"))
+    Printf("CountChar(\"banana\", \"a\") = %d\n", CountChar("banana", "a"))
+    Printf("IsPalindrome(\"racecar\") = %v\n", IsPalindrome("racecar"))
+    Printf("IsPalindrome(\"hello\") = %v\n", IsPalindrome("hello"))
+    PRINT ""
+
+    PRINT "=== Demo Complete ==="
+END SUB

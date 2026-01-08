@@ -238,6 +238,57 @@ func Int(val interface{}) int {
 		return 0
 	}
 }`,
+	"Lng": `// Lng converts to int64 (LONG)
+func Lng(val interface{}) int64 {
+	switch v := val.(type) {
+	case int:
+		return int64(v)
+	case int32:
+		return int64(v)
+	case int64:
+		return v
+	case float32:
+		return int64(v)
+	case float64:
+		return int64(v)
+	default:
+		return 0
+	}
+}`,
+	"Sng": `// Sng converts to float32 (SINGLE)
+func Sng(val interface{}) float32 {
+	switch v := val.(type) {
+	case int:
+		return float32(v)
+	case int32:
+		return float32(v)
+	case int64:
+		return float32(v)
+	case float32:
+		return v
+	case float64:
+		return float32(v)
+	default:
+		return 0
+	}
+}`,
+	"Dbl": `// Dbl converts to float64 (DOUBLE)
+func Dbl(val interface{}) float64 {
+	switch v := val.(type) {
+	case int:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case float32:
+		return float64(v)
+	case float64:
+		return v
+	default:
+		return 0
+	}
+}`,
 	"Sleep": `// Sleep pauses execution for specified milliseconds
 func Sleep(ms int) {
 	time.Sleep(time.Duration(ms) * time.Millisecond)
@@ -1168,14 +1219,47 @@ func (g *Generator) generateFor(stmt *parser.ForStatement) {
 		step = g.exprToGo(stmt.Step)
 	}
 
+	// Determine comparison operator based on step direction
+	// Check if step is negative (handles literal negative numbers and prefix expressions)
+	comparison := "<="
+	if g.isNegativeStep(stmt.Step) {
+		comparison = ">="
+	}
+
 	// In BASIC, FOR loop variables are typically pre-declared
 	// Use = instead of := to avoid redeclaration
-	g.writeLine(fmt.Sprintf("for %s = %s; %s <= %s; %s += %s {",
-		varName, start, varName, end, varName, step))
+	g.writeLine(fmt.Sprintf("for %s = %s; %s %s %s; %s += %s {",
+		varName, start, varName, comparison, end, varName, step))
 	g.indent++
 	g.generateBlockStatement(stmt.Body)
 	g.indent--
 	g.writeLine("}")
+}
+
+// isNegativeStep checks if the step expression is a negative value
+func (g *Generator) isNegativeStep(step parser.Expression) bool {
+	if step == nil {
+		return false
+	}
+
+	// Check for prefix expression with minus operator (e.g., -1)
+	if prefix, ok := step.(*parser.PrefixExpression); ok {
+		if prefix.Operator == "-" {
+			return true
+		}
+	}
+
+	// Check for negative integer literal
+	if intLit, ok := step.(*parser.IntegerLiteral); ok {
+		return intLit.Value < 0
+	}
+
+	// Check for negative float literal
+	if floatLit, ok := step.(*parser.FloatLiteral); ok {
+		return floatLit.Value < 0
+	}
+
+	return false
 }
 
 func (g *Generator) generateWhile(stmt *parser.WhileStatement) {

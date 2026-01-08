@@ -1,5 +1,5 @@
 # Compiled binaries
-dbasic
+/dbasic
 examples/*/edit
 examples/*/gorillas
 examples/edit/edit

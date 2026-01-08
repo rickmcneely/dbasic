@@ -1,0 +1,40 @@
+' String Utilities Library
+' Demonstrates shared code via INCLUDE
+
+' Repeat a string n times
+FUNCTION RepeatStr(s AS STRING, n AS INTEGER) AS STRING
+    DIM result AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        result = result & s
+    NEXT
+    RETURN result
+END FUNCTION
+
+' Reverse a string
+FUNCTION ReverseStr(s AS STRING) AS STRING
+    DIM result AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = Len(s) TO 1 STEP -1
+        result = result & Mid(s, i, 1)
+    NEXT
+    RETURN result
+END FUNCTION
+
+' Count occurrences of a character in a string
+FUNCTION CountChar(s AS STRING, ch AS STRING) AS INTEGER
+    DIM count AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 1 TO Len(s)
+        IF Mid(s, i, 1) = ch THEN
+            count = count + 1
+        ENDIF
+    NEXT
+    RETURN count
+END FUNCTION
+
+' Check if string is a palindrome
+FUNCTION IsPalindrome(s AS STRING) AS BOOLEAN
+    DIM lower AS STRING = LCase(s)
+    RETURN lower = ReverseStr(lower)
+END FUNCTION

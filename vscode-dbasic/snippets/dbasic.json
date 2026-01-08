@@ -241,6 +241,13 @@
     ],
     "description": "Import a Go package with alias"
   },
+  "Include File": {
+    "prefix": "include",
+    "body": [
+      "INCLUDE \"${1:filename.dbas}\""
+    ],
+    "description": "Include another DBasic source file"
+  },
   "Bytes Declaration": {
     "prefix": "bytes",
     "body": [

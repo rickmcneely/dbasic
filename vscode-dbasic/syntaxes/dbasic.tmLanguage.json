@@ -69,7 +69,7 @@
         },
         {
           "name": "keyword.other.dbasic",
-          "match": "(?i)\\b(IMPORT|PRINT|INPUT|SPAWN|SEND|RECEIVE|FROM|MAKE_CHAN|APPEND|MAKE|COPY|DELETE|CLOSE|NEW)\\b"
+          "match": "(?i)\\b(IMPORT|INCLUDE|PRINT|INPUT|SPAWN|SEND|RECEIVE|FROM|MAKE_CHAN|APPEND|MAKE|COPY|DELETE|CLOSE|NEW)\\b"
         }
       ]
     },
