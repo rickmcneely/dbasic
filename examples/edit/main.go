@@ -1,12 +1,12 @@
 package main
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
-	"strconv"
 	fmt "fmt"
+	"os"
+	tea "github.com/charmbracelet/bubbletea"
 	lipgloss "github.com/charmbracelet/lipgloss"
 	"strings"
-	"os"
+	"strconv"
 )
 
 // Runtime helper functions
@@ -20,6 +20,22 @@ func Left(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// Mid returns a substring starting at position start with length ln
+func Mid(s string, start, ln int) string {
+	if start < 1 {
+		start = 1
+	}
+	startIdx := start - 1
+	if startIdx >= len(s) {
+		return ""
+	}
+	endIdx := startIdx + ln
+	if endIdx > len(s) {
+		endIdx = len(s)
+	}
+	return s[startIdx:endIdx]
 }
 
 // Chr returns the character for an ASCII code
@@ -41,40 +57,9 @@ func WriteFile(path, content string) {
 	os.WriteFile(path, []byte(content), 0644)
 }
 
-// Instr finds the position of substring in string (1-based)
-func Instr(s, substr string) int {
-	idx := strings.Index(s, substr)
-	if idx == -1 {
-		return 0
-	}
-	return idx + 1
-}
-
-// Val converts a string to float64
-func Val(s string) float64 {
-	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	return v
-}
-
 // Len returns the length of a string
 func Len(s string) int {
 	return len(s)
-}
-
-// Mid returns a substring starting at position start with length ln
-func Mid(s string, start, ln int) string {
-	if start < 1 {
-		start = 1
-	}
-	startIdx := start - 1
-	if startIdx >= len(s) {
-		return ""
-	}
-	endIdx := startIdx + ln
-	if endIdx > len(s) {
-		endIdx = len(s)
-	}
-	return s[startIdx:endIdx]
 }
 
 // Int converts to int
@@ -99,6 +84,21 @@ func Int(val interface{}) int {
 func FileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// Instr finds the position of substring in string (1-based)
+func Instr(s, substr string) int {
+	idx := strings.Index(s, substr)
+	if idx == -1 {
+		return 0
+	}
+	return idx + 1
+}
+
+// Val converts a string to float64
+func Val(s string) float64 {
+	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return v
 }
 
 type EditorModel struct {
@@ -1243,31 +1243,68 @@ func DoGotoLine(m EditorModel) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func GetDropdownHeight(menu int) int {
-	if (menu == MENU_FILE) {
-		return 8
-	} else if (menu == MENU_EDIT) {
-		return 8
-	} else if (menu == MENU_SEARCH) {
-		return 6
-	} else if (menu == MENU_OPTIONS) {
-		return 4
-	} else if (menu == MENU_HELP) {
-		return 4
+func GetDropdownLines(m EditorModel) []string {
+	var lines []string
+	var offset int = GetMenuOffset(m.MenuOpen)
+	var padding string = RepeatChar(" ", offset)
+	if (m.MenuOpen == MENU_FILE) {
+		lines = append(lines, (padding + "┌──────────────────┐"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("New         Ctrl+N", (m.MenuIndex == 0))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Open        Ctrl+O", (m.MenuIndex == 1))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Save        Ctrl+S", (m.MenuIndex == 2))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Save As...       ", (m.MenuIndex == 3))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("-----------------", false)) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Exit        Alt+X ", (m.MenuIndex == 5))) + "│"))
+		lines = append(lines, (padding + "└──────────────────┘"))
+	} else if (m.MenuOpen == MENU_EDIT) {
+		lines = append(lines, (padding + "┌──────────────────┐"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Cut         Ctrl+X", (m.MenuIndex == 0))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Copy        Ctrl+C", (m.MenuIndex == 1))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Paste       Ctrl+V", (m.MenuIndex == 2))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("-----------------", false)) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Select All  Ctrl+A", (m.MenuIndex == 4))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Clear            ", (m.MenuIndex == 5))) + "│"))
+		lines = append(lines, (padding + "└──────────────────┘"))
+	} else if (m.MenuOpen == MENU_SEARCH) {
+		lines = append(lines, (padding + "┌──────────────────┐"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Find        Ctrl+F", (m.MenuIndex == 0))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Find Next   F3    ", (m.MenuIndex == 1))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Replace     Ctrl+H", (m.MenuIndex == 2))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Go to Line  Ctrl+G", (m.MenuIndex == 3))) + "│"))
+		lines = append(lines, (padding + "└──────────────────┘"))
+	} else if (m.MenuOpen == MENU_OPTIONS) {
+		var lineNumCheck string = "[ ]"
+		if m.ShowLineNumbers {
+			lineNumCheck = "[X]"
+		}
+		var insertCheck string = "[ ]"
+		if m.InsertMode {
+			insertCheck = "[X]"
+		}
+		lines = append(lines, (padding + "┌─────────────────┐"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem((lineNumCheck + " Line Numbers"), (m.MenuIndex == 0))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem((insertCheck + " Insert Mode "), (m.MenuIndex == 1))) + "│"))
+		lines = append(lines, (padding + "└─────────────────┘"))
+	} else if (m.MenuOpen == MENU_HELP) {
+		lines = append(lines, (padding + "┌──────────────────┐"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("Help        F1    ", (m.MenuIndex == 0))) + "│"))
+		lines = append(lines, (((padding + "│") + RenderMenuItem("About            ", (m.MenuIndex == 1))) + "│"))
+		lines = append(lines, (padding + "└──────────────────┘"))
 	}
-	return 0
+	return lines
 }
 
 func (m EditorModel) View() string {
 	var view string = ""
 	var totalLines int = CountLines(m.Content)
 	view = (RenderMenuBar(m) + Chr(10))
+	var dropdownLines []string
 	var dropdownHeight int = 0
 	if (m.MenuOpen != MENU_NONE) {
-		view = (view + RenderDropdown(m))
-		dropdownHeight = GetDropdownHeight(m.MenuOpen)
+		dropdownLines = GetDropdownLines(m)
+		dropdownHeight = len(dropdownLines)
 	}
-	var contentHeight int = ((m.Height - 3) - dropdownHeight)
+	var contentHeight int = (m.Height - 3)
 	if (contentHeight < 1) {
 		contentHeight = 1
 	}
@@ -1281,44 +1318,51 @@ func (m EditorModel) View() string {
 	}
 	var i int
 	for i = 0; i <= (contentHeight - 1); i += 1 {
-		var lineIdx int = (m.ScrollY + i)
-		var lineText string = ""
-		if (lineIdx < totalLines) {
-			lineText = GetLine(m.Content, (lineIdx + 1))
-		}
-		if ((m.ScrollX > 0) && (len(lineText) > m.ScrollX)) {
-			lineText = Mid(lineText, (m.ScrollX + 1), (len(lineText) - m.ScrollX))
-		} else if (m.ScrollX > 0) {
-			lineText = ""
-		}
-		if m.ShowLineNumbers {
+		if ((i < dropdownHeight) && (m.MenuOpen != MENU_NONE)) {
+			var dropLine string = dropdownLines[i]
+			var dropLen int = len(dropLine)
+			view = ((view + dropLine) + textAreaStyle.Render(RepeatChar(" ", (contentWidth - dropLen))))
+			view = (view + Chr(10))
+		} else {
+			var lineIdx int = (m.ScrollY + i)
+			var lineText string = ""
 			if (lineIdx < totalLines) {
-				view = (view + lineNumStyle.Render(fmt.Sprintf("%5d ", (lineIdx + 1))))
-			} else {
-				view = (view + lineNumStyle.Render("      "))
+				lineText = GetLine(m.Content, (lineIdx + 1))
 			}
+			if ((m.ScrollX > 0) && (len(lineText) > m.ScrollX)) {
+				lineText = Mid(lineText, (m.ScrollX + 1), (len(lineText) - m.ScrollX))
+			} else if (m.ScrollX > 0) {
+				lineText = ""
+			}
+			if m.ShowLineNumbers {
+				if (lineIdx < totalLines) {
+					view = (view + lineNumStyle.Render(fmt.Sprintf("%5d ", (lineIdx + 1))))
+				} else {
+					view = (view + lineNumStyle.Render("      "))
+				}
+			}
+			var lineContent string = ""
+			var col int
+			var cursorCol int = (m.CursorX - m.ScrollX)
+			var renderedLen int = 0
+			for col = 0; col <= (contentWidth - 1); col += 1 {
+				var actualCol int = (m.ScrollX + col)
+				var ch string = " "
+				if (col < len(lineText)) {
+					ch = Mid(lineText, (col + 1), 1)
+				}
+				if ((lineIdx == m.CursorY) && (col == cursorCol)) {
+					lineContent = (lineContent + cursorStyle.Render(ch))
+				} else if IsInSelection(m, lineIdx, actualCol) {
+					lineContent = (lineContent + selectedStyle.Render(ch))
+				} else {
+					lineContent = (lineContent + textAreaStyle.Render(ch))
+				}
+				renderedLen = (renderedLen + 1)
+			}
+			view = (view + lineContent)
+			view = (view + Chr(10))
 		}
-		var lineContent string = ""
-		var col int
-		var cursorCol int = (m.CursorX - m.ScrollX)
-		var renderedLen int = 0
-		for col = 0; col <= (contentWidth - 1); col += 1 {
-			var actualCol int = (m.ScrollX + col)
-			var ch string = " "
-			if (col < len(lineText)) {
-				ch = Mid(lineText, (col + 1), 1)
-			}
-			if ((lineIdx == m.CursorY) && (col == cursorCol)) {
-				lineContent = (lineContent + cursorStyle.Render(ch))
-			} else if IsInSelection(m, lineIdx, actualCol) {
-				lineContent = (lineContent + selectedStyle.Render(ch))
-			} else {
-				lineContent = (lineContent + textAreaStyle.Render(ch))
-			}
-			renderedLen = (renderedLen + 1)
-		}
-		view = (view + lineContent)
-		view = (view + Chr(10))
 	}
 	var status string = ""
 	if (len(m.Filename) > 0) {
@@ -1373,69 +1417,15 @@ func GetMenuOffset(menu int) int {
 	if (menu == MENU_FILE) {
 		return 0
 	} else if (menu == MENU_EDIT) {
-		return 7
+		return 6
 	} else if (menu == MENU_SEARCH) {
-		return 14
+		return 12
 	} else if (menu == MENU_OPTIONS) {
-		return 23
+		return 20
 	} else if (menu == MENU_HELP) {
-		return 33
+		return 29
 	}
 	return 0
-}
-
-func RenderDropdown(m EditorModel) string {
-	var items string = ""
-	if (m.MenuOpen == MENU_FILE) {
-		items = (RenderMenuItem("New         Ctrl+N", (m.MenuIndex == 0)) + Chr(10))
-		items = ((items + RenderMenuItem("Open        Ctrl+O", (m.MenuIndex == 1))) + Chr(10))
-		items = ((items + RenderMenuItem("Save        Ctrl+S", (m.MenuIndex == 2))) + Chr(10))
-		items = ((items + RenderMenuItem("Save As...       ", (m.MenuIndex == 3))) + Chr(10))
-		items = ((items + RenderMenuItem("-----------------", false)) + Chr(10))
-		items = (items + RenderMenuItem("Exit        Alt+X ", (m.MenuIndex == 5)))
-	} else if (m.MenuOpen == MENU_EDIT) {
-		items = (RenderMenuItem("Cut         Ctrl+X", (m.MenuIndex == 0)) + Chr(10))
-		items = ((items + RenderMenuItem("Copy        Ctrl+C", (m.MenuIndex == 1))) + Chr(10))
-		items = ((items + RenderMenuItem("Paste       Ctrl+V", (m.MenuIndex == 2))) + Chr(10))
-		items = ((items + RenderMenuItem("-----------------", false)) + Chr(10))
-		items = ((items + RenderMenuItem("Select All  Ctrl+A", (m.MenuIndex == 4))) + Chr(10))
-		items = (items + RenderMenuItem("Clear            ", (m.MenuIndex == 5)))
-	} else if (m.MenuOpen == MENU_SEARCH) {
-		items = (RenderMenuItem("Find        Ctrl+F", (m.MenuIndex == 0)) + Chr(10))
-		items = ((items + RenderMenuItem("Find Next   F3    ", (m.MenuIndex == 1))) + Chr(10))
-		items = ((items + RenderMenuItem("Replace     Ctrl+H", (m.MenuIndex == 2))) + Chr(10))
-		items = (items + RenderMenuItem("Go to Line  Ctrl+G", (m.MenuIndex == 3)))
-	} else if (m.MenuOpen == MENU_OPTIONS) {
-		var lineNumCheck string = "[ ]"
-		if m.ShowLineNumbers {
-			lineNumCheck = "[X]"
-		}
-		var insertCheck string = "[ ]"
-		if m.InsertMode {
-			insertCheck = "[X]"
-		}
-		items = (RenderMenuItem((lineNumCheck + " Line Numbers "), (m.MenuIndex == 0)) + Chr(10))
-		items = (items + RenderMenuItem((insertCheck + " Insert Mode  "), (m.MenuIndex == 1)))
-	} else if (m.MenuOpen == MENU_HELP) {
-		items = (RenderMenuItem("Help        F1    ", (m.MenuIndex == 0)) + Chr(10))
-		items = (items + RenderMenuItem("About            ", (m.MenuIndex == 1)))
-	}
-	var offset int = GetMenuOffset(m.MenuOpen)
-	var padding string = RepeatChar(" ", offset)
-	var dropdown string = menuDropdownStyle.Render(items)
-	var result string = ""
-	var i int
-	var lineStart int = 1
-	for i = 1; i <= len(dropdown); i += 1 {
-		if (Mid(dropdown, i, 1) == Chr(10)) {
-			result = (((result + padding) + Mid(dropdown, lineStart, (i - lineStart))) + Chr(10))
-			lineStart = (i + 1)
-		}
-	}
-	if (lineStart <= len(dropdown)) {
-		result = ((result + padding) + Mid(dropdown, lineStart, ((len(dropdown) - lineStart) + 1)))
-	}
-	return (result + Chr(10))
 }
 
 func RenderMenuItem(text string, selected bool) string {
