@@ -1362,37 +1362,35 @@ FUNCTION DoGotoLine(m AS EditorModel) AS (tea.Model, tea.Cmd)
     RETURN m, NIL
 END FUNCTION
 
-' Get dropdown lines as an array of strings
+' Get dropdown lines as an array of strings (without padding - positioning handled in View)
 FUNCTION GetDropdownLines(m AS EditorModel) AS []STRING
     DIM lines AS []STRING
-    DIM offset AS INTEGER = GetMenuOffset(m.MenuOpen)
-    DIM padding AS STRING = RepeatChar(" ", offset)
 
     IF m.MenuOpen = MENU_FILE THEN
-        lines = APPEND(lines, padding & "┌──────────────────┐")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("New         Ctrl+N", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Open        Ctrl+O", m.MenuIndex = 1) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Save        Ctrl+S", m.MenuIndex = 2) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Save As...       ", m.MenuIndex = 3) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("-----------------", FALSE) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Exit        Alt+X ", m.MenuIndex = 5) & "│")
-        lines = APPEND(lines, padding & "└──────────────────┘")
+        lines = APPEND(lines, "┌──────────────────┐")
+        lines = APPEND(lines, "│" & RenderMenuItem("New         Ctrl+N", m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Open        Ctrl+O", m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Save        Ctrl+S", m.MenuIndex = 2) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Save As...       ", m.MenuIndex = 3) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("-----------------", FALSE) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Exit        Alt+X ", m.MenuIndex = 5) & "│")
+        lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_EDIT THEN
-        lines = APPEND(lines, padding & "┌──────────────────┐")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Cut         Ctrl+X", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Copy        Ctrl+C", m.MenuIndex = 1) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Paste       Ctrl+V", m.MenuIndex = 2) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("-----------------", FALSE) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Select All  Ctrl+A", m.MenuIndex = 4) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Clear            ", m.MenuIndex = 5) & "│")
-        lines = APPEND(lines, padding & "└──────────────────┘")
+        lines = APPEND(lines, "┌──────────────────┐")
+        lines = APPEND(lines, "│" & RenderMenuItem("Cut         Ctrl+X", m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Copy        Ctrl+C", m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Paste       Ctrl+V", m.MenuIndex = 2) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("-----------------", FALSE) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Select All  Ctrl+A", m.MenuIndex = 4) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Clear            ", m.MenuIndex = 5) & "│")
+        lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_SEARCH THEN
-        lines = APPEND(lines, padding & "┌──────────────────┐")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Find        Ctrl+F", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Find Next   F3    ", m.MenuIndex = 1) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Replace     Ctrl+H", m.MenuIndex = 2) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Go to Line  Ctrl+G", m.MenuIndex = 3) & "│")
-        lines = APPEND(lines, padding & "└──────────────────┘")
+        lines = APPEND(lines, "┌──────────────────┐")
+        lines = APPEND(lines, "│" & RenderMenuItem("Find        Ctrl+F", m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Find Next   F3    ", m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Replace     Ctrl+H", m.MenuIndex = 2) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Go to Line  Ctrl+G", m.MenuIndex = 3) & "│")
+        lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_OPTIONS THEN
         DIM lineNumCheck AS STRING = "[ ]"
         IF m.ShowLineNumbers THEN
@@ -1402,15 +1400,15 @@ FUNCTION GetDropdownLines(m AS EditorModel) AS []STRING
         IF m.InsertMode THEN
             insertCheck = "[X]"
         ENDIF
-        lines = APPEND(lines, padding & "┌─────────────────┐")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem(lineNumCheck & " Line Numbers", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem(insertCheck & " Insert Mode ", m.MenuIndex = 1) & "│")
-        lines = APPEND(lines, padding & "└─────────────────┘")
+        lines = APPEND(lines, "┌─────────────────┐")
+        lines = APPEND(lines, "│" & RenderMenuItem(lineNumCheck & " Line Numbers", m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem(insertCheck & " Insert Mode ", m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "└─────────────────┘")
     ELSEIF m.MenuOpen = MENU_HELP THEN
-        lines = APPEND(lines, padding & "┌──────────────────┐")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("Help        F1    ", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, padding & "│" & RenderMenuItem("About            ", m.MenuIndex = 1) & "│")
-        lines = APPEND(lines, padding & "└──────────────────┘")
+        lines = APPEND(lines, "┌──────────────────┐")
+        lines = APPEND(lines, "│" & RenderMenuItem("Help        F1    ", m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("About            ", m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "└──────────────────┘")
     ENDIF
 
     RETURN lines
@@ -1449,32 +1447,60 @@ FUNCTION (m AS EditorModel) View() AS STRING
         contentWidth = 10
     ENDIF
 
+    ' Get dropdown positioning info
+    DIM dropOffset AS INTEGER = 0
+    DIM dropWidth AS INTEGER = 0
+    IF m.MenuOpen <> MENU_NONE THEN
+        dropOffset = GetMenuOffset(m.MenuOpen)
+        dropWidth = GetDropdownWidth(m.MenuOpen)
+    ENDIF
+
     DIM i AS INTEGER
     FOR i = 0 TO contentHeight - 1
+        DIM lineIdx AS INTEGER = m.ScrollY + i
+        DIM lineText AS STRING = ""
+
+        IF lineIdx < totalLines THEN
+            lineText = GetLine(m.Content, lineIdx + 1)
+        ENDIF
+
+        ' Apply horizontal scroll
+        IF m.ScrollX > 0 AND Len(lineText) > m.ScrollX THEN
+            lineText = Mid(lineText, m.ScrollX + 1, Len(lineText) - m.ScrollX)
+        ELSEIF m.ScrollX > 0 THEN
+            lineText = ""
+        ENDIF
+
+        ' Declare common variables for content rendering
+        DIM col AS INTEGER
+        DIM cursorCol AS INTEGER = m.CursorX - m.ScrollX
+
         ' Check if this line should show dropdown overlay
         IF i < dropdownHeight AND m.MenuOpen <> MENU_NONE THEN
-            ' Render dropdown line with content background on the rest
-            DIM dropLine AS STRING = dropdownLines[i]
-            DIM dropLen AS INTEGER = Len(dropLine)
+            ' Render content BEFORE dropdown (left side)
+            FOR col = 0 TO dropOffset - 1
+                DIM chLeft AS STRING = " "
+                IF col < Len(lineText) THEN
+                    chLeft = Mid(lineText, col + 1, 1)
+                ENDIF
+                view = view & textAreaStyle.Render(chLeft)
+            NEXT
 
-            ' Pad the rest of the line with content background
-            view = view & dropLine & textAreaStyle.Render(RepeatChar(" ", contentWidth - dropLen))
+            ' Render dropdown line
+            view = view & dropdownLines[i]
+
+            ' Render content AFTER dropdown (right side)
+            DIM afterStart AS INTEGER = dropOffset + dropWidth
+            FOR col = afterStart TO contentWidth - 1
+                DIM chRight AS STRING = " "
+                IF col < Len(lineText) THEN
+                    chRight = Mid(lineText, col + 1, 1)
+                ENDIF
+                view = view & textAreaStyle.Render(chRight)
+            NEXT
+
             view = view & Chr(10)
         ELSE
-            DIM lineIdx AS INTEGER = m.ScrollY + i
-            DIM lineText AS STRING = ""
-
-            IF lineIdx < totalLines THEN
-                lineText = GetLine(m.Content, lineIdx + 1)
-            ENDIF
-
-            ' Apply horizontal scroll
-            IF m.ScrollX > 0 AND Len(lineText) > m.ScrollX THEN
-                lineText = Mid(lineText, m.ScrollX + 1, Len(lineText) - m.ScrollX)
-            ELSEIF m.ScrollX > 0 THEN
-                lineText = ""
-            ENDIF
-
             ' Line number
             IF m.ShowLineNumbers THEN
                 IF lineIdx < totalLines THEN
@@ -1486,8 +1512,6 @@ FUNCTION (m AS EditorModel) View() AS STRING
 
             ' Render content with selection highlighting and cursor
             DIM lineContent AS STRING = ""
-            DIM col AS INTEGER
-            DIM cursorCol AS INTEGER = m.CursorX - m.ScrollX
             DIM renderedLen AS INTEGER = 0
 
             FOR col = 0 TO contentWidth - 1
@@ -1601,6 +1625,23 @@ FUNCTION GetMenuOffset(menu AS INTEGER) AS INTEGER
         RETURN 29
     ENDIF
     RETURN 0
+END FUNCTION
+
+' Get visible width of dropdown menu (excluding padding)
+FUNCTION GetDropdownWidth(menu AS INTEGER) AS INTEGER
+    ' Box drawing + content width
+    IF menu = MENU_FILE THEN
+        RETURN 20   ' ┌──────────────────┐
+    ELSEIF menu = MENU_EDIT THEN
+        RETURN 20
+    ELSEIF menu = MENU_SEARCH THEN
+        RETURN 20
+    ELSEIF menu = MENU_OPTIONS THEN
+        RETURN 19
+    ELSEIF menu = MENU_HELP THEN
+        RETURN 20
+    ENDIF
+    RETURN 20
 END FUNCTION
 
 ' Render a single menu item
