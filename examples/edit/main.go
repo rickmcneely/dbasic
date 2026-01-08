@@ -1,12 +1,12 @@
 package main
 
 import (
-	"os"
+	tea "github.com/charmbracelet/bubbletea"
 	"strconv"
 	fmt "fmt"
-	tea "github.com/charmbracelet/bubbletea"
 	lipgloss "github.com/charmbracelet/lipgloss"
 	"strings"
+	"os"
 )
 
 // Runtime helper functions
@@ -22,6 +22,11 @@ func Left(s string, n int) string {
 	return s[:n]
 }
 
+// Chr returns the character for an ASCII code
+func Chr(code int) string {
+	return string(rune(code))
+}
+
 // ReadFile reads entire file contents
 func ReadFile(path string) string {
 	data, err := os.ReadFile(path)
@@ -31,6 +36,11 @@ func ReadFile(path string) string {
 	return string(data)
 }
 
+// WriteFile writes string to file
+func WriteFile(path, content string) {
+	os.WriteFile(path, []byte(content), 0644)
+}
+
 // Instr finds the position of substring in string (1-based)
 func Instr(s, substr string) int {
 	idx := strings.Index(s, substr)
@@ -38,6 +48,12 @@ func Instr(s, substr string) int {
 		return 0
 	}
 	return idx + 1
+}
+
+// Val converts a string to float64
+func Val(s string) float64 {
+	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return v
 }
 
 // Len returns the length of a string
@@ -59,11 +75,6 @@ func Mid(s string, start, ln int) string {
 		endIdx = len(s)
 	}
 	return s[startIdx:endIdx]
-}
-
-// Chr returns the character for an ASCII code
-func Chr(code int) string {
-	return string(rune(code))
 }
 
 // Int converts to int
@@ -88,17 +99,6 @@ func Int(val interface{}) int {
 func FileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-// WriteFile writes string to file
-func WriteFile(path, content string) {
-	os.WriteFile(path, []byte(content), 0644)
-}
-
-// Val converts a string to float64
-func Val(s string) float64 {
-	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	return v
 }
 
 type EditorModel struct {
@@ -1369,6 +1369,21 @@ func RenderMenuBar(m EditorModel) string {
 	return bar
 }
 
+func GetMenuOffset(menu int) int {
+	if (menu == MENU_FILE) {
+		return 0
+	} else if (menu == MENU_EDIT) {
+		return 7
+	} else if (menu == MENU_SEARCH) {
+		return 14
+	} else if (menu == MENU_OPTIONS) {
+		return 23
+	} else if (menu == MENU_HELP) {
+		return 33
+	}
+	return 0
+}
+
 func RenderDropdown(m EditorModel) string {
 	var items string = ""
 	if (m.MenuOpen == MENU_FILE) {
@@ -1405,7 +1420,22 @@ func RenderDropdown(m EditorModel) string {
 		items = (RenderMenuItem("Help        F1    ", (m.MenuIndex == 0)) + Chr(10))
 		items = (items + RenderMenuItem("About            ", (m.MenuIndex == 1)))
 	}
-	return (menuDropdownStyle.Render(items) + Chr(10))
+	var offset int = GetMenuOffset(m.MenuOpen)
+	var padding string = RepeatChar(" ", offset)
+	var dropdown string = menuDropdownStyle.Render(items)
+	var result string = ""
+	var i int
+	var lineStart int = 1
+	for i = 1; i <= len(dropdown); i += 1 {
+		if (Mid(dropdown, i, 1) == Chr(10)) {
+			result = (((result + padding) + Mid(dropdown, lineStart, (i - lineStart))) + Chr(10))
+			lineStart = (i + 1)
+		}
+	}
+	if (lineStart <= len(dropdown)) {
+		result = ((result + padding) + Mid(dropdown, lineStart, ((len(dropdown) - lineStart) + 1)))
+	}
+	return (result + Chr(10))
 }
 
 func RenderMenuItem(text string, selected bool) string {

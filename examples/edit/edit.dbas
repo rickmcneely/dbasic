@@ -1536,6 +1536,23 @@ FUNCTION RenderMenuBar(m AS EditorModel) AS STRING
     RETURN bar
 END FUNCTION
 
+' Get horizontal offset for dropdown menu
+FUNCTION GetMenuOffset(menu AS INTEGER) AS INTEGER
+    ' Menu positions based on " File " " Edit " " Search " " Options " " Help "
+    IF menu = MENU_FILE THEN
+        RETURN 0
+    ELSEIF menu = MENU_EDIT THEN
+        RETURN 7
+    ELSEIF menu = MENU_SEARCH THEN
+        RETURN 14
+    ELSEIF menu = MENU_OPTIONS THEN
+        RETURN 23
+    ELSEIF menu = MENU_HELP THEN
+        RETURN 33
+    ENDIF
+    RETURN 0
+END FUNCTION
+
 ' Render dropdown menu
 FUNCTION RenderDropdown(m AS EditorModel) AS STRING
     DIM items AS STRING = ""
@@ -1575,7 +1592,27 @@ FUNCTION RenderDropdown(m AS EditorModel) AS STRING
         items = items & RenderMenuItem("About            ", m.MenuIndex = 1)
     ENDIF
 
-    RETURN menuDropdownStyle.Render(items) & Chr(10)
+    ' Position dropdown under its menu item
+    DIM offset AS INTEGER = GetMenuOffset(m.MenuOpen)
+    DIM padding AS STRING = RepeatChar(" ", offset)
+    DIM dropdown AS STRING = menuDropdownStyle.Render(items)
+
+    ' Add padding to each line of the dropdown
+    DIM result AS STRING = ""
+    DIM i AS INTEGER
+    DIM lineStart AS INTEGER = 1
+    FOR i = 1 TO Len(dropdown)
+        IF Mid(dropdown, i, 1) = Chr(10) THEN
+            result = result & padding & Mid(dropdown, lineStart, i - lineStart) & Chr(10)
+            lineStart = i + 1
+        ENDIF
+    NEXT
+    ' Add last line if no trailing newline
+    IF lineStart <= Len(dropdown) THEN
+        result = result & padding & Mid(dropdown, lineStart, Len(dropdown) - lineStart + 1)
+    ENDIF
+
+    RETURN result & Chr(10)
 END FUNCTION
 
 ' Render a single menu item
