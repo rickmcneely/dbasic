@@ -99,6 +99,7 @@ DIM dropdownHotkeySelectedStyle AS lipgloss.Style
 DIM textAreaStyle AS lipgloss.Style
 DIM statusBarStyle AS lipgloss.Style
 DIM dialogStyle AS lipgloss.Style
+DIM dialogBoxStyle AS lipgloss.Style
 DIM dialogTitleStyle AS lipgloss.Style
 DIM lineNumStyle AS lipgloss.Style
 DIM cursorStyle AS lipgloss.Style
@@ -130,8 +131,9 @@ SUB InitStyles()
     ' Status bar - black on cyan
     statusBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
 
-    ' Dialog box
+    ' Dialog box - dialogBoxStyle is used for overlay rendering
     dialogStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0")).Border(lipgloss.DoubleBorder()).BorderForeground(lipgloss.Color("0")).Padding(1, 2)
+    dialogBoxStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
     dialogTitleStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Padding(0, 1)
 
     ' Line numbers
@@ -500,6 +502,105 @@ SUB ClearSelection(m AS POINTER TO EditorModel)
     (^m).Selecting = FALSE
 END SUB
 
+' Check if character is a word character (alphanumeric or underscore)
+FUNCTION IsWordChar(ch AS STRING) AS BOOLEAN
+    IF Len(ch) = 0 THEN
+        RETURN FALSE
+    ENDIF
+    DIM c AS STRING = Mid(ch, 1, 1)
+    IF c >= "a" AND c <= "z" THEN
+        RETURN TRUE
+    ELSEIF c >= "A" AND c <= "Z" THEN
+        RETURN TRUE
+    ELSEIF c >= "0" AND c <= "9" THEN
+        RETURN TRUE
+    ELSEIF c = "_" THEN
+        RETURN TRUE
+    ENDIF
+    RETURN FALSE
+END FUNCTION
+
+' Find start of previous word (for Ctrl+Left)
+FUNCTION FindPrevWordStart(content AS STRING, lineNum AS INTEGER, col AS INTEGER) AS (INTEGER, INTEGER)
+    DIM line AS STRING = GetLine(content, lineNum)
+    DIM x AS INTEGER = col
+    DIM y AS INTEGER = lineNum - 1
+
+    ' If at start of line, go to end of previous line
+    IF x <= 0 THEN
+        IF y > 0 THEN
+            y = y - 1
+            line = GetLine(content, y + 1)
+            x = Len(line)
+        ELSE
+            RETURN 0, 0
+        ENDIF
+    ENDIF
+
+    ' Skip any whitespace/non-word chars going backward
+    DO WHILE x > 0
+        DIM ch AS STRING = Mid(line, x, 1)
+        IF IsWordChar(ch) THEN
+            EXIT DO
+        ENDIF
+        x = x - 1
+    LOOP
+
+    ' Now skip word chars to find start of word
+    DO WHILE x > 0
+        DIM prevCh AS STRING = Mid(line, x, 1)
+        IF NOT IsWordChar(prevCh) THEN
+            EXIT DO
+        ENDIF
+        x = x - 1
+    LOOP
+
+    RETURN x, y
+END FUNCTION
+
+' Find start of next word (for Ctrl+Right)
+FUNCTION FindNextWordStart(content AS STRING, lineNum AS INTEGER, col AS INTEGER, totalLines AS INTEGER) AS (INTEGER, INTEGER)
+    DIM line AS STRING = GetLine(content, lineNum)
+    DIM lineLen AS INTEGER = Len(line)
+    DIM x AS INTEGER = col
+    DIM y AS INTEGER = lineNum - 1
+
+    ' Skip current word chars
+    DO WHILE x < lineLen
+        DIM ch AS STRING = Mid(line, x + 1, 1)
+        IF NOT IsWordChar(ch) THEN
+            EXIT DO
+        ENDIF
+        x = x + 1
+    LOOP
+
+    ' Skip whitespace/non-word chars
+    DO WHILE x < lineLen
+        DIM ch2 AS STRING = Mid(line, x + 1, 1)
+        IF IsWordChar(ch2) THEN
+            EXIT DO
+        ENDIF
+        x = x + 1
+    LOOP
+
+    ' If at end of line, go to start of next line
+    IF x >= lineLen AND y < totalLines - 1 THEN
+        y = y + 1
+        x = 0
+        line = GetLine(content, y + 1)
+        ' Skip leading whitespace on new line
+        DO WHILE x < Len(line)
+            DIM ch3 AS STRING = Mid(line, x + 1, 1)
+            IF IsWordChar(ch3) THEN
+                EXIT DO
+            ENDIF
+            x = x + 1
+        LOOP
+    ENDIF
+
+    RETURN x, y
+END FUNCTION
+
 ' Handle editor input (navigation and text editing)
 FUNCTION HandleEditorInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.Cmd)
     DIM totalLines AS INTEGER = CountLines(m.Content)
@@ -569,6 +670,28 @@ FUNCTION HandleEditorInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.C
         m.SelectEndX = m.CursorX
         m.SelectEndY = m.CursorY
         RETURN m, NIL
+
+    ELSEIF key = "ctrl+shift+left" THEN
+        StartSelection(@m)
+        DIM prevX AS INTEGER
+        DIM prevY AS INTEGER
+        prevX, prevY = FindPrevWordStart(m.Content, m.CursorY + 1, m.CursorX)
+        m.CursorX = prevX
+        m.CursorY = prevY
+        m.SelectEndX = m.CursorX
+        m.SelectEndY = m.CursorY
+        RETURN m, NIL
+
+    ELSEIF key = "ctrl+shift+right" THEN
+        StartSelection(@m)
+        DIM nextX AS INTEGER
+        DIM nextY AS INTEGER
+        nextX, nextY = FindNextWordStart(m.Content, m.CursorY + 1, m.CursorX, totalLines)
+        m.CursorX = nextX
+        m.CursorY = nextY
+        m.SelectEndX = m.CursorX
+        m.SelectEndY = m.CursorY
+        RETURN m, NIL
     ENDIF
 
     ' Regular movement (clears selection)
@@ -622,6 +745,24 @@ FUNCTION HandleEditorInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.C
     ELSEIF key = "end" THEN
         ClearSelection(@m)
         m.CursorX = currentLineLen
+        m.Message = ""
+
+    ELSEIF key = "ctrl+left" THEN
+        ClearSelection(@m)
+        DIM wordPrevX AS INTEGER
+        DIM wordPrevY AS INTEGER
+        wordPrevX, wordPrevY = FindPrevWordStart(m.Content, m.CursorY + 1, m.CursorX)
+        m.CursorX = wordPrevX
+        m.CursorY = wordPrevY
+        m.Message = ""
+
+    ELSEIF key = "ctrl+right" THEN
+        ClearSelection(@m)
+        DIM wordNextX AS INTEGER
+        DIM wordNextY AS INTEGER
+        wordNextX, wordNextY = FindNextWordStart(m.Content, m.CursorY + 1, m.CursorX, totalLines)
+        m.CursorX = wordNextX
+        m.CursorY = wordNextY
         m.Message = ""
 
     ELSEIF key = "ctrl+home" THEN
@@ -1511,6 +1652,20 @@ FUNCTION (m AS EditorModel) View() AS STRING
         dropdownHeight = Len(dropdownLines)
     ENDIF
 
+    ' Get dialog lines if dialog is open
+    DIM dialogLines AS []STRING
+    DIM dialogHeight AS INTEGER = 0
+    DIM dialogWidth AS INTEGER = 0
+    DIM dialogStartRow AS INTEGER = 0
+    DIM dialogStartCol AS INTEGER = 0
+    IF m.DialogMode <> DIALOG_NONE THEN
+        dialogLines = GetDialogLines(m)
+        dialogHeight = Len(dialogLines)
+        dialogWidth, dialogHeight = GetDialogSize(m)
+        ' Override dialogHeight with actual line count
+        dialogHeight = Len(dialogLines)
+    ENDIF
+
     ' Calculate content area
     DIM contentHeight AS INTEGER = m.Height - 3
     IF contentHeight < 1 THEN
@@ -1536,6 +1691,18 @@ FUNCTION (m AS EditorModel) View() AS STRING
         dropWidth = GetDropdownWidth(m.MenuOpen)
     ENDIF
 
+    ' Calculate dialog centering
+    IF m.DialogMode <> DIALOG_NONE THEN
+        dialogStartRow = (contentHeight - dialogHeight) / 2
+        dialogStartCol = (contentWidth - dialogWidth) / 2
+        IF dialogStartRow < 0 THEN
+            dialogStartRow = 0
+        ENDIF
+        IF dialogStartCol < 0 THEN
+            dialogStartCol = 0
+        ENDIF
+    ENDIF
+
     DIM i AS INTEGER
     FOR i = 0 TO contentHeight - 1
         DIM lineIdx AS INTEGER = m.ScrollY + i
@@ -1556,10 +1723,20 @@ FUNCTION (m AS EditorModel) View() AS STRING
         DIM col AS INTEGER
         DIM cursorCol AS INTEGER = m.CursorX - m.ScrollX
 
-        ' Check if this line should show dropdown overlay
-        IF i < dropdownHeight AND m.MenuOpen <> MENU_NONE THEN
-            ' Render content BEFORE dropdown (left side)
-            FOR col = 0 TO dropOffset - 1
+        ' Check if this line should show dialog overlay
+        DIM dialogRowIdx AS INTEGER = i - dialogStartRow
+        IF m.DialogMode <> DIALOG_NONE AND dialogRowIdx >= 0 AND dialogRowIdx < Len(dialogLines) THEN
+            ' Line number if enabled
+            IF m.ShowLineNumbers THEN
+                IF lineIdx < totalLines THEN
+                    view = view & lineNumStyle.Render(fmt.Sprintf("%5d ", lineIdx + 1))
+                ELSE
+                    view = view & lineNumStyle.Render("      ")
+                ENDIF
+            ENDIF
+
+            ' Render content BEFORE dialog (left side)
+            FOR col = 0 TO dialogStartCol - 1
                 DIM chLeft AS STRING = " "
                 IF col < Len(lineText) THEN
                     chLeft = Mid(lineText, col + 1, 1)
@@ -1567,17 +1744,42 @@ FUNCTION (m AS EditorModel) View() AS STRING
                 view = view & textAreaStyle.Render(chLeft)
             NEXT
 
-            ' Render dropdown line
-            view = view & dropdownLines[i]
+            ' Render dialog line
+            view = view & dialogLines[dialogRowIdx]
 
-            ' Render content AFTER dropdown (right side)
-            DIM afterStart AS INTEGER = dropOffset + dropWidth
-            FOR col = afterStart TO contentWidth - 1
+            ' Render content AFTER dialog (right side)
+            DIM afterDialogStart AS INTEGER = dialogStartCol + dialogWidth
+            FOR col = afterDialogStart TO contentWidth - 1
                 DIM chRight AS STRING = " "
                 IF col < Len(lineText) THEN
                     chRight = Mid(lineText, col + 1, 1)
                 ENDIF
                 view = view & textAreaStyle.Render(chRight)
+            NEXT
+
+            view = view & Chr(10)
+        ' Check if this line should show dropdown overlay
+        ELSEIF i < dropdownHeight AND m.MenuOpen <> MENU_NONE THEN
+            ' Render content BEFORE dropdown (left side)
+            FOR col = 0 TO dropOffset - 1
+                DIM chDropLeft AS STRING = " "
+                IF col < Len(lineText) THEN
+                    chDropLeft = Mid(lineText, col + 1, 1)
+                ENDIF
+                view = view & textAreaStyle.Render(chDropLeft)
+            NEXT
+
+            ' Render dropdown line
+            view = view & dropdownLines[i]
+
+            ' Render content AFTER dropdown (right side)
+            DIM afterDropStart AS INTEGER = dropOffset + dropWidth
+            FOR col = afterDropStart TO contentWidth - 1
+                DIM chDropRight AS STRING = " "
+                IF col < Len(lineText) THEN
+                    chDropRight = Mid(lineText, col + 1, 1)
+                ENDIF
+                view = view & textAreaStyle.Render(chDropRight)
             NEXT
 
             view = view & Chr(10)
@@ -1640,11 +1842,6 @@ FUNCTION (m AS EditorModel) View() AS STRING
 
     ' Help line
     view = view & menuBarStyle.Render(PadRight(" F1=Help  F10=Menu  Ctrl+S=Save  Ctrl+Q=Quit", m.Width))
-
-    ' Render dialog if open
-    IF m.DialogMode <> DIALOG_NONE THEN
-        view = view & Chr(10) & RenderDialog(m)
-    ENDIF
 
     RETURN view
 END FUNCTION
@@ -1737,75 +1934,156 @@ FUNCTION RenderDropdownItem(text AS STRING, hotkeyPos AS INTEGER, selected AS BO
 END FUNCTION
 
 ' Render dialog box
-FUNCTION RenderDialog(m AS EditorModel) AS STRING
-    DIM content AS STRING = ""
+' Get dialog lines as array of strings for overlay rendering
+' Returns lines with box drawing, title centered in top border
+FUNCTION GetDialogLines(m AS EditorModel) AS []STRING
+    DIM lines AS []STRING
     DIM title AS STRING = ""
+    DIM width AS INTEGER = 40
+    DIM contentLines AS []STRING
 
     IF m.DialogMode = DIALOG_HELP THEN
         title = " Help "
-        content = "MS-DOS Editor Clone - Keyboard Shortcuts" & Chr(10) & Chr(10)
-        content = content & "File Operations:" & Chr(10)
-        content = content & "  Ctrl+N    New file" & Chr(10)
-        content = content & "  Ctrl+O    Open file" & Chr(10)
-        content = content & "  Ctrl+S    Save file" & Chr(10)
-        content = content & "  Ctrl+Q    Exit" & Chr(10) & Chr(10)
-        content = content & "Edit Operations:" & Chr(10)
-        content = content & "  Ctrl+C    Copy line" & Chr(10)
-        content = content & "  Ctrl+X    Cut line" & Chr(10)
-        content = content & "  Ctrl+V    Paste" & Chr(10) & Chr(10)
-        content = content & "Navigation:" & Chr(10)
-        content = content & "  Arrow keys, Home, End, PgUp, PgDn" & Chr(10)
-        content = content & "  Ctrl+Home/End  Start/end of file" & Chr(10) & Chr(10)
-        content = content & "Search:" & Chr(10)
-        content = content & "  Ctrl+F    Find" & Chr(10)
-        content = content & "  F3        Find next" & Chr(10)
-        content = content & "  Ctrl+G    Go to line" & Chr(10) & Chr(10)
-        content = content & "Press Enter or Esc to close"
+        width = 46
+        contentLines = APPEND(contentLines, " MS-DOS Editor Clone - Keyboard Shortcuts ")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, " File Operations:")
+        contentLines = APPEND(contentLines, "   Ctrl+N    New file")
+        contentLines = APPEND(contentLines, "   Ctrl+O    Open file")
+        contentLines = APPEND(contentLines, "   Ctrl+S    Save file")
+        contentLines = APPEND(contentLines, "   Ctrl+Q    Exit")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, " Edit Operations:")
+        contentLines = APPEND(contentLines, "   Ctrl+C    Copy")
+        contentLines = APPEND(contentLines, "   Ctrl+X    Cut")
+        contentLines = APPEND(contentLines, "   Ctrl+V    Paste")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, " Navigation:")
+        contentLines = APPEND(contentLines, "   Arrow keys, Home, End, PgUp, PgDn")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, " Search:")
+        contentLines = APPEND(contentLines, "   Ctrl+F  Find    F3  Find next")
+        contentLines = APPEND(contentLines, "   Ctrl+G  Go to line")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, " Press Enter or Esc to close")
 
     ELSEIF m.DialogMode = DIALOG_ABOUT THEN
         title = " About "
-        content = "DBasic EDIT" & Chr(10)
-        content = content & "Version 1.0" & Chr(10) & Chr(10)
-        content = content & "A clone of MS-DOS 5.0 EDIT.COM" & Chr(10)
-        content = content & "Written entirely in DBasic" & Chr(10) & Chr(10)
-        content = content & "Press Enter or Esc to close"
+        width = 36
+        contentLines = APPEND(contentLines, "       DBasic EDIT v1.0")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  A clone of MS-DOS 5.0 EDIT.COM")
+        contentLines = APPEND(contentLines, "  Written entirely in DBasic")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Press Enter or Esc to close")
 
     ELSEIF m.DialogMode = DIALOG_OPEN THEN
-        title = " Open File "
-        content = "Filename:" & Chr(10) & Chr(10)
-        content = content & "[" & m.DialogInput & "]" & Chr(10) & Chr(10)
-        content = content & "Enter=Open  Esc=Cancel"
+        title = " Open "
+        width = 40
+        contentLines = APPEND(contentLines, "  File Name:")
+        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 32) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
 
     ELSEIF m.DialogMode = DIALOG_SAVEAS THEN
         title = " Save As "
-        content = "Filename:" & Chr(10) & Chr(10)
-        content = content & "[" & m.DialogInput & "]" & Chr(10) & Chr(10)
-        content = content & "Enter=Save  Esc=Cancel"
+        width = 40
+        contentLines = APPEND(contentLines, "  File Name:")
+        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 32) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
 
     ELSEIF m.DialogMode = DIALOG_FIND THEN
         title = " Find "
-        content = "Search for:" & Chr(10) & Chr(10)
-        content = content & "[" & m.DialogInput & "]" & Chr(10) & Chr(10)
-        content = content & "Enter=Find  Esc=Cancel"
+        width = 40
+        contentLines = APPEND(contentLines, "  Find What:")
+        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 32) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
 
     ELSEIF m.DialogMode = DIALOG_GOTO THEN
-        title = " Go to Line "
-        content = "Line number:" & Chr(10) & Chr(10)
-        content = content & "[" & m.DialogInput & "]" & Chr(10) & Chr(10)
-        content = content & "Enter=Go  Esc=Cancel"
+        title = " Go To Line "
+        width = 30
+        contentLines = APPEND(contentLines, "  Line Number:")
+        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 20) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >    < Cancel >")
 
     ELSEIF m.DialogMode = DIALOG_CONFIRM_NEW THEN
-        title = " New File "
-        content = "File has been modified." & Chr(10) & Chr(10)
-        content = content & "Discard changes? (Y/N)"
+        title = " New "
+        width = 36
+        contentLines = APPEND(contentLines, "  File has been modified.")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Discard changes?")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < Yes >       < No >")
 
     ELSEIF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
         title = " Exit "
-        content = "File has been modified." & Chr(10) & Chr(10)
-        content = content & "Exit without saving? (Y/N)"
+        width = 36
+        contentLines = APPEND(contentLines, "  File has been modified.")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Exit without saving?")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < Yes >       < No >")
     ENDIF
 
-    RETURN dialogTitleStyle.Render(title) & Chr(10) & dialogStyle.Render(content)
+    ' Build the dialog box with borders
+    DIM innerWidth AS INTEGER = width - 2
+    DIM i AS INTEGER
+
+    ' Build top border with title embedded (avoids UTF-8 slicing issues)
+    DIM titleStart AS INTEGER = 0
+    DIM titleEnd AS INTEGER = 0
+    IF Len(title) > 0 THEN
+        titleStart = (innerWidth - Len(title)) / 2
+        titleEnd = titleStart + Len(title)
+    ENDIF
+
+    DIM borderTop AS STRING = "╔"
+    FOR i = 0 TO innerWidth - 1
+        IF i >= titleStart AND i < titleEnd AND Len(title) > 0 THEN
+            borderTop = borderTop & Mid(title, i - titleStart + 1, 1)
+        ELSE
+            borderTop = borderTop & "═"
+        ENDIF
+    NEXT
+    borderTop = borderTop & "╗"
+
+    ' Build bottom border
+    DIM borderBottom AS STRING = "╚"
+    FOR i = 1 TO innerWidth
+        borderBottom = borderBottom & "═"
+    NEXT
+    borderBottom = borderBottom & "╝"
+
+    lines = APPEND(lines, dialogBoxStyle.Render(borderTop))
+
+    ' Add content lines with side borders
+    FOR i = 0 TO Len(contentLines) - 1
+        DIM lineContent AS STRING = PadRight(contentLines[i], innerWidth)
+        lines = APPEND(lines, dialogBoxStyle.Render("║" & lineContent & "║"))
+    NEXT
+
+    lines = APPEND(lines, dialogBoxStyle.Render(borderBottom))
+
+    RETURN lines
+END FUNCTION
+
+' Get dialog dimensions (width, height)
+FUNCTION GetDialogSize(m AS EditorModel) AS (INTEGER, INTEGER)
+    IF m.DialogMode = DIALOG_HELP THEN
+        RETURN 46, 23
+    ELSEIF m.DialogMode = DIALOG_ABOUT THEN
+        RETURN 36, 10
+    ELSEIF m.DialogMode = DIALOG_OPEN OR m.DialogMode = DIALOG_SAVEAS OR m.DialogMode = DIALOG_FIND THEN
+        RETURN 40, 8
+    ELSEIF m.DialogMode = DIALOG_GOTO THEN
+        RETURN 30, 8
+    ELSEIF m.DialogMode = DIALOG_CONFIRM_NEW OR m.DialogMode = DIALOG_CONFIRM_EXIT THEN
+        RETURN 36, 9
+    ENDIF
+    RETURN 40, 10
 END FUNCTION
 
 ' Main entry point
