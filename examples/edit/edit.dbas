@@ -1,38 +1,37 @@
-' Enhanced EDIT.COM Clone - DBasic Text Editor
-' Demonstrates Bubble Tea TUI with extended features within DBasic constraints
-' Note: Full multi-line editing with slices requires Go; this shows what's achievable in DBasic
+' DOS 5.0 EDIT.COM Clone - DBasic Text Editor
+' A faithful recreation of the classic MS-DOS Editor
+' Written entirely in DBasic with no hand-written Go
 
 IMPORT "github.com/charmbracelet/bubbletea" AS tea
 IMPORT "github.com/charmbracelet/lipgloss" AS lipgloss
 IMPORT "fmt" AS fmt
+IMPORT "strings" AS strings
+IMPORT "os" AS os
 
-' Constants for dialog modes
+' Menu state constants
+CONST MENU_NONE AS INTEGER = 0
+CONST MENU_FILE AS INTEGER = 1
+CONST MENU_EDIT AS INTEGER = 2
+CONST MENU_SEARCH AS INTEGER = 3
+CONST MENU_OPTIONS AS INTEGER = 4
+CONST MENU_HELP AS INTEGER = 5
+
+' Dialog state constants
 CONST DIALOG_NONE AS INTEGER = 0
 CONST DIALOG_HELP AS INTEGER = 1
 CONST DIALOG_ABOUT AS INTEGER = 2
-
-' Helper to pad string to width
-FUNCTION PadRight(s AS STRING, width AS INTEGER) AS STRING
-    DIM result AS STRING = s
-    WHILE Len(result) < width
-        result = result & " "
-    WEND
-    RETURN result
-END FUNCTION
-
-' Helper to create spaces
-FUNCTION Spaces(count AS INTEGER) AS STRING
-    DIM result AS STRING = ""
-    DIM i AS INTEGER
-    FOR i = 1 TO count
-        result = result & " "
-    NEXT
-    RETURN result
-END FUNCTION
+CONST DIALOG_OPEN AS INTEGER = 3
+CONST DIALOG_SAVE AS INTEGER = 4
+CONST DIALOG_SAVEAS AS INTEGER = 5
+CONST DIALOG_FIND AS INTEGER = 6
+CONST DIALOG_REPLACE AS INTEGER = 7
+CONST DIALOG_GOTO AS INTEGER = 8
+CONST DIALOG_CONFIRM_NEW AS INTEGER = 9
+CONST DIALOG_CONFIRM_EXIT AS INTEGER = 10
 
 ' Editor state structure
 TYPE EditorModel IMPLEMENTS tea.Model
-    ' Cursor position
+    ' Cursor position (0-indexed)
     DIM CursorX AS INTEGER
     DIM CursorY AS INTEGER
 
@@ -40,84 +39,166 @@ TYPE EditorModel IMPLEMENTS tea.Model
     DIM Width AS INTEGER
     DIM Height AS INTEGER
 
-    ' Text content (single string with newlines)
+    ' Text lines stored as newline-separated string
     DIM Content AS STRING
+    DIM LineCount AS INTEGER
+
+    ' Scroll position
+    DIM ScrollX AS INTEGER
+    DIM ScrollY AS INTEGER
+
+    ' Selection (for copy/paste)
+    DIM SelectStartX AS INTEGER
+    DIM SelectStartY AS INTEGER
+    DIM SelectEndX AS INTEGER
+    DIM SelectEndY AS INTEGER
+    DIM Selecting AS BOOLEAN
+
+    ' Clipboard
+    DIM Clipboard AS STRING
+
+    ' File info
+    DIM Filename AS STRING
+    DIM Modified AS BOOLEAN
+
+    ' Menu state
+    DIM MenuOpen AS INTEGER
+    DIM MenuIndex AS INTEGER
+
+    ' Dialog state
+    DIM DialogMode AS INTEGER
+    DIM DialogInput AS STRING
+    DIM DialogCursor AS INTEGER
+
+    ' Search state
+    DIM SearchText AS STRING
+    DIM ReplaceText AS STRING
+    DIM SearchWrap AS BOOLEAN
+    DIM SearchCase AS BOOLEAN
 
     ' Status message
     DIM Message AS STRING
 
-    ' UI state
+    ' Options
     DIM ShowLineNumbers AS BOOLEAN
-    DIM DialogMode AS INTEGER
-
-    ' Scroll position
-    DIM ScrollY AS INTEGER
-
-    ' Modified flag
-    DIM Modified AS BOOLEAN
+    DIM TabSize AS INTEGER
+    DIM InsertMode AS BOOLEAN
 END TYPE
 
-' Styles
-DIM titleStyle AS lipgloss.Style
-DIM statusStyle AS lipgloss.Style
-DIM lineNumStyle AS lipgloss.Style
-DIM textStyle AS lipgloss.Style
-DIM cursorStyle AS lipgloss.Style
+' Styles - DOS blue theme
+DIM menuBarStyle AS lipgloss.Style
+DIM menuItemStyle AS lipgloss.Style
+DIM menuItemSelectedStyle AS lipgloss.Style
+DIM menuDropdownStyle AS lipgloss.Style
+DIM textAreaStyle AS lipgloss.Style
+DIM statusBarStyle AS lipgloss.Style
 DIM dialogStyle AS lipgloss.Style
+DIM dialogTitleStyle AS lipgloss.Style
+DIM lineNumStyle AS lipgloss.Style
+DIM cursorStyle AS lipgloss.Style
+DIM selectedStyle AS lipgloss.Style
 
-' Initialize styles
+' Initialize DOS-style colors
 SUB InitStyles()
-    titleStyle = lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(TRUE)
-    statusStyle = lipgloss.NewStyle().Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
-    lineNumStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-    textStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("15"))
-    cursorStyle = lipgloss.NewStyle().Background(lipgloss.Color("15")).Foreground(lipgloss.Color("0"))
-    dialogStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("12")).Padding(1, 2)
+    ' Menu bar - white on gray (like DOS)
+    menuBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
+    menuItemStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0")).Padding(0, 1)
+    menuItemSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("7")).Padding(0, 1)
+
+    ' Dropdown menu - white on blue
+    menuDropdownStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("15"))
+
+    ' Text area - white on blue (classic DOS look)
+    textAreaStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15"))
+
+    ' Status bar - black on cyan
+    statusBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
+
+    ' Dialog box
+    dialogStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0")).Border(lipgloss.DoubleBorder()).BorderForeground(lipgloss.Color("0")).Padding(1, 2)
+    dialogTitleStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+
+    ' Line numbers
+    lineNumStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("8"))
+
+    ' Cursor - reverse video
+    cursorStyle = lipgloss.NewStyle().Background(lipgloss.Color("15")).Foreground(lipgloss.Color("4"))
+
+    ' Selected text
+    selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("3")).Foreground(lipgloss.Color("0"))
 END SUB
+
+' String helper: repeat character
+FUNCTION RepeatChar(ch AS STRING, count AS INTEGER) AS STRING
+    DIM result AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 1 TO count
+        result = result & ch
+    NEXT
+    RETURN result
+END FUNCTION
+
+' String helper: pad string to width
+FUNCTION PadRight(s AS STRING, width AS INTEGER) AS STRING
+    IF Len(s) >= width THEN
+        RETURN Left(s, width)
+    ENDIF
+    RETURN s & RepeatChar(" ", width - Len(s))
+END FUNCTION
+
+' String helper: center string
+FUNCTION CenterStr(s AS STRING, width AS INTEGER) AS STRING
+    IF Len(s) >= width THEN
+        RETURN Left(s, width)
+    ENDIF
+    DIM padding AS INTEGER = (width - Len(s)) / 2
+    RETURN RepeatChar(" ", padding) & s & RepeatChar(" ", width - Len(s) - padding)
+END FUNCTION
 
 ' Count lines in content
 FUNCTION CountLines(content AS STRING) AS INTEGER
     IF Len(content) = 0 THEN
         RETURN 1
-    END IF
+    ENDIF
     DIM count AS INTEGER = 1
     DIM i AS INTEGER
     FOR i = 1 TO Len(content)
         IF Mid(content, i, 1) = Chr(10) THEN
             count = count + 1
-        END IF
+        ENDIF
     NEXT
     RETURN count
 END FUNCTION
 
 ' Get a specific line from content (1-indexed)
 FUNCTION GetLine(content AS STRING, lineNum AS INTEGER) AS STRING
+    IF Len(content) = 0 THEN
+        RETURN ""
+    ENDIF
     DIM currentLine AS INTEGER = 1
     DIM startPos AS INTEGER = 1
     DIM i AS INTEGER
 
-    ' Find start of requested line
     FOR i = 1 TO Len(content)
         IF currentLine = lineNum THEN
             startPos = i
             EXIT FOR
-        END IF
+        ENDIF
         IF Mid(content, i, 1) = Chr(10) THEN
             currentLine = currentLine + 1
-        END IF
+        ENDIF
     NEXT
 
     IF currentLine < lineNum THEN
         RETURN ""
-    END IF
+    ENDIF
 
-    ' Find end of line
     DIM result AS STRING = ""
     FOR i = startPos TO Len(content)
         DIM ch AS STRING = Mid(content, i, 1)
         IF ch = Chr(10) THEN
             EXIT FOR
-        END IF
+        ENDIF
         result = result & ch
     NEXT
 
@@ -127,6 +208,153 @@ END FUNCTION
 ' Get line length
 FUNCTION GetLineLength(content AS STRING, lineNum AS INTEGER) AS INTEGER
     RETURN Len(GetLine(content, lineNum))
+END FUNCTION
+
+' Set a specific line in content (1-indexed)
+FUNCTION SetLine(content AS STRING, lineNum AS INTEGER, newLine AS STRING) AS STRING
+    DIM lines AS STRING = ""
+    DIM currentLine AS INTEGER = 1
+    DIM i AS INTEGER
+    DIM lineStart AS INTEGER = 1
+
+    FOR i = 1 TO Len(content) + 1
+        DIM ch AS STRING = ""
+        IF i <= Len(content) THEN
+            ch = Mid(content, i, 1)
+        ENDIF
+
+        IF ch = Chr(10) OR i > Len(content) THEN
+            IF currentLine = lineNum THEN
+                lines = lines & newLine
+            ELSE
+                lines = lines & Mid(content, lineStart, i - lineStart)
+            ENDIF
+
+            IF ch = Chr(10) THEN
+                lines = lines & Chr(10)
+            ENDIF
+
+            currentLine = currentLine + 1
+            lineStart = i + 1
+        ENDIF
+    NEXT
+
+    RETURN lines
+END FUNCTION
+
+' Insert character at position
+FUNCTION InsertCharAt(content AS STRING, lineNum AS INTEGER, col AS INTEGER, ch AS STRING) AS STRING
+    DIM line AS STRING = GetLine(content, lineNum)
+    DIM newLine AS STRING
+
+    IF col <= 0 THEN
+        newLine = ch & line
+    ELSEIF col >= Len(line) THEN
+        newLine = line & ch
+    ELSE
+        newLine = Left(line, col) & ch & Mid(line, col + 1, Len(line) - col)
+    ENDIF
+
+    RETURN SetLine(content, lineNum, newLine)
+END FUNCTION
+
+' Delete character at position
+FUNCTION DeleteCharAt(content AS STRING, lineNum AS INTEGER, col AS INTEGER) AS STRING
+    DIM line AS STRING = GetLine(content, lineNum)
+
+    IF col < 0 OR col >= Len(line) THEN
+        RETURN content
+    ENDIF
+
+    DIM newLine AS STRING
+    IF col = 0 THEN
+        newLine = Mid(line, 2, Len(line) - 1)
+    ELSE
+        newLine = Left(line, col) & Mid(line, col + 2, Len(line) - col - 1)
+    ENDIF
+
+    RETURN SetLine(content, lineNum, newLine)
+END FUNCTION
+
+' Insert new line
+FUNCTION InsertNewLine(content AS STRING, lineNum AS INTEGER, col AS INTEGER) AS STRING
+    DIM line AS STRING = GetLine(content, lineNum)
+    DIM beforeCursor AS STRING = Left(line, col)
+    DIM afterCursor AS STRING = Mid(line, col + 1, Len(line) - col)
+
+    DIM result AS STRING = ""
+    DIM currentLine AS INTEGER = 1
+    DIM i AS INTEGER
+    DIM lineStart AS INTEGER = 1
+
+    FOR i = 1 TO Len(content) + 1
+        DIM ch AS STRING = ""
+        IF i <= Len(content) THEN
+            ch = Mid(content, i, 1)
+        ENDIF
+
+        IF ch = Chr(10) OR i > Len(content) THEN
+            IF currentLine = lineNum THEN
+                result = result & beforeCursor & Chr(10) & afterCursor
+            ELSE
+                result = result & Mid(content, lineStart, i - lineStart)
+            ENDIF
+
+            IF ch = Chr(10) AND currentLine <> lineNum THEN
+                result = result & Chr(10)
+            ENDIF
+
+            currentLine = currentLine + 1
+            lineStart = i + 1
+        ENDIF
+    NEXT
+
+    RETURN result
+END FUNCTION
+
+' Delete line and join with previous
+FUNCTION JoinWithPrevLine(content AS STRING, lineNum AS INTEGER) AS STRING
+    IF lineNum <= 1 THEN
+        RETURN content
+    ENDIF
+
+    DIM prevLine AS STRING = GetLine(content, lineNum - 1)
+    DIM currLine AS STRING = GetLine(content, lineNum)
+    DIM joinedLine AS STRING = prevLine & currLine
+
+    ' Rebuild content without the current line
+    DIM result AS STRING = ""
+    DIM currentLine AS INTEGER = 1
+    DIM i AS INTEGER
+    DIM lineStart AS INTEGER = 1
+
+    FOR i = 1 TO Len(content) + 1
+        DIM ch AS STRING = ""
+        IF i <= Len(content) THEN
+            ch = Mid(content, i, 1)
+        ENDIF
+
+        IF ch = Chr(10) OR i > Len(content) THEN
+            IF currentLine = lineNum - 1 THEN
+                result = result & joinedLine
+            ELSEIF currentLine <> lineNum THEN
+                result = result & Mid(content, lineStart, i - lineStart)
+            ENDIF
+
+            IF ch = Chr(10) AND currentLine <> lineNum - 1 AND currentLine <> lineNum THEN
+                result = result & Chr(10)
+            ELSEIF ch = Chr(10) AND currentLine = lineNum - 1 THEN
+                ' Skip the newline after prev line since we're joining
+            ELSEIF ch = Chr(10) AND currentLine < lineNum - 1 THEN
+                result = result & Chr(10)
+            ENDIF
+
+            currentLine = currentLine + 1
+            lineStart = i + 1
+        ENDIF
+    NEXT
+
+    RETURN result
 END FUNCTION
 
 ' Initialize the model
@@ -145,7 +373,7 @@ FUNCTION (m AS EditorModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Width = Int(sizeMsg.Width)
         m.Height = Int(sizeMsg.Height)
         RETURN m, NIL
-    END IF
+    ENDIF
 
     ' Handle key messages
     DIM keyMsg AS tea.KeyMsg
@@ -154,141 +382,692 @@ FUNCTION (m AS EditorModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
 
     IF NOT ok THEN
         RETURN m, NIL
-    END IF
+    ENDIF
 
-    DIM keyStr AS STRING
-    keyStr = keyMsg.String()
+    DIM key AS STRING = keyMsg.String()
 
-    ' Dialog mode key handling
+    ' Dialog input handling
     IF m.DialogMode <> DIALOG_NONE THEN
-        IF keyStr = "esc" OR keyStr = "enter" OR keyStr = "q" THEN
-            m.DialogMode = DIALOG_NONE
-        END IF
-        RETURN m, NIL
-    END IF
+        RETURN HandleDialogInput(m, key)
+    ENDIF
 
+    ' Menu handling
+    IF m.MenuOpen <> MENU_NONE THEN
+        RETURN HandleMenuInput(m, key)
+    ENDIF
+
+    ' Global shortcuts
+    IF key = "alt+f" OR key = "f10" THEN
+        m.MenuOpen = MENU_FILE
+        m.MenuIndex = 0
+        RETURN m, NIL
+    ELSEIF key = "alt+e" THEN
+        m.MenuOpen = MENU_EDIT
+        m.MenuIndex = 0
+        RETURN m, NIL
+    ELSEIF key = "alt+s" THEN
+        m.MenuOpen = MENU_SEARCH
+        m.MenuIndex = 0
+        RETURN m, NIL
+    ELSEIF key = "alt+o" THEN
+        m.MenuOpen = MENU_OPTIONS
+        m.MenuIndex = 0
+        RETURN m, NIL
+    ELSEIF key = "alt+h" OR key = "f1" THEN
+        m.DialogMode = DIALOG_HELP
+        RETURN m, NIL
+    ELSEIF key = "ctrl+n" THEN
+        RETURN DoNewFile(m)
+    ELSEIF key = "ctrl+o" THEN
+        m.DialogMode = DIALOG_OPEN
+        m.DialogInput = m.Filename
+        m.DialogCursor = Len(m.DialogInput)
+        RETURN m, NIL
+    ELSEIF key = "ctrl+s" THEN
+        RETURN DoSaveFile(m)
+    ELSEIF key = "ctrl+q" OR key = "alt+x" THEN
+        IF m.Modified THEN
+            m.DialogMode = DIALOG_CONFIRM_EXIT
+            RETURN m, NIL
+        ENDIF
+        RETURN m, tea.Quit
+    ELSEIF key = "ctrl+f" THEN
+        m.DialogMode = DIALOG_FIND
+        m.DialogInput = m.SearchText
+        m.DialogCursor = Len(m.DialogInput)
+        RETURN m, NIL
+    ELSEIF key = "ctrl+h" THEN
+        m.DialogMode = DIALOG_REPLACE
+        m.DialogInput = m.SearchText
+        m.DialogCursor = Len(m.DialogInput)
+        RETURN m, NIL
+    ELSEIF key = "f3" THEN
+        RETURN DoFindNext(m)
+    ELSEIF key = "ctrl+g" THEN
+        m.DialogMode = DIALOG_GOTO
+        m.DialogInput = ""
+        m.DialogCursor = 0
+        RETURN m, NIL
+    ELSEIF key = "ctrl+c" THEN
+        RETURN DoCopy(m)
+    ELSEIF key = "ctrl+x" THEN
+        RETURN DoCut(m)
+    ELSEIF key = "ctrl+v" THEN
+        RETURN DoPaste(m)
+    ELSEIF key = "ctrl+a" THEN
+        RETURN DoSelectAll(m)
+    ELSEIF key = "insert" THEN
+        m.InsertMode = NOT m.InsertMode
+        IF m.InsertMode THEN
+            m.Message = "Insert mode"
+        ELSE
+            m.Message = "Overwrite mode"
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Navigation and editing
+    RETURN HandleEditorInput(m, key)
+END FUNCTION
+
+' Handle editor input (navigation and text editing)
+FUNCTION HandleEditorInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.Cmd)
     DIM totalLines AS INTEGER = CountLines(m.Content)
     DIM currentLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
 
-    ' Handle navigation and commands
-    IF keyStr = "ctrl+c" OR keyStr = "ctrl+q" THEN
-        RETURN m, tea.Quit
-
-    ELSEIF keyStr = "f1" THEN
-        m.DialogMode = DIALOG_HELP
-        m.Message = "Help"
-
-    ELSEIF keyStr = "f10" THEN
-        m.DialogMode = DIALOG_ABOUT
-        m.Message = "About"
-
-    ELSEIF keyStr = "ctrl+l" THEN
-        m.ShowLineNumbers = NOT m.ShowLineNumbers
-        IF m.ShowLineNumbers THEN
-            m.Message = "Line numbers ON"
-        ELSE
-            m.Message = "Line numbers OFF"
-        END IF
-
-    ELSEIF keyStr = "left" THEN
+    IF key = "left" THEN
         IF m.CursorX > 0 THEN
             m.CursorX = m.CursorX - 1
         ELSEIF m.CursorY > 0 THEN
-            ' Move to end of previous line
             m.CursorY = m.CursorY - 1
             m.CursorX = GetLineLength(m.Content, m.CursorY + 1)
-        END IF
+        ENDIF
         m.Message = ""
 
-    ELSEIF keyStr = "right" THEN
+    ELSEIF key = "right" THEN
         IF m.CursorX < currentLineLen THEN
             m.CursorX = m.CursorX + 1
         ELSEIF m.CursorY < totalLines - 1 THEN
-            ' Move to start of next line
             m.CursorY = m.CursorY + 1
             m.CursorX = 0
-        END IF
+        ENDIF
         m.Message = ""
 
-    ELSEIF keyStr = "up" THEN
+    ELSEIF key = "up" THEN
         IF m.CursorY > 0 THEN
             m.CursorY = m.CursorY - 1
-            ' Clamp cursor to line length
             DIM upLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
             IF m.CursorX > upLineLen THEN
                 m.CursorX = upLineLen
-            END IF
-        END IF
+            ENDIF
+        ENDIF
         m.Message = ""
 
-    ELSEIF keyStr = "down" THEN
+    ELSEIF key = "down" THEN
         IF m.CursorY < totalLines - 1 THEN
             m.CursorY = m.CursorY + 1
-            ' Clamp cursor to line length
             DIM downLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
             IF m.CursorX > downLineLen THEN
                 m.CursorX = downLineLen
-            END IF
-        END IF
+            ENDIF
+        ENDIF
         m.Message = ""
 
-    ELSEIF keyStr = "home" THEN
+    ELSEIF key = "home" THEN
         m.CursorX = 0
         m.Message = ""
 
-    ELSEIF keyStr = "end" THEN
+    ELSEIF key = "end" THEN
         m.CursorX = currentLineLen
         m.Message = ""
 
-    ELSEIF keyStr = "ctrl+home" THEN
+    ELSEIF key = "ctrl+home" THEN
         m.CursorX = 0
         m.CursorY = 0
         m.ScrollY = 0
-        m.Message = "Top of file"
-
-    ELSEIF keyStr = "ctrl+end" THEN
-        m.CursorY = totalLines - 1
-        m.CursorX = GetLineLength(m.Content, totalLines)
-        m.Message = "End of file"
-
-    ELSEIF keyStr = "pgup" THEN
-        DIM pgUpSize AS INTEGER = m.Height - 4
-        IF pgUpSize < 1 THEN
-            pgUpSize = 1
-        END IF
-        m.CursorY = m.CursorY - pgUpSize
-        IF m.CursorY < 0 THEN
-            m.CursorY = 0
-        END IF
         m.Message = ""
 
-    ELSEIF keyStr = "pgdown" THEN
+    ELSEIF key = "ctrl+end" THEN
+        m.CursorY = totalLines - 1
+        m.CursorX = GetLineLength(m.Content, totalLines)
+        m.Message = ""
+
+    ELSEIF key = "pgup" THEN
+        DIM pgSize AS INTEGER = m.Height - 4
+        IF pgSize < 1 THEN
+            pgSize = 1
+        ENDIF
+        m.CursorY = m.CursorY - pgSize
+        IF m.CursorY < 0 THEN
+            m.CursorY = 0
+        ENDIF
+        m.Message = ""
+
+    ELSEIF key = "pgdown" THEN
         DIM pgDownSize AS INTEGER = m.Height - 4
         IF pgDownSize < 1 THEN
             pgDownSize = 1
-        END IF
+        ENDIF
         m.CursorY = m.CursorY + pgDownSize
         IF m.CursorY >= totalLines THEN
             m.CursorY = totalLines - 1
-        END IF
+        ENDIF
         m.Message = ""
 
-    ELSE
-        m.Message = "Key: " & keyStr
-    END IF
+    ELSEIF key = "enter" THEN
+        m.Content = InsertNewLine(m.Content, m.CursorY + 1, m.CursorX)
+        m.CursorY = m.CursorY + 1
+        m.CursorX = 0
+        m.Modified = TRUE
+        m.Message = ""
 
-    ' Update scroll to keep cursor visible
+    ELSEIF key = "backspace" THEN
+        IF m.CursorX > 0 THEN
+            m.Content = DeleteCharAt(m.Content, m.CursorY + 1, m.CursorX - 1)
+            m.CursorX = m.CursorX - 1
+            m.Modified = TRUE
+        ELSEIF m.CursorY > 0 THEN
+            DIM prevLen AS INTEGER = GetLineLength(m.Content, m.CursorY)
+            m.Content = JoinWithPrevLine(m.Content, m.CursorY + 1)
+            m.CursorY = m.CursorY - 1
+            m.CursorX = prevLen
+            m.Modified = TRUE
+        ENDIF
+        m.Message = ""
+
+    ELSEIF key = "delete" THEN
+        IF m.CursorX < currentLineLen THEN
+            m.Content = DeleteCharAt(m.Content, m.CursorY + 1, m.CursorX)
+            m.Modified = TRUE
+        ELSEIF m.CursorY < totalLines - 1 THEN
+            ' Join next line
+            DIM nextLine AS STRING = GetLine(m.Content, m.CursorY + 2)
+            DIM currLine AS STRING = GetLine(m.Content, m.CursorY + 1)
+            m.Content = SetLine(m.Content, m.CursorY + 1, currLine & nextLine)
+            ' Remove the next line - rebuild without it
+            DIM newContent AS STRING = ""
+            DIM lineNum AS INTEGER = 1
+            DIM total AS INTEGER = CountLines(m.Content)
+            FOR lineNum = 1 TO total
+                IF lineNum <> m.CursorY + 2 THEN
+                    IF Len(newContent) > 0 THEN
+                        newContent = newContent & Chr(10)
+                    ENDIF
+                    newContent = newContent & GetLine(m.Content, lineNum)
+                ENDIF
+            NEXT
+            m.Content = newContent
+            m.Modified = TRUE
+        ENDIF
+        m.Message = ""
+
+    ELSEIF key = "tab" THEN
+        DIM ti AS INTEGER
+        FOR ti = 1 TO m.TabSize
+            m.Content = InsertCharAt(m.Content, m.CursorY + 1, m.CursorX, " ")
+            m.CursorX = m.CursorX + 1
+        NEXT
+        m.Modified = TRUE
+        m.Message = ""
+
+    ELSEIF key = "esc" THEN
+        m.Selecting = FALSE
+        m.Message = ""
+
+    ELSEIF Len(key) = 1 THEN
+        ' Regular character input
+        IF m.InsertMode OR m.CursorX >= currentLineLen THEN
+            m.Content = InsertCharAt(m.Content, m.CursorY + 1, m.CursorX, key)
+        ELSE
+            ' Overwrite mode
+            m.Content = DeleteCharAt(m.Content, m.CursorY + 1, m.CursorX)
+            m.Content = InsertCharAt(m.Content, m.CursorY + 1, m.CursorX, key)
+        ENDIF
+        m.CursorX = m.CursorX + 1
+        m.Modified = TRUE
+        m.Message = ""
+    ENDIF
+
+    ' Update scroll position
     DIM visibleLines AS INTEGER = m.Height - 4
     IF visibleLines < 1 THEN
         visibleLines = 1
-    END IF
+    ENDIF
 
     IF m.CursorY < m.ScrollY THEN
         m.ScrollY = m.CursorY
     ELSEIF m.CursorY >= m.ScrollY + visibleLines THEN
         m.ScrollY = m.CursorY - visibleLines + 1
-    END IF
+    ENDIF
 
+    ' Horizontal scroll
+    DIM visibleCols AS INTEGER = m.Width - 8
+    IF m.ShowLineNumbers THEN
+        visibleCols = visibleCols - 6
+    ENDIF
+    IF visibleCols < 10 THEN
+        visibleCols = 10
+    ENDIF
+
+    IF m.CursorX < m.ScrollX THEN
+        m.ScrollX = m.CursorX
+    ELSEIF m.CursorX >= m.ScrollX + visibleCols THEN
+        m.ScrollX = m.CursorX - visibleCols + 1
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+' Handle menu input
+FUNCTION HandleMenuInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF key = "esc" THEN
+        m.MenuOpen = MENU_NONE
+        RETURN m, NIL
+    ELSEIF key = "left" THEN
+        m.MenuOpen = m.MenuOpen - 1
+        IF m.MenuOpen < MENU_FILE THEN
+            m.MenuOpen = MENU_HELP
+        ENDIF
+        m.MenuIndex = 0
+        RETURN m, NIL
+    ELSEIF key = "right" THEN
+        m.MenuOpen = m.MenuOpen + 1
+        IF m.MenuOpen > MENU_HELP THEN
+            m.MenuOpen = MENU_FILE
+        ENDIF
+        m.MenuIndex = 0
+        RETURN m, NIL
+    ELSEIF key = "up" THEN
+        m.MenuIndex = m.MenuIndex - 1
+        IF m.MenuIndex < 0 THEN
+            m.MenuIndex = GetMenuItemCount(m.MenuOpen) - 1
+        ENDIF
+        RETURN m, NIL
+    ELSEIF key = "down" THEN
+        m.MenuIndex = m.MenuIndex + 1
+        IF m.MenuIndex >= GetMenuItemCount(m.MenuOpen) THEN
+            m.MenuIndex = 0
+        ENDIF
+        RETURN m, NIL
+    ELSEIF key = "enter" THEN
+        RETURN ExecuteMenuItem(m)
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+' Get menu item count
+FUNCTION GetMenuItemCount(menu AS INTEGER) AS INTEGER
+    IF menu = MENU_FILE THEN
+        RETURN 6
+    ELSEIF menu = MENU_EDIT THEN
+        RETURN 6
+    ELSEIF menu = MENU_SEARCH THEN
+        RETURN 4
+    ELSEIF menu = MENU_OPTIONS THEN
+        RETURN 2
+    ELSEIF menu = MENU_HELP THEN
+        RETURN 2
+    ENDIF
+    RETURN 0
+END FUNCTION
+
+' Execute menu item
+FUNCTION ExecuteMenuItem(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    m.MenuOpen = MENU_NONE
+
+    IF m.MenuOpen = MENU_FILE THEN
+        IF m.MenuIndex = 0 THEN
+            RETURN DoNewFile(m)
+        ELSEIF m.MenuIndex = 1 THEN
+            m.DialogMode = DIALOG_OPEN
+            m.DialogInput = m.Filename
+            m.DialogCursor = Len(m.DialogInput)
+        ELSEIF m.MenuIndex = 2 THEN
+            RETURN DoSaveFile(m)
+        ELSEIF m.MenuIndex = 3 THEN
+            m.DialogMode = DIALOG_SAVEAS
+            m.DialogInput = m.Filename
+            m.DialogCursor = Len(m.DialogInput)
+        ELSEIF m.MenuIndex = 5 THEN
+            IF m.Modified THEN
+                m.DialogMode = DIALOG_CONFIRM_EXIT
+            ELSE
+                RETURN m, tea.Quit
+            ENDIF
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_EDIT THEN
+        IF m.MenuIndex = 0 THEN
+            RETURN DoCut(m)
+        ELSEIF m.MenuIndex = 1 THEN
+            RETURN DoCopy(m)
+        ELSEIF m.MenuIndex = 2 THEN
+            RETURN DoPaste(m)
+        ELSEIF m.MenuIndex = 4 THEN
+            RETURN DoSelectAll(m)
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_SEARCH THEN
+        IF m.MenuIndex = 0 THEN
+            m.DialogMode = DIALOG_FIND
+            m.DialogInput = m.SearchText
+            m.DialogCursor = Len(m.DialogInput)
+        ELSEIF m.MenuIndex = 1 THEN
+            RETURN DoFindNext(m)
+        ELSEIF m.MenuIndex = 2 THEN
+            m.DialogMode = DIALOG_REPLACE
+            m.DialogInput = m.SearchText
+            m.DialogCursor = Len(m.DialogInput)
+        ELSEIF m.MenuIndex = 3 THEN
+            m.DialogMode = DIALOG_GOTO
+            m.DialogInput = ""
+            m.DialogCursor = 0
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_OPTIONS THEN
+        IF m.MenuIndex = 0 THEN
+            m.ShowLineNumbers = NOT m.ShowLineNumbers
+        ELSEIF m.MenuIndex = 1 THEN
+            m.InsertMode = NOT m.InsertMode
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_HELP THEN
+        IF m.MenuIndex = 0 THEN
+            m.DialogMode = DIALOG_HELP
+        ELSEIF m.MenuIndex = 1 THEN
+            m.DialogMode = DIALOG_ABOUT
+        ENDIF
+    ENDIF
+
+    ' Reset menu state after checking
+    m.MenuOpen = MENU_NONE
+    RETURN m, NIL
+END FUNCTION
+
+' Handle dialog input
+FUNCTION HandleDialogInput(m AS EditorModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF key = "esc" THEN
+        m.DialogMode = DIALOG_NONE
+        RETURN m, NIL
+    ENDIF
+
+    ' Simple dialogs (just press any key)
+    IF m.DialogMode = DIALOG_HELP OR m.DialogMode = DIALOG_ABOUT THEN
+        IF key = "enter" OR key = "esc" OR key = " " THEN
+            m.DialogMode = DIALOG_NONE
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Confirmation dialogs
+    IF m.DialogMode = DIALOG_CONFIRM_NEW OR m.DialogMode = DIALOG_CONFIRM_EXIT THEN
+        IF key = "y" OR key = "Y" THEN
+            IF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
+                RETURN m, tea.Quit
+            ELSE
+                m.Content = ""
+                m.Filename = ""
+                m.Modified = FALSE
+                m.CursorX = 0
+                m.CursorY = 0
+                m.ScrollX = 0
+                m.ScrollY = 0
+                m.DialogMode = DIALOG_NONE
+                m.Message = "New file"
+            ENDIF
+        ELSEIF key = "n" OR key = "N" OR key = "esc" THEN
+            m.DialogMode = DIALOG_NONE
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Text input dialogs
+    IF key = "enter" THEN
+        IF m.DialogMode = DIALOG_OPEN THEN
+            RETURN DoOpenFile(m, m.DialogInput)
+        ELSEIF m.DialogMode = DIALOG_SAVE OR m.DialogMode = DIALOG_SAVEAS THEN
+            m.Filename = m.DialogInput
+            RETURN DoSaveFile(m)
+        ELSEIF m.DialogMode = DIALOG_FIND THEN
+            m.SearchText = m.DialogInput
+            m.DialogMode = DIALOG_NONE
+            RETURN DoFindNext(m)
+        ELSEIF m.DialogMode = DIALOG_REPLACE THEN
+            m.SearchText = m.DialogInput
+            m.DialogMode = DIALOG_NONE
+            RETURN DoReplace(m)
+        ELSEIF m.DialogMode = DIALOG_GOTO THEN
+            RETURN DoGotoLine(m)
+        ENDIF
+    ELSEIF key = "backspace" THEN
+        IF m.DialogCursor > 0 THEN
+            m.DialogInput = Left(m.DialogInput, m.DialogCursor - 1) & Mid(m.DialogInput, m.DialogCursor + 1, Len(m.DialogInput) - m.DialogCursor)
+            m.DialogCursor = m.DialogCursor - 1
+        ENDIF
+    ELSEIF key = "delete" THEN
+        IF m.DialogCursor < Len(m.DialogInput) THEN
+            m.DialogInput = Left(m.DialogInput, m.DialogCursor) & Mid(m.DialogInput, m.DialogCursor + 2, Len(m.DialogInput) - m.DialogCursor - 1)
+        ENDIF
+    ELSEIF key = "left" THEN
+        IF m.DialogCursor > 0 THEN
+            m.DialogCursor = m.DialogCursor - 1
+        ENDIF
+    ELSEIF key = "right" THEN
+        IF m.DialogCursor < Len(m.DialogInput) THEN
+            m.DialogCursor = m.DialogCursor + 1
+        ENDIF
+    ELSEIF key = "home" THEN
+        m.DialogCursor = 0
+    ELSEIF key = "end" THEN
+        m.DialogCursor = Len(m.DialogInput)
+    ELSEIF Len(key) = 1 THEN
+        m.DialogInput = Left(m.DialogInput, m.DialogCursor) & key & Mid(m.DialogInput, m.DialogCursor + 1, Len(m.DialogInput) - m.DialogCursor)
+        m.DialogCursor = m.DialogCursor + 1
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+' File operations
+FUNCTION DoNewFile(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    IF m.Modified THEN
+        m.DialogMode = DIALOG_CONFIRM_NEW
+        RETURN m, NIL
+    ENDIF
+    m.Content = ""
+    m.Filename = ""
+    m.Modified = FALSE
+    m.CursorX = 0
+    m.CursorY = 0
+    m.ScrollX = 0
+    m.ScrollY = 0
+    m.Message = "New file"
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION DoOpenFile(m AS EditorModel, filename AS STRING) AS (tea.Model, tea.Cmd)
+    m.DialogMode = DIALOG_NONE
+
+    IF Len(filename) = 0 THEN
+        m.Message = "No filename specified"
+        RETURN m, NIL
+    ENDIF
+
+    DIM content AS STRING = ReadFile(filename)
+    IF Len(content) = 0 AND NOT FileExists(filename) THEN
+        m.Message = "File not found: " & filename
+        RETURN m, NIL
+    ENDIF
+
+    m.Content = content
+    m.Filename = filename
+    m.Modified = FALSE
+    m.CursorX = 0
+    m.CursorY = 0
+    m.ScrollX = 0
+    m.ScrollY = 0
+    m.Message = "Opened: " & filename
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION DoSaveFile(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    IF Len(m.Filename) = 0 THEN
+        m.DialogMode = DIALOG_SAVEAS
+        m.DialogInput = ""
+        m.DialogCursor = 0
+        RETURN m, NIL
+    ENDIF
+
+    m.DialogMode = DIALOG_NONE
+    WriteFile(m.Filename, m.Content)
+    m.Modified = FALSE
+    m.Message = "Saved: " & m.Filename
+    RETURN m, NIL
+END FUNCTION
+
+' Edit operations
+FUNCTION DoCopy(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    ' For simplicity, copy current line
+    m.Clipboard = GetLine(m.Content, m.CursorY + 1)
+    m.Message = "Line copied"
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION DoCut(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    m.Clipboard = GetLine(m.Content, m.CursorY + 1)
+
+    ' Remove current line
+    DIM totalLines AS INTEGER = CountLines(m.Content)
+    IF totalLines = 1 THEN
+        m.Content = ""
+    ELSE
+        DIM newContent AS STRING = ""
+        DIM i AS INTEGER
+        FOR i = 1 TO totalLines
+            IF i <> m.CursorY + 1 THEN
+                IF Len(newContent) > 0 THEN
+                    newContent = newContent & Chr(10)
+                ENDIF
+                newContent = newContent & GetLine(m.Content, i)
+            ENDIF
+        NEXT
+        m.Content = newContent
+    ENDIF
+
+    IF m.CursorY >= CountLines(m.Content) THEN
+        m.CursorY = CountLines(m.Content) - 1
+        IF m.CursorY < 0 THEN
+            m.CursorY = 0
+        ENDIF
+    ENDIF
+
+    DIM newLineLen AS INTEGER = GetLineLength(m.Content, m.CursorY + 1)
+    IF m.CursorX > newLineLen THEN
+        m.CursorX = newLineLen
+    ENDIF
+
+    m.Modified = TRUE
+    m.Message = "Line cut"
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION DoPaste(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    IF Len(m.Clipboard) = 0 THEN
+        m.Message = "Clipboard empty"
+        RETURN m, NIL
+    ENDIF
+
+    ' Insert clipboard as new line below cursor
+    DIM totalLines AS INTEGER = CountLines(m.Content)
+    DIM newContent AS STRING = ""
+    DIM i AS INTEGER
+
+    FOR i = 1 TO totalLines
+        IF Len(newContent) > 0 THEN
+            newContent = newContent & Chr(10)
+        ENDIF
+        newContent = newContent & GetLine(m.Content, i)
+        IF i = m.CursorY + 1 THEN
+            newContent = newContent & Chr(10) & m.Clipboard
+        ENDIF
+    NEXT
+
+    m.Content = newContent
+    m.CursorY = m.CursorY + 1
+    m.CursorX = 0
+    m.Modified = TRUE
+    m.Message = "Pasted"
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION DoSelectAll(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    m.Message = "Select All not yet implemented"
+    RETURN m, NIL
+END FUNCTION
+
+' Search operations
+FUNCTION DoFindNext(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    IF Len(m.SearchText) = 0 THEN
+        m.Message = "No search text"
+        RETURN m, NIL
+    ENDIF
+
+    ' Search from current position
+    DIM totalLines AS INTEGER = CountLines(m.Content)
+    DIM startLine AS INTEGER = m.CursorY + 1
+    DIM startCol AS INTEGER = m.CursorX + 1
+    DIM i AS INTEGER
+
+    FOR i = startLine TO totalLines
+        DIM line AS STRING = GetLine(m.Content, i)
+        DIM searchStart AS INTEGER = 1
+        IF i = startLine THEN
+            searchStart = startCol + 1
+        ENDIF
+
+        DIM pos AS INTEGER = Instr(Mid(line, searchStart, Len(line) - searchStart + 1), m.SearchText)
+        IF pos > 0 THEN
+            m.CursorY = i - 1
+            m.CursorX = searchStart - 1 + pos - 1
+            m.Message = "Found"
+            RETURN m, NIL
+        ENDIF
+    NEXT
+
+    ' Wrap around if enabled
+    IF m.SearchWrap THEN
+        FOR i = 1 TO startLine
+            DIM wrapLine AS STRING = GetLine(m.Content, i)
+            DIM wrapPos AS INTEGER = Instr(wrapLine, m.SearchText)
+            IF wrapPos > 0 THEN
+                m.CursorY = i - 1
+                m.CursorX = wrapPos - 1
+                m.Message = "Found (wrapped)"
+                RETURN m, NIL
+            ENDIF
+        NEXT
+    ENDIF
+
+    m.Message = "Not found: " & m.SearchText
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION DoReplace(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    m.Message = "Replace not yet implemented"
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION DoGotoLine(m AS EditorModel) AS (tea.Model, tea.Cmd)
+    m.DialogMode = DIALOG_NONE
+    DIM lineNum AS INTEGER = Int(Val(m.DialogInput))
+    DIM totalLines AS INTEGER = CountLines(m.Content)
+
+    IF lineNum < 1 THEN
+        lineNum = 1
+    ELSEIF lineNum > totalLines THEN
+        lineNum = totalLines
+    ENDIF
+
+    m.CursorY = lineNum - 1
+    m.CursorX = 0
+    m.Message = fmt.Sprintf("Line %d", lineNum)
     RETURN m, NIL
 END FUNCTION
 
@@ -297,25 +1076,30 @@ FUNCTION (m AS EditorModel) View() AS STRING
     DIM view AS STRING = ""
     DIM totalLines AS INTEGER = CountLines(m.Content)
 
-    ' Title bar
-    DIM title AS STRING = " DBASIC EDIT "
-    IF m.Modified THEN
-        title = title & "[Modified] "
-    END IF
-    DIM padding AS STRING = Spaces(m.Width - Len(title))
-    view = titleStyle.Render(title & padding) & Chr(10)
+    ' Render menu bar
+    view = RenderMenuBar(m) & Chr(10)
+
+    ' Render dropdown if menu is open
+    IF m.MenuOpen <> MENU_NONE THEN
+        view = view & RenderDropdown(m)
+    ENDIF
 
     ' Calculate content area
     DIM contentHeight AS INTEGER = m.Height - 3
     IF contentHeight < 1 THEN
         contentHeight = 1
-    END IF
+    ENDIF
 
     ' Render content lines
     DIM lineNumWidth AS INTEGER = 0
     IF m.ShowLineNumbers THEN
-        lineNumWidth = 5
-    END IF
+        lineNumWidth = 6
+    ENDIF
+
+    DIM contentWidth AS INTEGER = m.Width - lineNumWidth
+    IF contentWidth < 10 THEN
+        contentWidth = 10
+    ENDIF
 
     DIM i AS INTEGER
     FOR i = 0 TO contentHeight - 1
@@ -324,99 +1108,259 @@ FUNCTION (m AS EditorModel) View() AS STRING
 
         IF lineIdx < totalLines THEN
             lineText = GetLine(m.Content, lineIdx + 1)
-        END IF
+        ENDIF
+
+        ' Apply horizontal scroll
+        IF m.ScrollX > 0 AND Len(lineText) > m.ScrollX THEN
+            lineText = Mid(lineText, m.ScrollX + 1, Len(lineText) - m.ScrollX)
+        ELSEIF m.ScrollX > 0 THEN
+            lineText = ""
+        ENDIF
 
         ' Line number
         IF m.ShowLineNumbers THEN
             IF lineIdx < totalLines THEN
-                view = view & lineNumStyle.Render(fmt.Sprintf("%4d ", lineIdx + 1))
+                view = view & lineNumStyle.Render(fmt.Sprintf("%5d ", lineIdx + 1))
             ELSE
-                view = view & lineNumStyle.Render("     ")
-            END IF
-        END IF
+                view = view & lineNumStyle.Render("      ")
+            ENDIF
+        ENDIF
 
         ' Content with cursor
         IF lineIdx = m.CursorY THEN
-            ' This line has the cursor
+            DIM cursorCol AS INTEGER = m.CursorX - m.ScrollX
             DIM beforeCursor AS STRING = ""
             DIM cursorChar AS STRING = " "
             DIM afterCursor AS STRING = ""
 
-            IF m.CursorX > 0 AND Len(lineText) > 0 THEN
-                IF m.CursorX <= Len(lineText) THEN
-                    beforeCursor = Left(lineText, m.CursorX)
+            IF cursorCol > 0 AND Len(lineText) > 0 THEN
+                IF cursorCol <= Len(lineText) THEN
+                    beforeCursor = Left(lineText, cursorCol)
                 ELSE
-                    beforeCursor = lineText
-                END IF
-            END IF
+                    beforeCursor = lineText & RepeatChar(" ", cursorCol - Len(lineText))
+                ENDIF
+            ENDIF
 
-            IF m.CursorX < Len(lineText) THEN
-                cursorChar = Mid(lineText, m.CursorX + 1, 1)
-                IF m.CursorX + 1 < Len(lineText) THEN
-                    afterCursor = Mid(lineText, m.CursorX + 2, Len(lineText) - m.CursorX - 1)
-                END IF
-            END IF
+            IF cursorCol >= 0 AND cursorCol < Len(lineText) THEN
+                cursorChar = Mid(lineText, cursorCol + 1, 1)
+                IF cursorCol + 1 < Len(lineText) THEN
+                    afterCursor = Mid(lineText, cursorCol + 2, Len(lineText) - cursorCol - 1)
+                ENDIF
+            ENDIF
 
-            view = view & textStyle.Render(beforeCursor)
-            view = view & cursorStyle.Render(cursorChar)
-            view = view & textStyle.Render(afterCursor)
+            DIM lineContent AS STRING = textAreaStyle.Render(beforeCursor) & cursorStyle.Render(cursorChar) & textAreaStyle.Render(afterCursor)
+            DIM displayLen AS INTEGER = Len(beforeCursor) + 1 + Len(afterCursor)
+            IF displayLen < contentWidth THEN
+                lineContent = lineContent & textAreaStyle.Render(RepeatChar(" ", contentWidth - displayLen))
+            ENDIF
+            view = view & lineContent
         ELSE
-            view = view & textStyle.Render(lineText)
-        END IF
+            DIM paddedLine AS STRING = PadRight(lineText, contentWidth)
+            view = view & textAreaStyle.Render(paddedLine)
+        ENDIF
 
-        ' Pad to width and add newline
-        DIM currentLen AS INTEGER = Len(lineText) + lineNumWidth
-        IF lineIdx = m.CursorY AND m.CursorX >= Len(lineText) THEN
-            currentLen = currentLen + 1
-        END IF
-        IF currentLen < m.Width THEN
-            view = view & Spaces(m.Width - currentLen)
-        END IF
         view = view & Chr(10)
     NEXT
 
     ' Status bar
-    DIM status AS STRING = fmt.Sprintf(" Ln %d, Col %d | Lines: %d", m.CursorY + 1, m.CursorX + 1, totalLines)
+    DIM status AS STRING = ""
+    IF Len(m.Filename) > 0 THEN
+        status = " " & m.Filename
+    ELSE
+        status = " [Untitled]"
+    ENDIF
+    IF m.Modified THEN
+        status = status & " *"
+    ENDIF
+    status = status & fmt.Sprintf("  Ln %d, Col %d", m.CursorY + 1, m.CursorX + 1)
+    IF NOT m.InsertMode THEN
+        status = status & "  OVR"
+    ENDIF
     IF Len(m.Message) > 0 THEN
-        status = status & " | " & m.Message
-    END IF
-    DIM statusPad AS STRING = Spaces(m.Width - Len(status))
-    view = view & statusStyle.Render(status & statusPad) & Chr(10)
+        status = status & "  " & m.Message
+    ENDIF
+    view = view & statusBarStyle.Render(PadRight(status, m.Width)) & Chr(10)
 
     ' Help line
-    view = view & " F1=Help  Ctrl+L=Line#  Ctrl+Q=Quit"
+    view = view & menuBarStyle.Render(PadRight(" F1=Help  F10=Menu  Ctrl+S=Save  Ctrl+Q=Quit", m.Width))
 
     ' Render dialog if open
-    IF m.DialogMode = DIALOG_HELP THEN
-        view = view & Chr(10) & Chr(10)
-        DIM helpText AS STRING = "DBASIC EDIT - Keyboard Shortcuts" & Chr(10) & Chr(10)
-        helpText = helpText & "Navigation:" & Chr(10)
-        helpText = helpText & "  Arrow keys    Move cursor" & Chr(10)
-        helpText = helpText & "  Home/End      Start/end of line" & Chr(10)
-        helpText = helpText & "  PgUp/PgDn     Page up/down" & Chr(10)
-        helpText = helpText & "  Ctrl+Home     Start of file" & Chr(10)
-        helpText = helpText & "  Ctrl+End      End of file" & Chr(10) & Chr(10)
-        helpText = helpText & "Commands:" & Chr(10)
-        helpText = helpText & "  F1            This help" & Chr(10)
-        helpText = helpText & "  F10           About" & Chr(10)
-        helpText = helpText & "  Ctrl+L        Toggle line numbers" & Chr(10)
-        helpText = helpText & "  Ctrl+Q/C      Quit" & Chr(10) & Chr(10)
-        helpText = helpText & "Press any key to close"
-        view = dialogStyle.Render(helpText)
-    ELSEIF m.DialogMode = DIALOG_ABOUT THEN
-        view = view & Chr(10) & Chr(10)
-        DIM aboutText AS STRING = "DBASIC EDIT" & Chr(10) & Chr(10)
-        aboutText = aboutText & "A text editor demonstration" & Chr(10)
-        aboutText = aboutText & "written in DBasic using" & Chr(10)
-        aboutText = aboutText & "the Bubble Tea TUI framework." & Chr(10) & Chr(10)
-        aboutText = aboutText & "This showcases DBasic's ability" & Chr(10)
-        aboutText = aboutText & "to implement Go interfaces and" & Chr(10)
-        aboutText = aboutText & "use external packages." & Chr(10) & Chr(10)
-        aboutText = aboutText & "Press any key to close"
-        view = dialogStyle.Render(aboutText)
-    END IF
+    IF m.DialogMode <> DIALOG_NONE THEN
+        view = view & Chr(10) & RenderDialog(m)
+    ENDIF
 
     RETURN view
+END FUNCTION
+
+' Render menu bar
+FUNCTION RenderMenuBar(m AS EditorModel) AS STRING
+    DIM bar AS STRING = " "
+
+    IF m.MenuOpen = MENU_FILE THEN
+        bar = bar & menuItemSelectedStyle.Render("File")
+    ELSE
+        bar = bar & menuItemStyle.Render("File")
+    ENDIF
+
+    bar = bar & " "
+
+    IF m.MenuOpen = MENU_EDIT THEN
+        bar = bar & menuItemSelectedStyle.Render("Edit")
+    ELSE
+        bar = bar & menuItemStyle.Render("Edit")
+    ENDIF
+
+    bar = bar & " "
+
+    IF m.MenuOpen = MENU_SEARCH THEN
+        bar = bar & menuItemSelectedStyle.Render("Search")
+    ELSE
+        bar = bar & menuItemStyle.Render("Search")
+    ENDIF
+
+    bar = bar & " "
+
+    IF m.MenuOpen = MENU_OPTIONS THEN
+        bar = bar & menuItemSelectedStyle.Render("Options")
+    ELSE
+        bar = bar & menuItemStyle.Render("Options")
+    ENDIF
+
+    bar = bar & " "
+
+    IF m.MenuOpen = MENU_HELP THEN
+        bar = bar & menuItemSelectedStyle.Render("Help")
+    ELSE
+        bar = bar & menuItemStyle.Render("Help")
+    ENDIF
+
+    ' Pad to full width
+    DIM currentLen AS INTEGER = 40
+    bar = bar & menuBarStyle.Render(RepeatChar(" ", m.Width - currentLen))
+
+    RETURN menuBarStyle.Render(bar)
+END FUNCTION
+
+' Render dropdown menu
+FUNCTION RenderDropdown(m AS EditorModel) AS STRING
+    DIM items AS STRING = ""
+
+    IF m.MenuOpen = MENU_FILE THEN
+        items = RenderMenuItem("New         Ctrl+N", m.MenuIndex = 0) & Chr(10)
+        items = items & RenderMenuItem("Open        Ctrl+O", m.MenuIndex = 1) & Chr(10)
+        items = items & RenderMenuItem("Save        Ctrl+S", m.MenuIndex = 2) & Chr(10)
+        items = items & RenderMenuItem("Save As...       ", m.MenuIndex = 3) & Chr(10)
+        items = items & RenderMenuItem("-----------------", FALSE) & Chr(10)
+        items = items & RenderMenuItem("Exit        Alt+X ", m.MenuIndex = 5)
+    ELSEIF m.MenuOpen = MENU_EDIT THEN
+        items = RenderMenuItem("Cut         Ctrl+X", m.MenuIndex = 0) & Chr(10)
+        items = items & RenderMenuItem("Copy        Ctrl+C", m.MenuIndex = 1) & Chr(10)
+        items = items & RenderMenuItem("Paste       Ctrl+V", m.MenuIndex = 2) & Chr(10)
+        items = items & RenderMenuItem("-----------------", FALSE) & Chr(10)
+        items = items & RenderMenuItem("Select All  Ctrl+A", m.MenuIndex = 4) & Chr(10)
+        items = items & RenderMenuItem("Clear            ", m.MenuIndex = 5)
+    ELSEIF m.MenuOpen = MENU_SEARCH THEN
+        items = RenderMenuItem("Find        Ctrl+F", m.MenuIndex = 0) & Chr(10)
+        items = items & RenderMenuItem("Find Next   F3    ", m.MenuIndex = 1) & Chr(10)
+        items = items & RenderMenuItem("Replace     Ctrl+H", m.MenuIndex = 2) & Chr(10)
+        items = items & RenderMenuItem("Go to Line  Ctrl+G", m.MenuIndex = 3)
+    ELSEIF m.MenuOpen = MENU_OPTIONS THEN
+        DIM lineNumCheck AS STRING = "[ ]"
+        IF m.ShowLineNumbers THEN
+            lineNumCheck = "[X]"
+        ENDIF
+        DIM insertCheck AS STRING = "[ ]"
+        IF m.InsertMode THEN
+            insertCheck = "[X]"
+        ENDIF
+        items = RenderMenuItem(lineNumCheck & " Line Numbers ", m.MenuIndex = 0) & Chr(10)
+        items = items & RenderMenuItem(insertCheck & " Insert Mode  ", m.MenuIndex = 1)
+    ELSEIF m.MenuOpen = MENU_HELP THEN
+        items = RenderMenuItem("Help        F1    ", m.MenuIndex = 0) & Chr(10)
+        items = items & RenderMenuItem("About            ", m.MenuIndex = 1)
+    ENDIF
+
+    RETURN menuDropdownStyle.Render(items) & Chr(10)
+END FUNCTION
+
+' Render a single menu item
+FUNCTION RenderMenuItem(text AS STRING, selected AS BOOLEAN) AS STRING
+    IF selected THEN
+        RETURN menuItemSelectedStyle.Render(text)
+    ENDIF
+    RETURN text
+END FUNCTION
+
+' Render dialog box
+FUNCTION RenderDialog(m AS EditorModel) AS STRING
+    DIM content AS STRING = ""
+    DIM title AS STRING = ""
+
+    IF m.DialogMode = DIALOG_HELP THEN
+        title = " Help "
+        content = "MS-DOS Editor Clone - Keyboard Shortcuts" & Chr(10) & Chr(10)
+        content = content & "File Operations:" & Chr(10)
+        content = content & "  Ctrl+N    New file" & Chr(10)
+        content = content & "  Ctrl+O    Open file" & Chr(10)
+        content = content & "  Ctrl+S    Save file" & Chr(10)
+        content = content & "  Ctrl+Q    Exit" & Chr(10) & Chr(10)
+        content = content & "Edit Operations:" & Chr(10)
+        content = content & "  Ctrl+C    Copy line" & Chr(10)
+        content = content & "  Ctrl+X    Cut line" & Chr(10)
+        content = content & "  Ctrl+V    Paste" & Chr(10) & Chr(10)
+        content = content & "Navigation:" & Chr(10)
+        content = content & "  Arrow keys, Home, End, PgUp, PgDn" & Chr(10)
+        content = content & "  Ctrl+Home/End  Start/end of file" & Chr(10) & Chr(10)
+        content = content & "Search:" & Chr(10)
+        content = content & "  Ctrl+F    Find" & Chr(10)
+        content = content & "  F3        Find next" & Chr(10)
+        content = content & "  Ctrl+G    Go to line" & Chr(10) & Chr(10)
+        content = content & "Press Enter or Esc to close"
+
+    ELSEIF m.DialogMode = DIALOG_ABOUT THEN
+        title = " About "
+        content = "DBasic EDIT" & Chr(10)
+        content = content & "Version 1.0" & Chr(10) & Chr(10)
+        content = content & "A clone of MS-DOS 5.0 EDIT.COM" & Chr(10)
+        content = content & "Written entirely in DBasic" & Chr(10) & Chr(10)
+        content = content & "Press Enter or Esc to close"
+
+    ELSEIF m.DialogMode = DIALOG_OPEN THEN
+        title = " Open File "
+        content = "Filename:" & Chr(10) & Chr(10)
+        content = content & "[" & m.DialogInput & "]" & Chr(10) & Chr(10)
+        content = content & "Enter=Open  Esc=Cancel"
+
+    ELSEIF m.DialogMode = DIALOG_SAVEAS THEN
+        title = " Save As "
+        content = "Filename:" & Chr(10) & Chr(10)
+        content = content & "[" & m.DialogInput & "]" & Chr(10) & Chr(10)
+        content = content & "Enter=Save  Esc=Cancel"
+
+    ELSEIF m.DialogMode = DIALOG_FIND THEN
+        title = " Find "
+        content = "Search for:" & Chr(10) & Chr(10)
+        content = content & "[" & m.DialogInput & "]" & Chr(10) & Chr(10)
+        content = content & "Enter=Find  Esc=Cancel"
+
+    ELSEIF m.DialogMode = DIALOG_GOTO THEN
+        title = " Go to Line "
+        content = "Line number:" & Chr(10) & Chr(10)
+        content = content & "[" & m.DialogInput & "]" & Chr(10) & Chr(10)
+        content = content & "Enter=Go  Esc=Cancel"
+
+    ELSEIF m.DialogMode = DIALOG_CONFIRM_NEW THEN
+        title = " New File "
+        content = "File has been modified." & Chr(10) & Chr(10)
+        content = content & "Discard changes? (Y/N)"
+
+    ELSEIF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
+        title = " Exit "
+        content = "File has been modified." & Chr(10) & Chr(10)
+        content = content & "Exit without saving? (Y/N)"
+    ENDIF
+
+    RETURN dialogTitleStyle.Render(title) & Chr(10) & dialogStyle.Render(content)
 END FUNCTION
 
 ' Main entry point
@@ -425,24 +1369,53 @@ SUB Main()
     model.CursorX = 0
     model.CursorY = 0
     model.Width = 80
-    model.Height = 24
+    model.Height = 25
+    model.ScrollX = 0
     model.ScrollY = 0
-    model.ShowLineNumbers = TRUE
-    model.DialogMode = DIALOG_NONE
+    model.SelectStartX = 0
+    model.SelectStartY = 0
+    model.SelectEndX = 0
+    model.SelectEndY = 0
+    model.Selecting = FALSE
+    model.Clipboard = ""
+    model.Filename = ""
     model.Modified = FALSE
-    model.Message = "Welcome to DBasic Edit!"
+    model.MenuOpen = MENU_NONE
+    model.MenuIndex = 0
+    model.DialogMode = DIALOG_NONE
+    model.DialogInput = ""
+    model.DialogCursor = 0
+    model.SearchText = ""
+    model.ReplaceText = ""
+    model.SearchWrap = TRUE
+    model.SearchCase = FALSE
+    model.Message = "Press F1 for Help, F10 for Menu"
+    model.ShowLineNumbers = FALSE
+    model.TabSize = 4
+    model.InsertMode = TRUE
 
-    ' Sample content
-    model.Content = "' Welcome to DBASIC EDIT" & Chr(10)
-    model.Content = model.Content & "' A simple text editor written in DBasic" & Chr(10)
-    model.Content = model.Content & Chr(10)
-    model.Content = model.Content & "SUB Main()" & Chr(10)
-    model.Content = model.Content & "    PRINT \"Hello, World!\"" & Chr(10)
-    model.Content = model.Content & "END SUB" & Chr(10)
-    model.Content = model.Content & Chr(10)
-    model.Content = model.Content & "' Use arrow keys to navigate" & Chr(10)
-    model.Content = model.Content & "' Press F1 for help" & Chr(10)
-    model.Content = model.Content & "' Press Ctrl+Q to quit"
+    ' Check for command line argument (file to open)
+    DIM args AS []STRING = os.Args
+    IF Len(args) > 1 THEN
+        DIM filename AS STRING = args[1]
+        IF FileExists(filename) THEN
+            model.Content = ReadFile(filename)
+            model.Filename = filename
+            model.Message = "Opened: " & filename
+        ELSE
+            model.Filename = filename
+            model.Message = "New file: " & filename
+        ENDIF
+    ELSE
+        ' Default welcome content
+        model.Content = "' Welcome to DBasic EDIT" & Chr(10)
+        model.Content = model.Content & "' A clone of MS-DOS 5.0 EDIT.COM" & Chr(10)
+        model.Content = model.Content & "'" & Chr(10)
+        model.Content = model.Content & "' Press F10 or Alt+F to open the menu" & Chr(10)
+        model.Content = model.Content & "' Press F1 for help" & Chr(10)
+        model.Content = model.Content & "'" & Chr(10)
+        model.Content = model.Content & "' Start typing to edit..." & Chr(10)
+    ENDIF
 
     tea.NewProgram(model, tea.WithAltScreen()).Run()
 END SUB

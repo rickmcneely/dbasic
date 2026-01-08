@@ -1,12 +1,49 @@
 package main
 
 import (
+	"strings"
+	"os"
+	"strconv"
 	fmt "fmt"
 	tea "github.com/charmbracelet/bubbletea"
 	lipgloss "github.com/charmbracelet/lipgloss"
 )
 
 // Runtime helper functions
+
+// ReadFile reads entire file contents
+func ReadFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// WriteFile writes string to file
+func WriteFile(path, content string) {
+	os.WriteFile(path, []byte(content), 0644)
+}
+
+// Instr finds the position of substring in string (1-based)
+func Instr(s, substr string) int {
+	idx := strings.Index(s, substr)
+	if idx == -1 {
+		return 0
+	}
+	return idx + 1
+}
+
+// Val converts a string to float64
+func Val(s string) float64 {
+	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return v
+}
+
+// Len returns the length of a string
+func Len(s string) int {
+	return len(s)
+}
 
 // Left returns the leftmost n characters
 func Left(s string, n int) string {
@@ -19,9 +56,10 @@ func Left(s string, n int) string {
 	return s[:n]
 }
 
-// Len returns the length of a string
-func Len(s string) int {
-	return len(s)
+// FileExists checks if a file exists
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // Mid returns a substring starting at position start with length ln
@@ -69,51 +107,101 @@ type EditorModel struct {
 	Width int
 	Height int
 	Content string
+	LineCount int
+	ScrollX int
+	ScrollY int
+	SelectStartX int
+	SelectStartY int
+	SelectEndX int
+	SelectEndY int
+	Selecting bool
+	Clipboard string
+	Filename string
+	Modified bool
+	MenuOpen int
+	MenuIndex int
+	DialogMode int
+	DialogInput string
+	DialogCursor int
+	SearchText string
+	ReplaceText string
+	SearchWrap bool
+	SearchCase bool
 	Message string
 	ShowLineNumbers bool
-	DialogMode int
-	ScrollY int
-	Modified bool
+	TabSize int
+	InsertMode bool
 }
 
 
+const MENU_NONE = 0
+const MENU_FILE = 1
+const MENU_EDIT = 2
+const MENU_SEARCH = 3
+const MENU_OPTIONS = 4
+const MENU_HELP = 5
 const DIALOG_NONE = 0
 const DIALOG_HELP = 1
 const DIALOG_ABOUT = 2
+const DIALOG_OPEN = 3
+const DIALOG_SAVE = 4
+const DIALOG_SAVEAS = 5
+const DIALOG_FIND = 6
+const DIALOG_REPLACE = 7
+const DIALOG_GOTO = 8
+const DIALOG_CONFIRM_NEW = 9
+const DIALOG_CONFIRM_EXIT = 10
 var (
-	titleStyle lipgloss.Style
-	statusStyle lipgloss.Style
-	lineNumStyle lipgloss.Style
-	textStyle lipgloss.Style
-	cursorStyle lipgloss.Style
+	menuBarStyle lipgloss.Style
+	menuItemStyle lipgloss.Style
+	menuItemSelectedStyle lipgloss.Style
+	menuDropdownStyle lipgloss.Style
+	textAreaStyle lipgloss.Style
+	statusBarStyle lipgloss.Style
 	dialogStyle lipgloss.Style
+	dialogTitleStyle lipgloss.Style
+	lineNumStyle lipgloss.Style
+	cursorStyle lipgloss.Style
+	selectedStyle lipgloss.Style
 )
 
 
-func PadRight(s string, width int) string {
-	var result string = s
-	for (len(result) < width) {
-		result = (result + " ")
-	}
-	return result
+func InitStyles() {
+	menuBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0"))
+	menuItemStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0")).Padding(0, 1)
+	menuItemSelectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("7")).Padding(0, 1)
+	menuDropdownStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("15"))
+	textAreaStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15"))
+	statusBarStyle = lipgloss.NewStyle().Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
+	dialogStyle = lipgloss.NewStyle().Background(lipgloss.Color("7")).Foreground(lipgloss.Color("0")).Border(lipgloss.DoubleBorder()).BorderForeground(lipgloss.Color("0")).Padding(1, 2)
+	dialogTitleStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15")).Padding(0, 1)
+	lineNumStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("8"))
+	cursorStyle = lipgloss.NewStyle().Background(lipgloss.Color("15")).Foreground(lipgloss.Color("4"))
+	selectedStyle = lipgloss.NewStyle().Background(lipgloss.Color("3")).Foreground(lipgloss.Color("0"))
 }
 
-func Spaces(count int) string {
+func RepeatChar(ch string, count int) string {
 	var result string = ""
 	var i int
 	for i = 1; i <= count; i += 1 {
-		result = (result + " ")
+		result = (result + ch)
 	}
 	return result
 }
 
-func InitStyles() {
-	titleStyle = lipgloss.NewStyle().Background(lipgloss.Color("12")).Foreground(lipgloss.Color("15")).Bold(true)
-	statusStyle = lipgloss.NewStyle().Background(lipgloss.Color("6")).Foreground(lipgloss.Color("0"))
-	lineNumStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	textStyle = lipgloss.NewStyle().Background(lipgloss.Color("0")).Foreground(lipgloss.Color("15"))
-	cursorStyle = lipgloss.NewStyle().Background(lipgloss.Color("15")).Foreground(lipgloss.Color("0"))
-	dialogStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("12")).Padding(1, 2)
+func PadRight(s string, width int) string {
+	if (len(s) >= width) {
+		return Left(s, width)
+	}
+	return (s + RepeatChar(" ", (width - len(s))))
+}
+
+func CenterStr(s string, width int) string {
+	if (len(s) >= width) {
+		return Left(s, width)
+	}
+	var padding int = ((width - len(s)) / 2)
+	return ((RepeatChar(" ", padding) + s) + RepeatChar(" ", ((width - len(s)) - padding)))
 }
 
 func CountLines(content string) int {
@@ -131,6 +219,9 @@ func CountLines(content string) int {
 }
 
 func GetLine(content string, lineNum int) string {
+	if (len(content) == 0) {
+		return ""
+	}
 	var currentLine int = 1
 	var startPos int = 1
 	var i int
@@ -161,6 +252,123 @@ func GetLineLength(content string, lineNum int) int {
 	return len(GetLine(content, lineNum))
 }
 
+func SetLine(content string, lineNum int, newLine string) string {
+	var lines string = ""
+	var currentLine int = 1
+	var i int
+	var lineStart int = 1
+	for i = 1; i <= (len(content) + 1); i += 1 {
+		var ch string = ""
+		if (i <= len(content)) {
+			ch = Mid(content, i, 1)
+		}
+		if ((ch == Chr(10)) || (i > len(content))) {
+			if (currentLine == lineNum) {
+				lines = (lines + newLine)
+			} else {
+				lines = (lines + Mid(content, lineStart, (i - lineStart)))
+			}
+			if (ch == Chr(10)) {
+				lines = (lines + Chr(10))
+			}
+			currentLine = (currentLine + 1)
+			lineStart = (i + 1)
+		}
+	}
+	return lines
+}
+
+func InsertCharAt(content string, lineNum int, col int, ch string) string {
+	var line string = GetLine(content, lineNum)
+	var newLine string
+	if (col <= 0) {
+		newLine = (ch + line)
+	} else if (col >= len(line)) {
+		newLine = (line + ch)
+	} else {
+		newLine = ((Left(line, col) + ch) + Mid(line, (col + 1), (len(line) - col)))
+	}
+	return SetLine(content, lineNum, newLine)
+}
+
+func DeleteCharAt(content string, lineNum int, col int) string {
+	var line string = GetLine(content, lineNum)
+	if ((col < 0) || (col >= len(line))) {
+		return content
+	}
+	var newLine string
+	if (col == 0) {
+		newLine = Mid(line, 2, (len(line) - 1))
+	} else {
+		newLine = (Left(line, col) + Mid(line, (col + 2), ((len(line) - col) - 1)))
+	}
+	return SetLine(content, lineNum, newLine)
+}
+
+func InsertNewLine(content string, lineNum int, col int) string {
+	var line string = GetLine(content, lineNum)
+	var beforeCursor string = Left(line, col)
+	var afterCursor string = Mid(line, (col + 1), (len(line) - col))
+	var result string = ""
+	var currentLine int = 1
+	var i int
+	var lineStart int = 1
+	for i = 1; i <= (len(content) + 1); i += 1 {
+		var ch string = ""
+		if (i <= len(content)) {
+			ch = Mid(content, i, 1)
+		}
+		if ((ch == Chr(10)) || (i > len(content))) {
+			if (currentLine == lineNum) {
+				result = (((result + beforeCursor) + Chr(10)) + afterCursor)
+			} else {
+				result = (result + Mid(content, lineStart, (i - lineStart)))
+			}
+			if ((ch == Chr(10)) && (currentLine != lineNum)) {
+				result = (result + Chr(10))
+			}
+			currentLine = (currentLine + 1)
+			lineStart = (i + 1)
+		}
+	}
+	return result
+}
+
+func JoinWithPrevLine(content string, lineNum int) string {
+	if (lineNum <= 1) {
+		return content
+	}
+	var prevLine string = GetLine(content, (lineNum - 1))
+	var currLine string = GetLine(content, lineNum)
+	var joinedLine string = (prevLine + currLine)
+	var result string = ""
+	var currentLine int = 1
+	var i int
+	var lineStart int = 1
+	for i = 1; i <= (len(content) + 1); i += 1 {
+		var ch string = ""
+		if (i <= len(content)) {
+			ch = Mid(content, i, 1)
+		}
+		if ((ch == Chr(10)) || (i > len(content))) {
+			if (currentLine == (lineNum - 1)) {
+				result = (result + joinedLine)
+			} else if (currentLine != lineNum) {
+				result = (result + Mid(content, lineStart, (i - lineStart)))
+			}
+			if (((ch == Chr(10)) && (currentLine != (lineNum - 1))) && (currentLine != lineNum)) {
+				result = (result + Chr(10))
+			} else if ((ch == Chr(10)) && (currentLine == (lineNum - 1))) {
+			} else if ((ch == Chr(10)) && (currentLine < (lineNum - 1))) {
+				result = (result + Chr(10))
+			}
+			currentLine = (currentLine + 1)
+			lineStart = (i + 1)
+		}
+	}
+	return result
+}
+
 func (m EditorModel) Init() tea.Cmd {
 	InitStyles()
 	return nil
@@ -181,32 +389,88 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !(ok) {
 		return m, nil
 	}
-	var keyStr string
-	keyStr = keyMsg.String()
+	var key string = keyMsg.String()
 	if (m.DialogMode != DIALOG_NONE) {
-		if (((keyStr == "esc") || (keyStr == "enter")) || (keyStr == "q")) {
-			m.DialogMode = DIALOG_NONE
+		return HandleDialogInput(m, key)
+	}
+	if (m.MenuOpen != MENU_NONE) {
+		return HandleMenuInput(m, key)
+	}
+	if ((key == "alt+f") || (key == "f10")) {
+		m.MenuOpen = MENU_FILE
+		m.MenuIndex = 0
+		return m, nil
+	} else if (key == "alt+e") {
+		m.MenuOpen = MENU_EDIT
+		m.MenuIndex = 0
+		return m, nil
+	} else if (key == "alt+s") {
+		m.MenuOpen = MENU_SEARCH
+		m.MenuIndex = 0
+		return m, nil
+	} else if (key == "alt+o") {
+		m.MenuOpen = MENU_OPTIONS
+		m.MenuIndex = 0
+		return m, nil
+	} else if ((key == "alt+h") || (key == "f1")) {
+		m.DialogMode = DIALOG_HELP
+		return m, nil
+	} else if (key == "ctrl+n") {
+		return DoNewFile(m)
+	} else if (key == "ctrl+o") {
+		m.DialogMode = DIALOG_OPEN
+		m.DialogInput = m.Filename
+		m.DialogCursor = len(m.DialogInput)
+		return m, nil
+	} else if (key == "ctrl+s") {
+		return DoSaveFile(m)
+	} else if ((key == "ctrl+q") || (key == "alt+x")) {
+		if m.Modified {
+			m.DialogMode = DIALOG_CONFIRM_EXIT
+			return m, nil
+		}
+		return m, tea.Quit
+	} else if (key == "ctrl+f") {
+		m.DialogMode = DIALOG_FIND
+		m.DialogInput = m.SearchText
+		m.DialogCursor = len(m.DialogInput)
+		return m, nil
+	} else if (key == "ctrl+h") {
+		m.DialogMode = DIALOG_REPLACE
+		m.DialogInput = m.SearchText
+		m.DialogCursor = len(m.DialogInput)
+		return m, nil
+	} else if (key == "f3") {
+		return DoFindNext(m)
+	} else if (key == "ctrl+g") {
+		m.DialogMode = DIALOG_GOTO
+		m.DialogInput = ""
+		m.DialogCursor = 0
+		return m, nil
+	} else if (key == "ctrl+c") {
+		return DoCopy(m)
+	} else if (key == "ctrl+x") {
+		return DoCut(m)
+	} else if (key == "ctrl+v") {
+		return DoPaste(m)
+	} else if (key == "ctrl+a") {
+		return DoSelectAll(m)
+	} else if (key == "insert") {
+		m.InsertMode = !(m.InsertMode)
+		if m.InsertMode {
+			m.Message = "Insert mode"
+		} else {
+			m.Message = "Overwrite mode"
 		}
 		return m, nil
 	}
+	return HandleEditorInput(m, key)
+}
+
+func HandleEditorInput(m EditorModel, key string) (tea.Model, tea.Cmd) {
 	var totalLines int = CountLines(m.Content)
 	var currentLineLen int = GetLineLength(m.Content, (m.CursorY + 1))
-	if ((keyStr == "ctrl+c") || (keyStr == "ctrl+q")) {
-		return m, tea.Quit
-	} else if (keyStr == "f1") {
-		m.DialogMode = DIALOG_HELP
-		m.Message = "Help"
-	} else if (keyStr == "f10") {
-		m.DialogMode = DIALOG_ABOUT
-		m.Message = "About"
-	} else if (keyStr == "ctrl+l") {
-		m.ShowLineNumbers = !(m.ShowLineNumbers)
-		if m.ShowLineNumbers {
-			m.Message = "Line numbers ON"
-		} else {
-			m.Message = "Line numbers OFF"
-		}
-	} else if (keyStr == "left") {
+	if (key == "left") {
 		if (m.CursorX > 0) {
 			m.CursorX = (m.CursorX - 1)
 		} else if (m.CursorY > 0) {
@@ -214,7 +478,7 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.CursorX = GetLineLength(m.Content, (m.CursorY + 1))
 		}
 		m.Message = ""
-	} else if (keyStr == "right") {
+	} else if (key == "right") {
 		if (m.CursorX < currentLineLen) {
 			m.CursorX = (m.CursorX + 1)
 		} else if (m.CursorY < (totalLines - 1)) {
@@ -222,7 +486,7 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.CursorX = 0
 		}
 		m.Message = ""
-	} else if (keyStr == "up") {
+	} else if (key == "up") {
 		if (m.CursorY > 0) {
 			m.CursorY = (m.CursorY - 1)
 			var upLineLen int = GetLineLength(m.Content, (m.CursorY + 1))
@@ -231,7 +495,7 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.Message = ""
-	} else if (keyStr == "down") {
+	} else if (key == "down") {
 		if (m.CursorY < (totalLines - 1)) {
 			m.CursorY = (m.CursorY + 1)
 			var downLineLen int = GetLineLength(m.Content, (m.CursorY + 1))
@@ -240,32 +504,32 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.Message = ""
-	} else if (keyStr == "home") {
+	} else if (key == "home") {
 		m.CursorX = 0
 		m.Message = ""
-	} else if (keyStr == "end") {
+	} else if (key == "end") {
 		m.CursorX = currentLineLen
 		m.Message = ""
-	} else if (keyStr == "ctrl+home") {
+	} else if (key == "ctrl+home") {
 		m.CursorX = 0
 		m.CursorY = 0
 		m.ScrollY = 0
-		m.Message = "Top of file"
-	} else if (keyStr == "ctrl+end") {
+		m.Message = ""
+	} else if (key == "ctrl+end") {
 		m.CursorY = (totalLines - 1)
 		m.CursorX = GetLineLength(m.Content, totalLines)
-		m.Message = "End of file"
-	} else if (keyStr == "pgup") {
-		var pgUpSize int = (m.Height - 4)
-		if (pgUpSize < 1) {
-			pgUpSize = 1
+		m.Message = ""
+	} else if (key == "pgup") {
+		var pgSize int = (m.Height - 4)
+		if (pgSize < 1) {
+			pgSize = 1
 		}
-		m.CursorY = (m.CursorY - pgUpSize)
+		m.CursorY = (m.CursorY - pgSize)
 		if (m.CursorY < 0) {
 			m.CursorY = 0
 		}
 		m.Message = ""
-	} else if (keyStr == "pgdown") {
+	} else if (key == "pgdown") {
 		var pgDownSize int = (m.Height - 4)
 		if (pgDownSize < 1) {
 			pgDownSize = 1
@@ -275,8 +539,69 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.CursorY = (totalLines - 1)
 		}
 		m.Message = ""
-	} else {
-		m.Message = ("Key: " + keyStr)
+	} else if (key == "enter") {
+		m.Content = InsertNewLine(m.Content, (m.CursorY + 1), m.CursorX)
+		m.CursorY = (m.CursorY + 1)
+		m.CursorX = 0
+		m.Modified = true
+		m.Message = ""
+	} else if (key == "backspace") {
+		if (m.CursorX > 0) {
+			m.Content = DeleteCharAt(m.Content, (m.CursorY + 1), (m.CursorX - 1))
+			m.CursorX = (m.CursorX - 1)
+			m.Modified = true
+		} else if (m.CursorY > 0) {
+			var prevLen int = GetLineLength(m.Content, m.CursorY)
+			m.Content = JoinWithPrevLine(m.Content, (m.CursorY + 1))
+			m.CursorY = (m.CursorY - 1)
+			m.CursorX = prevLen
+			m.Modified = true
+		}
+		m.Message = ""
+	} else if (key == "delete") {
+		if (m.CursorX < currentLineLen) {
+			m.Content = DeleteCharAt(m.Content, (m.CursorY + 1), m.CursorX)
+			m.Modified = true
+		} else if (m.CursorY < (totalLines - 1)) {
+			var nextLine string = GetLine(m.Content, (m.CursorY + 2))
+			var currLine string = GetLine(m.Content, (m.CursorY + 1))
+			m.Content = SetLine(m.Content, (m.CursorY + 1), (currLine + nextLine))
+			var newContent string = ""
+			var lineNum int = 1
+			var total int = CountLines(m.Content)
+			for lineNum = 1; lineNum <= total; lineNum += 1 {
+				if (lineNum != (m.CursorY + 2)) {
+					if (len(newContent) > 0) {
+						newContent = (newContent + Chr(10))
+					}
+					newContent = (newContent + GetLine(m.Content, lineNum))
+				}
+			}
+			m.Content = newContent
+			m.Modified = true
+		}
+		m.Message = ""
+	} else if (key == "tab") {
+		var ti int
+		for ti = 1; ti <= m.TabSize; ti += 1 {
+			m.Content = InsertCharAt(m.Content, (m.CursorY + 1), m.CursorX, " ")
+			m.CursorX = (m.CursorX + 1)
+		}
+		m.Modified = true
+		m.Message = ""
+	} else if (key == "esc") {
+		m.Selecting = false
+		m.Message = ""
+	} else if (len(key) == 1) {
+		if (m.InsertMode || (m.CursorX >= currentLineLen)) {
+			m.Content = InsertCharAt(m.Content, (m.CursorY + 1), m.CursorX, key)
+		} else {
+			m.Content = DeleteCharAt(m.Content, (m.CursorY + 1), m.CursorX)
+			m.Content = InsertCharAt(m.Content, (m.CursorY + 1), m.CursorX, key)
+		}
+		m.CursorX = (m.CursorX + 1)
+		m.Modified = true
+		m.Message = ""
 	}
 	var visibleLines int = (m.Height - 4)
 	if (visibleLines < 1) {
@@ -287,25 +612,411 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	} else if (m.CursorY >= (m.ScrollY + visibleLines)) {
 		m.ScrollY = ((m.CursorY - visibleLines) + 1)
 	}
+	var visibleCols int = (m.Width - 8)
+	if m.ShowLineNumbers {
+		visibleCols = (visibleCols - 6)
+	}
+	if (visibleCols < 10) {
+		visibleCols = 10
+	}
+	if (m.CursorX < m.ScrollX) {
+		m.ScrollX = m.CursorX
+	} else if (m.CursorX >= (m.ScrollX + visibleCols)) {
+		m.ScrollX = ((m.CursorX - visibleCols) + 1)
+	}
+	return m, nil
+}
+
+func HandleMenuInput(m EditorModel, key string) (tea.Model, tea.Cmd) {
+	if (key == "esc") {
+		m.MenuOpen = MENU_NONE
+		return m, nil
+	} else if (key == "left") {
+		m.MenuOpen = (m.MenuOpen - 1)
+		if (m.MenuOpen < MENU_FILE) {
+			m.MenuOpen = MENU_HELP
+		}
+		m.MenuIndex = 0
+		return m, nil
+	} else if (key == "right") {
+		m.MenuOpen = (m.MenuOpen + 1)
+		if (m.MenuOpen > MENU_HELP) {
+			m.MenuOpen = MENU_FILE
+		}
+		m.MenuIndex = 0
+		return m, nil
+	} else if (key == "up") {
+		m.MenuIndex = (m.MenuIndex - 1)
+		if (m.MenuIndex < 0) {
+			m.MenuIndex = (GetMenuItemCount(m.MenuOpen) - 1)
+		}
+		return m, nil
+	} else if (key == "down") {
+		m.MenuIndex = (m.MenuIndex + 1)
+		if (m.MenuIndex >= GetMenuItemCount(m.MenuOpen)) {
+			m.MenuIndex = 0
+		}
+		return m, nil
+	} else if (key == "enter") {
+		return ExecuteMenuItem(m)
+	}
+	return m, nil
+}
+
+func GetMenuItemCount(menu int) int {
+	if (menu == MENU_FILE) {
+		return 6
+	} else if (menu == MENU_EDIT) {
+		return 6
+	} else if (menu == MENU_SEARCH) {
+		return 4
+	} else if (menu == MENU_OPTIONS) {
+		return 2
+	} else if (menu == MENU_HELP) {
+		return 2
+	}
+	return 0
+}
+
+func ExecuteMenuItem(m EditorModel) (tea.Model, tea.Cmd) {
+	m.MenuOpen = MENU_NONE
+	if (m.MenuOpen == MENU_FILE) {
+		if (m.MenuIndex == 0) {
+			return DoNewFile(m)
+		} else if (m.MenuIndex == 1) {
+			m.DialogMode = DIALOG_OPEN
+			m.DialogInput = m.Filename
+			m.DialogCursor = len(m.DialogInput)
+		} else if (m.MenuIndex == 2) {
+			return DoSaveFile(m)
+		} else if (m.MenuIndex == 3) {
+			m.DialogMode = DIALOG_SAVEAS
+			m.DialogInput = m.Filename
+			m.DialogCursor = len(m.DialogInput)
+		} else if (m.MenuIndex == 5) {
+			if m.Modified {
+				m.DialogMode = DIALOG_CONFIRM_EXIT
+			} else {
+				return m, tea.Quit
+			}
+		}
+	} else if (m.MenuOpen == MENU_EDIT) {
+		if (m.MenuIndex == 0) {
+			return DoCut(m)
+		} else if (m.MenuIndex == 1) {
+			return DoCopy(m)
+		} else if (m.MenuIndex == 2) {
+			return DoPaste(m)
+		} else if (m.MenuIndex == 4) {
+			return DoSelectAll(m)
+		}
+	} else if (m.MenuOpen == MENU_SEARCH) {
+		if (m.MenuIndex == 0) {
+			m.DialogMode = DIALOG_FIND
+			m.DialogInput = m.SearchText
+			m.DialogCursor = len(m.DialogInput)
+		} else if (m.MenuIndex == 1) {
+			return DoFindNext(m)
+		} else if (m.MenuIndex == 2) {
+			m.DialogMode = DIALOG_REPLACE
+			m.DialogInput = m.SearchText
+			m.DialogCursor = len(m.DialogInput)
+		} else if (m.MenuIndex == 3) {
+			m.DialogMode = DIALOG_GOTO
+			m.DialogInput = ""
+			m.DialogCursor = 0
+		}
+	} else if (m.MenuOpen == MENU_OPTIONS) {
+		if (m.MenuIndex == 0) {
+			m.ShowLineNumbers = !(m.ShowLineNumbers)
+		} else if (m.MenuIndex == 1) {
+			m.InsertMode = !(m.InsertMode)
+		}
+	} else if (m.MenuOpen == MENU_HELP) {
+		if (m.MenuIndex == 0) {
+			m.DialogMode = DIALOG_HELP
+		} else if (m.MenuIndex == 1) {
+			m.DialogMode = DIALOG_ABOUT
+		}
+	}
+	m.MenuOpen = MENU_NONE
+	return m, nil
+}
+
+func HandleDialogInput(m EditorModel, key string) (tea.Model, tea.Cmd) {
+	if (key == "esc") {
+		m.DialogMode = DIALOG_NONE
+		return m, nil
+	}
+	if ((m.DialogMode == DIALOG_HELP) || (m.DialogMode == DIALOG_ABOUT)) {
+		if (((key == "enter") || (key == "esc")) || (key == " ")) {
+			m.DialogMode = DIALOG_NONE
+		}
+		return m, nil
+	}
+	if ((m.DialogMode == DIALOG_CONFIRM_NEW) || (m.DialogMode == DIALOG_CONFIRM_EXIT)) {
+		if ((key == "y") || (key == "Y")) {
+			if (m.DialogMode == DIALOG_CONFIRM_EXIT) {
+				return m, tea.Quit
+			} else {
+				m.Content = ""
+				m.Filename = ""
+				m.Modified = false
+				m.CursorX = 0
+				m.CursorY = 0
+				m.ScrollX = 0
+				m.ScrollY = 0
+				m.DialogMode = DIALOG_NONE
+				m.Message = "New file"
+			}
+		} else if (((key == "n") || (key == "N")) || (key == "esc")) {
+			m.DialogMode = DIALOG_NONE
+		}
+		return m, nil
+	}
+	if (key == "enter") {
+		if (m.DialogMode == DIALOG_OPEN) {
+			return DoOpenFile(m, m.DialogInput)
+		} else if ((m.DialogMode == DIALOG_SAVE) || (m.DialogMode == DIALOG_SAVEAS)) {
+			m.Filename = m.DialogInput
+			return DoSaveFile(m)
+		} else if (m.DialogMode == DIALOG_FIND) {
+			m.SearchText = m.DialogInput
+			m.DialogMode = DIALOG_NONE
+			return DoFindNext(m)
+		} else if (m.DialogMode == DIALOG_REPLACE) {
+			m.SearchText = m.DialogInput
+			m.DialogMode = DIALOG_NONE
+			return DoReplace(m)
+		} else if (m.DialogMode == DIALOG_GOTO) {
+			return DoGotoLine(m)
+		}
+	} else if (key == "backspace") {
+		if (m.DialogCursor > 0) {
+			m.DialogInput = (Left(m.DialogInput, (m.DialogCursor - 1)) + Mid(m.DialogInput, (m.DialogCursor + 1), (len(m.DialogInput) - m.DialogCursor)))
+			m.DialogCursor = (m.DialogCursor - 1)
+		}
+	} else if (key == "delete") {
+		if (m.DialogCursor < len(m.DialogInput)) {
+			m.DialogInput = (Left(m.DialogInput, m.DialogCursor) + Mid(m.DialogInput, (m.DialogCursor + 2), ((len(m.DialogInput) - m.DialogCursor) - 1)))
+		}
+	} else if (key == "left") {
+		if (m.DialogCursor > 0) {
+			m.DialogCursor = (m.DialogCursor - 1)
+		}
+	} else if (key == "right") {
+		if (m.DialogCursor < len(m.DialogInput)) {
+			m.DialogCursor = (m.DialogCursor + 1)
+		}
+	} else if (key == "home") {
+		m.DialogCursor = 0
+	} else if (key == "end") {
+		m.DialogCursor = len(m.DialogInput)
+	} else if (len(key) == 1) {
+		m.DialogInput = ((Left(m.DialogInput, m.DialogCursor) + key) + Mid(m.DialogInput, (m.DialogCursor + 1), (len(m.DialogInput) - m.DialogCursor)))
+		m.DialogCursor = (m.DialogCursor + 1)
+	}
+	return m, nil
+}
+
+func DoNewFile(m EditorModel) (tea.Model, tea.Cmd) {
+	if m.Modified {
+		m.DialogMode = DIALOG_CONFIRM_NEW
+		return m, nil
+	}
+	m.Content = ""
+	m.Filename = ""
+	m.Modified = false
+	m.CursorX = 0
+	m.CursorY = 0
+	m.ScrollX = 0
+	m.ScrollY = 0
+	m.Message = "New file"
+	return m, nil
+}
+
+func DoOpenFile(m EditorModel, filename string) (tea.Model, tea.Cmd) {
+	m.DialogMode = DIALOG_NONE
+	if (len(filename) == 0) {
+		m.Message = "No filename specified"
+		return m, nil
+	}
+	var content string = ReadFile(filename)
+	if ((len(content) == 0) && !(FileExists(filename))) {
+		m.Message = ("File not found: " + filename)
+		return m, nil
+	}
+	m.Content = content
+	m.Filename = filename
+	m.Modified = false
+	m.CursorX = 0
+	m.CursorY = 0
+	m.ScrollX = 0
+	m.ScrollY = 0
+	m.Message = ("Opened: " + filename)
+	return m, nil
+}
+
+func DoSaveFile(m EditorModel) (tea.Model, tea.Cmd) {
+	if (len(m.Filename) == 0) {
+		m.DialogMode = DIALOG_SAVEAS
+		m.DialogInput = ""
+		m.DialogCursor = 0
+		return m, nil
+	}
+	m.DialogMode = DIALOG_NONE
+	WriteFile(m.Filename, m.Content)
+	m.Modified = false
+	m.Message = ("Saved: " + m.Filename)
+	return m, nil
+}
+
+func DoCopy(m EditorModel) (tea.Model, tea.Cmd) {
+	m.Clipboard = GetLine(m.Content, (m.CursorY + 1))
+	m.Message = "Line copied"
+	return m, nil
+}
+
+func DoCut(m EditorModel) (tea.Model, tea.Cmd) {
+	m.Clipboard = GetLine(m.Content, (m.CursorY + 1))
+	var totalLines int = CountLines(m.Content)
+	if (totalLines == 1) {
+		m.Content = ""
+	} else {
+		var newContent string = ""
+		var i int
+		for i = 1; i <= totalLines; i += 1 {
+			if (i != (m.CursorY + 1)) {
+				if (len(newContent) > 0) {
+					newContent = (newContent + Chr(10))
+				}
+				newContent = (newContent + GetLine(m.Content, i))
+			}
+		}
+		m.Content = newContent
+	}
+	if (m.CursorY >= CountLines(m.Content)) {
+		m.CursorY = (CountLines(m.Content) - 1)
+		if (m.CursorY < 0) {
+			m.CursorY = 0
+		}
+	}
+	var newLineLen int = GetLineLength(m.Content, (m.CursorY + 1))
+	if (m.CursorX > newLineLen) {
+		m.CursorX = newLineLen
+	}
+	m.Modified = true
+	m.Message = "Line cut"
+	return m, nil
+}
+
+func DoPaste(m EditorModel) (tea.Model, tea.Cmd) {
+	if (len(m.Clipboard) == 0) {
+		m.Message = "Clipboard empty"
+		return m, nil
+	}
+	var totalLines int = CountLines(m.Content)
+	var newContent string = ""
+	var i int
+	for i = 1; i <= totalLines; i += 1 {
+		if (len(newContent) > 0) {
+			newContent = (newContent + Chr(10))
+		}
+		newContent = (newContent + GetLine(m.Content, i))
+		if (i == (m.CursorY + 1)) {
+			newContent = ((newContent + Chr(10)) + m.Clipboard)
+		}
+	}
+	m.Content = newContent
+	m.CursorY = (m.CursorY + 1)
+	m.CursorX = 0
+	m.Modified = true
+	m.Message = "Pasted"
+	return m, nil
+}
+
+func DoSelectAll(m EditorModel) (tea.Model, tea.Cmd) {
+	m.Message = "Select All not yet implemented"
+	return m, nil
+}
+
+func DoFindNext(m EditorModel) (tea.Model, tea.Cmd) {
+	if (len(m.SearchText) == 0) {
+		m.Message = "No search text"
+		return m, nil
+	}
+	var totalLines int = CountLines(m.Content)
+	var startLine int = (m.CursorY + 1)
+	var startCol int = (m.CursorX + 1)
+	var i int
+	for i = startLine; i <= totalLines; i += 1 {
+		var line string = GetLine(m.Content, i)
+		var searchStart int = 1
+		if (i == startLine) {
+			searchStart = (startCol + 1)
+		}
+		var pos int = Instr(Mid(line, searchStart, ((len(line) - searchStart) + 1)), m.SearchText)
+		if (pos > 0) {
+			m.CursorY = (i - 1)
+			m.CursorX = (((searchStart - 1) + pos) - 1)
+			m.Message = "Found"
+			return m, nil
+		}
+	}
+	if m.SearchWrap {
+		for i = 1; i <= startLine; i += 1 {
+			var wrapLine string = GetLine(m.Content, i)
+			var wrapPos int = Instr(wrapLine, m.SearchText)
+			if (wrapPos > 0) {
+				m.CursorY = (i - 1)
+				m.CursorX = (wrapPos - 1)
+				m.Message = "Found (wrapped)"
+				return m, nil
+			}
+		}
+	}
+	m.Message = ("Not found: " + m.SearchText)
+	return m, nil
+}
+
+func DoReplace(m EditorModel) (tea.Model, tea.Cmd) {
+	m.Message = "Replace not yet implemented"
+	return m, nil
+}
+
+func DoGotoLine(m EditorModel) (tea.Model, tea.Cmd) {
+	m.DialogMode = DIALOG_NONE
+	var lineNum int = Int(Val(m.DialogInput))
+	var totalLines int = CountLines(m.Content)
+	if (lineNum < 1) {
+		lineNum = 1
+	} else if (lineNum > totalLines) {
+		lineNum = totalLines
+	}
+	m.CursorY = (lineNum - 1)
+	m.CursorX = 0
+	m.Message = fmt.Sprintf("Line %d", lineNum)
 	return m, nil
 }
 
 func (m EditorModel) View() string {
 	var view string = ""
 	var totalLines int = CountLines(m.Content)
-	var title string = " DBASIC EDIT "
-	if m.Modified {
-		title = (title + "[Modified] ")
+	view = (RenderMenuBar(m) + Chr(10))
+	if (m.MenuOpen != MENU_NONE) {
+		view = (view + RenderDropdown(m))
 	}
-	var padding string = Spaces((m.Width - len(title)))
-	view = (titleStyle.Render((title + padding)) + Chr(10))
 	var contentHeight int = (m.Height - 3)
 	if (contentHeight < 1) {
 		contentHeight = 1
 	}
 	var lineNumWidth int = 0
 	if m.ShowLineNumbers {
-		lineNumWidth = 5
+		lineNumWidth = 6
+	}
+	var contentWidth int = (m.Width - lineNumWidth)
+	if (contentWidth < 10) {
+		contentWidth = 10
 	}
 	var i int
 	for i = 0; i <= (contentHeight - 1); i += 1 {
@@ -314,81 +1025,214 @@ func (m EditorModel) View() string {
 		if (lineIdx < totalLines) {
 			lineText = GetLine(m.Content, (lineIdx + 1))
 		}
+		if ((m.ScrollX > 0) && (len(lineText) > m.ScrollX)) {
+			lineText = Mid(lineText, (m.ScrollX + 1), (len(lineText) - m.ScrollX))
+		} else if (m.ScrollX > 0) {
+			lineText = ""
+		}
 		if m.ShowLineNumbers {
 			if (lineIdx < totalLines) {
-				view = (view + lineNumStyle.Render(fmt.Sprintf("%4d ", (lineIdx + 1))))
+				view = (view + lineNumStyle.Render(fmt.Sprintf("%5d ", (lineIdx + 1))))
 			} else {
-				view = (view + lineNumStyle.Render("     "))
+				view = (view + lineNumStyle.Render("      "))
 			}
 		}
 		if (lineIdx == m.CursorY) {
+			var cursorCol int = (m.CursorX - m.ScrollX)
 			var beforeCursor string = ""
 			var cursorChar string = " "
 			var afterCursor string = ""
-			if ((m.CursorX > 0) && (len(lineText) > 0)) {
-				if (m.CursorX <= len(lineText)) {
-					beforeCursor = Left(lineText, m.CursorX)
+			if ((cursorCol > 0) && (len(lineText) > 0)) {
+				if (cursorCol <= len(lineText)) {
+					beforeCursor = Left(lineText, cursorCol)
 				} else {
-					beforeCursor = lineText
+					beforeCursor = (lineText + RepeatChar(" ", (cursorCol - len(lineText))))
 				}
 			}
-			if (m.CursorX < len(lineText)) {
-				cursorChar = Mid(lineText, (m.CursorX + 1), 1)
-				if ((m.CursorX + 1) < len(lineText)) {
-					afterCursor = Mid(lineText, (m.CursorX + 2), ((len(lineText) - m.CursorX) - 1))
+			if ((cursorCol >= 0) && (cursorCol < len(lineText))) {
+				cursorChar = Mid(lineText, (cursorCol + 1), 1)
+				if ((cursorCol + 1) < len(lineText)) {
+					afterCursor = Mid(lineText, (cursorCol + 2), ((len(lineText) - cursorCol) - 1))
 				}
 			}
-			view = (view + textStyle.Render(beforeCursor))
-			view = (view + cursorStyle.Render(cursorChar))
-			view = (view + textStyle.Render(afterCursor))
+			var lineContent string = ((textAreaStyle.Render(beforeCursor) + cursorStyle.Render(cursorChar)) + textAreaStyle.Render(afterCursor))
+			var displayLen int = ((len(beforeCursor) + 1) + len(afterCursor))
+			if (displayLen < contentWidth) {
+				lineContent = (lineContent + textAreaStyle.Render(RepeatChar(" ", (contentWidth - displayLen))))
+			}
+			view = (view + lineContent)
 		} else {
-			view = (view + textStyle.Render(lineText))
-		}
-		var currentLen int = (len(lineText) + lineNumWidth)
-		if ((lineIdx == m.CursorY) && (m.CursorX >= len(lineText))) {
-			currentLen = (currentLen + 1)
-		}
-		if (currentLen < m.Width) {
-			view = (view + Spaces((m.Width - currentLen)))
+			var paddedLine string = PadRight(lineText, contentWidth)
+			view = (view + textAreaStyle.Render(paddedLine))
 		}
 		view = (view + Chr(10))
 	}
-	var status string = fmt.Sprintf(" Ln %d, Col %d | Lines: %d", (m.CursorY + 1), (m.CursorX + 1), totalLines)
-	if (len(m.Message) > 0) {
-		status = ((status + " | ") + m.Message)
+	var status string = ""
+	if (len(m.Filename) > 0) {
+		status = (" " + m.Filename)
+	} else {
+		status = " [Untitled]"
 	}
-	var statusPad string = Spaces((m.Width - len(status)))
-	view = ((view + statusStyle.Render((status + statusPad))) + Chr(10))
-	view = (view + " F1=Help  Ctrl+L=Line#  Ctrl+Q=Quit")
-	if (m.DialogMode == DIALOG_HELP) {
-		view = ((view + Chr(10)) + Chr(10))
-		var helpText string = (("DBASIC EDIT - Keyboard Shortcuts" + Chr(10)) + Chr(10))
-		helpText = ((helpText + "Navigation:") + Chr(10))
-		helpText = ((helpText + "  Arrow keys    Move cursor") + Chr(10))
-		helpText = ((helpText + "  Home/End      Start/end of line") + Chr(10))
-		helpText = ((helpText + "  PgUp/PgDn     Page up/down") + Chr(10))
-		helpText = ((helpText + "  Ctrl+Home     Start of file") + Chr(10))
-		helpText = (((helpText + "  Ctrl+End      End of file") + Chr(10)) + Chr(10))
-		helpText = ((helpText + "Commands:") + Chr(10))
-		helpText = ((helpText + "  F1            This help") + Chr(10))
-		helpText = ((helpText + "  F10           About") + Chr(10))
-		helpText = ((helpText + "  Ctrl+L        Toggle line numbers") + Chr(10))
-		helpText = (((helpText + "  Ctrl+Q/C      Quit") + Chr(10)) + Chr(10))
-		helpText = (helpText + "Press any key to close")
-		view = dialogStyle.Render(helpText)
-	} else if (m.DialogMode == DIALOG_ABOUT) {
-		view = ((view + Chr(10)) + Chr(10))
-		var aboutText string = (("DBASIC EDIT" + Chr(10)) + Chr(10))
-		aboutText = ((aboutText + "A text editor demonstration") + Chr(10))
-		aboutText = ((aboutText + "written in DBasic using") + Chr(10))
-		aboutText = (((aboutText + "the Bubble Tea TUI framework.") + Chr(10)) + Chr(10))
-		aboutText = ((aboutText + "This showcases DBasic's ability") + Chr(10))
-		aboutText = ((aboutText + "to implement Go interfaces and") + Chr(10))
-		aboutText = (((aboutText + "use external packages.") + Chr(10)) + Chr(10))
-		aboutText = (aboutText + "Press any key to close")
-		view = dialogStyle.Render(aboutText)
+	if m.Modified {
+		status = (status + " *")
+	}
+	status = (status + fmt.Sprintf("  Ln %d, Col %d", (m.CursorY + 1), (m.CursorX + 1)))
+	if !(m.InsertMode) {
+		status = (status + "  OVR")
+	}
+	if (len(m.Message) > 0) {
+		status = ((status + "  ") + m.Message)
+	}
+	view = ((view + statusBarStyle.Render(PadRight(status, m.Width))) + Chr(10))
+	view = (view + menuBarStyle.Render(PadRight(" F1=Help  F10=Menu  Ctrl+S=Save  Ctrl+Q=Quit", m.Width)))
+	if (m.DialogMode != DIALOG_NONE) {
+		view = ((view + Chr(10)) + RenderDialog(m))
 	}
 	return view
+}
+
+func RenderMenuBar(m EditorModel) string {
+	var bar string = " "
+	if (m.MenuOpen == MENU_FILE) {
+		bar = (bar + menuItemSelectedStyle.Render("File"))
+	} else {
+		bar = (bar + menuItemStyle.Render("File"))
+	}
+	bar = (bar + " ")
+	if (m.MenuOpen == MENU_EDIT) {
+		bar = (bar + menuItemSelectedStyle.Render("Edit"))
+	} else {
+		bar = (bar + menuItemStyle.Render("Edit"))
+	}
+	bar = (bar + " ")
+	if (m.MenuOpen == MENU_SEARCH) {
+		bar = (bar + menuItemSelectedStyle.Render("Search"))
+	} else {
+		bar = (bar + menuItemStyle.Render("Search"))
+	}
+	bar = (bar + " ")
+	if (m.MenuOpen == MENU_OPTIONS) {
+		bar = (bar + menuItemSelectedStyle.Render("Options"))
+	} else {
+		bar = (bar + menuItemStyle.Render("Options"))
+	}
+	bar = (bar + " ")
+	if (m.MenuOpen == MENU_HELP) {
+		bar = (bar + menuItemSelectedStyle.Render("Help"))
+	} else {
+		bar = (bar + menuItemStyle.Render("Help"))
+	}
+	var currentLen int = 40
+	bar = (bar + menuBarStyle.Render(RepeatChar(" ", (m.Width - currentLen))))
+	return menuBarStyle.Render(bar)
+}
+
+func RenderDropdown(m EditorModel) string {
+	var items string = ""
+	if (m.MenuOpen == MENU_FILE) {
+		items = (RenderMenuItem("New         Ctrl+N", (m.MenuIndex == 0)) + Chr(10))
+		items = ((items + RenderMenuItem("Open        Ctrl+O", (m.MenuIndex == 1))) + Chr(10))
+		items = ((items + RenderMenuItem("Save        Ctrl+S", (m.MenuIndex == 2))) + Chr(10))
+		items = ((items + RenderMenuItem("Save As...       ", (m.MenuIndex == 3))) + Chr(10))
+		items = ((items + RenderMenuItem("-----------------", false)) + Chr(10))
+		items = (items + RenderMenuItem("Exit        Alt+X ", (m.MenuIndex == 5)))
+	} else if (m.MenuOpen == MENU_EDIT) {
+		items = (RenderMenuItem("Cut         Ctrl+X", (m.MenuIndex == 0)) + Chr(10))
+		items = ((items + RenderMenuItem("Copy        Ctrl+C", (m.MenuIndex == 1))) + Chr(10))
+		items = ((items + RenderMenuItem("Paste       Ctrl+V", (m.MenuIndex == 2))) + Chr(10))
+		items = ((items + RenderMenuItem("-----------------", false)) + Chr(10))
+		items = ((items + RenderMenuItem("Select All  Ctrl+A", (m.MenuIndex == 4))) + Chr(10))
+		items = (items + RenderMenuItem("Clear            ", (m.MenuIndex == 5)))
+	} else if (m.MenuOpen == MENU_SEARCH) {
+		items = (RenderMenuItem("Find        Ctrl+F", (m.MenuIndex == 0)) + Chr(10))
+		items = ((items + RenderMenuItem("Find Next   F3    ", (m.MenuIndex == 1))) + Chr(10))
+		items = ((items + RenderMenuItem("Replace     Ctrl+H", (m.MenuIndex == 2))) + Chr(10))
+		items = (items + RenderMenuItem("Go to Line  Ctrl+G", (m.MenuIndex == 3)))
+	} else if (m.MenuOpen == MENU_OPTIONS) {
+		var lineNumCheck string = "[ ]"
+		if m.ShowLineNumbers {
+			lineNumCheck = "[X]"
+		}
+		var insertCheck string = "[ ]"
+		if m.InsertMode {
+			insertCheck = "[X]"
+		}
+		items = (RenderMenuItem((lineNumCheck + " Line Numbers "), (m.MenuIndex == 0)) + Chr(10))
+		items = (items + RenderMenuItem((insertCheck + " Insert Mode  "), (m.MenuIndex == 1)))
+	} else if (m.MenuOpen == MENU_HELP) {
+		items = (RenderMenuItem("Help        F1    ", (m.MenuIndex == 0)) + Chr(10))
+		items = (items + RenderMenuItem("About            ", (m.MenuIndex == 1)))
+	}
+	return (menuDropdownStyle.Render(items) + Chr(10))
+}
+
+func RenderMenuItem(text string, selected bool) string {
+	if selected {
+		return menuItemSelectedStyle.Render(text)
+	}
+	return text
+}
+
+func RenderDialog(m EditorModel) string {
+	var content string = ""
+	var title string = ""
+	if (m.DialogMode == DIALOG_HELP) {
+		title = " Help "
+		content = (("MS-DOS Editor Clone - Keyboard Shortcuts" + Chr(10)) + Chr(10))
+		content = ((content + "File Operations:") + Chr(10))
+		content = ((content + "  Ctrl+N    New file") + Chr(10))
+		content = ((content + "  Ctrl+O    Open file") + Chr(10))
+		content = ((content + "  Ctrl+S    Save file") + Chr(10))
+		content = (((content + "  Ctrl+Q    Exit") + Chr(10)) + Chr(10))
+		content = ((content + "Edit Operations:") + Chr(10))
+		content = ((content + "  Ctrl+C    Copy line") + Chr(10))
+		content = ((content + "  Ctrl+X    Cut line") + Chr(10))
+		content = (((content + "  Ctrl+V    Paste") + Chr(10)) + Chr(10))
+		content = ((content + "Navigation:") + Chr(10))
+		content = ((content + "  Arrow keys, Home, End, PgUp, PgDn") + Chr(10))
+		content = (((content + "  Ctrl+Home/End  Start/end of file") + Chr(10)) + Chr(10))
+		content = ((content + "Search:") + Chr(10))
+		content = ((content + "  Ctrl+F    Find") + Chr(10))
+		content = ((content + "  F3        Find next") + Chr(10))
+		content = (((content + "  Ctrl+G    Go to line") + Chr(10)) + Chr(10))
+		content = (content + "Press Enter or Esc to close")
+	} else if (m.DialogMode == DIALOG_ABOUT) {
+		title = " About "
+		content = ("DBasic EDIT" + Chr(10))
+		content = (((content + "Version 1.0") + Chr(10)) + Chr(10))
+		content = ((content + "A clone of MS-DOS 5.0 EDIT.COM") + Chr(10))
+		content = (((content + "Written entirely in DBasic") + Chr(10)) + Chr(10))
+		content = (content + "Press Enter or Esc to close")
+	} else if (m.DialogMode == DIALOG_OPEN) {
+		title = " Open File "
+		content = (("Filename:" + Chr(10)) + Chr(10))
+		content = (((((content + "[") + m.DialogInput) + "]") + Chr(10)) + Chr(10))
+		content = (content + "Enter=Open  Esc=Cancel")
+	} else if (m.DialogMode == DIALOG_SAVEAS) {
+		title = " Save As "
+		content = (("Filename:" + Chr(10)) + Chr(10))
+		content = (((((content + "[") + m.DialogInput) + "]") + Chr(10)) + Chr(10))
+		content = (content + "Enter=Save  Esc=Cancel")
+	} else if (m.DialogMode == DIALOG_FIND) {
+		title = " Find "
+		content = (("Search for:" + Chr(10)) + Chr(10))
+		content = (((((content + "[") + m.DialogInput) + "]") + Chr(10)) + Chr(10))
+		content = (content + "Enter=Find  Esc=Cancel")
+	} else if (m.DialogMode == DIALOG_GOTO) {
+		title = " Go to Line "
+		content = (("Line number:" + Chr(10)) + Chr(10))
+		content = (((((content + "[") + m.DialogInput) + "]") + Chr(10)) + Chr(10))
+		content = (content + "Enter=Go  Esc=Cancel")
+	} else if (m.DialogMode == DIALOG_CONFIRM_NEW) {
+		title = " New File "
+		content = (("File has been modified." + Chr(10)) + Chr(10))
+		content = (content + "Discard changes? (Y/N)")
+	} else if (m.DialogMode == DIALOG_CONFIRM_EXIT) {
+		title = " Exit "
+		content = (("File has been modified." + Chr(10)) + Chr(10))
+		content = (content + "Exit without saving? (Y/N)")
+	}
+	return ((dialogTitleStyle.Render(title) + Chr(10)) + dialogStyle.Render(content))
 }
 
 func Main() {
@@ -396,22 +1240,50 @@ func Main() {
 	model.CursorX = 0
 	model.CursorY = 0
 	model.Width = 80
-	model.Height = 24
+	model.Height = 25
+	model.ScrollX = 0
 	model.ScrollY = 0
-	model.ShowLineNumbers = true
-	model.DialogMode = DIALOG_NONE
+	model.SelectStartX = 0
+	model.SelectStartY = 0
+	model.SelectEndX = 0
+	model.SelectEndY = 0
+	model.Selecting = false
+	model.Clipboard = ""
+	model.Filename = ""
 	model.Modified = false
-	model.Message = "Welcome to DBasic Edit!"
-	model.Content = ("' Welcome to DBASIC EDIT" + Chr(10))
-	model.Content = ((model.Content + "' A simple text editor written in DBasic") + Chr(10))
-	model.Content = (model.Content + Chr(10))
-	model.Content = ((model.Content + "SUB Main()") + Chr(10))
-	model.Content = ((model.Content + "    PRINT \"Hello, World!\"") + Chr(10))
-	model.Content = ((model.Content + "END SUB") + Chr(10))
-	model.Content = (model.Content + Chr(10))
-	model.Content = ((model.Content + "' Use arrow keys to navigate") + Chr(10))
-	model.Content = ((model.Content + "' Press F1 for help") + Chr(10))
-	model.Content = (model.Content + "' Press Ctrl+Q to quit")
+	model.MenuOpen = MENU_NONE
+	model.MenuIndex = 0
+	model.DialogMode = DIALOG_NONE
+	model.DialogInput = ""
+	model.DialogCursor = 0
+	model.SearchText = ""
+	model.ReplaceText = ""
+	model.SearchWrap = true
+	model.SearchCase = false
+	model.Message = "Press F1 for Help, F10 for Menu"
+	model.ShowLineNumbers = false
+	model.TabSize = 4
+	model.InsertMode = true
+	var args []string = os.Args
+	if (len(args) > 1) {
+		var filename string = args[1]
+		if FileExists(filename) {
+			model.Content = ReadFile(filename)
+			model.Filename = filename
+			model.Message = ("Opened: " + filename)
+		} else {
+			model.Filename = filename
+			model.Message = ("New file: " + filename)
+		}
+	} else {
+		model.Content = ("' Welcome to DBasic EDIT" + Chr(10))
+		model.Content = ((model.Content + "' A clone of MS-DOS 5.0 EDIT.COM") + Chr(10))
+		model.Content = ((model.Content + "'") + Chr(10))
+		model.Content = ((model.Content + "' Press F10 or Alt+F to open the menu") + Chr(10))
+		model.Content = ((model.Content + "' Press F1 for help") + Chr(10))
+		model.Content = ((model.Content + "'") + Chr(10))
+		model.Content = ((model.Content + "' Start typing to edit...") + Chr(10))
+	}
 	tea.NewProgram(model, tea.WithAltScreen()).Run()
 }
 
