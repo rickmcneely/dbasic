@@ -11,11 +11,9 @@ IMPORT "database/sql"
 IMPORT "fmt"
 IMPORT "os"
 IMPORT "path/filepath"
-IMPORT "sort"
-IMPORT "strings"
 IMPORT "github.com/lxn/walk"
 IMPORT "github.com/lxn/walk/declarative"
-IMPORT "modernc.org/sqlite"
+IMPORT _ "modernc.org/sqlite"
 
 ' ============================================================================
 ' Data Types
@@ -37,11 +35,11 @@ END TYPE
 TYPE ContactModel
     EMBED walk.TableModelBase
     EMBED walk.SorterBase
-    DIM sortColumn AS INTEGER
-    DIM sortOrder AS walk.SortOrder
-    DIM items AS []POINTER TO Contact
-    DIM db AS POINTER TO sql.DB
-    DIM tableView AS POINTER TO walk.TableView
+    DIM SortCol AS INTEGER
+    DIM SortAsc AS BOOLEAN
+    DIM Items AS []POINTER TO Contact
+    DIM DB AS POINTER TO sql.DB
+    DIM TV AS POINTER TO walk.TableView
 END TYPE
 
 ' ============================================================================
@@ -50,16 +48,16 @@ END TYPE
 
 ' RowCount returns the number of rows in the table
 FUNCTION (m AS POINTER TO ContactModel) RowCount() AS INTEGER
-    RETURN LEN((^m).items)
+    RETURN LEN((^m).Items)
 END FUNCTION
 
 ' Value returns the cell value at the given row and column
 FUNCTION (m AS POINTER TO ContactModel) Value(row AS INTEGER, col AS INTEGER) AS ANY
-    IF row < 0 OR row >= LEN((^m).items) THEN
+    IF row < 0 OR row >= LEN((^m).Items) THEN
         RETURN NIL
     END IF
 
-    DIM item AS POINTER TO Contact = (^m).items[row]
+    DIM item AS POINTER TO Contact = (^m).Items[row]
 
     SELECT CASE col
         CASE 0
@@ -77,39 +75,18 @@ FUNCTION (m AS POINTER TO ContactModel) Value(row AS INTEGER, col AS INTEGER) AS
     RETURN NIL
 END FUNCTION
 
-' Sort sorts the table by the given column
+' Sort sorts the table by the given column - reloads from database
 FUNCTION (m AS POINTER TO ContactModel) Sort(col AS INTEGER, order AS walk.SortOrder) AS ERROR
-    (^m).sortColumn = col
-    (^m).sortOrder = order
+    (^m).SortCol = col
+    (^m).SortAsc = (order = walk.SortAscending)
 
-    sort.SliceStable((^m).items, LAMBDA(i AS INTEGER, j AS INTEGER) AS BOOLEAN
-        DIM a AS POINTER TO Contact = (^m).items[i]
-        DIM b AS POINTER TO Contact = (^m).items[j]
-        DIM result AS INTEGER
-
-        SELECT CASE col
-            CASE 0
-                result = strings.Compare((^a).FirstName, (^b).FirstName)
-            CASE 1
-                result = strings.Compare((^a).LastName, (^b).LastName)
-            CASE 2
-                result = strings.Compare((^a).City, (^b).City)
-            CASE 3
-                result = strings.Compare((^a).State, (^b).State)
-            CASE 4
-                result = strings.Compare((^a).Phone, (^b).Phone)
-        END SELECT
-
-        IF order = walk.SortDescending THEN
-            RETURN result > 0
-        END IF
-        RETURN result < 0
-    END LAMBDA)
+    ' Reload from database with new sort order
+    (^m).Items = GetAllContacts((^m).DB, col, (^m).SortAsc)
 
     (^m).PublishRowsReset()
 
-    IF (^m).tableView <> NIL THEN
-        (^(^m).tableView).Invalidate()
+    IF (^m).TV <> NIL THEN
+        (^(^m).TV).Invalidate()
     END IF
 
     RETURN NIL
@@ -121,16 +98,16 @@ END FUNCTION
 
 ' ResetRows reloads contacts from database
 SUB (m AS POINTER TO ContactModel) ResetRows()
-    (^m).items = GetAllContacts((^m).db, (^m).sortColumn, (^m).sortOrder = walk.SortAscending)
+    (^m).Items = GetAllContacts((^m).DB, (^m).SortCol, (^m).SortAsc)
     (^m).PublishRowsReset()
 END SUB
 
 ' Item returns the contact at the given index
 FUNCTION (m AS POINTER TO ContactModel) Item(index AS INTEGER) AS POINTER TO Contact
-    IF index < 0 OR index >= LEN((^m).items) THEN
+    IF index < 0 OR index >= LEN((^m).Items) THEN
         RETURN NIL
     END IF
-    RETURN (^m).items[index]
+    RETURN (^m).Items[index]
 END FUNCTION
 
 ' ============================================================================
@@ -150,16 +127,11 @@ FUNCTION InitDatabase(dbPath AS STRING) AS POINTER TO sql.DB
 END FUNCTION
 
 SUB CreateContactsTable(db AS POINTER TO sql.DB)
-    DIM query AS STRING = "CREATE TABLE IF NOT EXISTS contacts (" +
-        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-        "first_name TEXT NOT NULL, " +
-        "last_name TEXT NOT NULL, " +
-        "address TEXT, " +
-        "city TEXT, " +
-        "state TEXT, " +
-        "zip TEXT, " +
-        "phone TEXT, " +
-        "email TEXT)"
+    DIM query AS STRING = "CREATE TABLE IF NOT EXISTS contacts (" + _
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, " + _
+        "first_name TEXT NOT NULL, " + _
+        "last_name TEXT NOT NULL, " + _
+        "address TEXT, city TEXT, state TEXT, zip TEXT, phone TEXT, email TEXT)"
 
     (^db).Exec(query)
 END SUB
@@ -190,8 +162,7 @@ FUNCTION GetAllContacts(db AS POINTER TO sql.DB, sortCol AS INTEGER, sortAsc AS 
         orderDir = "DESC"
     END IF
 
-    DIM query AS STRING = "SELECT id, first_name, last_name, address, city, state, zip, phone, email " +
-        "FROM contacts ORDER BY " + sortBy + " " + orderDir
+    DIM query AS STRING = "SELECT id, first_name, last_name, address, city, state, zip, phone, email FROM contacts ORDER BY " + sortBy + " " + orderDir
 
     DIM rows AS POINTER TO sql.Rows
     DIM err AS ERROR
@@ -202,7 +173,7 @@ FUNCTION GetAllContacts(db AS POINTER TO sql.DB, sortCol AS INTEGER, sortAsc AS 
 
     DO WHILE (^rows).Next()
         DIM c AS POINTER TO Contact = NEW(Contact)
-        (^rows).Scan(@(^c).ID, @(^c).FirstName, @(^c).LastName, @(^c).Address,
+        (^rows).Scan(@(^c).ID, @(^c).FirstName, @(^c).LastName, @(^c).Address, _
                      @(^c).City, @(^c).State, @(^c).Zip, @(^c).Phone, @(^c).Email)
         contacts = APPEND(contacts, c)
     LOOP
@@ -212,18 +183,14 @@ FUNCTION GetAllContacts(db AS POINTER TO sql.DB, sortCol AS INTEGER, sortAsc AS 
 END FUNCTION
 
 SUB InsertContact(db AS POINTER TO sql.DB, c AS POINTER TO Contact)
-    DIM query AS STRING = "INSERT INTO contacts (first_name, last_name, address, city, state, zip, phone, email) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-
-    (^db).Exec(query, (^c).FirstName, (^c).LastName, (^c).Address, (^c).City,
+    DIM query AS STRING = "INSERT INTO contacts (first_name, last_name, address, city, state, zip, phone, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    (^db).Exec(query, (^c).FirstName, (^c).LastName, (^c).Address, (^c).City, _
                (^c).State, (^c).Zip, (^c).Phone, (^c).Email)
 END SUB
 
 SUB UpdateContact(db AS POINTER TO sql.DB, c AS POINTER TO Contact)
-    DIM query AS STRING = "UPDATE contacts SET first_name=?, last_name=?, address=?, city=?, state=?, zip=?, phone=?, email=? " +
-        "WHERE id=?"
-
-    (^db).Exec(query, (^c).FirstName, (^c).LastName, (^c).Address, (^c).City,
+    DIM query AS STRING = "UPDATE contacts SET first_name=?, last_name=?, address=?, city=?, state=?, zip=?, phone=?, email=? WHERE id=?"
+    (^db).Exec(query, (^c).FirstName, (^c).LastName, (^c).Address, (^c).City, _
                (^c).State, (^c).Zip, (^c).Phone, (^c).Email, (^c).ID)
 END SUB
 
@@ -241,24 +208,12 @@ SUB SeedDatabase(db AS POINTER TO sql.DB)
     IF count > 0 THEN RETURN
 
     DIM seedContacts AS []Contact = []Contact{
-        Contact{FirstName: "Herman", LastName: "Munster", Address: "1313 Mockingbird Lane",
-                City: "Mockingbird Heights", State: "CA", Zip: "90210", Phone: "555-555-0001",
-                Email: "herman.munster@mockingbird.example"},
-        Contact{FirstName: "Gomez", LastName: "Addams", Address: "0001 Cemetery Lane",
-                City: "Westfield", State: "NJ", Zip: "07090", Phone: "555-555-0002",
-                Email: "gomez.addams@cemetery.example"},
-        Contact{FirstName: "Homer", LastName: "Simpson", Address: "742 Evergreen Terrace",
-                City: "Springfield", State: "", Zip: "49007", Phone: "555-555-0005",
-                Email: "homer.simpson@springfield.example"},
-        Contact{FirstName: "Al", LastName: "Bundy", Address: "9764 Jeopardy Lane",
-                City: "Chicago", State: "IL", Zip: "60614", Phone: "555-555-0007",
-                Email: "al.bundy@chicago.example"},
-        Contact{FirstName: "Walter", LastName: "White", Address: "308 Negra Arroyo Lane",
-                City: "Albuquerque", State: "NM", Zip: "87104", Phone: "555-555-0022",
-                Email: "walter.white@jpwynne.example"},
-        Contact{FirstName: "Michael", LastName: "Scott", Address: "1725 Slough Avenue",
-                City: "Scranton", State: "PA", Zip: "18503", Phone: "555-555-0024",
-                Email: "michael.scott@dundermifflin.example"}
+        Contact{FirstName: "Herman", LastName: "Munster", Address: "1313 Mockingbird Lane", City: "Mockingbird Heights", State: "CA", Zip: "90210", Phone: "555-555-0001", Email: "herman@munster.example"},
+        Contact{FirstName: "Gomez", LastName: "Addams", Address: "0001 Cemetery Lane", City: "Westfield", State: "NJ", Zip: "07090", Phone: "555-555-0002", Email: "gomez@addams.example"},
+        Contact{FirstName: "Homer", LastName: "Simpson", Address: "742 Evergreen Terrace", City: "Springfield", State: "OR", Zip: "49007", Phone: "555-555-0005", Email: "homer@simpson.example"},
+        Contact{FirstName: "Al", LastName: "Bundy", Address: "9764 Jeopardy Lane", City: "Chicago", State: "IL", Zip: "60614", Phone: "555-555-0007", Email: "al@bundy.example"},
+        Contact{FirstName: "Walter", LastName: "White", Address: "308 Negra Arroyo Lane", City: "Albuquerque", State: "NM", Zip: "87104", Phone: "555-555-0022", Email: "walter@white.example"},
+        Contact{FirstName: "Michael", LastName: "Scott", Address: "1725 Slough Avenue", City: "Scranton", State: "PA", Zip: "18503", Phone: "555-555-0024", Email: "michael@scott.example"}
     }
 
     DIM i AS INTEGER
@@ -269,12 +224,12 @@ SUB SeedDatabase(db AS POINTER TO sql.DB)
 END SUB
 
 ' ============================================================================
-' Application State
+' Global Application State
 ' ============================================================================
 
-DIM app_mainWindow AS POINTER TO walk.MainWindow
-DIM app_model AS POINTER TO ContactModel
-DIM app_statusBar AS POINTER TO walk.StatusBarItem
+DIM gMainWindow AS POINTER TO walk.MainWindow
+DIM gModel AS POINTER TO ContactModel
+DIM gStatusBar AS POINTER TO walk.StatusBarItem
 
 ' ============================================================================
 ' Event Handlers
@@ -283,59 +238,67 @@ DIM app_statusBar AS POINTER TO walk.StatusBarItem
 SUB OnNewContact()
     DIM c AS Contact
     IF ShowContactDialog(@c, "New Contact") THEN
-        InsertContact((^app_model).db, @c)
-        (^app_model).ResetRows()
+        InsertContact((^gModel).DB, @c)
+        (^gModel).ResetRows()
         UpdateStatus()
     END IF
 END SUB
 
 SUB OnEditContact()
-    DIM index AS INTEGER = (^(^app_model).tableView).CurrentIndex()
+    DIM tv AS POINTER TO walk.TableView = (^gModel).TV
+    IF tv = NIL THEN RETURN
+
+    DIM index AS INTEGER = (^tv).CurrentIndex()
     IF index < 0 THEN
-        walk.MsgBox(app_mainWindow, "No Selection", "Please select a contact to edit.", walk.MsgBoxIconInformation)
+        walk.MsgBox(gMainWindow, "No Selection", "Please select a contact to edit.", walk.MsgBoxIconInformation)
         RETURN
     END IF
 
-    DIM c AS POINTER TO Contact = (^app_model).Item(index)
+    DIM c AS POINTER TO Contact = (^gModel).Item(index)
     IF c = NIL THEN RETURN
 
     DIM editCopy AS Contact = ^c
 
     IF ShowContactDialog(@editCopy, "Edit Contact") THEN
-        UpdateContact((^app_model).db, @editCopy)
-        (^app_model).ResetRows()
+        UpdateContact((^gModel).DB, @editCopy)
+        (^gModel).ResetRows()
     END IF
 END SUB
 
 SUB OnDeleteContact()
-    DIM index AS INTEGER = (^(^app_model).tableView).CurrentIndex()
+    DIM tv AS POINTER TO walk.TableView = (^gModel).TV
+    IF tv = NIL THEN RETURN
+
+    DIM index AS INTEGER = (^tv).CurrentIndex()
     IF index < 0 THEN
-        walk.MsgBox(app_mainWindow, "No Selection", "Please select a contact to delete.", walk.MsgBoxIconInformation)
+        walk.MsgBox(gMainWindow, "No Selection", "Please select a contact to delete.", walk.MsgBoxIconInformation)
         RETURN
     END IF
 
-    DIM c AS POINTER TO Contact = (^app_model).Item(index)
+    DIM c AS POINTER TO Contact = (^gModel).Item(index)
     IF c = NIL THEN RETURN
 
     DIM result AS INTEGER
-    result = walk.MsgBox(app_mainWindow, "Confirm Delete",
-        "Are you sure you want to delete " + (^c).FirstName + " " + (^c).LastName + "?",
+    result = walk.MsgBox(gMainWindow, "Confirm Delete", _
+        "Delete " + (^c).FirstName + " " + (^c).LastName + "?", _
         walk.MsgBoxYesNo + walk.MsgBoxIconQuestion)
 
     IF result = walk.DlgCmdYes THEN
-        DeleteContact((^app_model).db, (^c).ID)
-        (^app_model).ResetRows()
+        DeleteContact((^gModel).DB, (^c).ID)
+        (^gModel).ResetRows()
         UpdateStatus()
     END IF
 END SUB
 
 SUB UpdateStatus()
-    DIM count AS INTEGER = (^app_model).RowCount()
-    (^app_statusBar).SetText(Str(count) + " contacts")
+    DIM count AS INTEGER = (^gModel).RowCount()
+    (^gStatusBar).SetText(Str(count) + " contacts")
 END SUB
 
 FUNCTION ShowContactDialog(c AS POINTER TO Contact, title AS STRING) AS BOOLEAN
     DIM dlg AS POINTER TO walk.Dialog
+    DIM acceptPB AS POINTER TO walk.PushButton
+    DIM cancelPB AS POINTER TO walk.PushButton
     DIM firstNameEdit AS POINTER TO walk.LineEdit
     DIM lastNameEdit AS POINTER TO walk.LineEdit
     DIM addressEdit AS POINTER TO walk.LineEdit
@@ -379,31 +342,70 @@ FUNCTION ShowContactDialog(c AS POINTER TO Contact, title AS STRING) AS BOOLEAN
                 Layout: declarative.HBox{},
                 Children: []declarative.Widget{
                     declarative.HSpacer{},
-                    declarative.PushButton{AssignTo: @acceptPB, Text: "OK", OnClicked: LAMBDA()
-                        (^c).FirstName = (^firstNameEdit).Text()
-                        (^c).LastName = (^lastNameEdit).Text()
-                        (^c).Address = (^addressEdit).Text()
-                        (^c).City = (^cityEdit).Text()
-                        (^c).State = (^stateEdit).Text()
-                        (^c).Zip = (^zipEdit).Text()
-                        (^c).Phone = (^phoneEdit).Text()
-                        (^c).Email = (^emailEdit).Text()
-                        (^dlg).Accept()
-                    END LAMBDA},
-                    declarative.PushButton{AssignTo: @cancelPB, Text: "Cancel", OnClicked: LAMBDA()
-                        (^dlg).Cancel()
-                    END LAMBDA}
+                    declarative.PushButton{AssignTo: @acceptPB, Text: "OK"},
+                    declarative.PushButton{AssignTo: @cancelPB, Text: "Cancel"}
                 }
             }
         }
-    }.Run(app_mainWindow)
+    }.Create(gMainWindow)
 
     IF err <> NIL THEN
         RETURN FALSE
     END IF
 
-    RETURN (^dlg).Result() = walk.DlgCmdOK
+    ' Set button handlers after dialog creation
+    (^acceptPB).Clicked().Attach(AcceptDialog)
+    (^cancelPB).Clicked().Attach(CancelDialog)
+
+    ' Store edit pointers for dialog handler
+    gDialogEdits.firstName = firstNameEdit
+    gDialogEdits.lastName = lastNameEdit
+    gDialogEdits.address = addressEdit
+    gDialogEdits.city = cityEdit
+    gDialogEdits.state = stateEdit
+    gDialogEdits.zip = zipEdit
+    gDialogEdits.phone = phoneEdit
+    gDialogEdits.email = emailEdit
+    gDialogEdits.contact = c
+    gDialogEdits.dialog = dlg
+
+    DIM result AS INTEGER = (^dlg).Run()
+
+    RETURN result = walk.DlgCmdOK
 END FUNCTION
+
+' Dialog edit fields storage
+TYPE DialogEdits
+    DIM firstName AS POINTER TO walk.LineEdit
+    DIM lastName AS POINTER TO walk.LineEdit
+    DIM address AS POINTER TO walk.LineEdit
+    DIM city AS POINTER TO walk.LineEdit
+    DIM state AS POINTER TO walk.LineEdit
+    DIM zip AS POINTER TO walk.LineEdit
+    DIM phone AS POINTER TO walk.LineEdit
+    DIM email AS POINTER TO walk.LineEdit
+    DIM contact AS POINTER TO Contact
+    DIM dialog AS POINTER TO walk.Dialog
+END TYPE
+
+DIM gDialogEdits AS DialogEdits
+
+SUB AcceptDialog()
+    DIM c AS POINTER TO Contact = gDialogEdits.contact
+    (^c).FirstName = (^gDialogEdits.firstName).Text()
+    (^c).LastName = (^gDialogEdits.lastName).Text()
+    (^c).Address = (^gDialogEdits.address).Text()
+    (^c).City = (^gDialogEdits.city).Text()
+    (^c).State = (^gDialogEdits.state).Text()
+    (^c).Zip = (^gDialogEdits.zip).Text()
+    (^c).Phone = (^gDialogEdits.phone).Text()
+    (^c).Email = (^gDialogEdits.email).Text()
+    (^gDialogEdits.dialog).Accept()
+END SUB
+
+SUB CancelDialog()
+    (^gDialogEdits.dialog).Cancel()
+END SUB
 
 ' ============================================================================
 ' Main Entry Point
@@ -428,17 +430,17 @@ SUB Main()
     SeedDatabase(db)
 
     ' Create model
-    app_model = NEW(ContactModel)
-    (^app_model).db = db
-    (^app_model).sortColumn = 1
-    (^app_model).sortOrder = walk.SortAscending
-    (^app_model).items = GetAllContacts(db, 1, TRUE)
+    gModel = NEW(ContactModel)
+    (^gModel).DB = db
+    (^gModel).SortCol = 1
+    (^gModel).SortAsc = TRUE
+    (^gModel).Items = GetAllContacts(db, 1, TRUE)
 
     ' Create main window
     DIM tableView AS POINTER TO walk.TableView
 
     err = declarative.MainWindow{
-        AssignTo: @app_mainWindow,
+        AssignTo: @gMainWindow,
         Title: "Contact Book",
         MinSize: declarative.Size{Width: 600, Height: 400},
         Size: declarative.Size{Width: 800, Height: 600},
@@ -447,20 +449,18 @@ SUB Main()
             declarative.Menu{
                 Text: "&File",
                 Items: []declarative.MenuItem{
-                    declarative.Action{Text: "&New\tCtrl+N", OnTriggered: OnNewContact},
-                    declarative.Action{Text: "&Edit\tCtrl+E", OnTriggered: OnEditContact},
-                    declarative.Action{Text: "&Delete\tDel", OnTriggered: OnDeleteContact},
+                    declarative.Action{Text: "&New Contact\tCtrl+N", OnTriggered: OnNewContact},
+                    declarative.Action{Text: "&Edit Contact\tCtrl+E", OnTriggered: OnEditContact},
+                    declarative.Action{Text: "&Delete Contact\tDel", OnTriggered: OnDeleteContact},
                     declarative.Separator{},
-                    declarative.Action{Text: "E&xit\tAlt+F4", OnTriggered: LAMBDA()
-                        (^app_mainWindow).Close()
-                    END LAMBDA}
+                    declarative.Action{Text: "E&xit\tAlt+F4", OnTriggered: OnExit}
                 }
             }
         },
         Children: []declarative.Widget{
             declarative.TableView{
                 AssignTo: @tableView,
-                Model: app_model,
+                Model: gModel,
                 Columns: []declarative.TableViewColumn{
                     declarative.TableViewColumn{Title: "First Name", Width: 100},
                     declarative.TableViewColumn{Title: "Last Name", Width: 100},
@@ -472,23 +472,24 @@ SUB Main()
             }
         },
         StatusBarItems: []declarative.StatusBarItem{
-            declarative.StatusBarItem{
-                AssignTo: @app_statusBar,
-                Text: "Ready"
-            }
+            declarative.StatusBarItem{AssignTo: @gStatusBar, Text: "Ready"}
         }
     }.Create()
 
     IF err <> NIL THEN
-        walk.MsgBox(NIL, "Error", "Failed to create window: " + err.Error(), walk.MsgBoxIconError)
+        walk.MsgBox(NIL, "Error", "Failed to create window", walk.MsgBoxIconError)
         RETURN
     END IF
 
-    (^app_model).tableView = tableView
+    (^gModel).TV = tableView
     UpdateStatus()
 
-    (^app_mainWindow).Run()
+    (^gMainWindow).Run()
 
     ' Cleanup
     (^db).Close()
+END SUB
+
+SUB OnExit()
+    (^gMainWindow).Close()
 END SUB

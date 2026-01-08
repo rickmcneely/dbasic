@@ -322,14 +322,20 @@ func (p *Parser) parseStatement() Statement {
 func (p *Parser) parseImportStatement() *ImportStatement {
 	stmt := &ImportStatement{Token: p.curToken}
 
+	// Check for blank import: IMPORT _ "package"
+	if p.peekTokenIs(lexer.TOKEN_IDENT) && p.peekToken.Literal == "_" {
+		p.nextToken() // consume _
+		stmt.Alias = "_"
+	}
+
 	if !p.expectPeek(lexer.TOKEN_STRING) {
 		return nil
 	}
 
 	stmt.Package = p.curToken.Literal
 
-	// Check for optional AS alias
-	if p.peekTokenIs(lexer.TOKEN_AS) {
+	// Check for optional AS alias (only if we didn't already get blank import)
+	if stmt.Alias == "" && p.peekTokenIs(lexer.TOKEN_AS) {
 		p.nextToken()
 		if !p.expectPeek(lexer.TOKEN_IDENT) {
 			return nil
@@ -539,6 +545,21 @@ func (p *Parser) parseIfStatement() *IfStatement {
 		return nil
 	}
 
+	// Check for single-line IF: IF cond THEN statement
+	// If peek is not NEWLINE and not a block-starting keyword, it's a single-line IF
+	if !p.peekTokenIs(lexer.TOKEN_NEWLINE) && !p.peekTokenIs(lexer.TOKEN_EOF) {
+		p.nextToken()
+		// Parse single statement
+		singleStmt := p.parseStatement()
+		if singleStmt != nil {
+			stmt.Consequence = &BlockStatement{
+				Token:      p.curToken,
+				Statements: []Statement{singleStmt},
+			}
+		}
+		return stmt
+	}
+
 	p.nextToken()
 	stmt.Consequence = p.parseBlockStatement(lexer.TOKEN_ENDIF, lexer.TOKEN_ELSE, lexer.TOKEN_ELSEIF)
 
@@ -596,6 +617,11 @@ func (p *Parser) parseForStatement() *ForStatement {
 
 	p.nextToken()
 	stmt.Body = p.parseBlockStatement(lexer.TOKEN_NEXT)
+
+	// Handle optional loop variable after NEXT (e.g., NEXT i)
+	if p.peekTokenIs(lexer.TOKEN_IDENT) {
+		p.nextToken() // consume the loop variable
+	}
 
 	return stmt
 }
@@ -1447,10 +1473,19 @@ func (p *Parser) parseArrayLiteral() Expression {
 	if p.peekTokenIs(lexer.TOKEN_RBRACKET) {
 		p.nextToken() // consume ]
 
-		// Check for type name (identifier or type keyword) followed by {
+		// Check for type name (identifier or type keyword) followed by { or .
 		if p.peekIsTypeName() {
 			p.nextToken() // move to type name
 			typeName := p.curToken.Literal
+
+			// Handle dotted type names like declarative.Widget
+			for p.peekTokenIs(lexer.TOKEN_DOT) {
+				p.nextToken() // consume dot
+				if !p.expectPeek(lexer.TOKEN_IDENT) {
+					return nil
+				}
+				typeName += "." + p.curToken.Literal
+			}
 
 			if p.peekTokenIs(lexer.TOKEN_LBRACE) {
 				return p.parseSliceLiteral(startToken, typeName)
@@ -1690,8 +1725,19 @@ func (p *Parser) parseMemberExpression(left Expression) Expression {
 		return nil
 	}
 
+	memberName := p.curToken.Literal
+
+	// Check for struct literal with dotted type name: package.Type{...}
+	// Only do this if left is a simple identifier (package name)
+	if ident, ok := left.(*Identifier); ok && p.peekTokenIs(lexer.TOKEN_LBRACE) {
+		// This is a struct literal like declarative.Size{...}
+		fullTypeName := ident.Value + "." + memberName
+		typeIdent := &Identifier{Token: ident.Token, Value: fullTypeName}
+		return p.parseStructLiteral(typeIdent)
+	}
+
 	exp := &MemberExpression{Token: dotToken, Object: left}
-	exp.Member = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	exp.Member = &Identifier{Token: p.curToken, Value: memberName}
 
 	return exp
 }

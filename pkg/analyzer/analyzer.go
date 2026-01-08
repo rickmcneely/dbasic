@@ -158,14 +158,21 @@ func (a *Analyzer) getSourceLine(lineNum int) string {
 func (a *Analyzer) Analyze(program *parser.Program) (*SymbolTable, []string) {
 	a.program = program
 
-	// First pass: collect all type definitions
+	// First pass: collect all imports (must be before type declarations)
+	for _, stmt := range program.Statements {
+		if is, ok := stmt.(*parser.ImportStatement); ok {
+			a.symbols.AddImport(is.Package, is.Alias)
+		}
+	}
+
+	// Second pass: collect all type definitions
 	for _, stmt := range program.Statements {
 		if ts, ok := stmt.(*parser.TypeStatement); ok {
 			a.declareType(ts)
 		}
 	}
 
-	// Second pass: collect all function/sub/method declarations
+	// Third pass: collect all function/sub/method declarations
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
 		case *parser.SubStatement:
@@ -174,12 +181,23 @@ func (a *Analyzer) Analyze(program *parser.Program) (*SymbolTable, []string) {
 			a.declareSubOrFunction(s.Name.Value, s.Params, s.ReturnTypes, s)
 		case *parser.MethodStatement:
 			a.declareMethod(s)
-		case *parser.ImportStatement:
-			a.symbols.AddImport(s.Package, s.Alias)
 		}
 	}
 
-	// Third pass: analyze all statements
+	// Fourth pass: declare global DIM statements (so they're available in all functions)
+	for _, stmt := range program.Statements {
+		if ds, ok := stmt.(*parser.DimStatement); ok {
+			varType := a.resolveTypeSpec(ds.Type)
+			sym := &Symbol{
+				Name: ds.Name.Value,
+				Kind: SymVariable,
+				Type: varType,
+			}
+			a.symbols.DefineGlobal(sym)
+		}
+	}
+
+	// Fifth pass: analyze all statements
 	for _, stmt := range program.Statements {
 		a.analyzeStatement(stmt)
 	}
@@ -439,15 +457,18 @@ func (a *Analyzer) analyzeStatement(stmt parser.Statement) {
 func (a *Analyzer) analyzeDimStatement(stmt *parser.DimStatement) {
 	varType := a.resolveTypeSpec(stmt.Type)
 
-	sym := &Symbol{
-		Name: stmt.Name.Value,
-		Kind: SymVariable,
-		Type: varType,
-		Node: stmt,
-	}
+	// Skip defining global variables (they're already defined in the earlier pass)
+	if !a.symbols.IsGlobalScope() || a.symbols.Resolve(stmt.Name.Value) == nil {
+		sym := &Symbol{
+			Name: stmt.Name.Value,
+			Kind: SymVariable,
+			Type: varType,
+			Node: stmt,
+		}
 
-	if err := a.symbols.Define(sym); err != nil {
-		a.error(stmt.Token.Line, err.Error())
+		if err := a.symbols.Define(sym); err != nil {
+			a.error(stmt.Token.Line, err.Error())
+		}
 	}
 
 	if stmt.Value != nil {
@@ -936,6 +957,10 @@ func (a *Analyzer) analyzeInfixExpression(expr *parser.InfixExpression) *Type {
 
 	switch expr.Operator {
 	case "+", "-", "*", "/", "\\":
+		// Allow AnyType for external constants (e.g., walk.MsgBoxYesNo + walk.MsgBoxIconQuestion)
+		if leftType.Kind == TypeAny || rightType.Kind == TypeAny {
+			return AnyType
+		}
 		if !leftType.IsNumeric() || !rightType.IsNumeric() {
 			// String concatenation
 			if expr.Operator == "+" && leftType.Kind == TypeString && rightType.Kind == TypeString {
@@ -1040,10 +1065,28 @@ func (a *Analyzer) analyzeCallExpression(call *parser.CallExpression) *Type {
 				a.analyzeExpression(arg)
 			}
 			return VoidType
-		case "PANIC", "RECOVER", "NEW", "STRING", "RUNE", "BYTE":
+		case "PANIC", "RECOVER", "STRING", "RUNE", "BYTE":
 			// Handle other Go builtins
 			for _, arg := range call.Arguments {
 				a.analyzeExpression(arg)
+			}
+			return AnyType
+		case "NEW":
+			// NEW takes a type name, not a variable expression
+			// The argument should be resolved as a type, not analyzed as an expression
+			if len(call.Arguments) == 1 {
+				if ident, ok := call.Arguments[0].(*parser.Identifier); ok {
+					// Check if it's a known type
+					if t := a.types.Lookup(ident.Value); t != nil {
+						return NewPointerType(t)
+					}
+					// Check if it's a built-in type
+					if t := TypeFromName(ident.Value); t != nil {
+						return NewPointerType(t)
+					}
+					// Otherwise, assume it's an external type
+					return AnyType
+				}
 			}
 			return AnyType
 		}

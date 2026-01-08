@@ -209,8 +209,44 @@ func (l *Lexer) newToken(tokenType TokenType, ch byte) Token {
 
 // skipWhitespace skips whitespace characters (but not newlines)
 func (l *Lexer) skipWhitespace() {
-	for l.ch == ' ' || l.ch == '\t' || l.ch == '\r' {
-		l.readChar()
+	for {
+		// Skip regular whitespace
+		for l.ch == ' ' || l.ch == '\t' || l.ch == '\r' {
+			l.readChar()
+		}
+
+		// Check for line continuation: _ followed by optional whitespace and newline
+		if l.ch == '_' {
+			pos := l.position
+			l.readChar() // skip _
+
+			// Skip any spaces/tabs after _
+			for l.ch == ' ' || l.ch == '\t' {
+				l.readChar()
+			}
+
+			// If we hit a newline or comment, it's a line continuation
+			if l.ch == '\n' || l.ch == '\'' {
+				if l.ch == '\'' {
+					// Skip the comment
+					for l.ch != '\n' && l.ch != 0 {
+						l.readChar()
+					}
+				}
+				if l.ch == '\n' {
+					l.readChar() // skip newline
+				}
+				continue // continue skipping whitespace on next line
+			} else {
+				// Not a line continuation, back up
+				l.position = pos
+				l.readPosition = pos + 1
+				l.ch = l.input[pos]
+				return
+			}
+		}
+
+		return
 	}
 }
 
