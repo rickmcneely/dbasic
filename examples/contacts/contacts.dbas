@@ -1,0 +1,336 @@
+' Contact Book - Win32 SQLite Application
+' Demonstrates Go package integration with Walk GUI and SQLite database
+'
+' This example shows DBasic syntax for a Win32 GUI application.
+' Due to Walk requiring Go interface implementation, the actual
+' executable is built from the Go source (main.go).
+
+IMPORT "database/sql"
+IMPORT "fmt"
+IMPORT "os"
+IMPORT "path/filepath"
+IMPORT "sort"
+IMPORT "github.com/lxn/walk"
+IMPORT "github.com/lxn/walk/declarative"
+IMPORT "modernc.org/sqlite"
+
+' Contact record structure
+TYPE Contact
+    DIM ID AS LONG
+    DIM FirstName AS STRING
+    DIM LastName AS STRING
+    DIM Address AS STRING
+    DIM City AS STRING
+    DIM State AS STRING
+    DIM Zip AS STRING
+    DIM Phone AS STRING
+    DIM Email AS STRING
+END TYPE
+
+' Application state
+TYPE Application
+    DIM mainWindow AS walk.MainWindow
+    DIM tableView AS walk.TableView
+    DIM statusBar AS walk.StatusBarItem
+    DIM db AS sql.DB
+    DIM contacts AS []Contact
+    DIM sortColumn AS INTEGER
+    DIM sortAscending AS BOOLEAN
+END TYPE
+
+' Global application instance
+DIM app AS Application
+
+' ============================================================================
+' Database Functions
+' ============================================================================
+
+FUNCTION InitDatabase(dbPath AS STRING) AS sql.DB
+    DIM db AS sql.DB
+    DIM err AS ERROR
+
+    db, err = sql.Open("sqlite", dbPath)
+    IF err <> NIL THEN
+        PRINT "Failed to open database:"; err
+        RETURN NIL
+    END IF
+
+    RETURN db
+END FUNCTION
+
+SUB CreateContactsTable(db AS sql.DB)
+    DIM query AS STRING
+    query = "CREATE TABLE IF NOT EXISTS contacts (" + _
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, " + _
+            "first_name TEXT NOT NULL, " + _
+            "last_name TEXT NOT NULL, " + _
+            "address TEXT, " + _
+            "city TEXT, " + _
+            "state TEXT, " + _
+            "zip TEXT, " + _
+            "phone TEXT, " + _
+            "email TEXT)"
+
+    db.Exec(query)
+END SUB
+
+FUNCTION GetAllContacts(db AS sql.DB, sortBy AS STRING, sortAsc AS BOOLEAN) AS []Contact
+    DIM contacts AS []Contact
+    DIM orderDir AS STRING
+
+    IF sortAsc THEN
+        orderDir = "ASC"
+    ELSE
+        orderDir = "DESC"
+    END IF
+
+    DIM query AS STRING
+    query = "SELECT id, first_name, last_name, address, city, state, zip, phone, email " + _
+            "FROM contacts ORDER BY " + sortBy + " " + orderDir
+
+    DIM rows AS sql.Rows
+    rows = db.Query(query)
+
+    DO WHILE rows.Next()
+        DIM c AS Contact
+        rows.Scan(@c.ID, @c.FirstName, @c.LastName, @c.Address, @c.City, @c.State, @c.Zip, @c.Phone, @c.Email)
+        contacts = APPEND(contacts, c)
+    LOOP
+
+    rows.Close()
+    RETURN contacts
+END FUNCTION
+
+SUB InsertContact(db AS sql.DB, c AS Contact)
+    DIM query AS STRING
+    query = "INSERT INTO contacts (first_name, last_name, address, city, state, zip, phone, email) " + _
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+
+    db.Exec(query, c.FirstName, c.LastName, c.Address, c.City, c.State, c.Zip, c.Phone, c.Email)
+END SUB
+
+SUB UpdateContact(db AS sql.DB, c AS Contact)
+    DIM query AS STRING
+    query = "UPDATE contacts SET first_name=?, last_name=?, address=?, city=?, state=?, zip=?, phone=?, email=? " + _
+            "WHERE id=?"
+
+    db.Exec(query, c.FirstName, c.LastName, c.Address, c.City, c.State, c.Zip, c.Phone, c.Email, c.ID)
+END SUB
+
+SUB DeleteContact(db AS sql.DB, id AS LONG)
+    db.Exec("DELETE FROM contacts WHERE id=?", id)
+END SUB
+
+FUNCTION SearchContacts(db AS sql.DB, searchTerm AS STRING) AS []Contact
+    DIM contacts AS []Contact
+    DIM pattern AS STRING
+    pattern = "%" + searchTerm + "%"
+
+    DIM query AS STRING
+    query = "SELECT id, first_name, last_name, address, city, state, zip, phone, email " + _
+            "FROM contacts WHERE " + _
+            "first_name LIKE ? OR last_name LIKE ? OR city LIKE ? OR state LIKE ? OR phone LIKE ?"
+
+    DIM rows AS sql.Rows
+    rows = db.Query(query, pattern, pattern, pattern, pattern, pattern)
+
+    DO WHILE rows.Next()
+        DIM c AS Contact
+        rows.Scan(@c.ID, @c.FirstName, @c.LastName, @c.Address, @c.City, @c.State, @c.Zip, @c.Phone, @c.Email)
+        contacts = APPEND(contacts, c)
+    LOOP
+
+    rows.Close()
+    RETURN contacts
+END FUNCTION
+
+' ============================================================================
+' Seed Data - Fictional TV Characters
+' ============================================================================
+
+SUB SeedDatabase(db AS sql.DB)
+    ' Check if already seeded
+    DIM count AS INTEGER
+    db.QueryRow("SELECT COUNT(*) FROM contacts").Scan(@count)
+    IF count > 0 THEN RETURN
+
+    ' Add TV character contacts
+    DIM c AS Contact
+
+    c.FirstName = "Herman": c.LastName = "Munster"
+    c.Address = "1313 Mockingbird Lane": c.City = "Mockingbird Heights": c.State = "CA"
+    c.Zip = "90210": c.Phone = "555-555-0001": c.Email = "herman.munster@mockingbird.example"
+    InsertContact(db, c)
+
+    c.FirstName = "Gomez": c.LastName = "Addams"
+    c.Address = "0001 Cemetery Lane": c.City = "Westfield": c.State = "NJ"
+    c.Zip = "07090": c.Phone = "555-555-0002": c.Email = "gomez.addams@cemetery.example"
+    InsertContact(db, c)
+
+    c.FirstName = "Fred": c.LastName = "Flintstone"
+    c.Address = "301 Cobblestone Way": c.City = "Bedrock": c.State = ""
+    c.Zip = "00001": c.Phone = "555-555-0003": c.Email = "fred.flintstone@bedrock.example"
+    InsertContact(db, c)
+
+    c.FirstName = "Homer": c.LastName = "Simpson"
+    c.Address = "742 Evergreen Terrace": c.City = "Springfield": c.State = ""
+    c.Zip = "49007": c.Phone = "555-555-0005": c.Email = "homer.simpson@springfield.example"
+    InsertContact(db, c)
+
+    c.FirstName = "Archie": c.LastName = "Bunker"
+    c.Address = "704 Houser Street": c.City = "Queens": c.State = "NY"
+    c.Zip = "11375": c.Phone = "555-555-0006": c.Email = "archie.bunker@queens.example"
+    InsertContact(db, c)
+
+    c.FirstName = "Al": c.LastName = "Bundy"
+    c.Address = "9764 Jeopardy Lane": c.City = "Chicago": c.State = "IL"
+    c.Zip = "60614": c.Phone = "555-555-0007": c.Email = "al.bundy@chicago.example"
+    InsertContact(db, c)
+
+    c.FirstName = "Walter": c.LastName = "White"
+    c.Address = "308 Negra Arroyo Lane": c.City = "Albuquerque": c.State = "NM"
+    c.Zip = "87104": c.Phone = "555-555-0022": c.Email = "walter.white@jpwynne.example"
+    InsertContact(db, c)
+
+    c.FirstName = "Michael": c.LastName = "Scott"
+    c.Address = "1725 Slough Avenue": c.City = "Scranton": c.State = "PA"
+    c.Zip = "18503": c.Phone = "555-555-0024": c.Email = "michael.scott@dundermifflin.example"
+    InsertContact(db, c)
+
+    ' ... additional contacts in data.go
+END SUB
+
+' ============================================================================
+' Event Handlers
+' ============================================================================
+
+SUB OnNewContact()
+    DIM c AS Contact
+    IF ShowContactDialog(@c, "New Contact") THEN
+        InsertContact(app.db, c)
+        RefreshContacts()
+    END IF
+END SUB
+
+SUB OnEditContact()
+    DIM index AS INTEGER
+    index = app.tableView.CurrentIndex()
+    IF index < 0 THEN
+        walk.MsgBox(app.mainWindow, "No Selection", "Please select a contact to edit.", walk.MsgBoxIconInformation)
+        RETURN
+    END IF
+
+    DIM c AS Contact
+    c = app.contacts[index]
+
+    IF ShowContactDialog(@c, "Edit Contact") THEN
+        UpdateContact(app.db, c)
+        RefreshContacts()
+    END IF
+END SUB
+
+SUB OnDeleteContact()
+    DIM index AS INTEGER
+    index = app.tableView.CurrentIndex()
+    IF index < 0 THEN
+        walk.MsgBox(app.mainWindow, "No Selection", "Please select a contact to delete.", walk.MsgBoxIconInformation)
+        RETURN
+    END IF
+
+    DIM c AS Contact
+    c = app.contacts[index]
+
+    DIM result AS INTEGER
+    result = walk.MsgBox(app.mainWindow, "Confirm Delete", _
+                         "Are you sure you want to delete " + c.FirstName + " " + c.LastName + "?", _
+                         walk.MsgBoxYesNo + walk.MsgBoxIconQuestion)
+
+    IF result = walk.DlgCmdYes THEN
+        DeleteContact(app.db, c.ID)
+        RefreshContacts()
+    END IF
+END SUB
+
+SUB RefreshContacts()
+    DIM sortBy AS STRING
+    SELECT CASE app.sortColumn
+        CASE 0: sortBy = "first_name"
+        CASE 1: sortBy = "last_name"
+        CASE 2: sortBy = "city"
+        CASE 3: sortBy = "state"
+        CASE 4: sortBy = "phone"
+    END SELECT
+
+    app.contacts = GetAllContacts(app.db, sortBy, app.sortAscending)
+    app.tableView.Invalidate()
+    UpdateStatus()
+END SUB
+
+SUB UpdateStatus()
+    DIM count AS INTEGER
+    count = LEN(app.contacts)
+    app.statusBar.SetText(Str(count) + " contacts")
+END SUB
+
+FUNCTION ShowContactDialog(c AS ^Contact, title AS STRING) AS BOOLEAN
+    ' Create modal dialog for editing contact
+    ' Returns TRUE if user clicked OK, FALSE if cancelled
+
+    DIM dlg AS walk.Dialog
+    DIM firstNameEdit AS walk.LineEdit
+    DIM lastNameEdit AS walk.LineEdit
+    DIM addressEdit AS walk.LineEdit
+    DIM cityEdit AS walk.LineEdit
+    DIM stateEdit AS walk.LineEdit
+    DIM zipEdit AS walk.LineEdit
+    DIM phoneEdit AS walk.LineEdit
+    DIM emailEdit AS walk.LineEdit
+
+    ' ... dialog creation code using walk.declarative
+    ' ... set field values from c^
+    ' ... on OK, copy values back to c^
+
+    RETURN dlg.Result() = walk.DlgCmdOK
+END FUNCTION
+
+' ============================================================================
+' Main Entry Point
+' ============================================================================
+
+SUB Main()
+    ' Get database path
+    DIM exePath AS STRING
+    exePath = os.Executable()
+    DIM dbPath AS STRING
+    dbPath = filepath.Join(filepath.Dir(exePath), "contacts.db")
+
+    ' Initialize database
+    app.db = InitDatabase(dbPath)
+    IF app.db = NIL THEN
+        walk.MsgBox(NIL, "Error", "Failed to initialize database", walk.MsgBoxIconError)
+        RETURN
+    END IF
+
+    ' Create tables and seed data
+    CreateContactsTable(app.db)
+    SeedDatabase(app.db)
+
+    ' Set default sort
+    app.sortColumn = 1  ' Last name
+    app.sortAscending = TRUE
+
+    ' Load contacts
+    app.contacts = GetAllContacts(app.db, "last_name", TRUE)
+
+    ' Create and run main window
+    ' Note: Walk's declarative API requires Go interface implementation
+    ' See main.go for the actual window creation code
+
+    ' ... window creation using walk.declarative.MainWindow
+    ' ... with Menu, TableView, StatusBar
+
+    app.mainWindow.Run()
+
+    ' Cleanup
+    app.db.Close()
+END SUB

@@ -116,11 +116,43 @@ The database is pre-populated with 25 fictional TV character contacts including:
 
 | File | Description |
 |------|-------------|
+| `contacts.dbas` | DBasic source showing the application structure |
 | `main.go` | Main application, Walk GUI, TableModel implementation |
 | `database.go` | SQLite operations (CRUD functions) |
 | `data.go` | TV character seed data (25 contacts) |
 | `contacts.manifest` | Windows application manifest for visual styles |
+| `contacts.exe` | Pre-built Windows executable |
 | `go.mod` | Go module dependencies |
+
+## DBasic Source
+
+The `contacts.dbas` file demonstrates how this application would be written in DBasic syntax:
+
+```basic
+' Import Go packages
+IMPORT "database/sql"
+IMPORT "github.com/lxn/walk"
+IMPORT "modernc.org/sqlite"
+
+' Define Contact structure
+TYPE Contact
+    DIM ID AS LONG
+    DIM FirstName AS STRING
+    DIM LastName AS STRING
+    ' ...
+END TYPE
+
+' Database operations
+FUNCTION GetAllContacts(db AS sql.DB, sortBy AS STRING) AS []Contact
+    DIM contacts AS []Contact
+    DIM rows AS sql.Rows
+    rows = db.Query("SELECT * FROM contacts ORDER BY " + sortBy)
+    ' ...
+    RETURN contacts
+END FUNCTION
+```
+
+**Note:** Walk requires Go interface implementation (`walk.TableModel`) which DBasic cannot directly express. The Go source files contain the actual implementation.
 
 ## Database Schema
 
