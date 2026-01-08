@@ -208,12 +208,31 @@ SUB SeedDatabase(db AS POINTER TO sql.DB)
     IF count > 0 THEN RETURN
 
     DIM seedContacts AS []Contact = []Contact{
-        Contact{FirstName: "Herman", LastName: "Munster", Address: "1313 Mockingbird Lane", City: "Mockingbird Heights", State: "CA", Zip: "90210", Phone: "555-555-0001", Email: "herman@munster.example"},
-        Contact{FirstName: "Gomez", LastName: "Addams", Address: "0001 Cemetery Lane", City: "Westfield", State: "NJ", Zip: "07090", Phone: "555-555-0002", Email: "gomez@addams.example"},
-        Contact{FirstName: "Homer", LastName: "Simpson", Address: "742 Evergreen Terrace", City: "Springfield", State: "OR", Zip: "49007", Phone: "555-555-0005", Email: "homer@simpson.example"},
-        Contact{FirstName: "Al", LastName: "Bundy", Address: "9764 Jeopardy Lane", City: "Chicago", State: "IL", Zip: "60614", Phone: "555-555-0007", Email: "al@bundy.example"},
-        Contact{FirstName: "Walter", LastName: "White", Address: "308 Negra Arroyo Lane", City: "Albuquerque", State: "NM", Zip: "87104", Phone: "555-555-0022", Email: "walter@white.example"},
-        Contact{FirstName: "Michael", LastName: "Scott", Address: "1725 Slough Avenue", City: "Scranton", State: "PA", Zip: "18503", Phone: "555-555-0024", Email: "michael@scott.example"}
+        Contact{FirstName: "Herman", LastName: "Munster", Address: "1313 Mockingbird Lane", City: "Mockingbird Heights", State: "CA", Zip: "90210", Phone: "555-555-0001", Email: "herman.munster@mockingbird.example"},
+        Contact{FirstName: "Gomez", LastName: "Addams", Address: "0001 Cemetery Lane", City: "Westfield", State: "NJ", Zip: "07090", Phone: "555-555-0002", Email: "gomez.addams@cemetery.example"},
+        Contact{FirstName: "Fred", LastName: "Flintstone", Address: "301 Cobblestone Way", City: "Bedrock", State: "", Zip: "00001", Phone: "555-555-0003", Email: "fred.flintstone@bedrock.example"},
+        Contact{FirstName: "George", LastName: "Jetson", Address: "Skypad Apartments", City: "Orbit City", State: "", Zip: "99999", Phone: "555-555-0004", Email: "george.jetson@spacely.example"},
+        Contact{FirstName: "Homer", LastName: "Simpson", Address: "742 Evergreen Terrace", City: "Springfield", State: "", Zip: "49007", Phone: "555-555-0005", Email: "homer.simpson@springfield.example"},
+        Contact{FirstName: "Archie", LastName: "Bunker", Address: "704 Houser Street", City: "Queens", State: "NY", Zip: "11375", Phone: "555-555-0006", Email: "archie.bunker@queens.example"},
+        Contact{FirstName: "Al", LastName: "Bundy", Address: "9764 Jeopardy Lane", City: "Chicago", State: "IL", Zip: "60614", Phone: "555-555-0007", Email: "al.bundy@chicago.example"},
+        Contact{FirstName: "Ward", LastName: "Cleaver", Address: "211 Pine Street", City: "Mayfield", State: "", Zip: "12345", Phone: "555-555-0008", Email: "ward.cleaver@mayfield.example"},
+        Contact{FirstName: "Mike", LastName: "Brady", Address: "4222 Clinton Way", City: "Los Angeles", State: "CA", Zip: "91604", Phone: "555-555-0009", Email: "mike.brady@losangeles.example"},
+        Contact{FirstName: "Ricky", LastName: "Ricardo", Address: "623 East 68th Street", City: "New York", State: "NY", Zip: "10065", Phone: "555-555-0010", Email: "ricky.ricardo@tropicana.example"},
+        Contact{FirstName: "Ralph", LastName: "Kramden", Address: "328 Chauncey Street", City: "Brooklyn", State: "NY", Zip: "11233", Phone: "555-555-0011", Email: "ralph.kramden@gotham.example"},
+        Contact{FirstName: "George", LastName: "Jefferson", Address: "185 East 85th Street", City: "New York", State: "NY", Zip: "10028", Phone: "555-555-0012", Email: "george.jefferson@deluxe.example"},
+        Contact{FirstName: "Cliff", LastName: "Huxtable", Address: "10 Stigwood Avenue", City: "Brooklyn", State: "NY", Zip: "11215", Phone: "555-555-0013", Email: "cliff.huxtable@brooklyn.example"},
+        Contact{FirstName: "Danny", LastName: "Tanner", Address: "1882 Gerard Street", City: "San Francisco", State: "CA", Zip: "94115", Phone: "555-555-0014", Email: "danny.tanner@sanfrancisco.example"},
+        Contact{FirstName: "Tim", LastName: "Taylor", Address: "510 Glenview Road", City: "Detroit", State: "MI", Zip: "48226", Phone: "555-555-0015", Email: "tim.taylor@tooltime.example"},
+        Contact{FirstName: "Ray", LastName: "Barone", Address: "320 Fowler Street", City: "Lynbrook", State: "NY", Zip: "11563", Phone: "555-555-0016", Email: "ray.barone@newsday.example"},
+        Contact{FirstName: "Doug", LastName: "Heffernan", Address: "3121 Aberdeen Street", City: "Queens", State: "NY", Zip: "11375", Phone: "555-555-0017", Email: "doug.heffernan@ips.example"},
+        Contact{FirstName: "Peter", LastName: "Griffin", Address: "31 Spooner Street", City: "Quahog", State: "RI", Zip: "02901", Phone: "555-555-0018", Email: "peter.griffin@quahog.example"},
+        Contact{FirstName: "Hank", LastName: "Hill", Address: "84 Rainey Street", City: "Arlen", State: "TX", Zip: "73104", Phone: "555-555-0019", Email: "hank.hill@strickland.example"},
+        Contact{FirstName: "Phil", LastName: "Dunphy", Address: "10336 Dunphy Lane", City: "Los Angeles", State: "CA", Zip: "90077", Phone: "555-555-0020", Email: "phil.dunphy@realestate.example"},
+        Contact{FirstName: "Bob", LastName: "Belcher", Address: "123 Ocean Avenue", City: "Seymours Bay", State: "NJ", Zip: "07001", Phone: "555-555-0021", Email: "bob.belcher@burgers.example"},
+        Contact{FirstName: "Walter", LastName: "White", Address: "308 Negra Arroyo Lane", City: "Albuquerque", State: "NM", Zip: "87104", Phone: "555-555-0022", Email: "walter.white@graymatter.example"},
+        Contact{FirstName: "Don", LastName: "Draper", Address: "783 Park Avenue", City: "New York", State: "NY", Zip: "10021", Phone: "555-555-0023", Email: "don.draper@scdp.example"},
+        Contact{FirstName: "Michael", LastName: "Scott", Address: "1725 Slough Avenue", City: "Scranton", State: "PA", Zip: "18503", Phone: "555-555-0024", Email: "michael.scott@dundermifflin.example"},
+        Contact{FirstName: "Leslie", LastName: "Knope", Address: "314 Pawnee Way", City: "Pawnee", State: "IN", Zip: "47408", Phone: "555-555-0025", Email: "leslie.knope@pawnee.example"}
     }
 
     DIM i AS INTEGER

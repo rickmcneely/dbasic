@@ -1,5 +1,9 @@
-# Compiled binary
+# Compiled binaries
 dbasic
+examples/*/edit
+examples/*/gorillas
+examples/edit/edit
+examples/gorillas/gorillas
 
 # Test output
 test_output/

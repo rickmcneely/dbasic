@@ -65,7 +65,7 @@
         },
         {
           "name": "keyword.function.dbasic",
-          "match": "(?i)\\b(SUB|FUNCTION|TYPE|END\\s+SUB|END\\s+FUNCTION|END\\s+TYPE)\\b"
+          "match": "(?i)\\b(SUB|FUNCTION|TYPE|END\\s+SUB|END\\s+FUNCTION|END\\s+TYPE|IMPLEMENTS|EMBED)\\b"
         },
         {
           "name": "keyword.other.dbasic",
@@ -77,7 +77,7 @@
       "patterns": [
         {
           "name": "storage.type.dbasic",
-          "match": "(?i)\\b(INTEGER|LONG|SINGLE|DOUBLE|STRING|BOOLEAN|JSON|BYTES|BSTRING|POINTER|CHAN|OF)\\b"
+          "match": "(?i)\\b(INTEGER|LONG|SINGLE|DOUBLE|STRING|BOOLEAN|JSON|BYTES|BSTRING|POINTER|CHAN|OF|ANY|ERROR)\\b"
         }
       ]
     },

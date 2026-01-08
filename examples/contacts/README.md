@@ -1,10 +1,10 @@
 # Contact Book - Win32 SQLite Example
 
-A native Windows GUI contact manager demonstrating how to use Go packages (Walk, SQLite) from DBasic.
+A native Windows GUI contact manager written entirely in DBasic, demonstrating Go interface implementation with Walk and SQLite.
 
 ## Overview
 
-This example shows how DBasic can integrate with Go's ecosystem by importing and using external packages. The contact manager uses:
+This example shows how DBasic can implement Go interfaces and integrate with Go's ecosystem. The contact manager uses:
 
 - **github.com/lxn/walk** - Native Windows GUI toolkit (Win32 API wrapper)
 - **modernc.org/sqlite** - Pure-Go SQLite database driver (no CGO required)
@@ -15,77 +15,101 @@ This example shows how DBasic can integrate with Go's ecosystem by importing and
 - SQLite database for persistent storage
 - Contact list with sortable columns (click headers to sort)
 - Add, edit, and delete contacts
-- Search contacts by any field
 - Pre-populated with 25 fictional TV character contacts
+- **Written entirely in DBasic** - no hand-written Go code required
 
 ## Key DBasic Features Demonstrated
 
-### Importing Go Packages
+### Go Interface Implementation
 
 ```basic
-IMPORT "github.com/lxn/walk"
-IMPORT "github.com/lxn/walk/declarative"
-IMPORT "github.com/mattn/go-sqlite3"
+' Embed base types for interface implementation
+TYPE ContactModel
+    EMBED walk.TableModelBase
+    EMBED walk.SorterBase
+    DIM SortCol AS INTEGER
+    DIM Items AS []POINTER TO Contact
+END TYPE
+
+' Implement TableModel interface methods
+FUNCTION (m AS POINTER TO ContactModel) RowCount() AS INTEGER
+    RETURN LEN((^m).Items)
+END FUNCTION
+
+FUNCTION (m AS POINTER TO ContactModel) Value(row AS INTEGER, col AS INTEGER) AS ANY
+    ' Return interface{} for Walk's TableView
+    RETURN (^item).FirstName
+END FUNCTION
+
+FUNCTION (m AS POINTER TO ContactModel) Sort(col AS INTEGER, order AS walk.SortOrder) AS ERROR
+    ' Return error type
+    RETURN NIL
+END FUNCTION
 ```
 
-### Using Win32 GUI Components
+### Declarative GUI with Struct Literals
 
 ```basic
-' TableView for listing contacts
-DIM tableView AS walk.TableView
-DIM model AS ContactModel
-
-' Dialog for editing
-DIM dlg AS walk.Dialog
-DIM firstNameEdit AS walk.LineEdit
+err = declarative.MainWindow{
+    AssignTo: @gMainWindow,
+    Title: "Contact Book",
+    MinSize: declarative.Size{Width: 600, Height: 400},
+    Layout: declarative.VBox{},
+    Children: []declarative.Widget{
+        declarative.TableView{
+            AssignTo: @tableView,
+            Model: gModel,
+            Columns: []declarative.TableViewColumn{
+                declarative.TableViewColumn{Title: "First Name", Width: 100}
+            }
+        }
+    }
+}.Create()
 ```
 
-### Database Operations
+### Line Continuation
 
 ```basic
-' Open SQLite database
-DIM db AS sql.DB
-db = InitDatabase("contacts.db")
-
-' Query contacts
-DIM contacts AS []Contact
-contacts = GetAllContacts(db, "last_name", TRUE)
+DIM query AS STRING = "CREATE TABLE IF NOT EXISTS contacts (" + _
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, " + _
+    "first_name TEXT NOT NULL)"
 ```
 
 ## Building
 
-### Prerequisites
-
-- Windows OS (Walk uses Win32 API)
-- Go 1.21 or later
-- Optional: rsrc tool for embedding manifest (for modern visual styles)
-
-### Build Steps
+### From Linux (Cross-compile to Windows)
 
 ```bash
-cd examples/contacts
+# Transpile DBasic to Go
+cd ~/DBasic
+./dbasic emit examples/contacts/contacts.dbas > examples/contacts/main.go
 
-# Download dependencies
-go mod tidy
+# Copy to Windows-accessible directory and build
+cp examples/contacts/{main.go,go.mod,go.sum,contacts.manifest} /mnt/c/temp/contacts/
 
-# Build the executable
-go build -ldflags="-H windowsgui" -o contacts.exe
-
-# Run
-./contacts.exe
+# Build on Windows (from WSL)
+cd /mnt/c/temp/contacts
+"/mnt/c/Program Files/Go/bin/go.exe" install github.com/akavel/rsrc@latest
+/mnt/c/Users/YourUser/go/bin/rsrc.exe -manifest contacts.manifest -o rsrc.syso
+"/mnt/c/Program Files/Go/bin/go.exe" build -ldflags="-H windowsgui" -o contacts.exe
 ```
 
-### With Manifest (for modern visual styles)
+### From Windows
 
-```bash
-# Install rsrc tool
+```cmd
+cd C:\path\to\contacts
+
+REM Install rsrc for manifest embedding
 go install github.com/akavel/rsrc@latest
 
-# Generate resource file from manifest
+REM Generate resource file
 rsrc -manifest contacts.manifest -o rsrc.syso
 
-# Build with embedded manifest
+REM Build
 go build -ldflags="-H windowsgui" -o contacts.exe
+
+REM Run
+contacts.exe
 ```
 
 ## Keyboard Shortcuts
@@ -93,9 +117,8 @@ go build -ldflags="-H windowsgui" -o contacts.exe
 | Key | Action |
 |-----|--------|
 | Ctrl+N | New contact |
-| Enter | Edit selected contact |
+| Ctrl+E | Edit selected contact |
 | Delete | Delete contact (with confirmation) |
-| F5 | Refresh list |
 | Alt+F4 | Exit |
 
 ## Sample Data
@@ -116,43 +139,10 @@ The database is pre-populated with 25 fictional TV character contacts including:
 
 | File | Description |
 |------|-------------|
-| `contacts.dbas` | DBasic source showing the application structure |
-| `main.go` | Main application, Walk GUI, TableModel implementation |
-| `database.go` | SQLite operations (CRUD functions) |
-| `data.go` | TV character seed data (25 contacts) |
+| `contacts.dbas` | DBasic source (complete application) |
+| `main.go` | Generated Go code (transpiled from contacts.dbas) |
 | `contacts.manifest` | Windows application manifest for visual styles |
-| `contacts.exe` | Pre-built Windows executable |
 | `go.mod` | Go module dependencies |
-
-## DBasic Source
-
-The `contacts.dbas` file demonstrates how this application would be written in DBasic syntax:
-
-```basic
-' Import Go packages
-IMPORT "database/sql"
-IMPORT "github.com/lxn/walk"
-IMPORT "modernc.org/sqlite"
-
-' Define Contact structure
-TYPE Contact
-    DIM ID AS LONG
-    DIM FirstName AS STRING
-    DIM LastName AS STRING
-    ' ...
-END TYPE
-
-' Database operations
-FUNCTION GetAllContacts(db AS sql.DB, sortBy AS STRING) AS []Contact
-    DIM contacts AS []Contact
-    DIM rows AS sql.Rows
-    rows = db.Query("SELECT * FROM contacts ORDER BY " + sortBy)
-    ' ...
-    RETURN contacts
-END FUNCTION
-```
-
-**Note:** Walk requires Go interface implementation (`walk.TableModel`) which DBasic cannot directly express. The Go source files contain the actual implementation.
 
 ## Database Schema
 
@@ -168,28 +158,6 @@ CREATE TABLE contacts (
     phone TEXT,
     email TEXT
 );
-```
-
-## Screenshot
-
-```
-+----------------------------------------------------------+
-| Contact Book                                    [-][o][x] |
-+----------------------------------------------------------+
-| File   Edit   View   Help                                |
-+----------------------------------------------------------+
-| [New] [Edit] [Delete] [Refresh]        Search: [_______] |
-+----------------------------------------------------------+
-| First Name | Last Name  | City           | State | Phone |
-|------------|------------|----------------|-------|-------|
-| Al         | Bundy      | Chicago        | IL    | 555-  |
-| Archie     | Bunker     | Queens         | NY    | 555-  |
-| Cliff      | Huxtable   | Brooklyn       | NY    | 555-  |
-| Don        | Draper     | New York       | NY    | 555-  |
-| ...        | ...        | ...            | ...   | ...   |
-+----------------------------------------------------------+
-| 25 contacts                                              |
-+----------------------------------------------------------+
 ```
 
 ## License

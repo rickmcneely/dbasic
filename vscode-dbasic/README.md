@@ -89,13 +89,20 @@ code --install-extension dbasic-0.1.0.vsix
 | `dimstruct` | Declare and init struct |
 | `sliceop` | Slice operation [start:end] |
 | `bytes` | Byte array |
+| `typeimpl` | Type implementing interface |
+| `typeembed` | Type with embedded base |
+| `funcany` | Method returning ANY |
+| `funcerr` | Method returning ERROR |
+| `importblank` | Blank import for side effects |
+| `cont` | Line continuation |
 
 ## Language Features
 
 DBasic supports:
-- Strong typing with INTEGER, LONG, SINGLE, DOUBLE, STRING, BOOLEAN, JSON
+- Strong typing with INTEGER, LONG, SINGLE, DOUBLE, STRING, BOOLEAN, JSON, ANY, ERROR
 - Slices (dynamic arrays) with `[]TYPE` syntax
 - User-defined types with TYPE/END TYPE
+- Type embedding with EMBED for Go interface implementation
 - Struct literal initialization: `Person{Name: "John", Age: 30}`
 - Slice operations: `slice[start:end]`, `APPEND(slice, elem)`
 - SUB and FUNCTION with multiple return values
@@ -103,12 +110,21 @@ DBasic supports:
 - Goroutines via `SPAWN` and channels
 - Native JSON type with dot notation
 - Go package integration via `IMPORT`
+- Line continuation with `_` at end of line
 
 ## Requirements
 
 - Visual Studio Code 1.75.0 or higher
 
 ## Release Notes
+
+### 0.3.0
+
+- Added Go interface support keywords: EMBED, IMPLEMENTS
+- Added new types: ANY (interface{}), ERROR (error)
+- Added blank import syntax highlighting (`IMPORT _ "package"`)
+- Added snippets for interface implementation patterns
+- Added line continuation snippet
 
 ### 0.2.0
 

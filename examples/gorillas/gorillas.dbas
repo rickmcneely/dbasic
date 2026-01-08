@@ -1,0 +1,288 @@
+' Gorillas.BAS - A DBasic Terminal Version
+' Simplified version of the classic QBasic game
+' Demonstrates structs, methods, and game logic
+
+' Game constants
+CONST SCREEN_WIDTH AS INTEGER = 40
+CONST FIELD_WIDTH AS INTEGER = 40
+CONST GRAVITY AS DOUBLE = 0.3
+
+' Point type for positions
+TYPE Point
+    DIM X AS DOUBLE
+    DIM Y AS DOUBLE
+END TYPE
+
+' Player type
+TYPE Player
+    DIM Position AS Point
+    DIM Name AS STRING
+    DIM Score AS INTEGER
+END TYPE
+
+' Banana/projectile type
+TYPE Banana
+    DIM Position AS Point
+    DIM VelocityX AS DOUBLE
+    DIM VelocityY AS DOUBLE
+    DIM Active AS BOOLEAN
+END TYPE
+
+' Game state
+TYPE GameState
+    DIM Player1 AS Player
+    DIM Player2 AS Player
+    DIM Projectile AS Banana
+    DIM CurrentPlayer AS INTEGER
+    DIM GameOver AS BOOLEAN
+    DIM Wind AS DOUBLE
+END TYPE
+
+' Calculate distance between two points
+FUNCTION Distance(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE) AS DOUBLE
+    DIM dx AS DOUBLE = x2 - x1
+    DIM dy AS DOUBLE = y2 - y1
+    RETURN dx * dx + dy * dy
+END FUNCTION
+
+' Initialize game state
+SUB InitGame(g AS POINTER TO GameState)
+    ' Set up player 1 on the left
+    (^g).Player1.Position.X = 5.0
+    (^g).Player1.Position.Y = 10.0
+    (^g).Player1.Name = "Player 1"
+    (^g).Player1.Score = 0
+
+    ' Set up player 2 on the right
+    (^g).Player2.Position.X = 35.0
+    (^g).Player2.Position.Y = 10.0
+    (^g).Player2.Name = "Player 2"
+    (^g).Player2.Score = 0
+
+    ' Initialize projectile
+    (^g).Projectile.Active = FALSE
+
+    ' Start with player 1
+    (^g).CurrentPlayer = 1
+    (^g).GameOver = FALSE
+    (^g).Wind = 0.0
+END SUB
+
+' Fire a banana with given angle and power
+SUB FireBanana(g AS POINTER TO GameState, angle AS DOUBLE, power AS DOUBLE)
+    DIM speed AS DOUBLE = power / 20.0
+    ' Simple approximation using angle to adjust trajectory
+    ' cos and sin approximations (simplified physics)
+    DIM cosAngle AS DOUBLE = 0.866 - (angle - 45.0) * 0.005
+    DIM sinAngle AS DOUBLE = 0.5 + (angle - 45.0) * 0.005
+
+    (^g).Projectile.Active = TRUE
+
+    IF (^g).CurrentPlayer = 1 THEN
+        (^g).Projectile.Position.X = (^g).Player1.Position.X + 2.0
+        (^g).Projectile.Position.Y = (^g).Player1.Position.Y
+        (^g).Projectile.VelocityX = speed * cosAngle
+        (^g).Projectile.VelocityY = -speed * sinAngle
+    ELSE
+        (^g).Projectile.Position.X = (^g).Player2.Position.X - 2.0
+        (^g).Projectile.Position.Y = (^g).Player2.Position.Y
+        (^g).Projectile.VelocityX = -speed * cosAngle
+        (^g).Projectile.VelocityY = -speed * sinAngle
+    ENDIF
+END SUB
+
+' Update projectile physics
+FUNCTION UpdateProjectile(g AS POINTER TO GameState) AS INTEGER
+    IF NOT (^g).Projectile.Active THEN
+        RETURN 0
+    ENDIF
+
+    ' Update position
+    (^g).Projectile.Position.X = (^g).Projectile.Position.X + (^g).Projectile.VelocityX
+    (^g).Projectile.Position.Y = (^g).Projectile.Position.Y + (^g).Projectile.VelocityY
+
+    ' Apply gravity
+    (^g).Projectile.VelocityY = (^g).Projectile.VelocityY + GRAVITY
+
+    ' Apply wind
+    (^g).Projectile.VelocityX = (^g).Projectile.VelocityX + (^g).Wind
+
+    ' Check bounds
+    IF (^g).Projectile.Position.X < 0.0 OR (^g).Projectile.Position.X > 40.0 THEN
+        (^g).Projectile.Active = FALSE
+        RETURN -1  ' Out of bounds
+    ENDIF
+
+    IF (^g).Projectile.Position.Y > 20.0 THEN
+        (^g).Projectile.Active = FALSE
+        RETURN -1  ' Hit ground
+    ENDIF
+
+    ' Check collision with players
+    DIM dist AS DOUBLE
+
+    ' Check player 2 (if player 1 is throwing)
+    IF (^g).CurrentPlayer = 1 THEN
+        dist = Distance((^g).Projectile.Position.X, (^g).Projectile.Position.Y, (^g).Player2.Position.X, (^g).Player2.Position.Y)
+        IF dist < 4.0 THEN
+            (^g).Projectile.Active = FALSE
+            (^g).Player1.Score = (^g).Player1.Score + 1
+            RETURN 1  ' Hit player 2
+        ENDIF
+    ELSE
+        dist = Distance((^g).Projectile.Position.X, (^g).Projectile.Position.Y, (^g).Player1.Position.X, (^g).Player1.Position.Y)
+        IF dist < 4.0 THEN
+            (^g).Projectile.Active = FALSE
+            (^g).Player2.Score = (^g).Player2.Score + 1
+            RETURN 2  ' Hit player 1
+        ENDIF
+    ENDIF
+
+    RETURN 0  ' Still flying
+END FUNCTION
+
+' Draw a simple ASCII representation
+SUB DrawGame(g AS POINTER TO GameState)
+    PRINT ""
+    PRINT "=========================================="
+    PRINT "          GORILLAS - DBasic Edition       "
+    PRINT "=========================================="
+    PRINT ""
+
+    DIM p1x AS INTEGER = Int((^g).Player1.Position.X)
+    DIM p2x AS INTEGER = Int((^g).Player2.Position.X)
+
+    ' Draw score
+    PRINT "Score: "; (^g).Player1.Name; " = "; (^g).Player1.Score; "  "; (^g).Player2.Name; " = "; (^g).Player2.Score
+    PRINT ""
+
+    ' Draw simple field
+    DIM row AS INTEGER
+    FOR row = 0 TO 15
+        DIM col AS INTEGER
+        DIM line AS STRING = ""
+        FOR col = 0 TO 39
+            IF col = p1x AND row = 10 THEN
+                line = line & "G"
+            ELSEIF col = p2x AND row = 10 THEN
+                line = line & "G"
+            ELSEIF (^g).Projectile.Active AND Int((^g).Projectile.Position.X) = col AND Int((^g).Projectile.Position.Y) = row THEN
+                line = line & "*"
+            ELSEIF row = 15 THEN
+                line = line & "="
+            ELSE
+                line = line & " "
+            ENDIF
+        NEXT
+        PRINT line
+    NEXT
+
+    IF (^g).CurrentPlayer = 1 THEN
+        PRINT ""
+        PRINT ">>> "; (^g).Player1.Name; "'s turn <<<"
+    ELSE
+        PRINT ""
+        PRINT ">>> "; (^g).Player2.Name; "'s turn <<<"
+    ENDIF
+END SUB
+
+' Get throw parameters for a turn
+SUB GetThrowParams(turn AS INTEGER, angle AS POINTER TO DOUBLE, power AS POINTER TO DOUBLE)
+    ' Predefined throws for demo
+    IF turn = 0 THEN
+        ^angle = 45.0
+        ^power = 60.0
+    ELSEIF turn = 1 THEN
+        ^angle = 50.0
+        ^power = 55.0
+    ELSEIF turn = 2 THEN
+        ^angle = 40.0
+        ^power = 70.0
+    ELSEIF turn = 3 THEN
+        ^angle = 55.0
+        ^power = 50.0
+    ELSEIF turn = 4 THEN
+        ^angle = 45.0
+        ^power = 65.0
+    ELSE
+        ^angle = 42.0
+        ^power = 68.0
+    ENDIF
+END SUB
+
+' Main game loop - Auto-play demo
+SUB Main()
+    DIM game AS GameState
+    InitGame(@game)
+
+    PRINT "Welcome to Gorillas!"
+    PRINT "Auto-play demo - watch the bananas fly!"
+    PRINT ""
+
+    DIM turnCount AS INTEGER = 0
+    DIM playing AS BOOLEAN = TRUE
+
+    WHILE playing AND turnCount < 6
+        DrawGame(@game)
+
+        ' Get pre-defined input
+        DIM angle AS DOUBLE
+        DIM power AS DOUBLE
+        GetThrowParams(turnCount, @angle, @power)
+
+        PRINT ""
+        PRINT "Throwing at angle "; angle; " with power "; power
+        Sleep(500)
+
+        ' Fire the banana
+        FireBanana(@game, angle, power)
+
+        ' Simulate the projectile
+        DIM result AS INTEGER = 0
+        DIM steps AS INTEGER = 0
+        WHILE game.Projectile.Active AND steps < 100
+            result = UpdateProjectile(@game)
+
+            IF game.Projectile.Active THEN
+                ' Show trajectory
+                PRINT "Banana at: "; Int(game.Projectile.Position.X); ", "; Int(game.Projectile.Position.Y)
+                Sleep(100)
+            ENDIF
+
+            steps = steps + 1
+        WEND
+
+        ' Check result
+        IF result = 1 THEN
+            PRINT ""
+            PRINT "*** "; game.Player1.Name; " hit "; game.Player2.Name; "! ***"
+            IF game.Player1.Score >= 3 THEN
+                PRINT game.Player1.Name; " WINS THE GAME!"
+                playing = FALSE
+            ENDIF
+        ELSEIF result = 2 THEN
+            PRINT ""
+            PRINT "*** "; game.Player2.Name; " hit "; game.Player1.Name; "! ***"
+            IF game.Player2.Score >= 3 THEN
+                PRINT game.Player2.Name; " WINS THE GAME!"
+                playing = FALSE
+            ENDIF
+        ELSE
+            PRINT "Missed!"
+        ENDIF
+
+        ' Switch players
+        IF game.CurrentPlayer = 1 THEN
+            game.CurrentPlayer = 2
+        ELSE
+            game.CurrentPlayer = 1
+        ENDIF
+
+        turnCount = turnCount + 1
+        Sleep(1000)
+    WEND
+
+    PRINT ""
+    PRINT "Game Over!"
+    PRINT "Final Score: "; game.Player1.Name; " = "; game.Player1.Score; "  "; game.Player2.Name; " = "; game.Player2.Score
+END SUB

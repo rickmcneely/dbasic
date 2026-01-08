@@ -375,5 +375,61 @@
       "${1:result} = ${2:slice}[:${3:end}]"
     ],
     "description": "Get slice from beginning to end index"
+  },
+  "Type with Interface": {
+    "prefix": "typeimpl",
+    "body": [
+      "TYPE ${1:TypeName} IMPLEMENTS ${2:package.Interface}",
+      "\tDIM ${3:field1} AS ${4:INTEGER}",
+      "\t$0",
+      "END TYPE"
+    ],
+    "description": "Define a type that implements an interface"
+  },
+  "Type with Embed": {
+    "prefix": "typeembed",
+    "body": [
+      "TYPE ${1:TypeName}",
+      "\tEMBED ${2:package.BaseType}",
+      "\tDIM ${3:field1} AS ${4:INTEGER}",
+      "\t$0",
+      "END TYPE"
+    ],
+    "description": "Define a type with embedded base type"
+  },
+  "Function returning ANY": {
+    "prefix": "funcany",
+    "body": [
+      "FUNCTION (${1:self} AS POINTER TO ${2:TypeName}) ${3:MethodName}(${4:params}) AS ANY",
+      "\t$0",
+      "\tRETURN ${5:value}",
+      "END FUNCTION"
+    ],
+    "description": "Define a method returning interface{}"
+  },
+  "Function returning ERROR": {
+    "prefix": "funcerr",
+    "body": [
+      "FUNCTION (${1:self} AS POINTER TO ${2:TypeName}) ${3:MethodName}(${4:params}) AS ERROR",
+      "\t$0",
+      "\tRETURN NIL",
+      "END FUNCTION"
+    ],
+    "description": "Define a method returning error"
+  },
+  "Blank Import": {
+    "prefix": "importblank",
+    "body": [
+      "IMPORT _ \"${1:package}\""
+    ],
+    "description": "Import a Go package for side effects only"
+  },
+  "Line Continuation": {
+    "prefix": "cont",
+    "body": [
+      "${1:expression} _",
+      "\t${2:continuation}"
+    ],
+    "description": "Line continuation with underscore"
   }
 }
