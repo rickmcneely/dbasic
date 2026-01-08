@@ -1363,6 +1363,7 @@ FUNCTION DoGotoLine(m AS EditorModel) AS (tea.Model, tea.Cmd)
 END FUNCTION
 
 ' Get dropdown lines as an array of strings (without padding - positioning handled in View)
+' All menu items are exactly 18 characters to fit in 20-char box (1 border + 18 content + 1 border)
 FUNCTION GetDropdownLines(m AS EditorModel) AS []STRING
     DIM lines AS []STRING
 
@@ -1371,8 +1372,8 @@ FUNCTION GetDropdownLines(m AS EditorModel) AS []STRING
         lines = APPEND(lines, "│" & RenderMenuItem("New         Ctrl+N", m.MenuIndex = 0) & "│")
         lines = APPEND(lines, "│" & RenderMenuItem("Open        Ctrl+O", m.MenuIndex = 1) & "│")
         lines = APPEND(lines, "│" & RenderMenuItem("Save        Ctrl+S", m.MenuIndex = 2) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Save As...       ", m.MenuIndex = 3) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("-----------------", FALSE) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Save As...        ", m.MenuIndex = 3) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("──────────────────", FALSE) & "│")
         lines = APPEND(lines, "│" & RenderMenuItem("Exit        Alt+X ", m.MenuIndex = 5) & "│")
         lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_EDIT THEN
@@ -1380,9 +1381,9 @@ FUNCTION GetDropdownLines(m AS EditorModel) AS []STRING
         lines = APPEND(lines, "│" & RenderMenuItem("Cut         Ctrl+X", m.MenuIndex = 0) & "│")
         lines = APPEND(lines, "│" & RenderMenuItem("Copy        Ctrl+C", m.MenuIndex = 1) & "│")
         lines = APPEND(lines, "│" & RenderMenuItem("Paste       Ctrl+V", m.MenuIndex = 2) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("-----------------", FALSE) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("──────────────────", FALSE) & "│")
         lines = APPEND(lines, "│" & RenderMenuItem("Select All  Ctrl+A", m.MenuIndex = 4) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("Clear            ", m.MenuIndex = 5) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Clear             ", m.MenuIndex = 5) & "│")
         lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_SEARCH THEN
         lines = APPEND(lines, "┌──────────────────┐")
@@ -1400,14 +1401,14 @@ FUNCTION GetDropdownLines(m AS EditorModel) AS []STRING
         IF m.InsertMode THEN
             insertCheck = "[X]"
         ENDIF
-        lines = APPEND(lines, "┌─────────────────┐")
-        lines = APPEND(lines, "│" & RenderMenuItem(lineNumCheck & " Line Numbers", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem(insertCheck & " Insert Mode ", m.MenuIndex = 1) & "│")
-        lines = APPEND(lines, "└─────────────────┘")
+        lines = APPEND(lines, "┌──────────────────┐")
+        lines = APPEND(lines, "│" & RenderMenuItem(lineNumCheck & " Line Numbers  ", m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem(insertCheck & " Insert Mode   ", m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "└──────────────────┘")
     ELSEIF m.MenuOpen = MENU_HELP THEN
         lines = APPEND(lines, "┌──────────────────┐")
-        lines = APPEND(lines, "│" & RenderMenuItem("Help        F1    ", m.MenuIndex = 0) & "│")
-        lines = APPEND(lines, "│" & RenderMenuItem("About            ", m.MenuIndex = 1) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("Help          F1  ", m.MenuIndex = 0) & "│")
+        lines = APPEND(lines, "│" & RenderMenuItem("About             ", m.MenuIndex = 1) & "│")
         lines = APPEND(lines, "└──────────────────┘")
     ENDIF
 
@@ -1629,18 +1630,7 @@ END FUNCTION
 
 ' Get visible width of dropdown menu (excluding padding)
 FUNCTION GetDropdownWidth(menu AS INTEGER) AS INTEGER
-    ' Box drawing + content width
-    IF menu = MENU_FILE THEN
-        RETURN 20   ' ┌──────────────────┐
-    ELSEIF menu = MENU_EDIT THEN
-        RETURN 20
-    ELSEIF menu = MENU_SEARCH THEN
-        RETURN 20
-    ELSEIF menu = MENU_OPTIONS THEN
-        RETURN 19
-    ELSEIF menu = MENU_HELP THEN
-        RETURN 20
-    ENDIF
+    ' All dropdowns are now 20 chars: 1 border + 18 content + 1 border
     RETURN 20
 END FUNCTION
 

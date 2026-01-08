@@ -1,72 +1,20 @@
 package main
 
 import (
-	fmt "fmt"
+	"os"
 	tea "github.com/charmbracelet/bubbletea"
 	lipgloss "github.com/charmbracelet/lipgloss"
 	"strings"
-	"os"
 	"strconv"
+	fmt "fmt"
 )
 
 // Runtime helper functions
-
-// WriteFile writes string to file
-func WriteFile(path, content string) {
-	os.WriteFile(path, []byte(content), 0644)
-}
 
 // Val converts a string to float64
 func Val(s string) float64 {
 	v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	return v
-}
-
-// Len returns the length of a string
-func Len(s string) int {
-	return len(s)
-}
-
-// FileExists checks if a file exists
-func FileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-// Instr finds the position of substring in string (1-based)
-func Instr(s, substr string) int {
-	idx := strings.Index(s, substr)
-	if idx == -1 {
-		return 0
-	}
-	return idx + 1
-}
-
-// Left returns the leftmost n characters
-func Left(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	if n >= len(s) {
-		return s
-	}
-	return s[:n]
-}
-
-// Mid returns a substring starting at position start with length ln
-func Mid(s string, start, ln int) string {
-	if start < 1 {
-		start = 1
-	}
-	startIdx := start - 1
-	if startIdx >= len(s) {
-		return ""
-	}
-	endIdx := startIdx + ln
-	if endIdx > len(s) {
-		endIdx = len(s)
-	}
-	return s[startIdx:endIdx]
 }
 
 // Chr returns the character for an ASCII code
@@ -99,6 +47,58 @@ func ReadFile(path string) string {
 		return ""
 	}
 	return string(data)
+}
+
+// WriteFile writes string to file
+func WriteFile(path, content string) {
+	os.WriteFile(path, []byte(content), 0644)
+}
+
+// Instr finds the position of substring in string (1-based)
+func Instr(s, substr string) int {
+	idx := strings.Index(s, substr)
+	if idx == -1 {
+		return 0
+	}
+	return idx + 1
+}
+
+// Len returns the length of a string
+func Len(s string) int {
+	return len(s)
+}
+
+// Left returns the leftmost n characters
+func Left(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	return s[:n]
+}
+
+// Mid returns a substring starting at position start with length ln
+func Mid(s string, start, ln int) string {
+	if start < 1 {
+		start = 1
+	}
+	startIdx := start - 1
+	if startIdx >= len(s) {
+		return ""
+	}
+	endIdx := startIdx + ln
+	if endIdx > len(s) {
+		endIdx = len(s)
+	}
+	return s[startIdx:endIdx]
+}
+
+// FileExists checks if a file exists
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 type EditorModel struct {
@@ -1250,8 +1250,8 @@ func GetDropdownLines(m EditorModel) []string {
 		lines = append(lines, (("│" + RenderMenuItem("New         Ctrl+N", (m.MenuIndex == 0))) + "│"))
 		lines = append(lines, (("│" + RenderMenuItem("Open        Ctrl+O", (m.MenuIndex == 1))) + "│"))
 		lines = append(lines, (("│" + RenderMenuItem("Save        Ctrl+S", (m.MenuIndex == 2))) + "│"))
-		lines = append(lines, (("│" + RenderMenuItem("Save As...       ", (m.MenuIndex == 3))) + "│"))
-		lines = append(lines, (("│" + RenderMenuItem("-----------------", false)) + "│"))
+		lines = append(lines, (("│" + RenderMenuItem("Save As...        ", (m.MenuIndex == 3))) + "│"))
+		lines = append(lines, (("│" + RenderMenuItem("──────────────────", false)) + "│"))
 		lines = append(lines, (("│" + RenderMenuItem("Exit        Alt+X ", (m.MenuIndex == 5))) + "│"))
 		lines = append(lines, "└──────────────────┘")
 	} else if (m.MenuOpen == MENU_EDIT) {
@@ -1259,9 +1259,9 @@ func GetDropdownLines(m EditorModel) []string {
 		lines = append(lines, (("│" + RenderMenuItem("Cut         Ctrl+X", (m.MenuIndex == 0))) + "│"))
 		lines = append(lines, (("│" + RenderMenuItem("Copy        Ctrl+C", (m.MenuIndex == 1))) + "│"))
 		lines = append(lines, (("│" + RenderMenuItem("Paste       Ctrl+V", (m.MenuIndex == 2))) + "│"))
-		lines = append(lines, (("│" + RenderMenuItem("-----------------", false)) + "│"))
+		lines = append(lines, (("│" + RenderMenuItem("──────────────────", false)) + "│"))
 		lines = append(lines, (("│" + RenderMenuItem("Select All  Ctrl+A", (m.MenuIndex == 4))) + "│"))
-		lines = append(lines, (("│" + RenderMenuItem("Clear            ", (m.MenuIndex == 5))) + "│"))
+		lines = append(lines, (("│" + RenderMenuItem("Clear             ", (m.MenuIndex == 5))) + "│"))
 		lines = append(lines, "└──────────────────┘")
 	} else if (m.MenuOpen == MENU_SEARCH) {
 		lines = append(lines, "┌──────────────────┐")
@@ -1279,14 +1279,14 @@ func GetDropdownLines(m EditorModel) []string {
 		if m.InsertMode {
 			insertCheck = "[X]"
 		}
-		lines = append(lines, "┌─────────────────┐")
-		lines = append(lines, (("│" + RenderMenuItem((lineNumCheck + " Line Numbers"), (m.MenuIndex == 0))) + "│"))
-		lines = append(lines, (("│" + RenderMenuItem((insertCheck + " Insert Mode "), (m.MenuIndex == 1))) + "│"))
-		lines = append(lines, "└─────────────────┘")
+		lines = append(lines, "┌──────────────────┐")
+		lines = append(lines, (("│" + RenderMenuItem((lineNumCheck + " Line Numbers  "), (m.MenuIndex == 0))) + "│"))
+		lines = append(lines, (("│" + RenderMenuItem((insertCheck + " Insert Mode   "), (m.MenuIndex == 1))) + "│"))
+		lines = append(lines, "└──────────────────┘")
 	} else if (m.MenuOpen == MENU_HELP) {
 		lines = append(lines, "┌──────────────────┐")
-		lines = append(lines, (("│" + RenderMenuItem("Help        F1    ", (m.MenuIndex == 0))) + "│"))
-		lines = append(lines, (("│" + RenderMenuItem("About            ", (m.MenuIndex == 1))) + "│"))
+		lines = append(lines, (("│" + RenderMenuItem("Help          F1  ", (m.MenuIndex == 0))) + "│"))
+		lines = append(lines, (("│" + RenderMenuItem("About             ", (m.MenuIndex == 1))) + "│"))
 		lines = append(lines, "└──────────────────┘")
 	}
 	return lines
@@ -1446,17 +1446,6 @@ func GetMenuOffset(menu int) int {
 }
 
 func GetDropdownWidth(menu int) int {
-	if (menu == MENU_FILE) {
-		return 20
-	} else if (menu == MENU_EDIT) {
-		return 20
-	} else if (menu == MENU_SEARCH) {
-		return 20
-	} else if (menu == MENU_OPTIONS) {
-		return 19
-	} else if (menu == MENU_HELP) {
-		return 20
-	}
 	return 20
 }
 
