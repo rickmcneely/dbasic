@@ -1214,6 +1214,8 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 		return g.arrayLiteralToGo(e)
 	case *parser.StructLiteral:
 		return g.structLiteralToGo(e)
+	case *parser.SliceLiteral:
+		return g.sliceLiteralToGo(e)
 	case *parser.PrefixExpression:
 		return g.prefixExprToGo(e)
 	case *parser.InfixExpression:
@@ -1298,6 +1300,8 @@ func (g *Generator) inferElementType(expr parser.Expression) string {
 		return "bool"
 	case *parser.StructLiteral:
 		return e.TypeName
+	case *parser.SliceLiteral:
+		return "[]" + e.ElementType
 	case *parser.Identifier:
 		// Try to look up the type in the symbol table
 		if g.symbols != nil {
@@ -1332,6 +1336,52 @@ func (g *Generator) structLiteralToGo(lit *parser.StructLiteral) string {
 		pairs = append(pairs, fmt.Sprintf("%s: %s", goFieldName, g.exprToGo(v)))
 	}
 	return fmt.Sprintf("%s{%s}", typeName, strings.Join(pairs, ", "))
+}
+
+func (g *Generator) sliceLiteralToGo(lit *parser.SliceLiteral) string {
+	elementType := g.mapTypeToGo(lit.ElementType)
+
+	if len(lit.Elements) == 0 {
+		return "[]" + elementType + "{}"
+	}
+
+	var elements []string
+	for _, e := range lit.Elements {
+		elements = append(elements, g.exprToGo(e))
+	}
+	return fmt.Sprintf("[]%s{%s}", elementType, strings.Join(elements, ", "))
+}
+
+// mapTypeToGo converts a DBasic type name to Go type
+func (g *Generator) mapTypeToGo(typeName string) string {
+	// Check if this is a user-defined type
+	if g.types != nil {
+		if t := g.types.Lookup(typeName); t != nil {
+			return t.Name
+		}
+	}
+
+	// Map primitive types
+	switch strings.ToUpper(typeName) {
+	case "INTEGER":
+		return "int"
+	case "LONG":
+		return "int64"
+	case "SINGLE":
+		return "float32"
+	case "DOUBLE":
+		return "float64"
+	case "STRING":
+		return "string"
+	case "BOOLEAN":
+		return "bool"
+	case "JSON":
+		return "map[string]interface{}"
+	case "BYTES", "BSTRING":
+		return "[]byte"
+	default:
+		return typeName
+	}
 }
 
 func (g *Generator) prefixExprToGo(expr *parser.PrefixExpression) string {

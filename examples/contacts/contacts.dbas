@@ -1,9 +1,13 @@
 ' Contact Book - Win32 SQLite Application
 ' Demonstrates Go package integration with Walk GUI and SQLite database
 '
-' This example shows DBasic syntax for a Win32 GUI application.
-' Due to Walk requiring Go interface implementation, the actual
-' executable is built from the Go source (main.go).
+' This example shows DBasic syntax for a Win32 GUI application using:
+' - Multi-line struct literals: Type{ field1: value1, field2: value2 }
+' - Slice literals: []Type{ elem1, elem2 }
+' - Nested struct/slice literals for declarative UI definitions
+'
+' Due to Walk requiring Go interface implementation (TableModel),
+' the actual executable is built from the Go source (main.go).
 
 IMPORT "database/sql"
 IMPORT "fmt"
@@ -146,6 +150,7 @@ END FUNCTION
 
 ' ============================================================================
 ' Seed Data - Fictional TV Characters
+' Using slice literal syntax for declarative data definition
 ' ============================================================================
 
 SUB SeedDatabase(db AS sql.DB)
@@ -154,50 +159,85 @@ SUB SeedDatabase(db AS sql.DB)
     db.QueryRow("SELECT COUNT(*) FROM contacts").Scan(@count)
     IF count > 0 THEN RETURN
 
-    ' Add TV character contacts
-    DIM c AS Contact
+    ' Define TV character contacts using slice literal syntax
+    DIM seedContacts AS []Contact = []Contact{
+        Contact{
+            FirstName: "Herman",
+            LastName: "Munster",
+            Address: "1313 Mockingbird Lane",
+            City: "Mockingbird Heights",
+            State: "CA",
+            Zip: "90210",
+            Phone: "555-555-0001",
+            Email: "herman.munster@mockingbird.example"
+        },
+        Contact{
+            FirstName: "Gomez",
+            LastName: "Addams",
+            Address: "0001 Cemetery Lane",
+            City: "Westfield",
+            State: "NJ",
+            Zip: "07090",
+            Phone: "555-555-0002",
+            Email: "gomez.addams@cemetery.example"
+        },
+        Contact{
+            FirstName: "Fred",
+            LastName: "Flintstone",
+            Address: "301 Cobblestone Way",
+            City: "Bedrock",
+            State: "",
+            Zip: "00001",
+            Phone: "555-555-0003",
+            Email: "fred.flintstone@bedrock.example"
+        },
+        Contact{
+            FirstName: "Homer",
+            LastName: "Simpson",
+            Address: "742 Evergreen Terrace",
+            City: "Springfield",
+            State: "",
+            Zip: "49007",
+            Phone: "555-555-0005",
+            Email: "homer.simpson@springfield.example"
+        },
+        Contact{
+            FirstName: "Al",
+            LastName: "Bundy",
+            Address: "9764 Jeopardy Lane",
+            City: "Chicago",
+            State: "IL",
+            Zip: "60614",
+            Phone: "555-555-0007",
+            Email: "al.bundy@chicago.example"
+        },
+        Contact{
+            FirstName: "Walter",
+            LastName: "White",
+            Address: "308 Negra Arroyo Lane",
+            City: "Albuquerque",
+            State: "NM",
+            Zip: "87104",
+            Phone: "555-555-0022",
+            Email: "walter.white@jpwynne.example"
+        },
+        Contact{
+            FirstName: "Michael",
+            LastName: "Scott",
+            Address: "1725 Slough Avenue",
+            City: "Scranton",
+            State: "PA",
+            Zip: "18503",
+            Phone: "555-555-0024",
+            Email: "michael.scott@dundermifflin.example"
+        }
+    }
 
-    c.FirstName = "Herman": c.LastName = "Munster"
-    c.Address = "1313 Mockingbird Lane": c.City = "Mockingbird Heights": c.State = "CA"
-    c.Zip = "90210": c.Phone = "555-555-0001": c.Email = "herman.munster@mockingbird.example"
-    InsertContact(db, c)
-
-    c.FirstName = "Gomez": c.LastName = "Addams"
-    c.Address = "0001 Cemetery Lane": c.City = "Westfield": c.State = "NJ"
-    c.Zip = "07090": c.Phone = "555-555-0002": c.Email = "gomez.addams@cemetery.example"
-    InsertContact(db, c)
-
-    c.FirstName = "Fred": c.LastName = "Flintstone"
-    c.Address = "301 Cobblestone Way": c.City = "Bedrock": c.State = ""
-    c.Zip = "00001": c.Phone = "555-555-0003": c.Email = "fred.flintstone@bedrock.example"
-    InsertContact(db, c)
-
-    c.FirstName = "Homer": c.LastName = "Simpson"
-    c.Address = "742 Evergreen Terrace": c.City = "Springfield": c.State = ""
-    c.Zip = "49007": c.Phone = "555-555-0005": c.Email = "homer.simpson@springfield.example"
-    InsertContact(db, c)
-
-    c.FirstName = "Archie": c.LastName = "Bunker"
-    c.Address = "704 Houser Street": c.City = "Queens": c.State = "NY"
-    c.Zip = "11375": c.Phone = "555-555-0006": c.Email = "archie.bunker@queens.example"
-    InsertContact(db, c)
-
-    c.FirstName = "Al": c.LastName = "Bundy"
-    c.Address = "9764 Jeopardy Lane": c.City = "Chicago": c.State = "IL"
-    c.Zip = "60614": c.Phone = "555-555-0007": c.Email = "al.bundy@chicago.example"
-    InsertContact(db, c)
-
-    c.FirstName = "Walter": c.LastName = "White"
-    c.Address = "308 Negra Arroyo Lane": c.City = "Albuquerque": c.State = "NM"
-    c.Zip = "87104": c.Phone = "555-555-0022": c.Email = "walter.white@jpwynne.example"
-    InsertContact(db, c)
-
-    c.FirstName = "Michael": c.LastName = "Scott"
-    c.Address = "1725 Slough Avenue": c.City = "Scranton": c.State = "PA"
-    c.Zip = "18503": c.Phone = "555-555-0024": c.Email = "michael.scott@dundermifflin.example"
-    InsertContact(db, c)
-
-    ' ... additional contacts in data.go
+    ' Insert all seed contacts
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(seedContacts) - 1
+        InsertContact(db, seedContacts[i])
+    NEXT i
 END SUB
 
 ' ============================================================================
@@ -322,12 +362,60 @@ SUB Main()
     ' Load contacts
     app.contacts = GetAllContacts(app.db, "last_name", TRUE)
 
-    ' Create and run main window
-    ' Note: Walk's declarative API requires Go interface implementation
-    ' See main.go for the actual window creation code
-
-    ' ... window creation using walk.declarative.MainWindow
-    ' ... with Menu, TableView, StatusBar
+    ' Create and run main window using Walk's declarative API
+    ' Note: This is now possible with DBasic's multi-line struct and slice literals!
+    '
+    ' Example of how this would look in DBasic:
+    '
+    ' declarative.MainWindow{
+    '     AssignTo: @app.mainWindow,
+    '     Title: "Contact Book",
+    '     MinSize: declarative.Size{Width: 600, Height: 400},
+    '     Size: declarative.Size{Width: 800, Height: 600},
+    '     Layout: declarative.VBox{},
+    '     MenuItems: []declarative.MenuItem{
+    '         declarative.Menu{
+    '             Text: "&File",
+    '             Items: []declarative.MenuItem{
+    '                 declarative.Action{
+    '                     Text: "&New\tCtrl+N",
+    '                     OnTriggered: OnNewContact
+    '                 },
+    '                 declarative.Action{
+    '                     Text: "&Edit\tCtrl+E",
+    '                     OnTriggered: OnEditContact
+    '                 },
+    '                 declarative.Separator{},
+    '                 declarative.Action{
+    '                     Text: "E&xit\tAlt+F4",
+    '                     OnTriggered: ExitApp
+    '                 }
+    '             }
+    '         }
+    '     },
+    '     Children: []declarative.Widget{
+    '         declarative.TableView{
+    '             AssignTo: @app.tableView,
+    '             Columns: []declarative.TableViewColumn{
+    '                 declarative.TableViewColumn{Title: "First Name", Width: 100},
+    '                 declarative.TableViewColumn{Title: "Last Name", Width: 100},
+    '                 declarative.TableViewColumn{Title: "City", Width: 120},
+    '                 declarative.TableViewColumn{Title: "State", Width: 50},
+    '                 declarative.TableViewColumn{Title: "Phone", Width: 120}
+    '             }
+    '         }
+    '     },
+    '     StatusBarItems: []declarative.StatusBarItem{
+    '         declarative.StatusBarItem{
+    '             AssignTo: @app.statusBar,
+    '             Text: "Ready"
+    '         }
+    '     }
+    ' }.Run()
+    '
+    ' Note: The actual implementation uses main.go because Walk's TableModel
+    ' interface requires Go method implementation. Future DBasic versions may
+    ' support interface implementation directly.
 
     app.mainWindow.Run()
 

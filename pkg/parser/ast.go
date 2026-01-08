@@ -797,6 +797,23 @@ func (sl *StructLiteral) String() string {
 	return sl.TypeName + "{" + strings.Join(pairs, ", ") + "}"
 }
 
+// SliceLiteral represents a slice literal like []Type{elem1, elem2}
+type SliceLiteral struct {
+	Token       lexer.Token
+	ElementType string       // The element type name
+	Elements    []Expression // The elements
+}
+
+func (sl *SliceLiteral) expressionNode()      {}
+func (sl *SliceLiteral) TokenLiteral() string { return sl.Token.Literal }
+func (sl *SliceLiteral) String() string {
+	var elems []string
+	for _, e := range sl.Elements {
+		elems = append(elems, e.String())
+	}
+	return "[]" + sl.ElementType + "{" + strings.Join(elems, ", ") + "}"
+}
+
 // PrefixExpression represents a prefix expression (NOT, -, @, ^)
 type PrefixExpression struct {
 	Token    lexer.Token

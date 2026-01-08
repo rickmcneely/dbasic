@@ -1,0 +1,27 @@
+' Test slice literals
+
+TYPE Button
+    DIM text AS STRING
+    DIM width AS INTEGER
+END TYPE
+
+SUB Main()
+    ' Empty slice literal
+    DIM empty AS []INTEGER = []INTEGER{}
+    PRINT "Empty length:"; LEN(empty)
+
+    ' Slice literal with values
+    DIM numbers AS []INTEGER = []INTEGER{1, 2, 3, 4, 5}
+    PRINT "Numbers length:"; LEN(numbers)
+    PRINT "First:"; numbers[0]
+    PRINT "Last:"; numbers[4]
+
+    ' Slice of structs
+    DIM buttons AS []Button = []Button{
+        Button{text: "OK", width: 80},
+        Button{text: "Cancel", width: 80}
+    }
+    PRINT "Buttons:"; LEN(buttons)
+    PRINT "First button:"; buttons[0].text
+    PRINT "Second button:"; buttons[1].text
+END SUB

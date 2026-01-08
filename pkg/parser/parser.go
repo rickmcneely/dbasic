@@ -229,6 +229,13 @@ func (p *Parser) skipNewlines() {
 	}
 }
 
+// skipPeekNewlines advances past newlines in the peek position
+func (p *Parser) skipPeekNewlines() {
+	for p.peekTokenIs(lexer.TOKEN_NEWLINE) || p.peekTokenIs(lexer.TOKEN_COMMENT) {
+		p.nextToken()
+	}
+}
+
 // ParseProgram parses the entire program
 func (p *Parser) ParseProgram() *Program {
 	program := &Program{}
@@ -1272,6 +1279,9 @@ func (p *Parser) parseStructLiteral(typeName *Identifier) Expression {
 		return nil
 	}
 
+	// Skip newlines after opening brace (multi-line struct literals)
+	p.skipNewlines()
+
 	// Handle empty struct literal
 	if p.peekTokenIs(lexer.TOKEN_RBRACE) {
 		p.nextToken()
@@ -1281,6 +1291,12 @@ func (p *Parser) parseStructLiteral(typeName *Identifier) Expression {
 	// Parse field: value pairs
 	for {
 		p.nextToken() // move to field name
+		p.skipNewlines()
+
+		// Check for closing brace (handles trailing comma)
+		if p.curTokenIs(lexer.TOKEN_RBRACE) {
+			return lit
+		}
 
 		if !p.curTokenIs(lexer.TOKEN_IDENT) {
 			msg := p.formatError(p.curToken.Line, p.curToken.Column,
@@ -1297,7 +1313,11 @@ func (p *Parser) parseStructLiteral(typeName *Identifier) Expression {
 		}
 
 		p.nextToken() // move to value
+		p.skipNewlines()
 		lit.Fields[fieldName] = p.parseExpression(LOWEST)
+
+		// Skip newlines after value (in peek position)
+		p.skipPeekNewlines()
 
 		if p.peekTokenIs(lexer.TOKEN_RBRACE) {
 			break
@@ -1306,6 +1326,9 @@ func (p *Parser) parseStructLiteral(typeName *Identifier) Expression {
 		if !p.expectPeek(lexer.TOKEN_COMMA) {
 			return nil
 		}
+
+		// Skip newlines after comma (in peek position)
+		p.skipPeekNewlines()
 	}
 
 	if !p.expectPeek(lexer.TOKEN_RBRACE) {
@@ -1397,9 +1420,85 @@ func (p *Parser) parseJSONLiteral() Expression {
 }
 
 func (p *Parser) parseArrayLiteral() Expression {
-	lit := &ArrayLiteral{Token: p.curToken}
+	startToken := p.curToken
 
+	// Check for slice literal: []Type{...}
+	if p.peekTokenIs(lexer.TOKEN_RBRACKET) {
+		p.nextToken() // consume ]
+
+		// Check for type name (identifier or type keyword) followed by {
+		if p.peekIsTypeName() {
+			p.nextToken() // move to type name
+			typeName := p.curToken.Literal
+
+			if p.peekTokenIs(lexer.TOKEN_LBRACE) {
+				return p.parseSliceLiteral(startToken, typeName)
+			}
+		}
+		// Not a slice literal, this is an error
+		msg := p.formatError(p.curToken.Line, p.curToken.Column,
+			"expected type name after [] for slice literal",
+			"use []Type{elem1, elem2} for slice literals")
+		p.errors = append(p.errors, msg)
+		return nil
+	}
+
+	// Regular array literal: [expr1, expr2]
+	lit := &ArrayLiteral{Token: startToken}
 	lit.Elements = p.parseExpressionList(lexer.TOKEN_RBRACKET)
+	return lit
+}
+
+// peekIsTypeName checks if the peek token is a valid type name (identifier or type keyword)
+func (p *Parser) peekIsTypeName() bool {
+	return p.peekTokenIs(lexer.TOKEN_IDENT) ||
+		p.peekTokenIs(lexer.TOKEN_INTEGER) ||
+		p.peekTokenIs(lexer.TOKEN_LONG) ||
+		p.peekTokenIs(lexer.TOKEN_SINGLE) ||
+		p.peekTokenIs(lexer.TOKEN_DOUBLE) ||
+		p.peekTokenIs(lexer.TOKEN_STRING_TYPE) ||
+		p.peekTokenIs(lexer.TOKEN_BOOLEAN)
+}
+
+func (p *Parser) parseSliceLiteral(token lexer.Token, elementType string) Expression {
+	lit := &SliceLiteral{
+		Token:       token,
+		ElementType: elementType,
+		Elements:    []Expression{},
+	}
+
+	if !p.expectPeek(lexer.TOKEN_LBRACE) {
+		return nil
+	}
+
+	// Skip newlines after opening brace (multi-line slice literals)
+	p.skipPeekNewlines()
+
+	// Handle empty slice literal
+	if p.peekTokenIs(lexer.TOKEN_RBRACE) {
+		p.nextToken()
+		return lit
+	}
+
+	// Parse elements
+	p.nextToken()
+	p.skipNewlines()
+	lit.Elements = append(lit.Elements, p.parseExpression(LOWEST))
+
+	// Skip newlines after value
+	p.skipPeekNewlines()
+
+	for p.peekTokenIs(lexer.TOKEN_COMMA) {
+		p.nextToken() // move to comma
+		p.nextToken() // move past comma
+		p.skipNewlines()
+		lit.Elements = append(lit.Elements, p.parseExpression(LOWEST))
+		p.skipPeekNewlines()
+	}
+
+	if !p.expectPeek(lexer.TOKEN_RBRACE) {
+		return nil
+	}
 
 	return lit
 }
