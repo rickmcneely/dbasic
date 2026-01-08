@@ -20,6 +20,7 @@ type ContactModel struct {
 	sortOrder  walk.SortOrder
 	items      []*Contact
 	db         *sql.DB
+	tableView  *walk.TableView // Reference for forcing refresh
 }
 
 func NewContactModel(db *sql.DB) *ContactModel {
@@ -82,6 +83,10 @@ func (m *ContactModel) Sort(col int, order walk.SortOrder) error {
 	})
 
 	m.PublishRowsReset()
+	// Force table view to redraw
+	if m.tableView != nil {
+		m.tableView.Invalidate()
+	}
 	return nil
 }
 
@@ -209,7 +214,7 @@ func main() {
 func (app *Application) Run() error {
 	var searchEdit *walk.LineEdit
 
-	_, err := MainWindow{
+	err := MainWindow{
 		AssignTo: &app.mainWindow,
 		Title:    "Contact Book",
 		MinSize:  Size{Width: 800, Height: 600},
@@ -267,7 +272,7 @@ func (app *Application) Run() error {
 			},
 		},
 		ToolBar: ToolBar{
-			ButtonStyle: ToolBarButtonImageBeforeText,
+			ButtonStyle: ToolBarButtonTextOnly,
 			Items: []MenuItem{
 				Action{
 					Text:        "New",
@@ -323,9 +328,22 @@ func (app *Application) Run() error {
 				Width:    200,
 			},
 		},
-	}.Run()
+	}.Create()
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Set tableView reference on model for refresh after sort
+	app.model.tableView = app.tableView
+
+	// Update status bar
+	app.updateStatus()
+
+	// Run the main event loop
+	app.mainWindow.Run()
+
+	return nil
 }
 
 func (app *Application) updateStatus() {
