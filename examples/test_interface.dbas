@@ -1,0 +1,90 @@
+' Test Go Interface Implementation in DBasic
+' Demonstrates implementing an interface through methods
+'
+' In Go, interfaces are satisfied implicitly - if a type has all
+' the required methods, it automatically implements the interface.
+
+TYPE Counter
+    DIM value AS INTEGER
+    DIM name AS STRING
+END TYPE
+
+' Method: Increment the counter
+SUB (c AS POINTER TO Counter) Increment()
+    (^c).value = (^c).value + 1
+END SUB
+
+' Method: Decrement the counter
+SUB (c AS POINTER TO Counter) Decrement()
+    (^c).value = (^c).value - 1
+END SUB
+
+' Method: Get current value
+FUNCTION (c AS POINTER TO Counter) GetValue() AS INTEGER
+    RETURN (^c).value
+END FUNCTION
+
+' Method: Set a value
+SUB (c AS POINTER TO Counter) SetValue(v AS INTEGER)
+    (^c).value = v
+END SUB
+
+' Method: Reset to zero
+SUB (c AS POINTER TO Counter) Reset()
+    (^c).value = 0
+END SUB
+
+' Method: Add amount to counter
+SUB (c AS POINTER TO Counter) Add(amount AS INTEGER)
+    (^c).value = (^c).value + amount
+END SUB
+
+' Method: Get display string
+FUNCTION (c AS POINTER TO Counter) Display() AS STRING
+    RETURN (^c).name + " = " + Str((^c).value)
+END FUNCTION
+
+SUB Main()
+    DIM counter AS Counter
+    counter.name = "MyCounter"
+    counter.value = 0
+
+    PRINT "=== Testing Counter Methods ==="
+    PRINT ""
+
+    PRINT "Initial state:"
+    PRINT counter.Display()
+
+    PRINT ""
+    PRINT "After 3 increments:"
+    counter.Increment()
+    counter.Increment()
+    counter.Increment()
+    PRINT counter.Display()
+
+    PRINT ""
+    PRINT "After Add(10):"
+    counter.Add(10)
+    PRINT counter.Display()
+
+    PRINT ""
+    PRINT "After Decrement:"
+    counter.Decrement()
+    PRINT counter.Display()
+
+    PRINT ""
+    PRINT "GetValue() returns:"; counter.GetValue()
+
+    PRINT ""
+    PRINT "After SetValue(100):"
+    counter.SetValue(100)
+    PRINT counter.Display()
+
+    PRINT ""
+    PRINT "After Reset:"
+    counter.Reset()
+    PRINT counter.Display()
+
+    PRINT ""
+    PRINT "=== All tests passed! ==="
+END SUB
