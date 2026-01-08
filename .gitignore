@@ -5,6 +5,9 @@ examples/*/gorillas
 examples/edit/edit
 examples/gorillas/gorillas
 
+# Database files
+*.db
+
 # Test output
 test_output/
 
