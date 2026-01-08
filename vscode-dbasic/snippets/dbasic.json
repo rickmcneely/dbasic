@@ -460,6 +460,13 @@
     ],
     "description": "Create a formatted error"
   },
+  "WrapError": {
+    "prefix": "wraperror",
+    "body": [
+      "WrapError(${1:err}, \"${2:context message}\")"
+    ],
+    "description": "Wrap an error with additional context"
+  },
   "Error Check": {
     "prefix": "iferr",
     "body": [

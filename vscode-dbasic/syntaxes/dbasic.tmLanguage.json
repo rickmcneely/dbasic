@@ -113,7 +113,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.dbasic",
-          "match": "(?i)\\b(Len|Cap|Left|Right|Mid|Instr|UCase|LCase|Trim|LTrim|RTrim|Str|Val|Chr|Asc|Abs|Sqr|Sin|Cos|Tan|Atn|Atn2|Log|Log10|Exp|Int|Lng|Sng|Dbl|Bool|Fix|Floor|Ceil|Round|Sgn|Pow|Min|Max|Clamp|PI|Rnd|RndInt|RndRange|Randomize|Timer|Now|Date|Year|Month|Day|Hour|Minute|Second|Sleep|FileExists|ReadFile|WriteFile|AppendFile|DeleteFile|MkDir|RmDir|ListDir|Encode|Decode|MakeBytes|LenBytes|Printf|Sprintf|NewError|Errorf|JSONParse|JSONStringify|Replace|Space)\\b"
+          "match": "(?i)\\b(Len|Cap|Left|Right|Mid|Instr|UCase|LCase|Trim|LTrim|RTrim|Str|Val|Chr|Asc|Abs|Sqr|Sin|Cos|Tan|Atn|Atn2|Log|Log10|Exp|Int|Lng|Sng|Dbl|Bool|Fix|Floor|Ceil|Round|Sgn|Pow|Min|Max|Clamp|PI|Rnd|RndInt|RndRange|Randomize|Timer|Now|Date|Year|Month|Day|Hour|Minute|Second|Sleep|FileExists|ReadFile|WriteFile|AppendFile|DeleteFile|MkDir|RmDir|ListDir|Encode|Decode|MakeBytes|LenBytes|Printf|Sprintf|NewError|Errorf|WrapError|JSONParse|JSONStringify|Replace|Space)\\b"
         }
       ]
     },

@@ -901,7 +901,119 @@ func Exit(code int32) {
 
 // --- Error Handling ---
 
-// Error represents a runtime error
+// DBasicError represents a runtime error with source location
+type DBasicError struct {
+	Message  string
+	File     string
+	Line     int
+	Function string
+	Wrapped  error
+}
+
+func (e *DBasicError) Error() string {
+	var result string
+	if e.File != "" && e.Line > 0 {
+		if e.Function != "" {
+			result = fmt.Sprintf("%s:%d (%s): %s", e.File, e.Line, e.Function, e.Message)
+		} else {
+			result = fmt.Sprintf("%s:%d: %s", e.File, e.Line, e.Message)
+		}
+	} else {
+		result = e.Message
+	}
+
+	if e.Wrapped != nil {
+		// Check if wrapped error is also a DBasicError for call chain
+		if dbErr, ok := e.Wrapped.(*DBasicError); ok {
+			result += "\n  caused by: " + dbErr.Error()
+		} else {
+			result += "\n  caused by: " + e.Wrapped.Error()
+		}
+	}
+	return result
+}
+
+func (e *DBasicError) Unwrap() error {
+	return e.Wrapped
+}
+
+// NewError creates a new error (simple version for compatibility)
+func NewError(message string) error {
+	return &DBasicError{Message: message}
+}
+
+// NewErrorAt creates a new error with source location
+func NewErrorAt(file string, line int, message string) error {
+	return &DBasicError{
+		Message: message,
+		File:    file,
+		Line:    line,
+	}
+}
+
+// NewErrorAtFunc creates a new error with source location and function name
+func NewErrorAtFunc(file string, line int, function string, message string) error {
+	return &DBasicError{
+		Message:  message,
+		File:     file,
+		Line:     line,
+		Function: function,
+	}
+}
+
+// Errorf creates a formatted error with source location
+func Errorf(file string, line int, format string, args ...interface{}) error {
+	return &DBasicError{
+		Message: fmt.Sprintf(format, args...),
+		File:    file,
+		Line:    line,
+	}
+}
+
+// ErrorfFunc creates a formatted error with source location and function name
+func ErrorfFunc(file string, line int, function string, format string, args ...interface{}) error {
+	return &DBasicError{
+		Message:  fmt.Sprintf(format, args...),
+		File:     file,
+		Line:     line,
+		Function: function,
+	}
+}
+
+// WrapError wraps an existing error with additional context and location
+func WrapError(err error, file string, line int, function string, message string) error {
+	if err == nil {
+		return nil
+	}
+	return &DBasicError{
+		Message:  message,
+		File:     file,
+		Line:     line,
+		Function: function,
+		Wrapped:  err,
+	}
+}
+
+// WrapErrorf wraps an existing error with formatted context and location
+func WrapErrorf(err error, file string, line int, format string, args ...interface{}) error {
+	if err == nil {
+		return nil
+	}
+	return &DBasicError{
+		Message: fmt.Sprintf(format, args...),
+		File:    file,
+		Line:    line,
+		Wrapped: err,
+	}
+}
+
+// IsError checks if a value is an error
+func IsError(val interface{}) bool {
+	_, ok := val.(error)
+	return ok
+}
+
+// Legacy Error type for backwards compatibility
 type Error struct {
 	Message string
 	Code    int
@@ -909,15 +1021,4 @@ type Error struct {
 
 func (e *Error) Error() string {
 	return e.Message
-}
-
-// NewError creates a new error
-func NewError(message string) *Error {
-	return &Error{Message: message, Code: 1}
-}
-
-// IsError checks if a value is an error
-func IsError(val interface{}) bool {
-	_, ok := val.(error)
-	return ok
 }

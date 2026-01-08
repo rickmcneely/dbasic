@@ -818,25 +818,44 @@ DIM msg AS STRING = Sprintf("Score: %d / %d", correct, total)
 
 | Function | Description |
 |----------|-------------|
-| `NewError(message)` | Create a new error (maps to `errors.New`) |
-| `Errorf(format, args...)` | Create a formatted error (maps to `fmt.Errorf`) |
+| `NewError(message)` | Create a new error with source location |
+| `Errorf(format, args...)` | Create a formatted error with source location |
+| `WrapError(err, message)` | Wrap an existing error with context and location |
 
-DBasic supports Go-style error handling using the ERROR type:
+DBasic errors automatically include source location (file:line and function name):
 
 ```basic
-' Declare an error variable
-DIM err AS ERROR
-
-' Create a simple error
+' Create a simple error - includes file:line (function)
 err = NewError("something went wrong")
+' Output: errors.dbas:5 (Main): something went wrong
 
 ' Create a formatted error
-err = Errorf("failed to read %s: line %d", filename, lineNum)
+err = Errorf("failed to read %s at line %d", filename, lineNum)
+' Output: errors.dbas:8 (Main): failed to read config.txt at line 42
 
 ' Check for errors (NIL means no error)
 IF err <> NIL THEN
     Printf("Error: %v\n", err)
 ENDIF
+```
+
+**Error Wrapping (Call Chains):**
+
+Use `WrapError` to add context when propagating errors up the call stack:
+
+```basic
+FUNCTION LoadConfig(path AS STRING) AS ERROR
+    DIM err AS ERROR
+    err = ReadConfigFile(path)
+    IF err <> NIL THEN
+        RETURN WrapError(err, "failed to load config")
+    ENDIF
+    RETURN NIL
+END FUNCTION
+
+' When printed, shows the full error chain:
+' errors.dbas:12 (LoadConfig): failed to load config
+'   caused by: errors.dbas:20 (ReadConfigFile): file not found: config.txt
 ```
 
 **Function Returning Errors (Go idiom):**
@@ -853,11 +872,12 @@ SUB Main()
     DIM result AS INTEGER
     DIM err AS ERROR
 
-    result, err = SafeDivide(10, 2)
-    IF err = NIL THEN
-        Printf("Result: %d\n", result)
-    ELSE
+    result, err = SafeDivide(10, 0)
+    IF err <> NIL THEN
         Printf("Error: %v\n", err)
+        ' Output: errors.dbas:4 (SafeDivide): division by zero
+    ELSE
+        Printf("Result: %d\n", result)
     ENDIF
 END SUB
 ```

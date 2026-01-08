@@ -114,8 +114,9 @@ func (a *Analyzer) registerBuiltins() {
 	a.addVariadicBuiltin("Sprintf", []*Type{StringType}, []*Type{StringType}) // fmt.Sprintf(format, args...)
 
 	// Error functions
-	a.addBuiltin("NewError", []*Type{StringType}, []*Type{ErrorType})         // errors.New(message)
-	a.addVariadicBuiltin("Errorf", []*Type{StringType}, []*Type{ErrorType})   // fmt.Errorf(format, args...)
+	a.addBuiltin("NewError", []*Type{StringType}, []*Type{ErrorType})                  // errors.New(message)
+	a.addVariadicBuiltin("Errorf", []*Type{StringType}, []*Type{ErrorType})            // fmt.Errorf(format, args...)
+	a.addBuiltin("WrapError", []*Type{ErrorType, StringType}, []*Type{ErrorType})      // Wrap error with context
 
 	// JSON functions
 	a.addBuiltin("JSONParse", []*Type{StringType}, []*Type{JSONType})

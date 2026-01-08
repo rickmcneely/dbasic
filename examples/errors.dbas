@@ -1,69 +1,105 @@
 ' Error Handling Examples in DBasic
-' Demonstrates NewError, Errorf, Printf, and Sprintf
+' Demonstrates error tracking with source line numbers
 
 SUB Main()
-    PRINT "=== Error Handling Demo ==="
+    PRINT "=== Error Location Tracking Demo ==="
     PRINT ""
 
-    ' Test Printf (formatted output)
-    PRINT "--- Printf ---"
-    Printf("Hello, %s! You are %d years old.\n", "World", 42)
-    Printf("Pi is approximately %.4f\n", 3.14159)
-
-    ' Test Sprintf (formatted string)
-    PRINT ""
-    PRINT "--- Sprintf ---"
-    DIM msg AS STRING
-    msg = Sprintf("User: %s, Score: %d", "Alice", 100)
-    PRINT msg
-
-    ' Test NewError (create simple error)
-    PRINT ""
-    PRINT "--- NewError ---"
+    ' Test basic error with line tracking
+    PRINT "--- NewError with Line Info ---"
     DIM err AS ERROR
     err = NewError("something went wrong")
     IF err <> NIL THEN
-        Printf("Error created: %v\n", err)
+        Printf("Error: %v\n", err)
     ENDIF
 
-    ' Test Errorf (formatted error)
+    ' Test formatted error with line tracking
     PRINT ""
-    PRINT "--- Errorf ---"
+    PRINT "--- Errorf with Line Info ---"
     DIM filename AS STRING = "config.txt"
     DIM lineNum AS INTEGER = 42
     err = Errorf("parse error in %s at line %d", filename, lineNum)
     IF err <> NIL THEN
-        Printf("Formatted error: %v\n", err)
+        Printf("Error: %v\n", err)
     ENDIF
 
-    ' Test function returning error
+    ' Test function returning error (shows function name in error)
     PRINT ""
-    PRINT "--- Function Returning Error ---"
+    PRINT "--- Function Error with Location ---"
     DIM result AS INTEGER
     DIM divErr AS ERROR
 
-    result, divErr = SafeDivide(10, 2)
-    IF divErr = NIL THEN
-        Printf("10 / 2 = %d\n", result)
-    ELSE
+    result, divErr = SafeDivide(10, 0)
+    IF divErr <> NIL THEN
         Printf("Error: %v\n", divErr)
+    ELSE
+        Printf("Result: %d\n", result)
     ENDIF
 
-    result, divErr = SafeDivide(10, 0)
-    IF divErr = NIL THEN
-        Printf("10 / 0 = %d\n", result)
-    ELSE
-        Printf("Error: %v\n", divErr)
+    ' Test error wrapping (call chain)
+    PRINT ""
+    PRINT "--- Error Wrapping (Call Chain) ---"
+    DIM loadErr AS ERROR
+    loadErr = LoadConfig("missing.cfg")
+    IF loadErr <> NIL THEN
+        Printf("Error:\n%v\n", loadErr)
+    ENDIF
+
+    ' Test nested function calls with error propagation
+    PRINT ""
+    PRINT "--- Nested Error Propagation ---"
+    DIM processErr AS ERROR
+    processErr = ProcessData()
+    IF processErr <> NIL THEN
+        Printf("Error:\n%v\n", processErr)
     ENDIF
 
     PRINT ""
     PRINT "=== Demo Complete ==="
 END SUB
 
-' Function that returns a value and an error (Go idiom)
+' Function that returns an error with location info
 FUNCTION SafeDivide(a AS INTEGER, b AS INTEGER) AS (INTEGER, ERROR)
     IF b = 0 THEN
         RETURN 0, NewError("division by zero")
     ENDIF
     RETURN a / b, NIL
+END FUNCTION
+
+' Function that wraps an error from another function
+FUNCTION LoadConfig(path AS STRING) AS ERROR
+    DIM err AS ERROR
+    err = ReadConfigFile(path)
+    IF err <> NIL THEN
+        RETURN WrapError(err, "failed to load config")
+    ENDIF
+    RETURN NIL
+END FUNCTION
+
+' Simulates reading a config file
+FUNCTION ReadConfigFile(path AS STRING) AS ERROR
+    RETURN NewError("file not found: " & path)
+END FUNCTION
+
+' Demonstrates multi-level error wrapping
+FUNCTION ProcessData() AS ERROR
+    DIM err AS ERROR
+    err = ValidateInput()
+    IF err <> NIL THEN
+        RETURN WrapError(err, "data processing failed")
+    ENDIF
+    RETURN NIL
+END FUNCTION
+
+FUNCTION ValidateInput() AS ERROR
+    DIM err AS ERROR
+    err = CheckFormat()
+    IF err <> NIL THEN
+        RETURN WrapError(err, "input validation failed")
+    ENDIF
+    RETURN NIL
+END FUNCTION
+
+FUNCTION CheckFormat() AS ERROR
+    RETURN NewError("invalid format: expected JSON")
 END FUNCTION

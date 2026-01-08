@@ -22,6 +22,7 @@ type Generator struct {
 	labelCount      int
 	debugMode       bool
 	sourceFile      string
+	currentFunc     string            // Current function/sub name for error context
 }
 
 // New creates a new code generator
@@ -489,32 +490,100 @@ func setJSONFieldValue(field reflect.Value, value interface{}) {
 		}
 	}
 }`,
+	"NewErrorAtFunc": `// DBasicError represents a runtime error with source location
+type DBasicError struct {
+	Message  string
+	File     string
+	Line     int
+	Function string
+	Wrapped  error
+}
+
+func (e *DBasicError) Error() string {
+	var result string
+	if e.File != "" && e.Line > 0 {
+		if e.Function != "" {
+			result = fmt.Sprintf("%s:%d (%s): %s", e.File, e.Line, e.Function, e.Message)
+		} else {
+			result = fmt.Sprintf("%s:%d: %s", e.File, e.Line, e.Message)
+		}
+	} else {
+		result = e.Message
+	}
+	if e.Wrapped != nil {
+		if dbErr, ok := e.Wrapped.(*DBasicError); ok {
+			result += "\n  caused by: " + dbErr.Error()
+		} else {
+			result += "\n  caused by: " + e.Wrapped.Error()
+		}
+	}
+	return result
+}
+
+func (e *DBasicError) Unwrap() error {
+	return e.Wrapped
+}
+
+// NewErrorAtFunc creates a new error with source location and function name
+func NewErrorAtFunc(file string, line int, function string, message string) error {
+	return &DBasicError{
+		Message:  message,
+		File:     file,
+		Line:     line,
+		Function: function,
+	}
+}`,
+	"ErrorfFunc": `// ErrorfFunc creates a formatted error with source location and function name
+func ErrorfFunc(file string, line int, function string, format string, args ...interface{}) error {
+	return &DBasicError{
+		Message:  fmt.Sprintf(format, args...),
+		File:     file,
+		Line:     line,
+		Function: function,
+	}
+}`,
+	"WrapError": `// WrapError wraps an existing error with additional context and location
+func WrapError(err error, file string, line int, function string, message string) error {
+	if err == nil {
+		return nil
+	}
+	return &DBasicError{
+		Message:  message,
+		File:     file,
+		Line:     line,
+		Function: function,
+		Wrapped:  err,
+	}
+}`,
 }
 
 // runtimeFuncImports maps runtime functions to required imports
 var runtimeFuncImports = map[string][]string{
-	"Sleep":         {"time"},
-	"Sqr":           {"math"},
-	"Abs":           {"math"},
-	"Sin":           {"math"},
-	"Cos":           {"math"},
-	"Val":           {"strconv", "strings"},
-	"UCase":         {"strings"},
-	"LCase":         {"strings"},
-	"Trim":          {"strings"},
-	"Rnd":           {"math/rand"},
-	"RndInt":        {"math/rand"},
-	"Instr":         {"strings"},
-	"FileExists":    {"os"},
-	"ReadFile":      {"os"},
-	"WriteFile":     {"os"},
-	"JSONParse":     {"encoding/json"},
-	"JSONStringify": {"encoding/json"},
-	"JSONPretty":    {"encoding/json"},
-	"JSONGet":       {"strings"},
-	"JSONSet":       {"strings"},
-	"StructToJSON":  {"reflect"},
-	"JSONToStruct":  {"reflect"},
+	"Sleep":          {"time"},
+	"Sqr":            {"math"},
+	"Abs":            {"math"},
+	"Sin":            {"math"},
+	"Cos":            {"math"},
+	"Val":            {"strconv", "strings"},
+	"UCase":          {"strings"},
+	"LCase":          {"strings"},
+	"Trim":           {"strings"},
+	"Rnd":            {"math/rand"},
+	"RndInt":         {"math/rand"},
+	"Instr":          {"strings"},
+	"FileExists":     {"os"},
+	"ReadFile":       {"os"},
+	"WriteFile":      {"os"},
+	"JSONParse":      {"encoding/json"},
+	"JSONStringify":  {"encoding/json"},
+	"JSONPretty":     {"encoding/json"},
+	"JSONGet":        {"strings"},
+	"JSONSet":        {"strings"},
+	"StructToJSON":   {"reflect"},
+	"JSONToStruct":   {"reflect"},
+	"NewErrorAtFunc": {"fmt"},
+	"ErrorfFunc":     {"fmt"},
+	"WrapError":      {"fmt"},
 }
 
 // scanForRuntimeFunctions scans the AST for calls to runtime functions
@@ -600,10 +669,9 @@ func (g *Generator) scanStmtExprForRuntimeFuncs(stmt parser.Statement) {
 
 // builtinFuncImports maps builtin function names to their required imports
 var builtinFuncImports = map[string][]string{
-	"Printf":   {"fmt"},
-	"Sprintf":  {"fmt"},
-	"Errorf":   {"fmt"},
-	"NewError": {"errors"},
+	"Printf":  {"fmt"},
+	"Sprintf": {"fmt"},
+	// Note: NewError, Errorf, WrapError use embedded runtime functions, not imports
 }
 
 func (g *Generator) scanExprForRuntimeFuncs(expr parser.Expression) {
@@ -628,6 +696,17 @@ func (g *Generator) scanExprForRuntimeFuncs(expr parser.Expression) {
 				for _, imp := range imports {
 					g.imports[imp] = ""
 				}
+			}
+			// Check if this is an error handling function that needs runtime embedding
+			switch strings.ToUpper(ident.Value) {
+			case "NEWERROR":
+				g.runtimeFuncs["NewErrorAtFunc"] = true
+			case "ERRORF":
+				g.runtimeFuncs["ErrorfFunc"] = true
+				g.runtimeFuncs["NewErrorAtFunc"] = true // ErrorfFunc depends on DBasicError type
+			case "WRAPERROR":
+				g.runtimeFuncs["WrapError"] = true
+				g.runtimeFuncs["NewErrorAtFunc"] = true // WrapError depends on DBasicError type
 			}
 		}
 		// Scan arguments
@@ -798,7 +877,9 @@ func (g *Generator) generateSubStatement(stmt *parser.SubStatement) {
 	g.indent++
 	// Track local variables for this sub
 	oldScope := g.currentScope
+	oldFunc := g.currentFunc
 	g.currentScope = analyzer.NewScope(stmt.Name.Value, g.symbols.GlobalScope)
+	g.currentFunc = stmt.Name.Value
 	// Add parameters to local scope
 	for _, p := range stmt.Params {
 		paramType := g.typeFromTypeSpec(p.Type)
@@ -810,6 +891,7 @@ func (g *Generator) generateSubStatement(stmt *parser.SubStatement) {
 	}
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
+	g.currentFunc = oldFunc
 	g.indent--
 	g.writeLine("}")
 }
@@ -823,7 +905,9 @@ func (g *Generator) generateFunctionStatement(stmt *parser.FunctionStatement) {
 	g.indent++
 	// Track local variables for this function
 	oldScope := g.currentScope
+	oldFunc := g.currentFunc
 	g.currentScope = analyzer.NewScope(stmt.Name.Value, g.symbols.GlobalScope)
+	g.currentFunc = stmt.Name.Value
 	// Add parameters to local scope
 	for _, p := range stmt.Params {
 		paramType := g.typeFromTypeSpec(p.Type)
@@ -835,6 +919,7 @@ func (g *Generator) generateFunctionStatement(stmt *parser.FunctionStatement) {
 	}
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
+	g.currentFunc = oldFunc
 	g.indent--
 	g.writeLine("}")
 }
@@ -860,7 +945,9 @@ func (g *Generator) generateMethodStatement(stmt *parser.MethodStatement) {
 
 	// Track local variables for this method
 	oldScope := g.currentScope
+	oldFunc := g.currentFunc
 	g.currentScope = analyzer.NewScope(stmt.Name.Value, g.symbols.GlobalScope)
+	g.currentFunc = stmt.Name.Value
 
 	// Add receiver to local scope
 	recvType := g.typeFromTypeSpec(stmt.ReceiverType)
@@ -882,6 +969,7 @@ func (g *Generator) generateMethodStatement(stmt *parser.MethodStatement) {
 
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
+	g.currentFunc = oldFunc
 	g.indent--
 	g.writeLine("}")
 }
@@ -1517,13 +1605,44 @@ func (g *Generator) callExprToGo(call *parser.CallExpression) string {
 		g.imports["fmt"] = ""
 		return fmt.Sprintf("fmt.Sprintf(%s)", strings.Join(args, ", "))
 	case "NEWERROR":
-		// NewError(message) -> errors.New(message)
-		g.imports["errors"] = ""
-		return fmt.Sprintf("errors.New(%s)", strings.Join(args, ", "))
+		// NewError(message) -> dbasic.NewErrorAtFunc(file, line, func, message)
+		g.runtimeFuncs["NewErrorAtFunc"] = true
+		sourceFile := g.sourceFile
+		if sourceFile == "" {
+			sourceFile = "unknown"
+		}
+		funcName := g.currentFunc
+		if funcName == "" {
+			funcName = "main"
+		}
+		return fmt.Sprintf("NewErrorAtFunc(%q, %d, %q, %s)", sourceFile, call.Token.Line, funcName, strings.Join(args, ", "))
 	case "ERRORF":
-		// Errorf(format, args...) -> fmt.Errorf(format, args...)
-		g.imports["fmt"] = ""
-		return fmt.Sprintf("fmt.Errorf(%s)", strings.Join(args, ", "))
+		// Errorf(format, args...) -> dbasic.ErrorfFunc(file, line, func, format, args...)
+		g.runtimeFuncs["ErrorfFunc"] = true
+		sourceFile := g.sourceFile
+		if sourceFile == "" {
+			sourceFile = "unknown"
+		}
+		funcName := g.currentFunc
+		if funcName == "" {
+			funcName = "main"
+		}
+		return fmt.Sprintf("ErrorfFunc(%q, %d, %q, %s)", sourceFile, call.Token.Line, funcName, strings.Join(args, ", "))
+	case "WRAPERROR":
+		// WrapError(err, message) -> dbasic.WrapError(err, file, line, func, message)
+		g.runtimeFuncs["WrapError"] = true
+		sourceFile := g.sourceFile
+		if sourceFile == "" {
+			sourceFile = "unknown"
+		}
+		funcName := g.currentFunc
+		if funcName == "" {
+			funcName = "main"
+		}
+		if len(args) >= 2 {
+			return fmt.Sprintf("WrapError(%s, %q, %d, %q, %s)", args[0], sourceFile, call.Token.Line, funcName, strings.Join(args[1:], ", "))
+		}
+		return fmt.Sprintf("WrapError(%s)", strings.Join(args, ", "))
 	}
 
 	return fmt.Sprintf("%s(%s)", funcName, strings.Join(args, ", "))
