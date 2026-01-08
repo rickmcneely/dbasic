@@ -157,27 +157,36 @@ type Application struct {
 	db           *sql.DB
 }
 
+// showError displays an error message box (works in GUI mode)
+func showError(title, message string) {
+	walk.MsgBox(nil, title, message, walk.MsgBoxIconError)
+}
+
 func main() {
 	// Get database path in same directory as executable
 	exePath, err := os.Executable()
 	if err != nil {
-		log.Fatal("Failed to get executable path:", err)
+		showError("Startup Error", fmt.Sprintf("Failed to get executable path: %v", err))
+		return
 	}
 	dbPath := filepath.Join(filepath.Dir(exePath), "contacts.db")
 
 	// Initialize database
 	db, err := InitDatabase(dbPath)
 	if err != nil {
-		log.Fatal("Failed to initialize database:", err)
+		showError("Database Error", fmt.Sprintf("Failed to initialize database: %v\n\nPath: %s", err, dbPath))
+		return
 	}
 	defer db.Close()
 
 	// Create tables and seed data
 	if err := CreateContactsTable(db); err != nil {
-		log.Fatal("Failed to create tables:", err)
+		showError("Database Error", fmt.Sprintf("Failed to create tables: %v", err))
+		return
 	}
 	if err := SeedDatabase(db); err != nil {
-		log.Fatal("Failed to seed database:", err)
+		showError("Database Error", fmt.Sprintf("Failed to seed database: %v", err))
+		return
 	}
 
 	// Create application
@@ -186,7 +195,8 @@ func main() {
 
 	// Run the main window
 	if err := app.Run(); err != nil {
-		log.Fatal(err)
+		showError("Application Error", fmt.Sprintf("Failed to run application: %v", err))
+		return
 	}
 }
 
