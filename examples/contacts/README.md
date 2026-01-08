@@ -7,7 +7,7 @@ A native Windows GUI contact manager demonstrating how to use Go packages (Walk,
 This example shows how DBasic can integrate with Go's ecosystem by importing and using external packages. The contact manager uses:
 
 - **github.com/lxn/walk** - Native Windows GUI toolkit (Win32 API wrapper)
-- **github.com/mattn/go-sqlite3** - SQLite database driver
+- **modernc.org/sqlite** - Pure-Go SQLite database driver (no CGO required)
 
 ## Features
 
@@ -58,9 +58,7 @@ contacts = GetAllContacts(db, "last_name", TRUE)
 
 - Windows OS (Walk uses Win32 API)
 - Go 1.21 or later
-- CGO enabled (required for go-sqlite3)
-- GCC/MinGW compiler (for CGO)
-- Optional: rsrc tool for embedding manifest
+- Optional: rsrc tool for embedding manifest (for modern visual styles)
 
 ### Build Steps
 
