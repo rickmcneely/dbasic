@@ -163,6 +163,12 @@ func showError(title, message string) {
 }
 
 func main() {
+	// Catch any panics and display them
+	defer func() {
+		if r := recover(); r != nil {
+			showError("Panic", fmt.Sprintf("Application crashed: %v", r))
+		}
+	}()
 	// Get database path in same directory as executable
 	exePath, err := os.Executable()
 	if err != nil {
@@ -203,7 +209,7 @@ func main() {
 func (app *Application) Run() error {
 	var searchEdit *walk.LineEdit
 
-	return MainWindow{
+	_, err := MainWindow{
 		AssignTo: &app.mainWindow,
 		Title:    "Contact Book",
 		MinSize:  Size{Width: 800, Height: 600},
@@ -317,7 +323,9 @@ func (app *Application) Run() error {
 				Width:    200,
 			},
 		},
-	}.Create()
+	}.Run()
+
+	return err
 }
 
 func (app *Application) updateStatus() {
