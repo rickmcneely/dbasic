@@ -95,6 +95,12 @@ code --install-extension dbasic-0.1.0.vsix
 | `funcerr` | Method returning ERROR |
 | `importblank` | Blank import for side effects |
 | `cont` | Line continuation |
+| `printf` | Formatted print |
+| `sprintf` | Formatted string |
+| `newerror` | Create new error |
+| `errorf` | Create formatted error |
+| `iferr` | Error check pattern |
+| `funcerror` | Function returning error |
 
 ## Language Features
 
@@ -117,6 +123,13 @@ DBasic supports:
 - Visual Studio Code 1.75.0 or higher
 
 ## Release Notes
+
+### 0.4.0
+
+- Added error handling functions: `NewError`, `Errorf`
+- Added formatted I/O functions: `Printf`, `Sprintf`
+- Added snippets: `printf`, `sprintf`, `newerror`, `errorf`, `iferr`, `funcerror`
+- These functions use Go's standard library (`errors.New`, `fmt.Errorf`, `fmt.Printf`, `fmt.Sprintf`)
 
 ### 0.3.0
 

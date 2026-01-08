@@ -1,0 +1,69 @@
+' Error Handling Examples in DBasic
+' Demonstrates NewError, Errorf, Printf, and Sprintf
+
+SUB Main()
+    PRINT "=== Error Handling Demo ==="
+    PRINT ""
+
+    ' Test Printf (formatted output)
+    PRINT "--- Printf ---"
+    Printf("Hello, %s! You are %d years old.\n", "World", 42)
+    Printf("Pi is approximately %.4f\n", 3.14159)
+
+    ' Test Sprintf (formatted string)
+    PRINT ""
+    PRINT "--- Sprintf ---"
+    DIM msg AS STRING
+    msg = Sprintf("User: %s, Score: %d", "Alice", 100)
+    PRINT msg
+
+    ' Test NewError (create simple error)
+    PRINT ""
+    PRINT "--- NewError ---"
+    DIM err AS ERROR
+    err = NewError("something went wrong")
+    IF err <> NIL THEN
+        Printf("Error created: %v\n", err)
+    ENDIF
+
+    ' Test Errorf (formatted error)
+    PRINT ""
+    PRINT "--- Errorf ---"
+    DIM filename AS STRING = "config.txt"
+    DIM lineNum AS INTEGER = 42
+    err = Errorf("parse error in %s at line %d", filename, lineNum)
+    IF err <> NIL THEN
+        Printf("Formatted error: %v\n", err)
+    ENDIF
+
+    ' Test function returning error
+    PRINT ""
+    PRINT "--- Function Returning Error ---"
+    DIM result AS INTEGER
+    DIM divErr AS ERROR
+
+    result, divErr = SafeDivide(10, 2)
+    IF divErr = NIL THEN
+        Printf("10 / 2 = %d\n", result)
+    ELSE
+        Printf("Error: %v\n", divErr)
+    ENDIF
+
+    result, divErr = SafeDivide(10, 0)
+    IF divErr = NIL THEN
+        Printf("10 / 0 = %d\n", result)
+    ELSE
+        Printf("Error: %v\n", divErr)
+    ENDIF
+
+    PRINT ""
+    PRINT "=== Demo Complete ==="
+END SUB
+
+' Function that returns a value and an error (Go idiom)
+FUNCTION SafeDivide(a AS INTEGER, b AS INTEGER) AS (INTEGER, ERROR)
+    IF b = 0 THEN
+        RETURN 0, NewError("division by zero")
+    ENDIF
+    RETURN a / b, NIL
+END FUNCTION

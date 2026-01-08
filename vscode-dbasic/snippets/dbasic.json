@@ -431,5 +431,52 @@
       "\t${2:continuation}"
     ],
     "description": "Line continuation with underscore"
+  },
+  "Printf": {
+    "prefix": "printf",
+    "body": [
+      "Printf(\"${1:format}\\n\"${2:, ${3:args}})"
+    ],
+    "description": "Formatted print (like C printf)"
+  },
+  "Sprintf": {
+    "prefix": "sprintf",
+    "body": [
+      "Sprintf(\"${1:format}\"${2:, ${3:args}})"
+    ],
+    "description": "Formatted string (like C sprintf)"
+  },
+  "NewError": {
+    "prefix": "newerror",
+    "body": [
+      "NewError(\"${1:error message}\")"
+    ],
+    "description": "Create a new error"
+  },
+  "Errorf": {
+    "prefix": "errorf",
+    "body": [
+      "Errorf(\"${1:format}\"${2:, ${3:args}})"
+    ],
+    "description": "Create a formatted error"
+  },
+  "Error Check": {
+    "prefix": "iferr",
+    "body": [
+      "IF ${1:err} <> NIL THEN",
+      "\t${2:' handle error}",
+      "ENDIF"
+    ],
+    "description": "Check if error is not nil"
+  },
+  "Function with Error": {
+    "prefix": "funcerror",
+    "body": [
+      "FUNCTION ${1:Name}(${2:params}) AS (${3:INTEGER}, ERROR)",
+      "\t${4:' function body}",
+      "\tRETURN ${5:result}, NIL",
+      "END FUNCTION"
+    ],
+    "description": "Function returning value and error"
   }
 }

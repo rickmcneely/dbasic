@@ -39,16 +39,17 @@ type StructField struct {
 
 // Type represents a DBasic type
 type Type struct {
-	Kind        TypeKind
-	Name        string         // Original type name
-	ElementType *Type          // For pointers, channels, arrays
-	ArraySize   int            // For fixed-size arrays (-1 for dynamic)
-	ParamTypes  []*Type        // For function/sub types
-	ReturnTypes []*Type        // For function types
-	Fields      []*StructField // For struct types
-	Implements  string         // Go interface this type implements (e.g., "tea.Model")
-	PackagePath string         // For external types: the full import path
-	PackageAlias string        // For external types: the alias used in code (e.g., "tea")
+	Kind         TypeKind
+	Name         string         // Original type name
+	ElementType  *Type          // For pointers, channels, arrays
+	ArraySize    int            // For fixed-size arrays (-1 for dynamic)
+	ParamTypes   []*Type        // For function/sub types
+	ReturnTypes  []*Type        // For function types
+	Fields       []*StructField // For struct types
+	Implements   string         // Go interface this type implements (e.g., "tea.Model")
+	PackagePath  string         // For external types: the full import path
+	PackageAlias string         // For external types: the alias used in code (e.g., "tea")
+	Variadic     bool           // True if function accepts variable arguments
 }
 
 // Predefined types
@@ -140,6 +141,26 @@ func NewFunctionType(params []*Type, returns []*Type) *Type {
 		Kind:        TypeFunction,
 		ParamTypes:  params,
 		ReturnTypes: returns,
+	}
+}
+
+// NewVariadicFunctionType creates a new variadic function type
+// Variadic functions accept their defined params plus any additional arguments
+func NewVariadicFunctionType(params []*Type, returns []*Type) *Type {
+	return &Type{
+		Kind:        TypeFunction,
+		ParamTypes:  params,
+		ReturnTypes: returns,
+		Variadic:    true,
+	}
+}
+
+// NewVariadicSubType creates a new variadic sub type (no return)
+func NewVariadicSubType(params []*Type) *Type {
+	return &Type{
+		Kind:       TypeSub,
+		ParamTypes: params,
+		Variadic:   true,
 	}
 }
 

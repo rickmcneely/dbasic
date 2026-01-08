@@ -598,6 +598,14 @@ func (g *Generator) scanStmtExprForRuntimeFuncs(stmt parser.Statement) {
 	}
 }
 
+// builtinFuncImports maps builtin function names to their required imports
+var builtinFuncImports = map[string][]string{
+	"Printf":   {"fmt"},
+	"Sprintf":  {"fmt"},
+	"Errorf":   {"fmt"},
+	"NewError": {"errors"},
+}
+
 func (g *Generator) scanExprForRuntimeFuncs(expr parser.Expression) {
 	if expr == nil {
 		return
@@ -613,6 +621,12 @@ func (g *Generator) scanExprForRuntimeFuncs(expr parser.Expression) {
 					for _, imp := range imports {
 						g.imports[imp] = ""
 					}
+				}
+			}
+			// Check if this is a builtin function that needs imports
+			if imports, ok := builtinFuncImports[ident.Value]; ok {
+				for _, imp := range imports {
+					g.imports[imp] = ""
 				}
 			}
 		}
@@ -1494,6 +1508,22 @@ func (g *Generator) callExprToGo(call *parser.CallExpression) string {
 		if len(args) == 1 {
 			return fmt.Sprintf("byte(%s)", args[0])
 		}
+	case "PRINTF":
+		// Printf(format, args...) -> fmt.Printf(format, args...)
+		g.imports["fmt"] = ""
+		return fmt.Sprintf("fmt.Printf(%s)", strings.Join(args, ", "))
+	case "SPRINTF":
+		// Sprintf(format, args...) -> fmt.Sprintf(format, args...)
+		g.imports["fmt"] = ""
+		return fmt.Sprintf("fmt.Sprintf(%s)", strings.Join(args, ", "))
+	case "NEWERROR":
+		// NewError(message) -> errors.New(message)
+		g.imports["errors"] = ""
+		return fmt.Sprintf("errors.New(%s)", strings.Join(args, ", "))
+	case "ERRORF":
+		// Errorf(format, args...) -> fmt.Errorf(format, args...)
+		g.imports["fmt"] = ""
+		return fmt.Sprintf("fmt.Errorf(%s)", strings.Join(args, ", "))
 	}
 
 	return fmt.Sprintf("%s(%s)", funcName, strings.Join(args, ", "))

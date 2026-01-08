@@ -109,9 +109,13 @@ func (a *Analyzer) registerBuiltins() {
 	a.addBuiltin("MkDir", []*Type{StringType}, []*Type{})
 	a.addBuiltin("RmDir", []*Type{StringType}, []*Type{})
 
-	// Printf functions
-	a.addBuiltin("Printf", []*Type{StringType}, []*Type{}) // variadic
-	a.addBuiltin("Sprintf", []*Type{StringType}, []*Type{StringType}) // variadic
+	// Printf functions (variadic - additional args not type-checked)
+	a.addVariadicBuiltin("Printf", []*Type{StringType}, []*Type{})            // fmt.Printf(format, args...)
+	a.addVariadicBuiltin("Sprintf", []*Type{StringType}, []*Type{StringType}) // fmt.Sprintf(format, args...)
+
+	// Error functions
+	a.addBuiltin("NewError", []*Type{StringType}, []*Type{ErrorType})         // errors.New(message)
+	a.addVariadicBuiltin("Errorf", []*Type{StringType}, []*Type{ErrorType})   // fmt.Errorf(format, args...)
 
 	// JSON functions
 	a.addBuiltin("JSONParse", []*Type{StringType}, []*Type{JSONType})
@@ -131,6 +135,22 @@ func (a *Analyzer) addBuiltin(name string, params []*Type, returns []*Type) {
 		symType = NewFunctionType(params, returns)
 	} else {
 		symType = NewSubType(params)
+	}
+
+	sym := &Symbol{
+		Name: name,
+		Kind: SymFunction,
+		Type: symType,
+	}
+	a.symbols.DefineGlobal(sym)
+}
+
+func (a *Analyzer) addVariadicBuiltin(name string, params []*Type, returns []*Type) {
+	var symType *Type
+	if len(returns) > 0 {
+		symType = NewVariadicFunctionType(params, returns)
+	} else {
+		symType = NewVariadicSubType(params)
 	}
 
 	sym := &Symbol{
@@ -1102,14 +1122,27 @@ func (a *Analyzer) analyzeCallExpression(call *parser.CallExpression) *Type {
 	}
 
 	// Check argument count
-	if len(call.Arguments) != len(sym.Type.ParamTypes) {
-		a.error(call.Token.Line, "wrong number of arguments: expected %d, got %d",
-			len(sym.Type.ParamTypes), len(call.Arguments))
+	if sym.Type.Variadic {
+		// Variadic functions require at least the defined params
+		if len(call.Arguments) < len(sym.Type.ParamTypes) {
+			a.error(call.Token.Line, "wrong number of arguments: expected at least %d, got %d",
+				len(sym.Type.ParamTypes), len(call.Arguments))
+		}
+	} else {
+		// Non-variadic functions require exact match
+		if len(call.Arguments) != len(sym.Type.ParamTypes) {
+			a.error(call.Token.Line, "wrong number of arguments: expected %d, got %d",
+				len(sym.Type.ParamTypes), len(call.Arguments))
+		}
 	}
 
-	// Check argument types
+	// Check argument types (only for defined params, not variadic args)
 	for i, arg := range call.Arguments {
 		if i >= len(sym.Type.ParamTypes) {
+			// For variadic functions, still analyze extra args but don't type-check them
+			if sym.Type.Variadic {
+				a.analyzeExpression(arg)
+			}
 			break
 		}
 		argType := a.analyzeExpression(arg)

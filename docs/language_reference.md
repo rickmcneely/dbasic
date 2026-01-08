@@ -794,6 +794,74 @@ The runtime library provides these built-in functions:
 | `RmDir(path)` | Remove directory |
 | `ListDir(path)` | List directory contents |
 
+### Formatted I/O Functions
+
+| Function | Description |
+|----------|-------------|
+| `Printf(format, args...)` | Print formatted output (like C printf) |
+| `Sprintf(format, args...)` | Return formatted string |
+
+Uses Go's fmt.Printf/Sprintf format specifiers:
+- `%s` - string
+- `%d` - integer
+- `%f` - float (use `%.2f` for 2 decimal places)
+- `%v` - default format for any type
+- `%t` - boolean
+- `\n` - newline
+
+```basic
+Printf("Hello, %s! You are %d years old.\n", name, age)
+DIM msg AS STRING = Sprintf("Score: %d / %d", correct, total)
+```
+
+### Error Handling Functions
+
+| Function | Description |
+|----------|-------------|
+| `NewError(message)` | Create a new error (maps to `errors.New`) |
+| `Errorf(format, args...)` | Create a formatted error (maps to `fmt.Errorf`) |
+
+DBasic supports Go-style error handling using the ERROR type:
+
+```basic
+' Declare an error variable
+DIM err AS ERROR
+
+' Create a simple error
+err = NewError("something went wrong")
+
+' Create a formatted error
+err = Errorf("failed to read %s: line %d", filename, lineNum)
+
+' Check for errors (NIL means no error)
+IF err <> NIL THEN
+    Printf("Error: %v\n", err)
+ENDIF
+```
+
+**Function Returning Errors (Go idiom):**
+
+```basic
+FUNCTION SafeDivide(a AS INTEGER, b AS INTEGER) AS (INTEGER, ERROR)
+    IF b = 0 THEN
+        RETURN 0, NewError("division by zero")
+    ENDIF
+    RETURN a / b, NIL
+END FUNCTION
+
+SUB Main()
+    DIM result AS INTEGER
+    DIM err AS ERROR
+
+    result, err = SafeDivide(10, 2)
+    IF err = NIL THEN
+        Printf("Result: %d\n", result)
+    ELSE
+        Printf("Error: %v\n", err)
+    ENDIF
+END SUB
+```
+
 ---
 
 ## Keywords
