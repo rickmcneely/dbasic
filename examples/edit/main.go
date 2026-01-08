@@ -8,6 +8,22 @@ import (
 
 // Runtime helper functions
 
+// Left returns the leftmost n characters
+func Left(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	return s[:n]
+}
+
+// Len returns the length of a string
+func Len(s string) int {
+	return len(s)
+}
+
 // Mid returns a substring starting at position start with length ln
 func Mid(s string, start, ln int) string {
 	if start < 1 {
@@ -45,22 +61,6 @@ func Int(val interface{}) int {
 	default:
 		return 0
 	}
-}
-
-// Left returns the leftmost n characters
-func Left(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	if n >= len(s) {
-		return s
-	}
-	return s[:n]
-}
-
-// Len returns the length of a string
-func Len(s string) int {
-	return len(s)
 }
 
 type EditorModel struct {
