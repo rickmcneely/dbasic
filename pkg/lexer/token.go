@@ -71,6 +71,9 @@ const (
 	TOKEN_CHAN
 	TOKEN_TO
 	TOKEN_OF
+	TOKEN_ANY         // ANY type (maps to interface{})
+	TOKEN_ERROR_TYPE  // ERROR type (maps to error)
+	TOKEN_EMBED       // EMBED keyword for type embedding
 
 	// Keywords - Control Flow
 	TOKEN_IF
@@ -184,6 +187,9 @@ var tokenNames = map[TokenType]string{
 	TOKEN_CHAN:        "CHAN",
 	TOKEN_TO:          "TO",
 	TOKEN_OF:          "OF",
+	TOKEN_ANY:         "ANY",
+	TOKEN_ERROR_TYPE:  "ERROR",
+	TOKEN_EMBED:       "EMBED",
 	TOKEN_IF:          "IF",
 	TOKEN_THEN:        "THEN",
 	TOKEN_ELSE:        "ELSE",
@@ -248,6 +254,9 @@ var Keywords = map[string]TokenType{
 	"CHAN":      TOKEN_CHAN,
 	"TO":        TOKEN_TO,
 	"OF":        TOKEN_OF,
+	"ANY":       TOKEN_ANY,
+	"ERROR":     TOKEN_ERROR_TYPE,
+	"EMBED":     TOKEN_EMBED,
 	"IF":        TOKEN_IF,
 	"THEN":      TOKEN_THEN,
 	"ELSE":      TOKEN_ELSE,

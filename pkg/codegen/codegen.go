@@ -699,6 +699,13 @@ func (g *Generator) generateTypeStatement(stmt *parser.TypeStatement) {
 	typeName := g.toGoIdent(stmt.Name.Value)
 	g.writeLine(fmt.Sprintf("type %s struct {", typeName))
 	g.indent++
+
+	// Generate embedded types first (anonymous embedding)
+	for _, embed := range stmt.Embedded {
+		g.writeLine(embed.TypeName)
+	}
+
+	// Generate named fields
 	for _, field := range stmt.Fields {
 		fieldName := g.toGoIdent(field.Name.Value)
 		fieldType := g.typeSpecToGo(field.Type)
@@ -1379,6 +1386,10 @@ func (g *Generator) mapTypeToGo(typeName string) string {
 		return "map[string]interface{}"
 	case "BYTES", "BSTRING":
 		return "[]byte"
+	case "ANY":
+		return "interface{}"
+	case "ERROR":
+		return "error"
 	default:
 		return typeName
 	}
@@ -1527,6 +1538,10 @@ func (g *Generator) typeSpecToGo(spec *parser.TypeSpec) string {
 		return "map[string]interface{}"
 	case "BYTES", "BSTRING":
 		return "[]byte"
+	case "ANY":
+		return "interface{}"
+	case "ERROR":
+		return "error"
 	default:
 		// Check for custom type
 		if g.types != nil {

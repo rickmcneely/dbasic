@@ -563,10 +563,17 @@ func (ms *MethodStatement) String() string {
 }
 
 // TypeStatement represents a TYPE definition (struct)
+// EmbeddedDeclaration represents an embedded type in a TYPE definition
+type EmbeddedDeclaration struct {
+	Token    lexer.Token
+	TypeName string // e.g., "walk.TableModelBase"
+}
+
 type TypeStatement struct {
 	Token      lexer.Token
 	Name       *Identifier
 	Implements string // Go interface this type implements (e.g., "tea.Model")
+	Embedded   []*EmbeddedDeclaration
 	Fields     []*FieldDeclaration
 }
 
@@ -581,6 +588,11 @@ func (ts *TypeStatement) String() string {
 		sb.WriteString(ts.Implements)
 	}
 	sb.WriteString("\n")
+	for _, e := range ts.Embedded {
+		sb.WriteString("    EMBED ")
+		sb.WriteString(e.TypeName)
+		sb.WriteString("\n")
+	}
 	for _, f := range ts.Fields {
 		sb.WriteString("    ")
 		sb.WriteString(f.String())

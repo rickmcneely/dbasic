@@ -24,6 +24,7 @@ const (
 	TypeSlice
 	TypeVoid
 	TypeAny       // For Go interface{} interop
+	TypeError     // For Go error type
 	TypeFunction
 	TypeSub
 	TypeStruct    // User-defined struct type
@@ -62,6 +63,7 @@ var (
 	BytesType   = &Type{Kind: TypeBytes, Name: "BYTES"}
 	VoidType    = &Type{Kind: TypeVoid, Name: "VOID"}
 	AnyType     = &Type{Kind: TypeAny, Name: "ANY"}
+	ErrorType   = &Type{Kind: TypeError, Name: "ERROR"}
 )
 
 // TypeFromName returns a Type for the given type name
@@ -87,6 +89,8 @@ func TypeFromName(name string) *Type {
 		return VoidType
 	case "ANY":
 		return AnyType
+	case "ERROR":
+		return ErrorType
 	default:
 		return nil
 	}
@@ -265,6 +269,8 @@ func (t *Type) GoType() string {
 		return ""
 	case TypeAny:
 		return "interface{}"
+	case TypeError:
+		return "error"
 	case TypeStruct:
 		return t.Name
 	case TypeExternal:

@@ -451,6 +451,10 @@ func (p *Parser) parseTypeSpec() *TypeSpec {
 		}
 		p.nextToken()
 		spec.ElementType = p.parseTypeSpec()
+	case lexer.TOKEN_ANY:
+		spec.Name = "ANY"
+	case lexer.TOKEN_ERROR_TYPE:
+		spec.Name = "ERROR"
 	default:
 		typeName := p.curToken.Literal
 		// Check for package.Type syntax (e.g., tea.Model)
@@ -718,13 +722,30 @@ func (p *Parser) parseTypeStatement() *TypeStatement {
 	p.nextToken()
 	p.skipNewlines()
 
-	// Parse field declarations until END TYPE
+	// Parse field declarations and embedded types until END TYPE
 	for !p.curTokenIs(lexer.TOKEN_EOF) {
 		if p.curTokenIs(lexer.TOKEN_END) {
 			if p.peekTokenIs(lexer.TOKEN_TYPE) {
 				p.nextToken() // consume TYPE
 				break
 			}
+		}
+
+		// Parse EMBED statements for type embedding
+		if p.curTokenIs(lexer.TOKEN_EMBED) {
+			embed := &EmbeddedDeclaration{Token: p.curToken}
+
+			p.nextToken() // move to type name
+
+			// Parse type name (could be package.Type like walk.TableModelBase)
+			typeName := p.curToken.Literal
+			if p.peekTokenIs(lexer.TOKEN_DOT) {
+				p.nextToken() // consume dot
+				p.nextToken() // consume type name
+				typeName += "." + p.curToken.Literal
+			}
+			embed.TypeName = typeName
+			stmt.Embedded = append(stmt.Embedded, embed)
 		}
 
 		// Expect DIM statements for fields
