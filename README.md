@@ -271,6 +271,9 @@ The `examples/` directory contains sample programs:
 - `bytes.dbas` - Byte arrays and BSTRING
 - `goroutines.dbas` - Concurrency with SPAWN and channels
 - `new_features.dbas` - Slices, struct literals, APPEND
+- `edit/` - MS-DOS EDIT clone using Bubble Tea (TUI)
+- `contacts/` - Win32 GUI contacts app using Walk
+- `tictactoe/` - Web server tic-tac-toe game with cookies
 
 Run an example:
 

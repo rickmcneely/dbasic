@@ -1,0 +1,535 @@
+' Tic-Tac-Toe Web Server
+' A complete web server example demonstrating HTTP handling, cookies, and game logic
+' Written entirely in DBasic - No hand-coded Go
+' Powered by DBasic - https://github.com/zditech/DBasic
+
+IMPORT "net/http" AS http
+IMPORT "fmt" AS fmt
+IMPORT "strings" AS strings
+IMPORT "strconv" AS strconv
+IMPORT "time" AS time
+IMPORT "math/rand" AS rand
+IMPORT "encoding/json" AS jsonpkg
+IMPORT "os" AS os
+IMPORT "path/filepath" AS filepath
+IMPORT "io" AS io
+
+' Game constants
+CONST PLAYER_X AS STRING = "X"
+CONST PLAYER_O AS STRING = "O"
+CONST EMPTY AS STRING = ""
+
+' Cookie name for tracking record
+CONST COOKIE_NAME AS STRING = "tictactoe_record"
+
+' Root directory for static files
+DIM rootDir AS STRING
+
+' PlayerRecord tracks wins, losses, and draws
+TYPE PlayerRecord
+    DIM Wins AS INTEGER
+    DIM Losses AS INTEGER
+    DIM Draws AS INTEGER
+END TYPE
+
+' GameState represents the current game
+TYPE GameState
+    DIM Board AS []STRING
+    DIM CurrentPlayer AS STRING
+    DIM GameOver AS BOOLEAN
+    DIM Winner AS STRING
+    DIM PlayerSymbol AS STRING
+    DIM AISymbol AS STRING
+    DIM Message AS STRING
+END TYPE
+
+' GameResponse is the JSON response sent to the client
+TYPE GameResponse
+    DIM Board AS []STRING         `json:"board"`
+    DIM CurrentPlayer AS STRING   `json:"currentPlayer"`
+    DIM GameOver AS BOOLEAN       `json:"gameOver"`
+    DIM Winner AS STRING          `json:"winner"`
+    DIM PlayerSymbol AS STRING    `json:"playerSymbol"`
+    DIM AISymbol AS STRING        `json:"aiSymbol"`
+    DIM Message AS STRING         `json:"message"`
+    DIM Wins AS INTEGER           `json:"wins"`
+    DIM Losses AS INTEGER         `json:"losses"`
+    DIM Draws AS INTEGER          `json:"draws"`
+END TYPE
+
+' MoveRequest is the JSON request from the client
+TYPE MoveRequest
+    DIM Position AS INTEGER `json:"position"`
+END TYPE
+
+' Initialize a new game board
+FUNCTION NewBoard() AS []STRING
+    DIM board AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO 8
+        board = APPEND(board, EMPTY)
+    NEXT
+    RETURN board
+END FUNCTION
+
+' Check if a position is valid and empty
+FUNCTION IsValidMove(board AS []STRING, pos AS INTEGER) AS BOOLEAN
+    IF pos < 0 OR pos > 8 THEN
+        RETURN FALSE
+    ENDIF
+    RETURN board[pos] = EMPTY
+END FUNCTION
+
+' Make a move on the board
+FUNCTION MakeMove(board AS []STRING, pos AS INTEGER, symbol AS STRING) AS []STRING
+    board[pos] = symbol
+    RETURN board
+END FUNCTION
+
+' Check for a winner
+FUNCTION CheckWinner(board AS []STRING) AS STRING
+    ' Winning combinations
+    ' Rows
+    IF board[0] <> EMPTY AND board[0] = board[1] AND board[1] = board[2] THEN
+        RETURN board[0]
+    ENDIF
+    IF board[3] <> EMPTY AND board[3] = board[4] AND board[4] = board[5] THEN
+        RETURN board[3]
+    ENDIF
+    IF board[6] <> EMPTY AND board[6] = board[7] AND board[7] = board[8] THEN
+        RETURN board[6]
+    ENDIF
+
+    ' Columns
+    IF board[0] <> EMPTY AND board[0] = board[3] AND board[3] = board[6] THEN
+        RETURN board[0]
+    ENDIF
+    IF board[1] <> EMPTY AND board[1] = board[4] AND board[4] = board[7] THEN
+        RETURN board[1]
+    ENDIF
+    IF board[2] <> EMPTY AND board[2] = board[5] AND board[5] = board[8] THEN
+        RETURN board[2]
+    ENDIF
+
+    ' Diagonals
+    IF board[0] <> EMPTY AND board[0] = board[4] AND board[4] = board[8] THEN
+        RETURN board[0]
+    ENDIF
+    IF board[2] <> EMPTY AND board[2] = board[4] AND board[4] = board[6] THEN
+        RETURN board[2]
+    ENDIF
+
+    RETURN EMPTY
+END FUNCTION
+
+' Check if board is full (draw)
+FUNCTION IsBoardFull(board AS []STRING) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO 8
+        IF board[i] = EMPTY THEN
+            RETURN FALSE
+        ENDIF
+    NEXT
+    RETURN TRUE
+END FUNCTION
+
+' Get available moves
+FUNCTION GetAvailableMoves(board AS []STRING) AS []INTEGER
+    DIM moves AS []INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO 8
+        IF board[i] = EMPTY THEN
+            moves = APPEND(moves, i)
+        ENDIF
+    NEXT
+    RETURN moves
+END FUNCTION
+
+' AI Move - Simple strategy
+' 1. Win if possible
+' 2. Block opponent win
+' 3. Take center
+' 4. Take corner
+' 5. Take any available
+FUNCTION GetAIMove(board AS []STRING, aiSymbol AS STRING, playerSymbol AS STRING) AS INTEGER
+    DIM moves AS []INTEGER = GetAvailableMoves(board)
+    DIM i AS INTEGER
+    DIM pos AS INTEGER
+
+    ' Check if AI can win
+    FOR i = 0 TO Len(moves) - 1
+        pos = moves[i]
+        DIM testBoard AS []STRING = CopyBoard(board)
+        testBoard[pos] = aiSymbol
+        IF CheckWinner(testBoard) = aiSymbol THEN
+            RETURN pos
+        ENDIF
+    NEXT
+
+    ' Block player win
+    FOR i = 0 TO Len(moves) - 1
+        pos = moves[i]
+        DIM blockBoard AS []STRING = CopyBoard(board)
+        blockBoard[pos] = playerSymbol
+        IF CheckWinner(blockBoard) = playerSymbol THEN
+            RETURN pos
+        ENDIF
+    NEXT
+
+    ' Take center
+    IF board[4] = EMPTY THEN
+        RETURN 4
+    ENDIF
+
+    ' Take corner
+    DIM corners AS []INTEGER = [0, 2, 6, 8]
+    FOR i = 0 TO 3
+        IF board[corners[i]] = EMPTY THEN
+            RETURN corners[i]
+        ENDIF
+    NEXT
+
+    ' Take any available
+    IF Len(moves) > 0 THEN
+        RETURN moves[0]
+    ENDIF
+
+    RETURN -1
+END FUNCTION
+
+' Copy board for testing moves
+FUNCTION CopyBoard(board AS []STRING) AS []STRING
+    DIM newBoard AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO 8
+        newBoard = APPEND(newBoard, board[i])
+    NEXT
+    RETURN newBoard
+END FUNCTION
+
+' Parse record cookie
+FUNCTION ParseRecord(cookieValue AS STRING) AS PlayerRecord
+    DIM record AS PlayerRecord
+    record.Wins = 0
+    record.Losses = 0
+    record.Draws = 0
+
+    IF Len(cookieValue) = 0 THEN
+        RETURN record
+    ENDIF
+
+    DIM parts AS []STRING = strings.Split(cookieValue, "-")
+    IF Len(parts) = 3 THEN
+        DIM w AS INTEGER
+        DIM l AS INTEGER
+        DIM d AS INTEGER
+        DIM err AS ERROR
+        w, err = strconv.Atoi(parts[0])
+        IF err = NIL THEN
+            record.Wins = w
+        ENDIF
+        l, err = strconv.Atoi(parts[1])
+        IF err = NIL THEN
+            record.Losses = l
+        ENDIF
+        d, err = strconv.Atoi(parts[2])
+        IF err = NIL THEN
+            record.Draws = d
+        ENDIF
+    ENDIF
+
+    RETURN record
+END FUNCTION
+
+' Format record for cookie
+FUNCTION FormatRecord(record AS PlayerRecord) AS STRING
+    RETURN fmt.Sprintf("%d-%d-%d", record.Wins, record.Losses, record.Draws)
+END FUNCTION
+
+' Get record from request cookies
+FUNCTION GetRecordFromRequest(r AS POINTER TO http.Request) AS PlayerRecord
+    DIM cookie AS POINTER TO http.Cookie
+    DIM err AS ERROR
+    cookie, err = (^r).Cookie(COOKIE_NAME)
+    IF err <> NIL THEN
+        DIM record AS PlayerRecord
+        record.Wins = 0
+        record.Losses = 0
+        record.Draws = 0
+        RETURN record
+    ENDIF
+    RETURN ParseRecord((^cookie).Value)
+END FUNCTION
+
+' Set record cookie
+SUB SetRecordCookie(w AS http.ResponseWriter, record AS PlayerRecord)
+    DIM cookie AS http.Cookie
+    cookie.Name = COOKIE_NAME
+    cookie.Value = FormatRecord(record)
+    cookie.Path = "/"
+    cookie.MaxAge = 60 * 60 * 24 * 365
+    http.SetCookie(w, @cookie)
+END SUB
+
+' Write an error response
+SUB WriteError(w AS http.ResponseWriter, message AS STRING, statusCode AS INTEGER)
+    w.WriteHeader(statusCode)
+    io.WriteString(w, message)
+END SUB
+
+' Write JSON response
+SUB WriteJSON(w AS http.ResponseWriter, response AS GameResponse)
+    DIM jsonData AS BYTES
+    DIM err AS ERROR
+    jsonData, err = jsonpkg.Marshal(response)
+    IF err <> NIL THEN
+        WriteError(w, "Error encoding response", 500)
+        RETURN
+    ENDIF
+    w.Write(jsonData)
+END SUB
+
+' Serve static files
+SUB ServeStatic(w AS http.ResponseWriter, r AS POINTER TO http.Request)
+    DIM path AS STRING = (^r).URL.Path
+
+    ' Default to index.html
+    IF path = "/" THEN
+        path = "/index.html"
+    ENDIF
+
+    ' Build file path
+    DIM filePath AS STRING = filepath.Join(rootDir, path)
+
+    ' Serve the file
+    http.ServeFile(w, r, filePath)
+END SUB
+
+' Handle new game request
+SUB HandleNewGame(w AS http.ResponseWriter, r AS POINTER TO http.Request)
+    ' Set CORS and content type headers
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+
+    ' Get player record
+    DIM record AS PlayerRecord = GetRecordFromRequest(r)
+
+    ' Randomly decide who starts
+    DIM playerStarts AS BOOLEAN = rand.Intn(2) = 0
+
+    ' Create new game
+    DIM game AS GameState
+    game.Board = NewBoard()
+    game.GameOver = FALSE
+    game.Winner = EMPTY
+
+    IF playerStarts THEN
+        game.PlayerSymbol = PLAYER_X
+        game.AISymbol = PLAYER_O
+        game.CurrentPlayer = PLAYER_X
+        game.Message = "You are X. Your turn!"
+    ELSE
+        game.PlayerSymbol = PLAYER_O
+        game.AISymbol = PLAYER_X
+        game.CurrentPlayer = PLAYER_X
+        game.Message = "You are O. AI moves first..."
+
+        ' AI makes first move
+        DIM aiMove AS INTEGER = GetAIMove(game.Board, game.AISymbol, game.PlayerSymbol)
+        IF aiMove >= 0 THEN
+            game.Board = MakeMove(game.Board, aiMove, game.AISymbol)
+            game.CurrentPlayer = PLAYER_O
+            game.Message = "You are O. Your turn!"
+        ENDIF
+    ENDIF
+
+    ' Build response
+    DIM response AS GameResponse
+    response.Board = game.Board
+    response.CurrentPlayer = game.CurrentPlayer
+    response.GameOver = game.GameOver
+    response.Winner = game.Winner
+    response.PlayerSymbol = game.PlayerSymbol
+    response.AISymbol = game.AISymbol
+    response.Message = game.Message
+    response.Wins = record.Wins
+    response.Losses = record.Losses
+    response.Draws = record.Draws
+
+    WriteJSON(w, response)
+END SUB
+
+' Handle player move
+SUB HandleMove(w AS http.ResponseWriter, r AS POINTER TO http.Request)
+    ' Set headers
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+
+    ' Parse request body
+    DIM decoder AS POINTER TO jsonpkg.Decoder = jsonpkg.NewDecoder((^r).Body)
+    DIM moveReq AS MoveRequest
+    DIM err AS ERROR = (^decoder).Decode(@moveReq)
+    IF err <> NIL THEN
+        WriteError(w, "Invalid request body", 400)
+        RETURN
+    ENDIF
+
+    ' Get board and symbols from query params
+    DIM boardStr AS STRING = (^r).URL.Query().Get("board")
+    DIM playerSymbol AS STRING = (^r).URL.Query().Get("player")
+    DIM aiSymbol AS STRING = (^r).URL.Query().Get("ai")
+
+    ' Parse board
+    DIM board AS []STRING = strings.Split(boardStr, ",")
+    IF Len(board) <> 9 THEN
+        board = NewBoard()
+    ENDIF
+
+    ' Default symbols
+    IF playerSymbol = "" THEN
+        playerSymbol = PLAYER_X
+    ENDIF
+    IF aiSymbol = "" THEN
+        aiSymbol = PLAYER_O
+    ENDIF
+
+    ' Get record
+    DIM record AS PlayerRecord = GetRecordFromRequest(r)
+
+    ' Create game state
+    DIM game AS GameState
+    game.Board = board
+    game.PlayerSymbol = playerSymbol
+    game.AISymbol = aiSymbol
+    game.GameOver = FALSE
+    game.Winner = EMPTY
+
+    ' Validate and make player move
+    IF NOT IsValidMove(game.Board, moveReq.Position) THEN
+        game.Message = "Invalid move! Try again."
+    ELSE
+        ' Make player move
+        game.Board = MakeMove(game.Board, moveReq.Position, playerSymbol)
+
+        ' Check for player win
+        DIM winner AS STRING = CheckWinner(game.Board)
+        IF winner = playerSymbol THEN
+            game.GameOver = TRUE
+            game.Winner = playerSymbol
+            game.Message = "You win!"
+            record.Wins = record.Wins + 1
+            SetRecordCookie(w, record)
+        ELSEIF IsBoardFull(game.Board) THEN
+            game.GameOver = TRUE
+            game.Winner = EMPTY
+            game.Message = "It's a draw!"
+            record.Draws = record.Draws + 1
+            SetRecordCookie(w, record)
+        ELSE
+            ' AI's turn
+            DIM aiMove AS INTEGER = GetAIMove(game.Board, aiSymbol, playerSymbol)
+            IF aiMove >= 0 THEN
+                game.Board = MakeMove(game.Board, aiMove, aiSymbol)
+
+                ' Check for AI win
+                winner = CheckWinner(game.Board)
+                IF winner = aiSymbol THEN
+                    game.GameOver = TRUE
+                    game.Winner = aiSymbol
+                    game.Message = "AI wins!"
+                    record.Losses = record.Losses + 1
+                    SetRecordCookie(w, record)
+                ELSEIF IsBoardFull(game.Board) THEN
+                    game.GameOver = TRUE
+                    game.Winner = EMPTY
+                    game.Message = "It's a draw!"
+                    record.Draws = record.Draws + 1
+                    SetRecordCookie(w, record)
+                ELSE
+                    game.Message = "Your turn!"
+                ENDIF
+            ENDIF
+        ENDIF
+    ENDIF
+
+    game.CurrentPlayer = playerSymbol
+
+    ' Build response
+    DIM response AS GameResponse
+    response.Board = game.Board
+    response.CurrentPlayer = game.CurrentPlayer
+    response.GameOver = game.GameOver
+    response.Winner = game.Winner
+    response.PlayerSymbol = game.PlayerSymbol
+    response.AISymbol = game.AISymbol
+    response.Message = game.Message
+    response.Wins = record.Wins
+    response.Losses = record.Losses
+    response.Draws = record.Draws
+
+    WriteJSON(w, response)
+END SUB
+
+' Handle reset record
+SUB HandleResetRecord(w AS http.ResponseWriter, r AS POINTER TO http.Request)
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+
+    ' Reset record
+    DIM record AS PlayerRecord
+    record.Wins = 0
+    record.Losses = 0
+    record.Draws = 0
+    SetRecordCookie(w, record)
+
+    ' Return empty record
+    DIM response AS GameResponse
+    response.Wins = 0
+    response.Losses = 0
+    response.Draws = 0
+    response.Message = "Record reset!"
+
+    WriteJSON(w, response)
+END SUB
+
+' Main entry point
+SUB Main()
+    ' Seed random number generator
+    rand.Seed(time.Now().UnixNano())
+
+    ' Get executable directory for root path
+    DIM exePath AS STRING
+    DIM err AS ERROR
+    exePath, err = os.Executable()
+    IF err <> NIL THEN
+        rootDir = "root"
+    ELSE
+        rootDir = filepath.Join(filepath.Dir(exePath), "root")
+    ENDIF
+
+    ' Check if root exists, otherwise use current directory
+    IF NOT FileExists(rootDir) THEN
+        rootDir = "root"
+    ENDIF
+
+    PRINT "Tic-Tac-Toe Web Server"
+    PRINT "======================"
+    PRINT ""
+    PRINT "Powered by DBasic"
+    PRINT ""
+    PRINT "Starting server on http://localhost:8080"
+    PRINT "Press Ctrl+C to stop"
+    PRINT ""
+
+    ' Set up routes
+    http.HandleFunc("/api/newgame", HandleNewGame)
+    http.HandleFunc("/api/move", HandleMove)
+    http.HandleFunc("/api/reset", HandleResetRecord)
+    http.HandleFunc("/", ServeStatic)
+
+    ' Start server
+    err = http.ListenAndServe(":8080", NIL)
+    IF err <> NIL THEN
+        PRINT "Error starting server: "; err
+    ENDIF
+END SUB

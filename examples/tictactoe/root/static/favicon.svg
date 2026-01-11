@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Background -->
+  <rect width="64" height="64" rx="8" fill="#1a1a2e"/>
+
+  <!-- Grid lines -->
+  <line x1="22" y1="8" x2="22" y2="56" stroke="#3a3a5e" stroke-width="2"/>
+  <line x1="42" y1="8" x2="42" y2="56" stroke="#3a3a5e" stroke-width="2"/>
+  <line x1="8" y1="22" x2="56" y2="22" stroke="#3a3a5e" stroke-width="2"/>
+  <line x1="8" y1="42" x2="56" y2="42" stroke="#3a3a5e" stroke-width="2"/>
+
+  <!-- X in top-left -->
+  <line x1="10" y1="10" x2="18" y2="18" stroke="#00d9ff" stroke-width="3" stroke-linecap="round"/>
+  <line x1="18" y1="10" x2="10" y2="18" stroke="#00d9ff" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- O in center -->
+  <circle cx="32" cy="32" r="6" fill="none" stroke="#ff6b6b" stroke-width="3"/>
+
+  <!-- X in bottom-right -->
+  <line x1="46" y1="46" x2="54" y2="54" stroke="#00d9ff" stroke-width="3" stroke-linecap="round"/>
+  <line x1="54" y1="46" x2="46" y2="54" stroke="#00d9ff" stroke-width="3" stroke-linecap="round"/>
+</svg>
