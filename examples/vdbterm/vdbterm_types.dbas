@@ -76,6 +76,7 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM IsDragging AS BOOLEAN
     DIM DragStartX AS INTEGER
     DIM DragStartY AS INTEGER
+    DIM DragSkipFrame AS BOOLEAN
 
     ' Code editor state
     DIM CodeCursorX AS INTEGER

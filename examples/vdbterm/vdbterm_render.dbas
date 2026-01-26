@@ -210,6 +210,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
     ENDIF
 
     DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+    DIM formSelected AS BOOLEAN = (m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM)
 
     ' Row 0: Form title bar
     IF row = 0 THEN
@@ -226,7 +227,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             ENDIF
         NEXT
         titleBar = titleBar & "┐"
-        IF m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM THEN
+        IF formSelected THEN
             RETURN styleControlSelected.Render(titleBar)
         ELSE
             RETURN styleMenuBar.Render(titleBar)
@@ -235,17 +236,31 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
 
     ' Row 1+: Form content with left and right borders
     DIM formRow AS INTEGER = row - 1
-    DIM formCol AS INTEGER
-    DIM formCh AS STRING
 
     ' Left border
-    IF m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM THEN
+    IF formSelected THEN
         content = content & styleControlSelected.Render("│")
     ELSE
         content = content & styleMenuBar.Render("│")
     ENDIF
 
-    ' Form content area (width - 2 for borders)
+    ' Pre-filter: collect only controls that intersect this row
+    DIM rowCtrlIndices AS []INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM c AS VDBControl = form.Controls[i]
+        IF formRow >= c.Y AND formRow < c.Y + c.Height THEN
+            rowCtrlIndices = APPEND(rowCtrlIndices, i)
+        ENDIF
+    NEXT
+    DIM numRowCtrls AS INTEGER = Len(rowCtrlIndices)
+
+    ' Build row content - use chunks for better performance
+    DIM gridChunk AS STRING = ""
+    DIM canvasChunk AS STRING = ""
+    DIM formCol AS INTEGER
+    DIM formCh AS STRING
+
     FOR formCol = 0 TO width - 3
         formCh = " "
 
@@ -254,21 +269,31 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             formCh = "."
         ENDIF
 
-        ' Check if any control occupies this position
-        DIM i AS INTEGER
+        ' Check only controls that intersect this row
         DIM foundCtrl AS BOOLEAN = FALSE
-        FOR i = 0 TO Len(form.Controls) - 1
-            DIM ctrl AS VDBControl = form.Controls[i]
-            IF formRow >= ctrl.Y AND formRow < ctrl.Y + ctrl.Height AND formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
+        DIM j AS INTEGER
+        FOR j = 0 TO numRowCtrls - 1
+            DIM ctrlIdx AS INTEGER = rowCtrlIndices[j]
+            DIM ctrl AS VDBControl = form.Controls[ctrlIdx]
+            IF formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
+                ' Flush any pending canvas/grid content
+                IF Len(canvasChunk) > 0 THEN
+                    content = content & styleFormCanvas.Render(canvasChunk)
+                    canvasChunk = ""
+                ENDIF
+                IF Len(gridChunk) > 0 THEN
+                    content = content & styleFormGrid.Render(gridChunk)
+                    gridChunk = ""
+                ENDIF
+
                 DIM localRow AS INTEGER = formRow - ctrl.Y
                 DIM localCol AS INTEGER = formCol - ctrl.X
-                DIM isSelected AS BOOLEAN = (i = m.SelectedCtrlIdx)
+                DIM isSelected AS BOOLEAN = (ctrlIdx = m.SelectedCtrlIdx)
 
                 ' Check for selection handles at corners
                 IF isSelected THEN
                     IF (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1) THEN
-                        formCh = "■"
-                        content = content & styleControlSelected.Render(formCh)
+                        content = content & styleControlSelected.Render("■")
                         foundCtrl = TRUE
                         EXIT FOR
                     ENDIF
@@ -286,16 +311,33 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
         NEXT
 
         IF NOT foundCtrl THEN
+            ' Batch similar characters together
             IF m.ShowGrid AND formCh = "." THEN
-                content = content & styleFormGrid.Render(formCh)
+                IF Len(canvasChunk) > 0 THEN
+                    content = content & styleFormCanvas.Render(canvasChunk)
+                    canvasChunk = ""
+                ENDIF
+                gridChunk = gridChunk & formCh
             ELSE
-                content = content & styleFormCanvas.Render(formCh)
+                IF Len(gridChunk) > 0 THEN
+                    content = content & styleFormGrid.Render(gridChunk)
+                    gridChunk = ""
+                ENDIF
+                canvasChunk = canvasChunk & formCh
             ENDIF
         ENDIF
     NEXT
 
+    ' Flush remaining chunks
+    IF Len(canvasChunk) > 0 THEN
+        content = content & styleFormCanvas.Render(canvasChunk)
+    ENDIF
+    IF Len(gridChunk) > 0 THEN
+        content = content & styleFormGrid.Render(gridChunk)
+    ENDIF
+
     ' Right border
-    IF m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM THEN
+    IF formSelected THEN
         content = content & styleControlSelected.Render("│")
     ELSE
         content = content & styleMenuBar.Render("│")

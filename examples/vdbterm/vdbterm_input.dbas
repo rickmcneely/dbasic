@@ -631,7 +631,12 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
         ENDIF
 
     ' Handle mouse drag for moving controls in form view
+    ' Skip every other frame to reduce rendering overhead
     ELSEIF action = tea.MouseActionMotion AND m.IsDragging THEN
+        m.DragSkipFrame = NOT m.DragSkipFrame
+        IF m.DragSkipFrame THEN
+            RETURN m, NIL
+        ENDIF
         IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
             DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
             IF m.SelectedCtrlIdx < ctrlCount THEN
@@ -786,6 +791,7 @@ FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
             m.SelectedCtrlIdx = i
             ' Start drag operation
             m.IsDragging = TRUE
+            m.DragSkipFrame = FALSE
             m.DragStartX = x - ctrl.X
             m.DragStartY = y - ctrl.Y
             m.Message = "Selected: " & ctrl.CtlName
