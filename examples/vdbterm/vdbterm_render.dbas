@@ -1020,6 +1020,22 @@ FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
         RETURN content
     ENDIF
 
+    ' Use the textarea's built-in view for proper cursor/scroll handling
+    IF m.CodeEditorInited THEN
+        DIM editorLines AS []STRING = GetEditorViewLines(m.CodeEditor)
+        IF row < Len(editorLines) THEN
+            DIM line AS STRING = editorLines[row]
+            ' Pad to fill width
+            content = line
+            ' Note: line may contain ANSI codes, padding is approximate
+            RETURN content
+        ELSE
+            ' Empty row beyond editor content
+            RETURN styleCodeEditor.Render(RepeatStr(" ", width))
+        ENDIF
+    ENDIF
+
+    ' Fallback to legacy rendering if textarea not initialized
     DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
     DIM totalLines AS INTEGER = CountLines(code)
     DIM lineIdx AS INTEGER = m.CodeScrollY + row
@@ -1039,69 +1055,9 @@ FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
         RETURN content
     ENDIF
 
-    ' Get highlighted lines using chroma
-    DIM highlightedLines AS []STRING
-    IF m.SyntaxHighlight THEN
-        highlightedLines = GetCachedHighlightedLines(code)
-    ENDIF
-
-    ' Get the line text (raw for cursor positioning)
+    ' Get the line text
     DIM lineText AS STRING = GetLine(code, lineIdx + 1)
-
-    ' Get highlighted version of the line
-    DIM highlightedLine AS STRING = ""
-    IF m.SyntaxHighlight AND lineIdx < Len(highlightedLines) THEN
-        highlightedLine = highlightedLines[lineIdx]
-    ENDIF
-
-    ' If we have chroma highlighting and cursor is not on this line, use it directly
-    IF m.SyntaxHighlight AND Len(highlightedLine) > 0 AND (lineIdx <> m.CodeCursorY OR m.FocusArea <> FOCUS_CODE) THEN
-        ' Pad or truncate the highlighted line to fit width
-        ' Note: highlightedLine contains ANSI codes, so simple Len() won't work for visual width
-        ' For now, just append the highlighted line and pad with spaces
-        content = content & highlightedLine
-        ' Pad remaining width (approximate since ANSI codes are invisible)
-        DIM visualLen AS INTEGER = Len(lineText)
-        IF visualLen < width THEN
-            content = content & styleCodeEditor.Render(RepeatStr(" ", width - visualLen))
-        ENDIF
-        RETURN content
-    ENDIF
-
-    ' Manual rendering with cursor support (fallback or when cursor is on this line)
-    DIM col AS INTEGER
-    FOR col = 0 TO width - 1
-        DIM actualCol AS INTEGER = m.CodeScrollX + col
-        DIM ch AS STRING = " "
-
-        IF actualCol < Len(lineText) THEN
-            ch = Mid(lineText, actualCol + 1, 1)
-        ENDIF
-
-        ' Cursor takes priority
-        IF lineIdx = m.CodeCursorY AND actualCol = m.CodeCursorX AND m.FocusArea = FOCUS_CODE THEN
-            content = content & styleCodeCursor.Render(ch)
-        ELSEIF m.SyntaxHighlight THEN
-            ' Apply syntax highlighting using our tokenizer
-            DIM tokens AS []SyntaxToken = TokenizeLine(lineText)
-            DIM tokType AS INTEGER = GetTokenTypeForColumn(tokens, actualCol)
-            IF tokType = TOKEN_KEYWORD THEN
-                content = content & styleCodeKeyword.Render(ch)
-            ELSEIF tokType = TOKEN_TYPE THEN
-                content = content & styleCodeKeyword.Render(ch)
-            ELSEIF tokType = TOKEN_STRING THEN
-                content = content & styleCodeString.Render(ch)
-            ELSEIF tokType = TOKEN_COMMENT THEN
-                content = content & styleCodeComment.Render(ch)
-            ELSEIF tokType = TOKEN_NUMBER THEN
-                content = content & styleCodeNumber.Render(ch)
-            ELSE
-                content = content & styleCodeEditor.Render(ch)
-            ENDIF
-        ELSE
-            content = content & styleCodeEditor.Render(ch)
-        ENDIF
-    NEXT
+    content = content & styleCodeEditor.Render(PadRight(lineText, width))
 
     RETURN content
 END FUNCTION

@@ -54,12 +54,61 @@ FUNCTION HandleEditorKeyInput(editor AS textarea.Model, msg AS tea.Msg) AS (text
     RETURN newEditor, cmd
 END FUNCTION
 
-' Get cursor position from editor
+' Get cursor line position from editor
 FUNCTION GetEditorCursorLine(editor AS textarea.Model) AS INTEGER
     RETURN editor.Line()
+END FUNCTION
+
+' Get cursor column position from editor
+FUNCTION GetEditorCursorCol(editor AS textarea.Model) AS INTEGER
+    DIM info AS textarea.LineInfo = editor.LineInfo()
+    RETURN info.ColumnOffset
+END FUNCTION
+
+' Set cursor to specific line and column
+' Note: This uses textarea methods but mouse positioning may have limitations
+FUNCTION SetEditorCursor(editor AS textarea.Model, line AS INTEGER, col AS INTEGER) AS textarea.Model
+    ' Move to start first
+    editor.CursorStart()
+
+    ' Move down to target line
+    DIM i AS INTEGER
+    FOR i = 0 TO line - 1
+        editor.CursorDown()
+    NEXT
+
+    ' Set column position within current line
+    editor.SetCursor(col)
+
+    RETURN editor
 END FUNCTION
 
 ' Render the editor
 FUNCTION RenderEditor(editor AS textarea.Model) AS STRING
     RETURN editor.View()
+END FUNCTION
+
+' Get the editor view split into lines for row-based rendering
+FUNCTION GetEditorViewLines(editor AS textarea.Model) AS []STRING
+    DIM view AS STRING = editor.View()
+    DIM lines AS []STRING
+    DIM line AS STRING = ""
+    DIM i AS INTEGER
+
+    FOR i = 1 TO Len(view)
+        DIM ch AS STRING = Mid(view, i, 1)
+        IF ch = Chr(10) THEN
+            lines = APPEND(lines, line)
+            line = ""
+        ELSE
+            line = line & ch
+        ENDIF
+    NEXT
+
+    ' Add last line if non-empty
+    IF Len(line) > 0 THEN
+        lines = APPEND(lines, line)
+    ENDIF
+
+    RETURN lines
 END FUNCTION

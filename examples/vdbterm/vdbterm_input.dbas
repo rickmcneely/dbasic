@@ -499,8 +499,9 @@ FUNCTION HandleCodeInputMsg(m AS VDBTermModel, msg AS tea.Msg) AS (tea.Model, te
         m.Project.Modified = TRUE
     ENDIF
 
-    ' Update legacy cursor position for status bar
+    ' Update legacy cursor position for status bar and rendering
     m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
+    m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
 
     RETURN m, cmd
 END FUNCTION
@@ -1657,6 +1658,11 @@ FUNCTION HandleCodeClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, ctrlPres
 
     m.CodeCursorY = targetLine
     m.CodeCursorX = targetCol
+
+    ' Position textarea cursor if using textarea editor
+    IF m.CodeEditorInited THEN
+        m.CodeEditor = SetEditorCursor(m.CodeEditor, targetLine, targetCol)
+    ENDIF
 
     ' Handle Ctrl+click for go-to-definition
     IF ctrlPressed THEN
