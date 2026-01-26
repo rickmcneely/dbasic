@@ -4,6 +4,7 @@
 
 IMPORT "github.com/charmbracelet/bubbletea" AS tea
 IMPORT "github.com/charmbracelet/lipgloss" AS lipgloss
+IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
 IMPORT "fmt" AS fmt
 IMPORT "os" AS os
 
@@ -13,6 +14,9 @@ INCLUDE "vdbterm_types.dbas"
 INCLUDE "vdbterm_styles.dbas"
 INCLUDE "vdbterm_helpers.dbas"
 INCLUDE "vdbterm_project.dbas"
+INCLUDE "vdbterm_syntax.dbas"
+INCLUDE "vdbterm_highlight.dbas"
+INCLUDE "vdbterm_editor.dbas"
 INCLUDE "vdbterm_input.dbas"
 INCLUDE "vdbterm_codeedit.dbas"
 INCLUDE "vdbterm_render.dbas"
@@ -23,6 +27,7 @@ INCLUDE "vdbterm_render.dbas"
 
 FUNCTION (m AS VDBTermModel) Init() AS tea.Cmd
     InitStyles()
+    InitChromaHighlighting()
     RETURN NIL
 END FUNCTION
 
@@ -34,6 +39,18 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF sizeOk THEN
         m.Width = Int(sizeMsg.Width)
         m.Height = Int(sizeMsg.Height)
+        ' Update textarea size
+        IF m.CodeEditorInited THEN
+            DIM editorWidth AS INTEGER = m.Width - 16 - 22  ' toolbox - properties
+            DIM editorHeight AS INTEGER = m.Height - 4
+            IF editorWidth < 20 THEN
+                editorWidth = 20
+            ENDIF
+            IF editorHeight < 5 THEN
+                editorHeight = 5
+            ENDIF
+            m.CodeEditor = UpdateEditorSize(m.CodeEditor, editorWidth, editorHeight)
+        ENDIF
         RETURN m, NIL
     ENDIF
 
@@ -107,22 +124,48 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' Toggle between Form and Code view
         IF m.ViewMode = VIEW_FORM THEN
             m.ViewMode = VIEW_CODE
+            ' Sync code to textarea when switching to code view
+            IF m.CodeEditorInited AND m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                m.CodeEditor = SyncCodeToEditor(m.CodeEditor, m.Project.Forms[m.CurrentFormIdx].Code)
+            ENDIF
         ELSE
+            ' Save code from textarea when switching away from code view
+            IF m.CodeEditorInited AND m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                m.Project.Forms[m.CurrentFormIdx].Code = GetEditorCode(m.CodeEditor)
+            ENDIF
             m.ViewMode = VIEW_FORM
         ENDIF
         RETURN m, NIL
     ELSEIF key = "tab" THEN
         ' Cycle focus areas
+        DIM prevFocus AS INTEGER = m.FocusArea
         m.FocusArea = m.FocusArea + 1
         IF m.FocusArea > FOCUS_PROJECT THEN
             m.FocusArea = FOCUS_TOOLBOX
         ENDIF
+        ' Manage textarea focus
+        IF m.CodeEditorInited THEN
+            IF prevFocus = FOCUS_CODE AND m.FocusArea <> FOCUS_CODE THEN
+                m.CodeEditor = BlurEditor(m.CodeEditor)
+            ELSEIF prevFocus <> FOCUS_CODE AND m.FocusArea = FOCUS_CODE THEN
+                m.CodeEditor = FocusEditor(m.CodeEditor)
+            ENDIF
+        ENDIF
         RETURN m, NIL
     ELSEIF key = "shift+tab" THEN
         ' Cycle focus backwards
+        DIM prevFocus2 AS INTEGER = m.FocusArea
         m.FocusArea = m.FocusArea - 1
         IF m.FocusArea < FOCUS_TOOLBOX THEN
             m.FocusArea = FOCUS_PROJECT
+        ENDIF
+        ' Manage textarea focus
+        IF m.CodeEditorInited THEN
+            IF prevFocus2 = FOCUS_CODE AND m.FocusArea <> FOCUS_CODE THEN
+                m.CodeEditor = BlurEditor(m.CodeEditor)
+            ELSEIF prevFocus2 <> FOCUS_CODE AND m.FocusArea = FOCUS_CODE THEN
+                m.CodeEditor = FocusEditor(m.CodeEditor)
+            ENDIF
         ENDIF
         RETURN m, NIL
     ENDIF
@@ -133,7 +176,8 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     ELSEIF m.FocusArea = FOCUS_FORM THEN
         RETURN HandleFormInput(m, key)
     ELSEIF m.FocusArea = FOCUS_CODE THEN
-        RETURN HandleCodeInput(m, key)
+        ' Use raw message handler for textarea support
+        RETURN HandleCodeInputMsg(m, msg)
     ELSEIF m.FocusArea = FOCUS_PROPERTIES THEN
         RETURN HandlePropertiesInput(m, key)
     ELSEIF m.FocusArea = FOCUS_PROJECT THEN
@@ -167,7 +211,12 @@ SUB Main()
     model.ShowLineNumbers = TRUE
     model.TabSize = 4
     model.AutoIndent = TRUE
+    model.SyntaxHighlight = TRUE
     model.Message = "Welcome to VDBTerm! F10=menu, F1=help. Mouse enabled."
+
+    ' Initialize code editor (textarea)
+    model.CodeEditor = InitCodeEditor(60, 20)
+    model.CodeEditorInited = TRUE
 
     ' Check command line args
     DIM args AS []STRING = os.Args
@@ -178,6 +227,10 @@ SUB Main()
         ' Create new project
         model.Project = NewProject("Project1")
         model.ProjectLoaded = TRUE
+        ' Sync initial code to editor
+        IF Len(model.Project.Forms) > 0 THEN
+            model.CodeEditor = SyncCodeToEditor(model.CodeEditor, model.Project.Forms[0].Code)
+        ENDIF
     ENDIF
 
     tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()

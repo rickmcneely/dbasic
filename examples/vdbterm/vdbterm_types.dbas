@@ -1,6 +1,15 @@
 ' VDBTerm Type Definitions
 ' Data structures for controls, forms, modules, projects, and the main model
 
+IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
+
+' Syntax highlighting token
+TYPE SyntaxToken
+    DIM TokenType AS INTEGER
+    DIM StartCol AS INTEGER
+    DIM Length AS INTEGER
+END TYPE
+
 ' Control definition
 TYPE VDBControl
     DIM ID AS INTEGER
@@ -92,7 +101,10 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM ResizeOrigW AS INTEGER
     DIM ResizeOrigH AS INTEGER
 
-    ' Code editor state
+    ' Code editor state (textarea component)
+    DIM CodeEditor AS textarea.Model
+    DIM CodeEditorInited AS BOOLEAN
+    ' Legacy cursor position for status bar display
     DIM CodeCursorX AS INTEGER
     DIM CodeCursorY AS INTEGER
     DIM CodeScrollX AS INTEGER
@@ -134,4 +146,5 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM ShowLineNumbers AS BOOLEAN
     DIM TabSize AS INTEGER
     DIM AutoIndent AS BOOLEAN
+    DIM SyntaxHighlight AS BOOLEAN
 END TYPE

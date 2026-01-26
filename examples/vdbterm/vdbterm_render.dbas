@@ -790,6 +790,20 @@ FUNCTION RenderControlChar(ctrl AS VDBControl, localRow AS INTEGER, localCol AS 
 END FUNCTION
 
 ' Code editor rendering
+' Cache for highlighted lines to avoid re-highlighting on every render
+DIM cachedHighlightCode AS STRING
+DIM cachedHighlightLines AS []STRING
+
+' Get highlighted lines with caching
+FUNCTION GetCachedHighlightedLines(code AS STRING) AS []STRING
+    IF code = cachedHighlightCode AND Len(cachedHighlightLines) > 0 THEN
+        RETURN cachedHighlightLines
+    ENDIF
+    cachedHighlightCode = code
+    cachedHighlightLines = GetHighlightedLines(code)
+    RETURN cachedHighlightLines
+END FUNCTION
+
 FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
     DIM content AS STRING = ""
 
@@ -817,9 +831,36 @@ FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
         RETURN content
     ENDIF
 
+    ' Get highlighted lines using chroma
+    DIM highlightedLines AS []STRING
+    IF m.SyntaxHighlight THEN
+        highlightedLines = GetCachedHighlightedLines(code)
+    ENDIF
+
+    ' Get the line text (raw for cursor positioning)
     DIM lineText AS STRING = GetLine(code, lineIdx + 1)
 
-    ' Render line with syntax highlighting
+    ' Get highlighted version of the line
+    DIM highlightedLine AS STRING = ""
+    IF m.SyntaxHighlight AND lineIdx < Len(highlightedLines) THEN
+        highlightedLine = highlightedLines[lineIdx]
+    ENDIF
+
+    ' If we have chroma highlighting and cursor is not on this line, use it directly
+    IF m.SyntaxHighlight AND Len(highlightedLine) > 0 AND (lineIdx <> m.CodeCursorY OR m.FocusArea <> FOCUS_CODE) THEN
+        ' Pad or truncate the highlighted line to fit width
+        ' Note: highlightedLine contains ANSI codes, so simple Len() won't work for visual width
+        ' For now, just append the highlighted line and pad with spaces
+        content = content & highlightedLine
+        ' Pad remaining width (approximate since ANSI codes are invisible)
+        DIM visualLen AS INTEGER = Len(lineText)
+        IF visualLen < width THEN
+            content = content & styleCodeEditor.Render(RepeatStr(" ", width - visualLen))
+        ENDIF
+        RETURN content
+    ENDIF
+
+    ' Manual rendering with cursor support (fallback or when cursor is on this line)
     DIM col AS INTEGER
     FOR col = 0 TO width - 1
         DIM actualCol AS INTEGER = m.CodeScrollX + col
@@ -829,9 +870,26 @@ FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             ch = Mid(lineText, actualCol + 1, 1)
         ENDIF
 
-        ' Cursor
+        ' Cursor takes priority
         IF lineIdx = m.CodeCursorY AND actualCol = m.CodeCursorX AND m.FocusArea = FOCUS_CODE THEN
             content = content & styleCodeCursor.Render(ch)
+        ELSEIF m.SyntaxHighlight THEN
+            ' Apply syntax highlighting using our tokenizer
+            DIM tokens AS []SyntaxToken = TokenizeLine(lineText)
+            DIM tokType AS INTEGER = GetTokenTypeForColumn(tokens, actualCol)
+            IF tokType = TOKEN_KEYWORD THEN
+                content = content & styleCodeKeyword.Render(ch)
+            ELSEIF tokType = TOKEN_TYPE THEN
+                content = content & styleCodeKeyword.Render(ch)
+            ELSEIF tokType = TOKEN_STRING THEN
+                content = content & styleCodeString.Render(ch)
+            ELSEIF tokType = TOKEN_COMMENT THEN
+                content = content & styleCodeComment.Render(ch)
+            ELSEIF tokType = TOKEN_NUMBER THEN
+                content = content & styleCodeNumber.Render(ch)
+            ELSE
+                content = content & styleCodeEditor.Render(ch)
+            ENDIF
         ELSE
             content = content & styleCodeEditor.Render(ch)
         ENDIF
@@ -861,9 +919,26 @@ FUNCTION RenderCodeCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
         ch = Mid(lineText, actualCol + 1, 1)
     ENDIF
 
+    ' Cursor takes priority
     IF lineIdx = m.CodeCursorY AND actualCol = m.CodeCursorX AND m.FocusArea = FOCUS_CODE THEN
         RETURN styleCodeCursor.Render(ch)
     ENDIF
+
+    ' Apply syntax highlighting
+    IF m.SyntaxHighlight THEN
+        DIM tokens AS []SyntaxToken = TokenizeLine(lineText)
+        DIM tokType AS INTEGER = GetTokenTypeForColumn(tokens, actualCol)
+        IF tokType = TOKEN_KEYWORD OR tokType = TOKEN_TYPE THEN
+            RETURN styleCodeKeyword.Render(ch)
+        ELSEIF tokType = TOKEN_STRING THEN
+            RETURN styleCodeString.Render(ch)
+        ELSEIF tokType = TOKEN_COMMENT THEN
+            RETURN styleCodeComment.Render(ch)
+        ELSEIF tokType = TOKEN_NUMBER THEN
+            RETURN styleCodeNumber.Render(ch)
+        ENDIF
+    ENDIF
+
     RETURN styleCodeEditor.Render(ch)
 END FUNCTION
 
@@ -1459,7 +1534,7 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         contentLines = APPEND(contentLines, "  Tab Size:        [" & PadRight(Str(m.TabSize), 3) & "]")
         contentLines = APPEND(contentLines, "  Auto Indent:     [" & IIFStr(m.AutoIndent, "X", " ") & "]")
         contentLines = APPEND(contentLines, "  Line Numbers:    [" & IIFStr(m.ShowLineNumbers, "X", " ") & "]")
-        contentLines = APPEND(contentLines, "  Syntax Highlight:[ ]")
+        contentLines = APPEND(contentLines, "  Syntax Highlight:[" & IIFStr(m.SyntaxHighlight, "X", " ") & "]")
         contentLines = APPEND(contentLines, "")
         contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
     ELSEIF m.DialogMode = DIALOG_COLORS THEN

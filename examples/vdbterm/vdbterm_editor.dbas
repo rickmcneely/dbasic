@@ -1,0 +1,65 @@
+' VDBTerm Code Editor
+' Textarea component integration for code editing
+
+IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
+IMPORT "github.com/charmbracelet/bubbletea" AS tea
+
+' Initialize the textarea component with default settings
+FUNCTION InitCodeEditor(width AS INTEGER, height AS INTEGER) AS textarea.Model
+    DIM ta AS textarea.Model = textarea.New()
+    ta.SetWidth(width)
+    ta.SetHeight(height)
+    ta.Placeholder = "' Enter code here..."
+    ta.ShowLineNumbers = TRUE
+    ta.Focus()
+    RETURN ta
+END FUNCTION
+
+' Sync code from form to textarea
+FUNCTION SyncCodeToEditor(editor AS textarea.Model, code AS STRING) AS textarea.Model
+    editor.SetValue(code)
+    editor.Focus()
+    RETURN editor
+END FUNCTION
+
+' Focus the editor
+FUNCTION FocusEditor(editor AS textarea.Model) AS textarea.Model
+    editor.Focus()
+    RETURN editor
+END FUNCTION
+
+' Blur the editor
+FUNCTION BlurEditor(editor AS textarea.Model) AS textarea.Model
+    editor.Blur()
+    RETURN editor
+END FUNCTION
+
+' Get code from textarea
+FUNCTION GetEditorCode(editor AS textarea.Model) AS STRING
+    RETURN editor.Value()
+END FUNCTION
+
+' Update editor dimensions
+FUNCTION UpdateEditorSize(editor AS textarea.Model, width AS INTEGER, height AS INTEGER) AS textarea.Model
+    editor.SetWidth(width)
+    editor.SetHeight(height)
+    RETURN editor
+END FUNCTION
+
+' Handle key input for the editor - returns updated editor and whether it was handled
+FUNCTION HandleEditorKeyInput(editor AS textarea.Model, msg AS tea.Msg) AS (textarea.Model, tea.Cmd)
+    DIM newEditor AS textarea.Model
+    DIM cmd AS tea.Cmd
+    newEditor, cmd = editor.Update(msg)
+    RETURN newEditor, cmd
+END FUNCTION
+
+' Get cursor position from editor
+FUNCTION GetEditorCursorLine(editor AS textarea.Model) AS INTEGER
+    RETURN editor.Line()
+END FUNCTION
+
+' Render the editor
+FUNCTION RenderEditor(editor AS textarea.Model) AS STRING
+    RETURN editor.View()
+END FUNCTION

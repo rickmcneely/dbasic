@@ -1,0 +1,375 @@
+' VDBTerm Syntax Highlighting
+' Tokenizer and navigation functions for code editor
+
+' Check if a word is a DBasic keyword
+FUNCTION IsKeyword(word AS STRING) AS BOOLEAN
+    DIM upper AS STRING = UCase(word)
+
+    ' Control flow keywords
+    IF upper = "SUB" OR upper = "FUNCTION" OR upper = "END" THEN
+        RETURN TRUE
+    ENDIF
+    IF upper = "IF" OR upper = "THEN" OR upper = "ELSE" OR upper = "ELSEIF" OR upper = "ENDIF" THEN
+        RETURN TRUE
+    ENDIF
+    IF upper = "FOR" OR upper = "TO" OR upper = "STEP" OR upper = "NEXT" THEN
+        RETURN TRUE
+    ENDIF
+    IF upper = "WHILE" OR upper = "WEND" OR upper = "DO" OR upper = "LOOP" OR upper = "UNTIL" THEN
+        RETURN TRUE
+    ENDIF
+    IF upper = "SELECT" OR upper = "CASE" THEN
+        RETURN TRUE
+    ENDIF
+    IF upper = "RETURN" OR upper = "EXIT" OR upper = "BREAK" OR upper = "CONTINUE" THEN
+        RETURN TRUE
+    ENDIF
+
+    ' Declaration keywords
+    IF upper = "DIM" OR upper = "AS" OR upper = "CONST" OR upper = "TYPE" THEN
+        RETURN TRUE
+    ENDIF
+    IF upper = "IMPLEMENTS" OR upper = "POINTER" OR upper = "IMPORT" OR upper = "INCLUDE" THEN
+        RETURN TRUE
+    ENDIF
+
+    ' Operators
+    IF upper = "AND" OR upper = "OR" OR upper = "NOT" OR upper = "XOR" OR upper = "MOD" THEN
+        RETURN TRUE
+    ENDIF
+
+    ' Other keywords
+    IF upper = "APPEND" OR upper = "SPAWN" OR upper = "CHAN" OR upper = "OF" THEN
+        RETURN TRUE
+    ENDIF
+    IF upper = "SEND" OR upper = "RECEIVE" OR upper = "FROM" OR upper = "NEW" THEN
+        RETURN TRUE
+    ENDIF
+    IF upper = "TRUE" OR upper = "FALSE" OR upper = "NIL" THEN
+        RETURN TRUE
+    ENDIF
+
+    RETURN FALSE
+END FUNCTION
+
+' Check if a word is a type name
+FUNCTION IsTypeName(word AS STRING) AS BOOLEAN
+    DIM upper AS STRING = UCase(word)
+
+    IF upper = "INTEGER" OR upper = "LONG" OR upper = "SINGLE" OR upper = "DOUBLE" THEN
+        RETURN TRUE
+    ENDIF
+    IF upper = "STRING" OR upper = "BOOLEAN" OR upper = "BYTES" OR upper = "ERROR" OR upper = "JSON" THEN
+        RETURN TRUE
+    ENDIF
+
+    RETURN FALSE
+END FUNCTION
+
+' Check if character is a digit
+FUNCTION IsDigitChar(ch AS STRING) AS BOOLEAN
+    IF ch >= "0" AND ch <= "9" THEN
+        RETURN TRUE
+    ENDIF
+    RETURN FALSE
+END FUNCTION
+
+' Check if character is a letter
+FUNCTION IsLetterChar(ch AS STRING) AS BOOLEAN
+    IF (ch >= "A" AND ch <= "Z") OR (ch >= "a" AND ch <= "z") OR ch = "_" THEN
+        RETURN TRUE
+    ENDIF
+    RETURN FALSE
+END FUNCTION
+
+' Check if character is alphanumeric
+FUNCTION IsAlphaNumeric(ch AS STRING) AS BOOLEAN
+    RETURN IsLetterChar(ch) OR IsDigitChar(ch)
+END FUNCTION
+
+' Tokenize a line of code for syntax highlighting
+FUNCTION TokenizeLine(lineText AS STRING) AS []SyntaxToken
+    DIM tokens AS []SyntaxToken
+    DIM pos AS INTEGER = 0
+    DIM lineLen AS INTEGER = Len(lineText)
+
+    WHILE pos < lineLen
+        DIM ch AS STRING = Mid(lineText, pos + 1, 1)
+
+        ' Comment - rest of line (apostrophe)
+        IF ch = "'" THEN
+            DIM tok AS SyntaxToken
+            tok.TokenType = TOKEN_COMMENT
+            tok.StartCol = pos
+            tok.Length = lineLen - pos
+            tokens = APPEND(tokens, tok)
+            pos = lineLen ' Exit the loop
+
+        ' String literal
+        ELSEIF ch = Chr(34) THEN
+            DIM strStart AS INTEGER = pos
+            pos = pos + 1
+            ' Scan to closing quote, handling escaped quotes ("")
+            DIM foundClose AS BOOLEAN = FALSE
+            WHILE pos < lineLen AND NOT foundClose
+                DIM sch AS STRING = Mid(lineText, pos + 1, 1)
+                IF sch = Chr(34) THEN
+                    pos = pos + 1
+                    ' Check for escaped quote ("")
+                    IF pos < lineLen AND Mid(lineText, pos + 1, 1) = Chr(34) THEN
+                        pos = pos + 1
+                        ' This is an escaped quote, continue scanning
+                    ELSE
+                        foundClose = TRUE
+                    ENDIF
+                ELSE
+                    pos = pos + 1
+                ENDIF
+            WEND
+            DIM strTok AS SyntaxToken
+            strTok.TokenType = TOKEN_STRING
+            strTok.StartCol = strStart
+            strTok.Length = pos - strStart
+            tokens = APPEND(tokens, strTok)
+
+        ' Number
+        ELSEIF IsDigitChar(ch) THEN
+            DIM numStart AS INTEGER = pos
+            WHILE pos < lineLen
+                DIM nch AS STRING = Mid(lineText, pos + 1, 1)
+                IF NOT IsDigitChar(nch) AND nch <> "." THEN
+                    EXIT WHILE
+                ENDIF
+                pos = pos + 1
+            WEND
+            DIM numTok AS SyntaxToken
+            numTok.TokenType = TOKEN_NUMBER
+            numTok.StartCol = numStart
+            numTok.Length = pos - numStart
+            tokens = APPEND(tokens, numTok)
+
+        ' Word (identifier, keyword, or type)
+        ELSEIF IsLetterChar(ch) THEN
+            DIM wordStart AS INTEGER = pos
+            WHILE pos < lineLen AND IsAlphaNumeric(Mid(lineText, pos + 1, 1))
+                pos = pos + 1
+            WEND
+            DIM word AS STRING = Mid(lineText, wordStart + 1, pos - wordStart)
+
+            DIM wordTok AS SyntaxToken
+            wordTok.StartCol = wordStart
+            wordTok.Length = pos - wordStart
+
+            IF IsKeyword(word) THEN
+                wordTok.TokenType = TOKEN_KEYWORD
+                tokens = APPEND(tokens, wordTok)
+            ELSEIF IsTypeName(word) THEN
+                wordTok.TokenType = TOKEN_TYPE
+                tokens = APPEND(tokens, wordTok)
+            ENDIF
+            ' For regular identifiers, we don't add a token (use default style)
+
+        ELSE
+            ' Skip other characters (spaces, operators, punctuation)
+            pos = pos + 1
+        ENDIF
+    WEND
+
+    RETURN tokens
+END FUNCTION
+
+' Get the token type for a specific column position
+FUNCTION GetTokenTypeForColumn(tokens AS []SyntaxToken, col AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(tokens) - 1
+        DIM tok AS SyntaxToken = tokens[i]
+        IF col >= tok.StartCol AND col < tok.StartCol + tok.Length THEN
+            RETURN tok.TokenType
+        ENDIF
+    NEXT
+    RETURN TOKEN_DEFAULT
+END FUNCTION
+
+' Get the word at a specific column position in a line
+FUNCTION GetWordAtColumn(lineText AS STRING, col AS INTEGER) AS STRING
+    DIM lineLen AS INTEGER = Len(lineText)
+
+    IF col < 0 OR col >= lineLen THEN
+        RETURN ""
+    ENDIF
+
+    ' Check if we're on a letter/digit
+    DIM ch AS STRING = Mid(lineText, col + 1, 1)
+    IF NOT IsAlphaNumeric(ch) THEN
+        RETURN ""
+    ENDIF
+
+    ' Find start of word
+    DIM wordStart AS INTEGER = col
+    WHILE wordStart > 0 AND IsAlphaNumeric(Mid(lineText, wordStart, 1))
+        wordStart = wordStart - 1
+    WEND
+    IF NOT IsAlphaNumeric(Mid(lineText, wordStart + 1, 1)) THEN
+        wordStart = wordStart + 1
+    ENDIF
+
+    ' Find end of word
+    DIM wordEnd AS INTEGER = col
+    WHILE wordEnd < lineLen AND IsAlphaNumeric(Mid(lineText, wordEnd + 1, 1))
+        wordEnd = wordEnd + 1
+    WEND
+
+    RETURN Mid(lineText, wordStart + 1, wordEnd - wordStart)
+END FUNCTION
+
+' Find definition of a SUB or FUNCTION in the project
+' Returns: formIdx, lineNum, colNum (-1 for formIdx if not found)
+FUNCTION FindDefinition(proj AS VDBProject, name AS STRING) AS (INTEGER, INTEGER, INTEGER)
+    DIM searchUpper AS STRING = UCase(name)
+    DIM formIdx AS INTEGER
+    DIM lineNum AS INTEGER
+
+    ' Search all forms
+    FOR formIdx = 0 TO Len(proj.Forms) - 1
+        DIM code AS STRING = proj.Forms[formIdx].Code
+        DIM totalLines AS INTEGER = CountLines(code)
+
+        FOR lineNum = 0 TO totalLines - 1
+            DIM lineText AS STRING = GetLine(code, lineNum + 1)
+            DIM trimmed AS STRING = TrimLeft(lineText)
+            DIM upperLine AS STRING = UCase(trimmed)
+
+            ' Check for SUB definition
+            IF Left(upperLine, 4) = "SUB " THEN
+                DIM subName AS STRING = ExtractDefinitionName(trimmed, 4)
+                IF UCase(subName) = searchUpper THEN
+                    DIM colNum AS INTEGER = FindStr(lineText, subName) - 1
+                    RETURN formIdx, lineNum, colNum
+                ENDIF
+            ENDIF
+
+            ' Check for FUNCTION definition
+            IF Left(upperLine, 9) = "FUNCTION " THEN
+                DIM funcName AS STRING = ExtractDefinitionName(trimmed, 9)
+                IF UCase(funcName) = searchUpper THEN
+                    DIM col AS INTEGER = FindStr(lineText, funcName) - 1
+                    RETURN formIdx, lineNum, col
+                ENDIF
+            ENDIF
+
+            ' Check for method definition (receiver syntax)
+            IF Left(upperLine, 9) = "FUNCTION " OR FindStr(upperLine, ") ") > 0 THEN
+                ' Look for patterns like "FUNCTION (m AS Type) MethodName"
+                DIM parenClose AS INTEGER = FindStr(trimmed, ") ")
+                IF parenClose > 0 THEN
+                    DIM afterParen AS STRING = Mid(trimmed, parenClose + 2, Len(trimmed) - parenClose - 1)
+                    DIM methodName AS STRING = ExtractFirstWord(afterParen)
+                    IF UCase(methodName) = searchUpper THEN
+                        DIM mcol AS INTEGER = FindStr(lineText, methodName) - 1
+                        RETURN formIdx, lineNum, mcol
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT
+    NEXT
+
+    ' Search all modules
+    DIM modIdx AS INTEGER
+    FOR modIdx = 0 TO Len(proj.Modules) - 1
+        DIM modCode AS STRING = proj.Modules[modIdx].Code
+        DIM modTotalLines AS INTEGER = CountLines(modCode)
+
+        FOR lineNum = 0 TO modTotalLines - 1
+            DIM modLineText AS STRING = GetLine(modCode, lineNum + 1)
+            DIM modTrimmed AS STRING = TrimLeft(modLineText)
+            DIM modUpperLine AS STRING = UCase(modTrimmed)
+
+            ' Check for SUB definition
+            IF Left(modUpperLine, 4) = "SUB " THEN
+                DIM modSubName AS STRING = ExtractDefinitionName(modTrimmed, 4)
+                IF UCase(modSubName) = searchUpper THEN
+                    DIM modColNum AS INTEGER = FindStr(modLineText, modSubName) - 1
+                    ' Return negative formIdx to indicate it's a module
+                    ' Use -(modIdx + 1000) to differentiate from forms
+                    RETURN -(modIdx + 1000), lineNum, modColNum
+                ENDIF
+            ENDIF
+
+            ' Check for FUNCTION definition
+            IF Left(modUpperLine, 9) = "FUNCTION " THEN
+                DIM modFuncName AS STRING = ExtractDefinitionName(modTrimmed, 9)
+                IF UCase(modFuncName) = searchUpper THEN
+                    DIM mfCol AS INTEGER = FindStr(modLineText, modFuncName) - 1
+                    RETURN -(modIdx + 1000), lineNum, mfCol
+                ENDIF
+            ENDIF
+        NEXT
+    NEXT
+
+    ' Not found
+    RETURN -1, 0, 0
+END FUNCTION
+
+' Extract the name from a SUB/FUNCTION definition line
+FUNCTION ExtractDefinitionName(line AS STRING, offset AS INTEGER) AS STRING
+    DIM rest AS STRING = Mid(line, offset + 1, Len(line) - offset)
+    rest = TrimLeft(rest)
+
+    ' Handle receiver syntax: "(m AS Type) Name"
+    IF Left(rest, 1) = "(" THEN
+        DIM closeP AS INTEGER = FindStr(rest, ")")
+        IF closeP > 0 THEN
+            rest = Mid(rest, closeP + 1, Len(rest) - closeP)
+            rest = TrimLeft(rest)
+        ENDIF
+    ENDIF
+
+    RETURN ExtractFirstWord(rest)
+END FUNCTION
+
+' Extract the first word from a string
+FUNCTION ExtractFirstWord(s AS STRING) AS STRING
+    DIM result AS STRING = ""
+    DIM i AS INTEGER = 1
+
+    ' Skip leading spaces
+    WHILE i <= Len(s) AND Mid(s, i, 1) = " "
+        i = i + 1
+    WEND
+
+    ' Collect alphanumeric characters
+    WHILE i <= Len(s) AND IsAlphaNumeric(Mid(s, i, 1))
+        result = result & Mid(s, i, 1)
+        i = i + 1
+    WEND
+
+    RETURN result
+END FUNCTION
+
+' Trim leading whitespace
+FUNCTION TrimLeft(s AS STRING) AS STRING
+    DIM i AS INTEGER = 1
+    WHILE i <= Len(s) AND (Mid(s, i, 1) = " " OR Mid(s, i, 1) = Chr(9))
+        i = i + 1
+    WEND
+    RETURN Mid(s, i, Len(s) - i + 1)
+END FUNCTION
+
+' Find position of substring in string (1-indexed, 0 if not found)
+FUNCTION FindStr(haystack AS STRING, needle AS STRING) AS INTEGER
+    DIM hLen AS INTEGER = Len(haystack)
+    DIM nLen AS INTEGER = Len(needle)
+
+    IF nLen = 0 OR nLen > hLen THEN
+        RETURN 0
+    ENDIF
+
+    DIM i AS INTEGER
+    FOR i = 1 TO hLen - nLen + 1
+        IF Mid(haystack, i, nLen) = needle THEN
+            RETURN i
+        ENDIF
+    NEXT
+
+    RETURN 0
+END FUNCTION

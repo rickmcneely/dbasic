@@ -1,0 +1,39 @@
+' VDBTerm Syntax Highlighting with Chroma
+' Uses alecthomas/chroma for code highlighting
+
+IMPORT "github.com/alecthomas/chroma/v2/quick" AS quick
+IMPORT "strings" AS strings
+IMPORT "bytes" AS gobytes
+
+' Global state
+DIM chromaInited AS BOOLEAN = FALSE
+DIM chromaStyleName AS STRING = "monokai"
+
+' Initialize chroma
+SUB InitChromaHighlighting()
+    chromaInited = TRUE
+END SUB
+
+' Highlight code using the quick.Highlight helper
+FUNCTION HighlightCode(code AS STRING) AS STRING
+    IF NOT chromaInited THEN
+        InitChromaHighlighting()
+    ENDIF
+
+    ' Use quick.Highlight which handles the style pointer internally
+    DIM buf AS gobytes.Buffer
+    DIM err AS ERROR
+    err = quick.Highlight(@buf, code, "vb.net", "terminal256", chromaStyleName)
+    IF err <> NIL THEN
+        RETURN code
+    ENDIF
+
+    RETURN buf.String()
+END FUNCTION
+
+' Get highlighted lines as array
+FUNCTION GetHighlightedLines(code AS STRING) AS []STRING
+    DIM highlighted AS STRING = HighlightCode(code)
+    DIM lines AS []STRING = strings.Split(highlighted, Chr(10))
+    RETURN lines
+END FUNCTION

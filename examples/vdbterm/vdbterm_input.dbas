@@ -332,6 +332,7 @@ FUNCTION HandleCodeInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cm
         RETURN m, NIL
     ENDIF
 
+    ' Legacy manual code handling (textarea handles input via HandleCodeInputMsg)
     DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
     DIM totalLines AS INTEGER = CountLines(code)
     DIM currentLine AS STRING = GetLine(code, m.CodeCursorY + 1)
@@ -405,6 +406,44 @@ FUNCTION HandleCodeInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cm
     ENDIF
 
     RETURN m, NIL
+END FUNCTION
+
+' Handle code input with raw message for textarea
+FUNCTION HandleCodeInputMsg(m AS VDBTermModel, msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN m, NIL
+    ENDIF
+
+    IF NOT m.CodeEditorInited THEN
+        ' Fall back to string-based handler
+        DIM keyMsg AS tea.KeyMsg
+        DIM ok AS BOOLEAN
+        keyMsg, ok = msg.(tea.KeyMsg)
+        IF ok THEN
+            RETURN HandleCodeInput(m, keyMsg.String())
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Get previous code to detect changes
+    DIM prevCode AS STRING = GetEditorCode(m.CodeEditor)
+
+    ' Pass raw message to textarea
+    DIM cmd AS tea.Cmd
+    m.CodeEditor, cmd = HandleEditorKeyInput(m.CodeEditor, msg)
+
+    ' Check if code changed
+    DIM newCode AS STRING = GetEditorCode(m.CodeEditor)
+    IF newCode <> prevCode THEN
+        ' Sync back to form
+        m.Project.Forms[m.CurrentFormIdx].Code = newCode
+        m.Project.Modified = TRUE
+    ENDIF
+
+    ' Update legacy cursor position for status bar
+    m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
+
+    RETURN m, cmd
 END FUNCTION
 
 FUNCTION HandlePropertiesInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
@@ -645,7 +684,7 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             IF m.ViewMode = VIEW_FORM THEN
                 RETURN HandleFormClick(m, localX, contentY)
             ELSE
-                RETURN HandleCodeClick(m, localX, contentY)
+                RETURN HandleCodeClick(m, localX, contentY, mouseMsg.Ctrl)
             ENDIF
         ELSE
             ' Properties panel
@@ -1167,7 +1206,7 @@ FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
     RETURN m, NIL
 END FUNCTION
 
-FUNCTION HandleCodeClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.Model, tea.Cmd)
+FUNCTION HandleCodeClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, ctrlPressed AS BOOLEAN) AS (tea.Model, tea.Cmd)
     m.FocusArea = FOCUS_CODE
 
     IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
@@ -1206,6 +1245,38 @@ FUNCTION HandleCodeClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
 
     m.CodeCursorY = targetLine
     m.CodeCursorX = targetCol
+
+    ' Handle Ctrl+click for go-to-definition
+    IF ctrlPressed THEN
+        DIM word AS STRING = GetWordAtColumn(lineText, targetCol)
+        IF Len(word) > 0 THEN
+            DIM defFormIdx AS INTEGER
+            DIM defLineNum AS INTEGER
+            DIM defColNum AS INTEGER
+            defFormIdx, defLineNum, defColNum = FindDefinition(m.Project, word)
+
+            IF defFormIdx >= 0 THEN
+                ' Found definition in a form
+                m.CurrentFormIdx = defFormIdx
+                m.CodeCursorY = defLineNum
+                m.CodeCursorX = defColNum
+                m.CodeScrollY = defLineNum
+                IF m.CodeScrollY > 0 THEN
+                    m.CodeScrollY = m.CodeScrollY - 3
+                    IF m.CodeScrollY < 0 THEN
+                        m.CodeScrollY = 0
+                    ENDIF
+                ENDIF
+                m.ViewMode = VIEW_CODE
+                m.Message = "Found: " & word
+            ELSEIF defFormIdx < -1 THEN
+                ' Found in a module (encoded as -(modIdx + 1000))
+                m.Message = "Definition in module (modules not editable in this view)"
+            ELSE
+                m.Message = "Definition not found: " & word
+            ENDIF
+        ENDIF
+    ENDIF
 
     RETURN m, NIL
 END FUNCTION
