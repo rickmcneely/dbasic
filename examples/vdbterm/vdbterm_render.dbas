@@ -1590,47 +1590,16 @@ END FUNCTION
 
 ' Popup rendering (events context menu)
 FUNCTION GetPopupWidth(m AS VDBTermModel) AS INTEGER
-    ' Calculate width based on longest event name + padding
-    DIM maxLen AS INTEGER = 10  ' Minimum width
-    DIM i AS INTEGER
-    FOR i = 0 TO Len(m.PopupEvents) - 1
-        DIM eventLen AS INTEGER = Len(m.PopupEvents[i]) + 4  ' +4 for padding/icons
-        IF eventLen > maxLen THEN
-            maxLen = eventLen
-        ENDIF
-    NEXT
-    ' Add border
-    RETURN maxLen + 2
+    ' Fixed width for consistent appearance
+    RETURN 16
 END FUNCTION
 
 FUNCTION GetPopupLines(m AS VDBTermModel) AS []STRING
     DIM lines AS []STRING
     DIM width AS INTEGER = GetPopupWidth(m)
 
-    ' Get control/widget name for title
-    DIM titleText AS STRING = ""
-    IF m.PopupCtrlIdx = -1 THEN
-        ' Form events
-        IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
-            titleText = m.Project.Forms[m.CurrentFormIdx].Name
-        ELSE
-            titleText = "Form"
-        ENDIF
-    ELSEIF m.PopupCtrlIdx = -2 THEN
-        ' Widget/Toolbox panel
-        titleText = GetControlTypeName(m.PopupCtrlType)
-    ELSE
-        ' Control
-        IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) AND m.PopupCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
-            titleText = m.Project.Forms[m.CurrentFormIdx].Controls[m.PopupCtrlIdx].CtlName
-        ELSE
-            titleText = GetControlTypeName(m.PopupCtrlType)
-        ENDIF
-    ENDIF
-
     ' Title bar (using Unicode box-drawing characters like dropdown menus)
-    DIM title AS STRING = " " & titleText & " Events "
-    DIM titlePadded AS STRING = PadCenter(title, width - 2)
+    DIM titlePadded AS STRING = PadCenter(" Events ", width - 2)
     lines = APPEND(lines, styleDropdown.Render("┌" & RepeatStr("─", width - 2) & "┐"))
     lines = APPEND(lines, styleDropdownSelected.Render("│" & titlePadded & "│"))
     lines = APPEND(lines, styleDropdown.Render("├" & RepeatStr("─", width - 2) & "┤"))
