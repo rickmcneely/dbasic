@@ -1,0 +1,880 @@
+' VDBTerm Input Handlers
+' Keyboard, mouse, dialog, and menu input handling
+
+FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF key = "esc" THEN
+        m.DialogMode = DIALOG_NONE
+        RETURN m, NIL
+    ENDIF
+
+    ' Simple info dialogs
+    IF m.DialogMode = DIALOG_HELP OR m.DialogMode = DIALOG_ABOUT THEN
+        IF key = "enter" OR key = " " THEN
+            m.DialogMode = DIALOG_NONE
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Confirmation dialog
+    IF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
+        IF key = "y" OR key = "Y" THEN
+            RETURN m, tea.Quit
+        ELSEIF key = "n" OR key = "N" THEN
+            m.DialogMode = DIALOG_NONE
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Text input dialogs
+    IF key = "enter" THEN
+        IF m.DialogMode = DIALOG_NEW_PROJECT THEN
+            m.Project = NewProject(m.DialogInput)
+            m.ProjectLoaded = TRUE
+            m.CurrentFormIdx = 0
+            m.Message = "New project: " & m.DialogInput
+            m.DialogMode = DIALOG_NONE
+        ELSEIF m.DialogMode = DIALOG_NEW_FORM THEN
+            DIM addForm AS VDBForm
+            addForm = NewForm(m.DialogInput)
+            m.Project.Forms = APPEND(m.Project.Forms, addForm)
+            m.CurrentFormIdx = Len(m.Project.Forms) - 1
+            m.Project.Modified = TRUE
+            m.Message = "New form: " & m.DialogInput
+            m.DialogMode = DIALOG_NONE
+        ELSEIF m.DialogMode = DIALOG_NEW_MODULE THEN
+            DIM addMod AS VDBModule
+            addMod = NewModule(m.DialogInput)
+            m.Project.Modules = APPEND(m.Project.Modules, addMod)
+            m.Project.Modified = TRUE
+            m.Message = "New module: " & m.DialogInput
+            m.DialogMode = DIALOG_NONE
+        ELSEIF m.DialogMode = DIALOG_SAVE_PROJECT THEN
+            SaveProject(@m.Project, m.DialogInput)
+            m.Message = "Project saved: " & m.DialogInput
+            m.DialogMode = DIALOG_NONE
+        ENDIF
+        RETURN m, NIL
+    ELSEIF key = "backspace" THEN
+        IF m.DialogCursor > 0 THEN
+            m.DialogInput = Left(m.DialogInput, m.DialogCursor - 1) & Mid(m.DialogInput, m.DialogCursor + 1, Len(m.DialogInput) - m.DialogCursor)
+            m.DialogCursor = m.DialogCursor - 1
+        ENDIF
+    ELSEIF key = "delete" THEN
+        IF m.DialogCursor < Len(m.DialogInput) THEN
+            m.DialogInput = Left(m.DialogInput, m.DialogCursor) & Mid(m.DialogInput, m.DialogCursor + 2, Len(m.DialogInput) - m.DialogCursor - 1)
+        ENDIF
+    ELSEIF key = "left" THEN
+        IF m.DialogCursor > 0 THEN
+            m.DialogCursor = m.DialogCursor - 1
+        ENDIF
+    ELSEIF key = "right" THEN
+        IF m.DialogCursor < Len(m.DialogInput) THEN
+            m.DialogCursor = m.DialogCursor + 1
+        ENDIF
+    ELSEIF key = "home" THEN
+        m.DialogCursor = 0
+    ELSEIF key = "end" THEN
+        m.DialogCursor = Len(m.DialogInput)
+    ELSEIF Len(key) = 1 THEN
+        m.DialogInput = Left(m.DialogInput, m.DialogCursor) & key & Mid(m.DialogInput, m.DialogCursor + 1, Len(m.DialogInput) - m.DialogCursor)
+        m.DialogCursor = m.DialogCursor + 1
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleMenuInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF key = "esc" THEN
+        m.MenuOpen = MENU_NONE
+        RETURN m, NIL
+    ELSEIF key = "left" THEN
+        m.MenuOpen = m.MenuOpen - 1
+        IF m.MenuOpen < MENU_FILE THEN
+            m.MenuOpen = MENU_HELP
+        ENDIF
+        m.MenuIndex = 0
+        RETURN m, NIL
+    ELSEIF key = "right" THEN
+        m.MenuOpen = m.MenuOpen + 1
+        IF m.MenuOpen > MENU_HELP THEN
+            m.MenuOpen = MENU_FILE
+        ENDIF
+        m.MenuIndex = 0
+        RETURN m, NIL
+    ELSEIF key = "up" THEN
+        m.MenuIndex = m.MenuIndex - 1
+        IF m.MenuIndex < 0 THEN
+            m.MenuIndex = GetMenuItemCount(m.MenuOpen) - 1
+        ENDIF
+        RETURN m, NIL
+    ELSEIF key = "down" THEN
+        m.MenuIndex = m.MenuIndex + 1
+        IF m.MenuIndex >= GetMenuItemCount(m.MenuOpen) THEN
+            m.MenuIndex = 0
+        ENDIF
+        RETURN m, NIL
+    ELSEIF key = "enter" THEN
+        RETURN ExecuteMenuItem(m)
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION GetMenuItemCount(menu AS INTEGER) AS INTEGER
+    IF menu = MENU_FILE THEN
+        RETURN 8
+    ELSEIF menu = MENU_EDIT THEN
+        RETURN 8
+    ELSEIF menu = MENU_VIEW THEN
+        RETURN 5
+    ELSEIF menu = MENU_RUN THEN
+        RETURN 4
+    ELSEIF menu = MENU_DEBUG THEN
+        RETURN 5
+    ELSEIF menu = MENU_OPTIONS THEN
+        RETURN 4
+    ELSEIF menu = MENU_HELP THEN
+        RETURN 2
+    ENDIF
+    RETURN 0
+END FUNCTION
+
+FUNCTION ExecuteMenuItem(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
+    DIM currentMenu AS INTEGER = m.MenuOpen
+    m.MenuOpen = MENU_NONE
+
+    IF currentMenu = MENU_FILE THEN
+        IF m.MenuIndex = 0 THEN
+            ' New Project
+            m.DialogMode = DIALOG_NEW_PROJECT
+            m.DialogInput = "Project1"
+            m.DialogCursor = Len(m.DialogInput)
+        ELSEIF m.MenuIndex = 1 THEN
+            ' Open Project
+            m.DialogMode = DIALOG_OPEN_PROJECT
+            m.DialogInput = ""
+            m.DialogCursor = 0
+        ELSEIF m.MenuIndex = 2 THEN
+            ' Save Project
+            IF Len(m.Project.Path) = 0 THEN
+                m.DialogMode = DIALOG_SAVE_PROJECT
+                m.DialogInput = m.Project.Name & ".vdb"
+                m.DialogCursor = Len(m.DialogInput)
+            ELSE
+                SaveProject(@m.Project, m.Project.Path)
+                m.Message = "Project saved"
+            ENDIF
+        ELSEIF m.MenuIndex = 4 THEN
+            ' New Form
+            m.DialogMode = DIALOG_NEW_FORM
+            m.DialogInput = "Form" & Str(Len(m.Project.Forms) + 1)
+            m.DialogCursor = Len(m.DialogInput)
+        ELSEIF m.MenuIndex = 5 THEN
+            ' New Module
+            m.DialogMode = DIALOG_NEW_MODULE
+            m.DialogInput = "Module" & Str(Len(m.Project.Modules) + 1)
+            m.DialogCursor = Len(m.DialogInput)
+        ELSEIF m.MenuIndex = 7 THEN
+            ' Exit
+            IF m.Project.Modified THEN
+                m.DialogMode = DIALOG_CONFIRM_EXIT
+            ELSE
+                RETURN m, tea.Quit
+            ENDIF
+        ENDIF
+    ELSEIF currentMenu = MENU_EDIT THEN
+        IF m.MenuIndex = 7 THEN
+            ' Menu Editor
+            m.DialogMode = DIALOG_MENU_EDITOR
+        ENDIF
+    ELSEIF currentMenu = MENU_VIEW THEN
+        IF m.MenuIndex = 0 THEN
+            m.ViewMode = VIEW_FORM
+        ELSEIF m.MenuIndex = 1 THEN
+            m.ViewMode = VIEW_CODE
+        ELSEIF m.MenuIndex = 3 THEN
+            m.ShowGrid = NOT m.ShowGrid
+        ENDIF
+    ELSEIF currentMenu = MENU_RUN THEN
+        IF m.MenuIndex = 0 THEN
+            RETURN DoRun(m)
+        ELSEIF m.MenuIndex = 1 THEN
+            RETURN DoBuild(m)
+        ENDIF
+    ELSEIF currentMenu = MENU_OPTIONS THEN
+        IF m.MenuIndex = 0 THEN
+            m.DialogMode = DIALOG_ENVIRONMENT
+        ELSEIF m.MenuIndex = 1 THEN
+            m.DialogMode = DIALOG_EDITOR
+        ELSEIF m.MenuIndex = 3 THEN
+            m.DialogMode = DIALOG_COLORS
+        ENDIF
+    ELSEIF currentMenu = MENU_HELP THEN
+        IF m.MenuIndex = 0 THEN
+            m.DialogMode = DIALOG_HELP
+        ELSEIF m.MenuIndex = 1 THEN
+            m.DialogMode = DIALOG_ABOUT
+        ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleToolboxInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF key = "up" THEN
+        IF m.ToolboxIndex > 0 THEN
+            m.ToolboxIndex = m.ToolboxIndex - 1
+        ENDIF
+    ELSEIF key = "down" THEN
+        IF m.ToolboxIndex < 10 THEN
+            m.ToolboxIndex = m.ToolboxIndex + 1
+        ENDIF
+    ELSEIF key = "enter" OR key = " " THEN
+        ' Add control to form
+        IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+            DIM ctlType AS INTEGER = m.ToolboxIndex + 1
+            DIM ctlName AS STRING = GetControlTypeName(ctlType) & Str(m.Project.Forms[m.CurrentFormIdx].NextCtrlID)
+            DIM ctrl AS VDBControl = NewControl(ctlType, ctlName, 5, 5)
+            ctrl.ID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
+            m.Project.Forms[m.CurrentFormIdx].NextCtrlID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID + 1
+            m.Project.Forms[m.CurrentFormIdx].Controls = APPEND(m.Project.Forms[m.CurrentFormIdx].Controls, ctrl)
+            m.SelectedCtrlIdx = Len(m.Project.Forms[m.CurrentFormIdx].Controls) - 1
+            m.Project.Modified = TRUE
+            m.FocusArea = FOCUS_FORM
+            m.Message = "Added " & ctlName
+        ENDIF
+    ENDIF
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleFormInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN m, NIL
+    ENDIF
+
+    DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+
+    IF key = "up" THEN
+        IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < ctrlCount THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y - 1
+            IF m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y < 0 THEN
+                m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = 0
+            ENDIF
+            m.Project.Modified = TRUE
+        ENDIF
+    ELSEIF key = "down" THEN
+        IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < ctrlCount THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y + 1
+            m.Project.Modified = TRUE
+        ENDIF
+    ELSEIF key = "left" THEN
+        IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < ctrlCount THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X - 1
+            IF m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X < 0 THEN
+                m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = 0
+            ENDIF
+            m.Project.Modified = TRUE
+        ENDIF
+    ELSEIF key = "right" THEN
+        IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < ctrlCount THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X + 1
+            m.Project.Modified = TRUE
+        ENDIF
+    ELSEIF key = "pgup" THEN
+        ' Select previous control
+        IF m.SelectedCtrlIdx > 0 THEN
+            m.SelectedCtrlIdx = m.SelectedCtrlIdx - 1
+        ENDIF
+    ELSEIF key = "pgdown" THEN
+        ' Select next control
+        IF m.SelectedCtrlIdx < ctrlCount - 1 THEN
+            m.SelectedCtrlIdx = m.SelectedCtrlIdx + 1
+        ENDIF
+    ELSEIF key = "delete" THEN
+        ' Delete selected control
+        IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < ctrlCount THEN
+            DIM newControls AS []VDBControl
+            DIM i AS INTEGER
+            FOR i = 0 TO ctrlCount - 1
+                IF i <> m.SelectedCtrlIdx THEN
+                    newControls = APPEND(newControls, m.Project.Forms[m.CurrentFormIdx].Controls[i])
+                ENDIF
+            NEXT
+            m.Project.Forms[m.CurrentFormIdx].Controls = newControls
+            IF m.SelectedCtrlIdx >= Len(newControls) THEN
+                m.SelectedCtrlIdx = Len(newControls) - 1
+            ENDIF
+            m.Project.Modified = TRUE
+            m.Message = "Control deleted"
+        ENDIF
+    ELSEIF key = "+" THEN
+        ' Increase width
+        IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < ctrlCount THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width + 1
+            m.Project.Modified = TRUE
+        ENDIF
+    ELSEIF key = "-" THEN
+        ' Decrease width
+        IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < ctrlCount THEN
+            IF m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width > 1 THEN
+                m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width - 1
+                m.Project.Modified = TRUE
+            ENDIF
+        ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleCodeInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN m, NIL
+    ENDIF
+
+    DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
+    DIM totalLines AS INTEGER = CountLines(code)
+    DIM currentLine AS STRING = GetLine(code, m.CodeCursorY + 1)
+    DIM lineLen AS INTEGER = Len(currentLine)
+
+    IF key = "left" THEN
+        IF m.CodeCursorX > 0 THEN
+            m.CodeCursorX = m.CodeCursorX - 1
+        ELSEIF m.CodeCursorY > 0 THEN
+            m.CodeCursorY = m.CodeCursorY - 1
+            m.CodeCursorX = Len(GetLine(code, m.CodeCursorY + 1))
+        ENDIF
+    ELSEIF key = "right" THEN
+        IF m.CodeCursorX < lineLen THEN
+            m.CodeCursorX = m.CodeCursorX + 1
+        ELSEIF m.CodeCursorY < totalLines - 1 THEN
+            m.CodeCursorY = m.CodeCursorY + 1
+            m.CodeCursorX = 0
+        ENDIF
+    ELSEIF key = "up" THEN
+        IF m.CodeCursorY > 0 THEN
+            m.CodeCursorY = m.CodeCursorY - 1
+            DIM upLineLen AS INTEGER = Len(GetLine(code, m.CodeCursorY + 1))
+            IF m.CodeCursorX > upLineLen THEN
+                m.CodeCursorX = upLineLen
+            ENDIF
+        ENDIF
+    ELSEIF key = "down" THEN
+        IF m.CodeCursorY < totalLines - 1 THEN
+            m.CodeCursorY = m.CodeCursorY + 1
+            DIM downLineLen AS INTEGER = Len(GetLine(code, m.CodeCursorY + 1))
+            IF m.CodeCursorX > downLineLen THEN
+                m.CodeCursorX = downLineLen
+            ENDIF
+        ENDIF
+    ELSEIF key = "home" THEN
+        m.CodeCursorX = 0
+    ELSEIF key = "end" THEN
+        m.CodeCursorX = lineLen
+    ELSEIF key = "enter" THEN
+        ' Insert new line
+        m.Project.Forms[m.CurrentFormIdx].Code = InsertCodeNewLine(code, m.CodeCursorY + 1, m.CodeCursorX)
+        m.CodeCursorY = m.CodeCursorY + 1
+        m.CodeCursorX = 0
+        m.Project.Modified = TRUE
+    ELSEIF key = "backspace" THEN
+        IF m.CodeCursorX > 0 THEN
+            m.Project.Forms[m.CurrentFormIdx].Code = DeleteCodeCharAt(code, m.CodeCursorY + 1, m.CodeCursorX - 1)
+            m.CodeCursorX = m.CodeCursorX - 1
+            m.Project.Modified = TRUE
+        ELSEIF m.CodeCursorY > 0 THEN
+            DIM prevLineLen AS INTEGER = Len(GetLine(code, m.CodeCursorY))
+            m.Project.Forms[m.CurrentFormIdx].Code = JoinCodeWithPrevLine(code, m.CodeCursorY + 1)
+            m.CodeCursorY = m.CodeCursorY - 1
+            m.CodeCursorX = prevLineLen
+            m.Project.Modified = TRUE
+        ENDIF
+    ELSEIF Len(key) = 1 THEN
+        ' Insert character
+        m.Project.Forms[m.CurrentFormIdx].Code = InsertCodeCharAt(code, m.CodeCursorY + 1, m.CodeCursorX, key)
+        m.CodeCursorX = m.CodeCursorX + 1
+        m.Project.Modified = TRUE
+    ENDIF
+
+    ' Update scroll position
+    DIM visibleLines AS INTEGER = m.Height - 6
+    IF m.CodeCursorY < m.CodeScrollY THEN
+        m.CodeScrollY = m.CodeCursorY
+    ELSEIF m.CodeCursorY >= m.CodeScrollY + visibleLines THEN
+        m.CodeScrollY = m.CodeCursorY - visibleLines + 1
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandlePropertiesInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF m.PropEditing THEN
+        ' Handle editing mode
+        IF key = "enter" OR key = "esc" THEN
+            IF key = "enter" THEN
+                ' Apply the edited value
+                m = ApplyPropertyEdit(m)
+            ENDIF
+            m.PropEditing = FALSE
+            m.PropEditValue = ""
+        ELSEIF key = "backspace" THEN
+            IF Len(m.PropEditValue) > 0 THEN
+                m.PropEditValue = Left(m.PropEditValue, Len(m.PropEditValue) - 1)
+            ENDIF
+        ELSEIF Len(key) = 1 THEN
+            ' Add character to edit value
+            m.PropEditValue = m.PropEditValue & key
+        ENDIF
+    ELSE
+        ' Handle navigation mode
+        IF key = "up" THEN
+            IF m.PropIndex > 0 THEN
+                m.PropIndex = m.PropIndex - 1
+            ENDIF
+        ELSEIF key = "down" THEN
+            m.PropIndex = m.PropIndex + 1
+        ELSEIF key = "enter" OR key = "f2" THEN
+            ' Start editing - load current value
+            m.PropEditValue = GetCurrentPropertyValue(m)
+            IF Len(m.PropEditValue) > 0 OR CanEditProperty(m) THEN
+                m.PropEditing = TRUE
+            ENDIF
+        ENDIF
+    ENDIF
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION GetCurrentPropertyValue(m AS VDBTermModel) AS STRING
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN ""
+    ENDIF
+
+    IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+        DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
+        IF m.PropIndex = 0 THEN
+            RETURN ctrl.CtlName
+        ELSEIF m.PropIndex = 1 THEN
+            RETURN "" ' Type is read-only
+        ELSEIF m.PropIndex = 2 THEN
+            RETURN ctrl.Caption
+        ELSEIF m.PropIndex = 3 THEN
+            RETURN Str(ctrl.X)
+        ELSEIF m.PropIndex = 4 THEN
+            RETURN Str(ctrl.Y)
+        ELSEIF m.PropIndex = 5 THEN
+            RETURN Str(ctrl.Width)
+        ELSEIF m.PropIndex = 6 THEN
+            RETURN Str(ctrl.Height)
+        ELSEIF m.PropIndex = 7 THEN
+            RETURN IIFStr(ctrl.Enabled, "True", "False")
+        ELSEIF m.PropIndex = 8 THEN
+            RETURN IIFStr(ctrl.Visible, "True", "False")
+        ELSEIF m.PropIndex = 9 THEN
+            RETURN Str(ctrl.ZOrder)
+        ENDIF
+    ELSE
+        DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+        IF m.PropIndex = 0 THEN
+            RETURN form.Name
+        ELSEIF m.PropIndex = 1 THEN
+            RETURN form.Caption
+        ELSEIF m.PropIndex = 2 THEN
+            RETURN Str(form.Width)
+        ELSEIF m.PropIndex = 3 THEN
+            RETURN Str(form.Height)
+        ENDIF
+    ENDIF
+    RETURN ""
+END FUNCTION
+
+FUNCTION CanEditProperty(m AS VDBTermModel) AS BOOLEAN
+    IF m.SelectedCtrlIdx >= 0 THEN
+        ' Type property (index 1) is read-only
+        RETURN m.PropIndex <> 1
+    ENDIF
+    RETURN TRUE
+END FUNCTION
+
+FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN m
+    ENDIF
+
+    DIM val AS STRING = m.PropEditValue
+
+    IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+        IF m.PropIndex = 0 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].CtlName = val
+        ELSEIF m.PropIndex = 2 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Caption = val
+        ELSEIF m.PropIndex = 3 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = ParseIntStr(val)
+        ELSEIF m.PropIndex = 4 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = ParseIntStr(val)
+        ELSEIF m.PropIndex = 5 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width = ParseIntStr(val)
+        ELSEIF m.PropIndex = 6 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Height = ParseIntStr(val)
+        ELSEIF m.PropIndex = 7 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Enabled = (val = "True" OR val = "true" OR val = "1")
+        ELSEIF m.PropIndex = 8 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Visible = (val = "True" OR val = "true" OR val = "1")
+        ELSEIF m.PropIndex = 9 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ZOrder = ParseIntStr(val)
+        ENDIF
+        m.Project.Modified = TRUE
+    ELSE
+        IF m.PropIndex = 0 THEN
+            m.Project.Forms[m.CurrentFormIdx].Name = val
+        ELSEIF m.PropIndex = 1 THEN
+            m.Project.Forms[m.CurrentFormIdx].Caption = val
+        ELSEIF m.PropIndex = 2 THEN
+            m.Project.Forms[m.CurrentFormIdx].Width = ParseIntStr(val)
+        ELSEIF m.PropIndex = 3 THEN
+            m.Project.Forms[m.CurrentFormIdx].Height = ParseIntStr(val)
+        ENDIF
+        m.Project.Modified = TRUE
+    ENDIF
+
+    RETURN m
+END FUNCTION
+
+FUNCTION HandleProjectInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF key = "up" THEN
+        IF m.TreeIndex > 0 THEN
+            m.TreeIndex = m.TreeIndex - 1
+        ENDIF
+    ELSEIF key = "down" THEN
+        m.TreeIndex = m.TreeIndex + 1
+    ELSEIF key = "enter" THEN
+        ' Select form/module
+        IF m.TreeIndex < Len(m.Project.Forms) THEN
+            m.CurrentFormIdx = m.TreeIndex
+            m.SelectedCtrlIdx = -1
+        ENDIF
+    ENDIF
+    RETURN m, NIL
+END FUNCTION
+
+' ============================================================================
+' MOUSE INPUT HANDLER
+' ============================================================================
+
+FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.Model, tea.Cmd)
+    DIM x AS INTEGER = Int(mouseMsg.X)
+    DIM y AS INTEGER = Int(mouseMsg.Y)
+    DIM action AS tea.MouseAction = mouseMsg.Action
+    DIM button AS tea.MouseButton = mouseMsg.Button
+
+    ' Calculate layout dimensions (same as View())
+    DIM toolboxWidth AS INTEGER = 16
+    DIM propertiesWidth AS INTEGER = 22
+    DIM projectHeight AS INTEGER = 8
+    DIM contentHeight AS INTEGER = m.Height - 4
+    DIM contentWidth AS INTEGER = m.Width - toolboxWidth - propertiesWidth
+    IF contentWidth < 20 THEN
+        contentWidth = 20
+    ENDIF
+
+    ' Handle mouse press events
+    IF action = tea.MouseActionPress AND button = tea.MouseButtonLeft THEN
+        ' Row 0 = Menu bar
+        IF y = 0 THEN
+            RETURN HandleMenuBarClick(m, x)
+        ENDIF
+
+        ' If dropdown menu is open, check for menu item click
+        IF m.MenuOpen <> MENU_NONE THEN
+            DIM dropOffset AS INTEGER = GetMenuOffset(m.MenuOpen)
+            DIM dropWidth AS INTEGER = 20
+            DIM dropRow AS INTEGER = y - 1
+
+            IF x >= dropOffset AND x < dropOffset + dropWidth AND dropRow >= 0 THEN
+                RETURN HandleDropdownClick(m, dropRow)
+            ELSE
+                ' Click outside dropdown closes it
+                m.MenuOpen = MENU_NONE
+                RETURN m, NIL
+            ENDIF
+        ENDIF
+
+        ' If dialog is open, handle dialog clicks
+        IF m.DialogMode <> DIALOG_NONE THEN
+            ' For now, just allow Escape to close (no mouse handling in dialogs)
+            RETURN m, NIL
+        ENDIF
+
+        ' Adjust y for content area (subtract 1 for menu bar)
+        DIM contentY AS INTEGER = y - 1
+
+        ' Check which panel was clicked
+        IF x < toolboxWidth THEN
+            ' Left column: Toolbox (top) or Project Tree (bottom)
+            IF contentY < contentHeight - projectHeight THEN
+                ' Toolbox panel
+                RETURN HandleToolboxClick(m, contentY)
+            ELSE
+                ' Project tree
+                DIM localY AS INTEGER = contentY - (contentHeight - projectHeight)
+                RETURN HandleProjectClick(m, localY)
+            ENDIF
+        ELSEIF x < toolboxWidth + contentWidth THEN
+            ' Main content area (full height)
+            DIM localX AS INTEGER = x - toolboxWidth
+            IF m.ViewMode = VIEW_FORM THEN
+                RETURN HandleFormClick(m, localX, contentY)
+            ELSE
+                RETURN HandleCodeClick(m, localX, contentY)
+            ENDIF
+        ELSE
+            ' Properties panel
+            RETURN HandlePropertiesClick(m, contentY)
+        ENDIF
+
+    ' Handle mouse drag for moving controls in form view
+    ELSEIF action = tea.MouseActionMotion AND m.IsDragging THEN
+        IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+            DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+            IF m.SelectedCtrlIdx < ctrlCount THEN
+                DIM dragContentY AS INTEGER = y - 1
+                DIM dragLocalX AS INTEGER = x - toolboxWidth
+
+                DIM newX AS INTEGER = dragLocalX - m.DragStartX
+                DIM newY AS INTEGER = dragContentY - m.DragStartY
+
+                IF newX < 0 THEN
+                    newX = 0
+                ENDIF
+                IF newY < 0 THEN
+                    newY = 0
+                ENDIF
+
+                m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = newX
+                m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = newY
+                m.Project.Modified = TRUE
+            ENDIF
+        ENDIF
+
+    ' Handle mouse release
+    ELSEIF action = tea.MouseActionRelease THEN
+        IF m.IsDragging THEN
+            m.IsDragging = FALSE
+            m.Message = "Control moved"
+        ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleMenuBarClick(m AS VDBTermModel, x AS INTEGER) AS (tea.Model, tea.Cmd)
+    ' Menu positions: File(0-5), Edit(6-11), View(12-17), Run(18-22), Debug(23-29), Options(30-38), Help(39-45)
+    IF x >= 0 AND x < 6 THEN
+        m.MenuOpen = MENU_FILE
+        m.MenuIndex = 0
+    ELSEIF x >= 6 AND x < 12 THEN
+        m.MenuOpen = MENU_EDIT
+        m.MenuIndex = 0
+    ELSEIF x >= 12 AND x < 18 THEN
+        m.MenuOpen = MENU_VIEW
+        m.MenuIndex = 0
+    ELSEIF x >= 18 AND x < 23 THEN
+        m.MenuOpen = MENU_RUN
+        m.MenuIndex = 0
+    ELSEIF x >= 23 AND x < 30 THEN
+        m.MenuOpen = MENU_DEBUG
+        m.MenuIndex = 0
+    ELSEIF x >= 30 AND x < 39 THEN
+        m.MenuOpen = MENU_OPTIONS
+        m.MenuIndex = 0
+    ELSEIF x >= 39 AND x < 46 THEN
+        m.MenuOpen = MENU_HELP
+        m.MenuIndex = 0
+    ELSE
+        m.MenuOpen = MENU_NONE
+    ENDIF
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleDropdownClick(m AS VDBTermModel, row AS INTEGER) AS (tea.Model, tea.Cmd)
+    ' Row 0 is the top border, so actual menu items start at row 1
+    DIM itemIdx AS INTEGER = row - 1
+
+    IF itemIdx < 0 THEN
+        RETURN m, NIL
+    ENDIF
+
+    ' Determine valid menu item indices based on current menu
+    DIM maxItems AS INTEGER
+
+    IF m.MenuOpen = MENU_FILE THEN
+        maxItems = 8
+        ' Items: 0=New Project, 1=Open, 2=Save, 3=separator, 4=New Form, 5=New Module, 6=separator, 7=Exit
+        IF itemIdx = 3 OR itemIdx = 6 THEN
+            RETURN m, NIL ' Separator clicked
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_EDIT THEN
+        maxItems = 8
+        ' Items: 0=Cut, 1=Copy, 2=Paste, 3=separator, 4=Select All, 5=Delete, 6=separator, 7=Menu Editor
+        IF itemIdx = 3 OR itemIdx = 6 THEN
+            RETURN m, NIL ' Separator clicked
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_VIEW THEN
+        maxItems = 5
+        ' Items: 0=Form View, 1=Code View, 2=separator, 3=Show Grid, 4=Line Numbers
+        IF itemIdx = 2 THEN
+            RETURN m, NIL ' Separator clicked
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_RUN THEN
+        maxItems = 4
+        ' Items: 0=Run, 1=Build, 2=separator, 3=Set Startup
+        IF itemIdx = 2 THEN
+            RETURN m, NIL ' Separator clicked
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_DEBUG THEN
+        maxItems = 5
+        ' Items: 0=Step, 1=Breakpoint, 2=Watch, 3=separator, 4=Clear All
+        IF itemIdx = 3 THEN
+            RETURN m, NIL ' Separator clicked
+        ENDIF
+    ELSEIF m.MenuOpen = MENU_OPTIONS THEN
+        maxItems = 4
+        ' Items: 0=Environment, 1=Editor, 2=Colors, 3=Compiler
+    ELSEIF m.MenuOpen = MENU_HELP THEN
+        maxItems = 3
+        ' Items: 0=Contents, 1=separator, 2=About
+        IF itemIdx = 1 THEN
+            RETURN m, NIL ' Separator clicked
+        ENDIF
+    ELSE
+        RETURN m, NIL
+    ENDIF
+
+    IF itemIdx >= maxItems THEN
+        RETURN m, NIL
+    ENDIF
+
+    ' Set menu index and simulate Enter key to execute menu action
+    m.MenuIndex = itemIdx
+    RETURN HandleMenuInput(m, "enter")
+END FUNCTION
+
+FUNCTION HandleToolboxClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.Cmd)
+    m.FocusArea = FOCUS_TOOLBOX
+
+    ' Row 0 is the title, items start at row 1
+    DIM itemIdx AS INTEGER = y - 1
+    IF itemIdx >= 0 AND itemIdx <= 10 THEN
+        m.ToolboxIndex = itemIdx
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.Model, tea.Cmd)
+    m.FocusArea = FOCUS_FORM
+
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN m, NIL
+    ENDIF
+
+    DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+
+    ' Check if click is on a control (iterate in reverse to get topmost first)
+    DIM i AS INTEGER
+    FOR i = ctrlCount - 1 TO 0 STEP -1
+        DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[i]
+        IF x >= ctrl.X AND x < ctrl.X + ctrl.Width AND y >= ctrl.Y AND y < ctrl.Y + ctrl.Height THEN
+            m.SelectedCtrlIdx = i
+            ' Start drag operation
+            m.IsDragging = TRUE
+            m.DragStartX = x - ctrl.X
+            m.DragStartY = y - ctrl.Y
+            m.Message = "Selected: " & ctrl.CtlName
+            RETURN m, NIL
+        ENDIF
+    NEXT
+
+    ' Clicked on empty area - deselect
+    m.SelectedCtrlIdx = -1
+    m.Message = ""
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleCodeClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.Model, tea.Cmd)
+    m.FocusArea = FOCUS_CODE
+
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN m, NIL
+    ENDIF
+
+    DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
+    DIM totalLines AS INTEGER = CountLines(code)
+
+    ' Adjust for line numbers if shown
+    DIM textX AS INTEGER = x
+    IF m.ShowLineNumbers THEN
+        textX = x - 5  ' Line number column width
+        IF textX < 0 THEN
+            textX = 0
+        ENDIF
+    ENDIF
+
+    ' Set cursor position
+    DIM targetLine AS INTEGER = y + m.CodeScrollY
+    IF targetLine >= totalLines THEN
+        targetLine = totalLines - 1
+    ENDIF
+    IF targetLine < 0 THEN
+        targetLine = 0
+    ENDIF
+
+    DIM lineText AS STRING = GetLine(code, targetLine + 1)
+    DIM targetCol AS INTEGER = textX + m.CodeScrollX
+    IF targetCol > Len(lineText) THEN
+        targetCol = Len(lineText)
+    ENDIF
+    IF targetCol < 0 THEN
+        targetCol = 0
+    ENDIF
+
+    m.CodeCursorY = targetLine
+    m.CodeCursorX = targetCol
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandlePropertiesClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.Cmd)
+    m.FocusArea = FOCUS_PROPERTIES
+
+    ' Row 0 is the title, properties start at row 1
+    IF y >= 1 THEN
+        DIM newPropIndex AS INTEGER = y - 1
+
+        ' If clicking on a different property while editing, cancel current edit
+        IF m.PropEditing AND newPropIndex <> m.PropIndex THEN
+            m.PropEditing = FALSE
+            m.PropEditValue = ""
+        ENDIF
+
+        m.PropIndex = newPropIndex
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleProjectClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.Cmd)
+    m.FocusArea = FOCUS_PROJECT
+
+    ' Row 0 is the title, items start at row 1
+    DIM itemIdx AS INTEGER = y - 1
+    IF itemIdx >= 0 THEN
+        m.TreeIndex = itemIdx
+        ' If clicking on a form, select it
+        IF itemIdx < Len(m.Project.Forms) THEN
+            m.CurrentFormIdx = itemIdx
+            m.SelectedCtrlIdx = -1
+        ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION

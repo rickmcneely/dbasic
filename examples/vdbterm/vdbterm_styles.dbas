@@ -1,0 +1,93 @@
+' VDBTerm Styles
+' Lipgloss style definitions for the UI
+
+DIM styleMenuBar AS lipgloss.Style
+DIM styleMenuSelected AS lipgloss.Style
+DIM styleMenuHotkey AS lipgloss.Style
+DIM styleMenuHotkeySelected AS lipgloss.Style
+DIM styleDropdown AS lipgloss.Style
+DIM styleDropdownSelected AS lipgloss.Style
+DIM styleDropdownHotkey AS lipgloss.Style
+DIM styleDropdownHotkeySelected AS lipgloss.Style
+DIM styleToolbox AS lipgloss.Style
+DIM styleToolboxSelected AS lipgloss.Style
+DIM styleFormCanvas AS lipgloss.Style
+DIM styleFormGrid AS lipgloss.Style
+DIM styleControl AS lipgloss.Style
+DIM styleControlSelected AS lipgloss.Style
+DIM styleCodeEditor AS lipgloss.Style
+DIM styleCodeLineNum AS lipgloss.Style
+DIM styleCodeCursor AS lipgloss.Style
+DIM styleCodeKeyword AS lipgloss.Style
+DIM styleCodeString AS lipgloss.Style
+DIM styleCodeComment AS lipgloss.Style
+DIM styleCodeNumber AS lipgloss.Style
+DIM styleProperties AS lipgloss.Style
+DIM stylePropName AS lipgloss.Style
+DIM stylePropValue AS lipgloss.Style
+DIM stylePropSelected AS lipgloss.Style
+DIM styleProjectTree AS lipgloss.Style
+DIM styleTreeItem AS lipgloss.Style
+DIM styleTreeSelected AS lipgloss.Style
+DIM styleStatusBar AS lipgloss.Style
+DIM styleDialog AS lipgloss.Style
+DIM styleDialogTitle AS lipgloss.Style
+DIM styleDialogButton AS lipgloss.Style
+DIM styleDialogButtonSelected AS lipgloss.Style
+
+SUB InitStyles()
+    ' Modern dark theme with blue accents
+
+    ' Menu bar - dark gray with white text
+    styleMenuBar = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("252"))
+    styleMenuSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255"))
+    styleMenuHotkey = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("214"))
+    styleMenuHotkeySelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("214"))
+
+    ' Dropdown menus
+    styleDropdown = lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("252"))
+    styleDropdownSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255"))
+    styleDropdownHotkey = lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("214"))
+    styleDropdownHotkeySelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("214"))
+
+    ' Toolbox panel
+    styleToolbox = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("250"))
+    styleToolboxSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255"))
+
+    ' Form canvas
+    styleFormCanvas = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("252"))
+    styleFormGrid = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("238"))
+
+    ' Controls
+    styleControl = lipgloss.NewStyle().Background(lipgloss.Color("240")).Foreground(lipgloss.Color("232"))
+    styleControlSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255")).Bold(TRUE)
+
+    ' Code editor
+    styleCodeEditor = lipgloss.NewStyle().Background(lipgloss.Color("234")).Foreground(lipgloss.Color("252"))
+    styleCodeLineNum = lipgloss.NewStyle().Background(lipgloss.Color("234")).Foreground(lipgloss.Color("241"))
+    styleCodeCursor = lipgloss.NewStyle().Background(lipgloss.Color("252")).Foreground(lipgloss.Color("234"))
+    styleCodeKeyword = lipgloss.NewStyle().Background(lipgloss.Color("234")).Foreground(lipgloss.Color("33")).Bold(TRUE)
+    styleCodeString = lipgloss.NewStyle().Background(lipgloss.Color("234")).Foreground(lipgloss.Color("113"))
+    styleCodeComment = lipgloss.NewStyle().Background(lipgloss.Color("234")).Foreground(lipgloss.Color("242"))
+    styleCodeNumber = lipgloss.NewStyle().Background(lipgloss.Color("234")).Foreground(lipgloss.Color("141"))
+
+    ' Properties panel
+    styleProperties = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252"))
+    stylePropName = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("250"))
+    stylePropValue = lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("252"))
+    stylePropSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255"))
+
+    ' Project tree
+    styleProjectTree = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252"))
+    styleTreeItem = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("250"))
+    styleTreeSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255"))
+
+    ' Status bar
+    styleStatusBar = lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("255"))
+
+    ' Dialogs
+    styleDialog = lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("252"))
+    styleDialogTitle = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255")).Padding(0, 1)
+    styleDialogButton = lipgloss.NewStyle().Background(lipgloss.Color("240")).Foreground(lipgloss.Color("232")).Padding(0, 2)
+    styleDialogButtonSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255")).Padding(0, 2)
+END SUB

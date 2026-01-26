@@ -1,0 +1,121 @@
+' VDBTerm Type Definitions
+' Data structures for controls, forms, modules, projects, and the main model
+
+' Control definition
+TYPE VDBControl
+    DIM ID AS INTEGER
+    DIM CtlType AS INTEGER
+    DIM CtlName AS STRING
+    DIM Caption AS STRING
+    DIM X AS INTEGER
+    DIM Y AS INTEGER
+    DIM Width AS INTEGER
+    DIM Height AS INTEGER
+    ' Expression strings for variable-based positioning/sizing
+    DIM XExpr AS STRING
+    DIM YExpr AS STRING
+    DIM WidthExpr AS STRING
+    DIM HeightExpr AS STRING
+    DIM Enabled AS BOOLEAN
+    DIM Visible AS BOOLEAN
+    DIM TabIndex AS INTEGER
+    DIM ZOrder AS INTEGER
+    DIM Value AS STRING
+    DIM ForeColor AS INTEGER
+    DIM BackColor AS INTEGER
+END TYPE
+
+' Form definition
+TYPE VDBForm
+    DIM Name AS STRING
+    DIM Caption AS STRING
+    DIM Width AS INTEGER
+    DIM Height AS INTEGER
+    DIM BackColor AS INTEGER
+    DIM Controls AS []VDBControl
+    DIM Code AS STRING
+    DIM NextCtrlID AS INTEGER
+END TYPE
+
+' Module definition (code-only file)
+TYPE VDBModule
+    DIM Name AS STRING
+    DIM Code AS STRING
+END TYPE
+
+' Project definition
+TYPE VDBProject
+    DIM Name AS STRING
+    DIM Path AS STRING
+    DIM StartupForm AS STRING
+    DIM Forms AS []VDBForm
+    DIM Modules AS []VDBModule
+    DIM Modified AS BOOLEAN
+END TYPE
+
+' Main application model
+TYPE VDBTermModel IMPLEMENTS tea.Model
+    ' Screen dimensions
+    DIM Width AS INTEGER
+    DIM Height AS INTEGER
+
+    ' Current project
+    DIM Project AS VDBProject
+    DIM ProjectLoaded AS BOOLEAN
+
+    ' View state
+    DIM ViewMode AS INTEGER
+    DIM FocusArea AS INTEGER
+
+    ' Form designer state
+    DIM CurrentFormIdx AS INTEGER
+    DIM SelectedCtrlIdx AS INTEGER
+    DIM ToolboxIndex AS INTEGER
+    DIM FormScrollX AS INTEGER
+    DIM FormScrollY AS INTEGER
+    DIM IsDragging AS BOOLEAN
+    DIM DragStartX AS INTEGER
+    DIM DragStartY AS INTEGER
+
+    ' Code editor state
+    DIM CodeCursorX AS INTEGER
+    DIM CodeCursorY AS INTEGER
+    DIM CodeScrollX AS INTEGER
+    DIM CodeScrollY AS INTEGER
+    DIM CodeSelecting AS BOOLEAN
+    DIM CodeSelStartX AS INTEGER
+    DIM CodeSelStartY AS INTEGER
+    DIM CodeClipboard AS STRING
+
+    ' Property inspector state
+    DIM PropIndex AS INTEGER
+    DIM PropEditing AS BOOLEAN
+    DIM PropEditValue AS STRING
+
+    ' Project tree state
+    DIM TreeIndex AS INTEGER
+    DIM TreeExpanded AS []BOOLEAN
+
+    ' Menu state
+    DIM MenuOpen AS INTEGER
+    DIM MenuIndex AS INTEGER
+
+    ' Dialog state
+    DIM DialogMode AS INTEGER
+    DIM DialogInput AS STRING
+    DIM DialogInput2 AS STRING
+    DIM DialogCursor AS INTEGER
+    DIM DialogField AS INTEGER
+
+    ' Status
+    DIM Message AS STRING
+    DIM ErrorMsg AS STRING
+
+    ' Options
+    DIM ShowGrid AS BOOLEAN
+    DIM GridSize AS INTEGER
+    DIM SnapToGrid AS BOOLEAN
+    DIM ShowLineNumbers AS BOOLEAN
+    DIM TabSize AS INTEGER
+    DIM AutoIndent AS BOOLEAN
+END TYPE

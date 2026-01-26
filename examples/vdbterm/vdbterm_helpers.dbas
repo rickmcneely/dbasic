@@ -1,0 +1,361 @@
+' VDBTerm Helper Functions
+' String utilities, expression evaluation, and other helper functions
+
+FUNCTION RepeatStr(ch AS STRING, count AS INTEGER) AS STRING
+    DIM result AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 1 TO count
+        result = result & ch
+    NEXT
+    RETURN result
+END FUNCTION
+
+FUNCTION PadRight(s AS STRING, width AS INTEGER) AS STRING
+    IF Len(s) >= width THEN
+        RETURN Left(s, width)
+    ENDIF
+    RETURN s & RepeatStr(" ", width - Len(s))
+END FUNCTION
+
+FUNCTION IIFStr(cond AS BOOLEAN, trueVal AS STRING, falseVal AS STRING) AS STRING
+    IF cond THEN
+        RETURN trueVal
+    ENDIF
+    RETURN falseVal
+END FUNCTION
+
+FUNCTION PadCenter(s AS STRING, width AS INTEGER) AS STRING
+    IF Len(s) >= width THEN
+        RETURN Left(s, width)
+    ENDIF
+    DIM padding AS INTEGER = (width - Len(s)) / 2
+    RETURN RepeatStr(" ", padding) & s & RepeatStr(" ", width - Len(s) - padding)
+END FUNCTION
+
+FUNCTION MinInt(a AS INTEGER, b AS INTEGER) AS INTEGER
+    IF a < b THEN
+        RETURN a
+    ENDIF
+    RETURN b
+END FUNCTION
+
+FUNCTION MaxInt(a AS INTEGER, b AS INTEGER) AS INTEGER
+    IF a > b THEN
+        RETURN a
+    ENDIF
+    RETURN b
+END FUNCTION
+
+' Count lines in a string
+FUNCTION CountLines(content AS STRING) AS INTEGER
+    IF Len(content) = 0 THEN
+        RETURN 1
+    ENDIF
+    DIM count AS INTEGER = 1
+    DIM i AS INTEGER
+    FOR i = 1 TO Len(content)
+        IF Mid(content, i, 1) = Chr(10) THEN
+            count = count + 1
+        ENDIF
+    NEXT
+    RETURN count
+END FUNCTION
+
+' Get a specific line (1-indexed)
+FUNCTION GetLine(content AS STRING, lineNum AS INTEGER) AS STRING
+    IF Len(content) = 0 THEN
+        RETURN ""
+    ENDIF
+    DIM currentLine AS INTEGER = 1
+    DIM startPos AS INTEGER = 1
+    DIM i AS INTEGER
+
+    FOR i = 1 TO Len(content)
+        IF currentLine = lineNum THEN
+            startPos = i
+            EXIT FOR
+        ENDIF
+        IF Mid(content, i, 1) = Chr(10) THEN
+            currentLine = currentLine + 1
+        ENDIF
+    NEXT
+
+    IF currentLine < lineNum THEN
+        RETURN ""
+    ENDIF
+
+    DIM result AS STRING = ""
+    FOR i = startPos TO Len(content)
+        DIM ch AS STRING = Mid(content, i, 1)
+        IF ch = Chr(10) THEN
+            EXIT FOR
+        ENDIF
+        result = result & ch
+    NEXT
+    RETURN result
+END FUNCTION
+
+' Get control type name
+FUNCTION GetControlTypeName(ctlType AS INTEGER) AS STRING
+    IF ctlType = CTRL_FORM THEN
+        RETURN "Form"
+    ELSEIF ctlType = CTRL_BUTTON THEN
+        RETURN "Button"
+    ELSEIF ctlType = CTRL_LABEL THEN
+        RETURN "Label"
+    ELSEIF ctlType = CTRL_TEXTBOX THEN
+        RETURN "TextBox"
+    ELSEIF ctlType = CTRL_CHECKBOX THEN
+        RETURN "CheckBox"
+    ELSEIF ctlType = CTRL_OPTION THEN
+        RETURN "Option"
+    ELSEIF ctlType = CTRL_LISTBOX THEN
+        RETURN "ListBox"
+    ELSEIF ctlType = CTRL_COMBOBOX THEN
+        RETURN "ComboBox"
+    ELSEIF ctlType = CTRL_FRAME THEN
+        RETURN "Frame"
+    ELSEIF ctlType = CTRL_HSCROLL THEN
+        RETURN "HScrollBar"
+    ELSEIF ctlType = CTRL_VSCROLL THEN
+        RETURN "VScrollBar"
+    ELSEIF ctlType = CTRL_TIMER THEN
+        RETURN "Timer"
+    ENDIF
+    RETURN "Unknown"
+END FUNCTION
+
+' Get toolbox icon for control type
+FUNCTION GetToolboxIcon(ctlType AS INTEGER) AS STRING
+    IF ctlType = CTRL_BUTTON THEN
+        RETURN "[Btn]"
+    ELSEIF ctlType = CTRL_LABEL THEN
+        RETURN " Lbl "
+    ELSEIF ctlType = CTRL_TEXTBOX THEN
+        RETURN "[___]"
+    ELSEIF ctlType = CTRL_CHECKBOX THEN
+        RETURN "[X] "
+    ELSEIF ctlType = CTRL_OPTION THEN
+        RETURN "(o) "
+    ELSEIF ctlType = CTRL_LISTBOX THEN
+        RETURN "[=] "
+    ELSEIF ctlType = CTRL_COMBOBOX THEN
+        RETURN "[v] "
+    ELSEIF ctlType = CTRL_FRAME THEN
+        RETURN "[-] "
+    ELSEIF ctlType = CTRL_HSCROLL THEN
+        RETURN "<=> "
+    ELSEIF ctlType = CTRL_VSCROLL THEN
+        RETURN "[|] "
+    ELSEIF ctlType = CTRL_TIMER THEN
+        RETURN " T  "
+    ENDIF
+    RETURN "??? "
+END FUNCTION
+
+' Replace all occurrences of a substring
+FUNCTION ReplaceAll(s AS STRING, old AS STRING, new AS STRING) AS STRING
+    DIM result AS STRING = ""
+    DIM i AS INTEGER = 1
+    DIM oldLen AS INTEGER = Len(old)
+
+    WHILE i <= Len(s)
+        IF Mid(s, i, oldLen) = old THEN
+            result = result & new
+            i = i + oldLen
+        ELSE
+            result = result & Mid(s, i, 1)
+            i = i + 1
+        ENDIF
+    WEND
+
+    RETURN result
+END FUNCTION
+
+' Trim whitespace from both ends of a string
+FUNCTION TrimStr(s AS STRING) AS STRING
+    DIM startIdx AS INTEGER = 1
+    DIM endIdx AS INTEGER = Len(s)
+
+    WHILE startIdx <= endIdx AND Mid(s, startIdx, 1) = " "
+        startIdx = startIdx + 1
+    WEND
+
+    WHILE endIdx >= startIdx AND Mid(s, endIdx, 1) = " "
+        endIdx = endIdx - 1
+    WEND
+
+    IF startIdx > endIdx THEN
+        RETURN ""
+    ENDIF
+
+    RETURN Mid(s, startIdx, endIdx - startIdx + 1)
+END FUNCTION
+
+' Parse an integer from a string
+FUNCTION ParseIntStr(s AS STRING) AS INTEGER
+    DIM result AS INTEGER = 0
+    DIM negative AS BOOLEAN = FALSE
+    DIM i AS INTEGER = 1
+
+    IF Len(s) = 0 THEN
+        RETURN 0
+    ENDIF
+
+    IF Mid(s, 1, 1) = "-" THEN
+        negative = TRUE
+        i = 2
+    ELSEIF Mid(s, 1, 1) = "+" THEN
+        i = 2
+    ENDIF
+
+    WHILE i <= Len(s)
+        DIM ch AS STRING = Mid(s, i, 1)
+        DIM digit AS INTEGER = Asc(ch) - 48
+        IF digit >= 0 AND digit <= 9 THEN
+            result = result * 10 + digit
+        ELSE
+            EXIT WHILE
+        ENDIF
+        i = i + 1
+    WEND
+
+    IF negative THEN
+        result = -result
+    ENDIF
+
+    RETURN result
+END FUNCTION
+
+' Check if a string is a valid integer
+FUNCTION IsNumericStr(s AS STRING) AS BOOLEAN
+    IF Len(s) = 0 THEN
+        RETURN FALSE
+    ENDIF
+
+    DIM startIdx AS INTEGER = 1
+    IF Mid(s, 1, 1) = "-" OR Mid(s, 1, 1) = "+" THEN
+        startIdx = 2
+    ENDIF
+
+    IF startIdx > Len(s) THEN
+        RETURN FALSE
+    ENDIF
+
+    DIM i AS INTEGER
+    FOR i = startIdx TO Len(s)
+        DIM ch AS STRING = Mid(s, i, 1)
+        DIM code AS INTEGER = Asc(ch)
+        IF code < 48 OR code > 57 THEN
+            RETURN FALSE
+        ENDIF
+    NEXT
+
+    RETURN TRUE
+END FUNCTION
+
+' Evaluate a numeric expression that may contain reserved variables
+' Returns the evaluated integer value, or the fallback if expression is empty or invalid
+FUNCTION EvalExpr(expr AS STRING, m AS VDBTermModel, fallback AS INTEGER) AS INTEGER
+    IF Len(expr) = 0 THEN
+        RETURN fallback
+    ENDIF
+
+    ' Calculate layout dimensions for variable substitution
+    DIM toolboxW AS INTEGER = 16
+    DIM propertiesW AS INTEGER = 22
+    DIM projectH AS INTEGER = 8
+    DIM contentW AS INTEGER = m.Width - toolboxW - propertiesW
+    DIM contentH AS INTEGER = m.Height - 4
+    DIM formW AS INTEGER = 80
+    DIM formH AS INTEGER = 25
+
+    IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+        formW = m.Project.Forms[m.CurrentFormIdx].Width
+        formH = m.Project.Forms[m.CurrentFormIdx].Height
+    ENDIF
+
+    ' Replace reserved variables with their values
+    DIM result AS STRING = expr
+
+    ' Screen/Window variables
+    result = ReplaceAll(result, "$SCREEN_WIDTH", Str(m.Width))
+    result = ReplaceAll(result, "$SCREEN_HEIGHT", Str(m.Height))
+    result = ReplaceAll(result, "$FORM_WIDTH", Str(formW))
+    result = ReplaceAll(result, "$FORM_HEIGHT", Str(formH))
+    result = ReplaceAll(result, "$CONTENT_WIDTH", Str(contentW))
+    result = ReplaceAll(result, "$CONTENT_HEIGHT", Str(contentH))
+
+    ' Layout constants
+    result = ReplaceAll(result, "$TOOLBOX_WIDTH", Str(toolboxW))
+    result = ReplaceAll(result, "$PROPERTIES_WIDTH", Str(propertiesW))
+    result = ReplaceAll(result, "$PROJECT_HEIGHT", Str(projectH))
+
+    ' Try to evaluate as simple expression
+    RETURN EvalSimpleExpr(result, fallback)
+END FUNCTION
+
+' Evaluate a simple arithmetic expression (supports +, -, *, /)
+' This is a basic evaluator for expressions like "100 - 20" or "50 / 2"
+FUNCTION EvalSimpleExpr(expr AS STRING, fallback AS INTEGER) AS INTEGER
+    DIM trimmed AS STRING = TrimStr(expr)
+
+    ' Try to parse as plain integer first
+    IF IsNumericStr(trimmed) THEN
+        RETURN ParseIntStr(trimmed)
+    ENDIF
+
+    ' Look for operators (process in order of precedence, right to left for +/-)
+    DIM i AS INTEGER
+    DIM depth AS INTEGER = 0
+
+    ' Find + or - (lowest precedence, scan right to left)
+    FOR i = Len(trimmed) TO 1 STEP -1
+        DIM ch AS STRING = Mid(trimmed, i, 1)
+        IF ch = "(" THEN
+            depth = depth + 1
+        ELSEIF ch = ")" THEN
+            depth = depth - 1
+        ELSEIF depth = 0 AND (ch = "+" OR ch = "-") AND i > 1 THEN
+            DIM lhs AS STRING = TrimStr(Left(trimmed, i - 1))
+            DIM rhs AS STRING = TrimStr(Mid(trimmed, i + 1, Len(trimmed) - i))
+            DIM lhsVal AS INTEGER = EvalSimpleExpr(lhs, 0)
+            DIM rhsVal AS INTEGER = EvalSimpleExpr(rhs, 0)
+            IF ch = "+" THEN
+                RETURN lhsVal + rhsVal
+            ELSE
+                RETURN lhsVal - rhsVal
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' Find * or / (higher precedence, scan right to left)
+    depth = 0
+    FOR i = Len(trimmed) TO 1 STEP -1
+        DIM ch2 AS STRING = Mid(trimmed, i, 1)
+        IF ch2 = "(" THEN
+            depth = depth + 1
+        ELSEIF ch2 = ")" THEN
+            depth = depth - 1
+        ELSEIF depth = 0 AND (ch2 = "*" OR ch2 = "/") THEN
+            DIM lhs2 AS STRING = TrimStr(Left(trimmed, i - 1))
+            DIM rhs2 AS STRING = TrimStr(Mid(trimmed, i + 1, Len(trimmed) - i))
+            DIM lhsVal2 AS INTEGER = EvalSimpleExpr(lhs2, 0)
+            DIM rhsVal2 AS INTEGER = EvalSimpleExpr(rhs2, 0)
+            IF ch2 = "*" THEN
+                RETURN lhsVal2 * rhsVal2
+            ELSEIF rhsVal2 <> 0 THEN
+                RETURN lhsVal2 / rhsVal2
+            ELSE
+                RETURN fallback
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' Handle parentheses
+    IF Left(trimmed, 1) = "(" AND Right(trimmed, 1) = ")" THEN
+        RETURN EvalSimpleExpr(Mid(trimmed, 2, Len(trimmed) - 2), fallback)
+    ENDIF
+
+    RETURN fallback
+END FUNCTION

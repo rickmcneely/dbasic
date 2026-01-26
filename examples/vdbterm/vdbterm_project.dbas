@@ -1,0 +1,329 @@
+' VDBTerm Project Operations
+' Project, form, module, and control creation, serialization, and code generation
+
+FUNCTION NewProject(name AS STRING) AS VDBProject
+    DIM proj AS VDBProject
+    proj.Name = name
+    proj.Path = ""
+    proj.StartupForm = "Form1"
+    proj.Modified = FALSE
+
+    ' Create default form with sample controls
+    DIM form AS VDBForm
+    form.Name = "Form1"
+    form.Caption = "VDBTerm Demo Form"
+    form.Width = 60
+    form.Height = 20
+    form.BackColor = 7
+    form.Code = "' Form1 Code - VDBTerm Demo" & Chr(10) & Chr(10)
+    form.Code = form.Code & "' This form demonstrates various VDBTerm controls" & Chr(10)
+    form.Code = form.Code & "' Use arrow keys to move controls, +/- to resize" & Chr(10)
+    form.Code = form.Code & "' Click with mouse to select and drag controls" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB Form_Load()" & Chr(10)
+    form.Code = form.Code & "    ' Initialize form controls" & Chr(10)
+    form.Code = form.Code & "    lblTitle.Caption = " & Chr(34) & "Welcome to VDBTerm!" & Chr(34) & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB btnOK_Click()" & Chr(10)
+    form.Code = form.Code & "    ' Handle OK button click" & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10)
+    form.NextCtrlID = 1
+
+    ' Add sample controls to demonstrate features
+    DIM ctrl AS VDBControl
+
+    ' Title label at top
+    ctrl = NewControl(CTRL_LABEL, "lblTitle", 2, 1)
+    ctrl.Caption = "VDBTerm Demo"
+    ctrl.Width = 20
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    ' Text input field
+    ctrl = NewControl(CTRL_TEXTBOX, "txtInput", 2, 3)
+    ctrl.Width = 25
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    ' Buttons
+    ctrl = NewControl(CTRL_BUTTON, "btnOK", 2, 5)
+    ctrl.Caption = "OK"
+    ctrl.Width = 10
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    ctrl = NewControl(CTRL_BUTTON, "btnCancel", 14, 5)
+    ctrl.Caption = "Cancel"
+    ctrl.Width = 10
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    ' Checkbox
+    ctrl = NewControl(CTRL_CHECKBOX, "chkOption", 2, 8)
+    ctrl.Caption = "Enable feature"
+    ctrl.Width = 18
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    ' Option buttons
+    ctrl = NewControl(CTRL_OPTION, "optChoice1", 2, 10)
+    ctrl.Caption = "Option A"
+    ctrl.Width = 12
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    ctrl = NewControl(CTRL_OPTION, "optChoice2", 2, 11)
+    ctrl.Caption = "Option B"
+    ctrl.Width = 12
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    ' ListBox
+    ctrl = NewControl(CTRL_LISTBOX, "lstItems", 30, 3)
+    ctrl.Width = 18
+    ctrl.Height = 6
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    ' Frame to group controls
+    ctrl = NewControl(CTRL_FRAME, "fraGroup", 28, 1)
+    ctrl.Caption = "Options"
+    ctrl.Width = 22
+    ctrl.Height = 10
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    proj.Forms = APPEND(proj.Forms, form)
+    RETURN proj
+END FUNCTION
+
+FUNCTION NewForm(name AS STRING) AS VDBForm
+    DIM form AS VDBForm
+    form.Name = name
+    form.Caption = name
+    form.Width = 60
+    form.Height = 20
+    form.BackColor = 7
+    form.Code = "' " & name & " Code" & Chr(10) & Chr(10) & "SUB Form_Load()" & Chr(10) & "    ' Initialization code here" & Chr(10) & "END SUB" & Chr(10)
+    form.NextCtrlID = 1
+    RETURN form
+END FUNCTION
+
+FUNCTION NewModule(name AS STRING) AS VDBModule
+    DIM newMod AS VDBModule
+    newMod.Name = name
+    newMod.Code = "' " & name & " Module" & Chr(10) & Chr(10) & "' Shared functions and subroutines" & Chr(10)
+    RETURN newMod
+END FUNCTION
+
+FUNCTION NewControl(ctlType AS INTEGER, name AS STRING, x AS INTEGER, y AS INTEGER) AS VDBControl
+    DIM ctrl AS VDBControl
+    ctrl.CtlType = ctlType
+    ctrl.CtlName = name
+    ctrl.X = x
+    ctrl.Y = y
+    ctrl.Enabled = TRUE
+    ctrl.Visible = TRUE
+    ctrl.ForeColor = 0
+    ctrl.BackColor = 7
+
+    ' Set default sizes based on type
+    IF ctlType = CTRL_BUTTON THEN
+        ctrl.Width = 10
+        ctrl.Height = 3
+        ctrl.Caption = name
+    ELSEIF ctlType = CTRL_LABEL THEN
+        ctrl.Width = 8
+        ctrl.Height = 1
+        ctrl.Caption = name
+    ELSEIF ctlType = CTRL_TEXTBOX THEN
+        ctrl.Width = 15
+        ctrl.Height = 1
+        ctrl.Value = ""
+    ELSEIF ctlType = CTRL_CHECKBOX THEN
+        ctrl.Width = 12
+        ctrl.Height = 1
+        ctrl.Caption = name
+        ctrl.Value = "0"
+    ELSEIF ctlType = CTRL_OPTION THEN
+        ctrl.Width = 12
+        ctrl.Height = 1
+        ctrl.Caption = name
+        ctrl.Value = "0"
+    ELSEIF ctlType = CTRL_LISTBOX THEN
+        ctrl.Width = 15
+        ctrl.Height = 5
+    ELSEIF ctlType = CTRL_COMBOBOX THEN
+        ctrl.Width = 15
+        ctrl.Height = 1
+    ELSEIF ctlType = CTRL_FRAME THEN
+        ctrl.Width = 20
+        ctrl.Height = 8
+        ctrl.Caption = name
+    ELSEIF ctlType = CTRL_HSCROLL THEN
+        ctrl.Width = 15
+        ctrl.Height = 1
+        ctrl.Value = "0"
+    ELSEIF ctlType = CTRL_VSCROLL THEN
+        ctrl.Width = 1
+        ctrl.Height = 8
+        ctrl.Value = "0"
+    ELSEIF ctlType = CTRL_TIMER THEN
+        ctrl.Width = 3
+        ctrl.Height = 1
+        ctrl.Value = "1000"
+        ctrl.Visible = FALSE
+    ENDIF
+
+    RETURN ctrl
+END FUNCTION
+
+' Serialize project to JSON string
+FUNCTION SerializeProject(proj AS VDBProject) AS STRING
+    DIM result AS STRING = "{" & Chr(10)
+    result = result & "  " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & proj.Name & Chr(34) & "," & Chr(10)
+    result = result & "  " & Chr(34) & "startupForm" & Chr(34) & ": " & Chr(34) & proj.StartupForm & Chr(34) & "," & Chr(10)
+
+    ' Forms array
+    result = result & "  " & Chr(34) & "forms" & Chr(34) & ": [" & Chr(10)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(proj.Forms) - 1
+        DIM f AS VDBForm = proj.Forms[i]
+        result = result & "    {" & Chr(10)
+        result = result & "      " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & f.Name & Chr(34) & "," & Chr(10)
+        result = result & "      " & Chr(34) & "caption" & Chr(34) & ": " & Chr(34) & f.Caption & Chr(34) & "," & Chr(10)
+        result = result & "      " & Chr(34) & "width" & Chr(34) & ": " & Str(f.Width) & "," & Chr(10)
+        result = result & "      " & Chr(34) & "height" & Chr(34) & ": " & Str(f.Height) & "," & Chr(10)
+        result = result & "      " & Chr(34) & "controls" & Chr(34) & ": [" & Chr(10)
+
+        DIM j AS INTEGER
+        FOR j = 0 TO Len(f.Controls) - 1
+            DIM c AS VDBControl = f.Controls[j]
+            result = result & "        {" & Chr(10)
+            result = result & "          " & Chr(34) & "id" & Chr(34) & ": " & Str(c.ID) & "," & Chr(10)
+            result = result & "          " & Chr(34) & "type" & Chr(34) & ": " & Str(c.CtlType) & "," & Chr(10)
+            result = result & "          " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & c.CtlName & Chr(34) & "," & Chr(10)
+            result = result & "          " & Chr(34) & "caption" & Chr(34) & ": " & Chr(34) & c.Caption & Chr(34) & "," & Chr(10)
+            result = result & "          " & Chr(34) & "x" & Chr(34) & ": " & Str(c.X) & "," & Chr(10)
+            result = result & "          " & Chr(34) & "y" & Chr(34) & ": " & Str(c.Y) & "," & Chr(10)
+            result = result & "          " & Chr(34) & "width" & Chr(34) & ": " & Str(c.Width) & "," & Chr(10)
+            result = result & "          " & Chr(34) & "height" & Chr(34) & ": " & Str(c.Height) & Chr(10)
+            result = result & "        }"
+            IF j < Len(f.Controls) - 1 THEN
+                result = result & ","
+            ENDIF
+            result = result & Chr(10)
+        NEXT
+
+        result = result & "      ]" & Chr(10)
+        result = result & "    }"
+        IF i < Len(proj.Forms) - 1 THEN
+            result = result & ","
+        ENDIF
+        result = result & Chr(10)
+    NEXT
+    result = result & "  ]," & Chr(10)
+
+    ' Modules array
+    result = result & "  " & Chr(34) & "modules" & Chr(34) & ": [" & Chr(10)
+    FOR i = 0 TO Len(proj.Modules) - 1
+        DIM m AS VDBModule = proj.Modules[i]
+        result = result & "    {" & Chr(10)
+        result = result & "      " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & m.Name & Chr(34) & Chr(10)
+        result = result & "    }"
+        IF i < Len(proj.Modules) - 1 THEN
+            result = result & ","
+        ENDIF
+        result = result & Chr(10)
+    NEXT
+    result = result & "  ]" & Chr(10)
+
+    result = result & "}"
+    RETURN result
+END FUNCTION
+
+' Save project to file
+SUB SaveProject(proj AS POINTER TO VDBProject, path AS STRING)
+    ' Save main project file
+    DIM projJson AS STRING = SerializeProject(^proj)
+    WriteFile(path, projJson)
+
+    ' Save form code files in same directory
+    DIM i AS INTEGER
+    FOR i = 0 TO Len((^proj).Forms) - 1
+        DIM f AS VDBForm = (^proj).Forms[i]
+        DIM formPath AS STRING = f.Name & ".frm"
+        WriteFile(formPath, f.Code)
+    NEXT
+
+    ' Save module code files
+    FOR i = 0 TO Len((^proj).Modules) - 1
+        DIM modFile AS VDBModule = (^proj).Modules[i]
+        DIM modPath AS STRING = modFile.Name & ".bas"
+        WriteFile(modPath, modFile.Code)
+    NEXT
+
+    (^proj).Path = path
+    (^proj).Modified = FALSE
+END SUB
+
+' Generate DBasic code from project
+FUNCTION GenerateCode(proj AS VDBProject) AS STRING
+    DIM code AS STRING = "' Generated by VDBTerm - Visual DBasic Terminal IDE" & Chr(10)
+    code = code & "' Project: " & proj.Name & Chr(10)
+    code = code & Chr(10)
+    code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbletea" & Chr(34) & " AS tea" & Chr(10)
+    code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/lipgloss" & Chr(34) & " AS lipgloss" & Chr(10)
+    code = code & "IMPORT " & Chr(34) & "fmt" & Chr(34) & " AS fmt" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate control structures for each form
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(proj.Forms) - 1
+        DIM f AS VDBForm = proj.Forms[i]
+        code = code & "' ============================================" & Chr(10)
+        code = code & "' Form: " & f.Name & Chr(10)
+        code = code & "' ============================================" & Chr(10)
+        code = code & Chr(10)
+
+        ' Form type definition
+        code = code & "TYPE " & f.Name & "Form" & Chr(10)
+        code = code & "    DIM Visible AS BOOLEAN" & Chr(10)
+        code = code & "    DIM Caption AS STRING" & Chr(10)
+
+        DIM j AS INTEGER
+        FOR j = 0 TO Len(f.Controls) - 1
+            DIM c AS VDBControl = f.Controls[j]
+            code = code & "    DIM " & c.CtlName & "_Value AS STRING" & Chr(10)
+            code = code & "    DIM " & c.CtlName & "_Enabled AS BOOLEAN" & Chr(10)
+        NEXT
+        code = code & "END TYPE" & Chr(10)
+        code = code & Chr(10)
+
+        ' Form code
+        code = code & f.Code & Chr(10)
+        code = code & Chr(10)
+    NEXT
+
+    ' Generate module code
+    FOR i = 0 TO Len(proj.Modules) - 1
+        DIM m AS VDBModule = proj.Modules[i]
+        code = code & "' ============================================" & Chr(10)
+        code = code & "' Module: " & m.Name & Chr(10)
+        code = code & "' ============================================" & Chr(10)
+        code = code & Chr(10)
+        code = code & m.Code & Chr(10)
+        code = code & Chr(10)
+    NEXT
+
+    ' Generate main entry point
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Main Entry Point" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+    code = code & "SUB Main()" & Chr(10)
+    code = code & "    ' Initialize startup form" & Chr(10)
+    code = code & "    " & proj.StartupForm & "_Load()" & Chr(10)
+    code = code & "END SUB" & Chr(10)
+
+    RETURN code
+END FUNCTION

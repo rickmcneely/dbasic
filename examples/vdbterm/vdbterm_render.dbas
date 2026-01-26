@@ -1,0 +1,1273 @@
+' VDBTerm Rendering
+' All view rendering functions
+
+FUNCTION (m AS VDBTermModel) View() AS STRING
+    DIM view AS STRING = ""
+
+    ' Menu bar
+    view = RenderMenuBar(m) & Chr(10)
+
+    ' Calculate layout dimensions
+    DIM toolboxWidth AS INTEGER = 16
+    DIM propertiesWidth AS INTEGER = 22
+    DIM projectHeight AS INTEGER = 8
+    DIM contentHeight AS INTEGER = m.Height - 4
+    DIM contentWidth AS INTEGER = m.Width - toolboxWidth - propertiesWidth
+
+    IF contentWidth < 20 THEN
+        contentWidth = 20
+    ENDIF
+
+    ' Get dropdown/dialog overlays
+    DIM dropdownLines AS []STRING
+    IF m.MenuOpen <> MENU_NONE THEN
+        dropdownLines = GetDropdownLines(m)
+    ENDIF
+
+    DIM dialogLines AS []STRING
+    DIM dialogWidth AS INTEGER = 0
+    DIM dialogHeight AS INTEGER = 0
+    DIM dialogStartRow AS INTEGER = 0
+    DIM dialogStartCol AS INTEGER = 0
+    IF m.DialogMode <> DIALOG_NONE THEN
+        dialogLines = GetDialogLines(m)
+        dialogWidth, dialogHeight = GetDialogSize(m)
+        dialogHeight = Len(dialogLines)
+        dialogStartRow = (contentHeight - dialogHeight) / 2
+        dialogStartCol = (m.Width - dialogWidth) / 2
+        IF dialogStartRow < 0 THEN
+            dialogStartRow = 0
+        ENDIF
+        IF dialogStartCol < 0 THEN
+            dialogStartCol = 0
+        ENDIF
+    ENDIF
+
+    ' Render main content area row by row
+    DIM row AS INTEGER
+    FOR row = 0 TO contentHeight - 1
+        DIM rowContent AS STRING = ""
+
+        ' Check for dialog overlay
+        DIM dialogRowIdx AS INTEGER = row - dialogStartRow
+        IF m.DialogMode <> DIALOG_NONE AND dialogRowIdx >= 0 AND dialogRowIdx < Len(dialogLines) THEN
+            ' Render with dialog overlay
+            DIM col AS INTEGER
+            FOR col = 0 TO dialogStartCol - 1
+                rowContent = rowContent & RenderCellAt(m, row, col, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+            NEXT
+            rowContent = rowContent & dialogLines[dialogRowIdx]
+            FOR col = dialogStartCol + dialogWidth TO m.Width - 1
+                rowContent = rowContent & RenderCellAt(m, row, col, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+            NEXT
+        ' Check for dropdown overlay
+        ELSEIF m.MenuOpen <> MENU_NONE AND row < Len(dropdownLines) THEN
+            DIM dropOffset AS INTEGER = GetMenuOffset(m.MenuOpen)
+            DIM dropWidth AS INTEGER = 20
+            DIM col2 AS INTEGER
+            FOR col2 = 0 TO dropOffset - 1
+                rowContent = rowContent & RenderCellAt(m, row, col2, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+            NEXT
+            rowContent = rowContent & dropdownLines[row]
+            FOR col2 = dropOffset + dropWidth TO m.Width - 1
+                rowContent = rowContent & RenderCellAt(m, row, col2, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+            NEXT
+        ELSE
+            ' Normal rendering
+            rowContent = RenderRow(m, row, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+        ENDIF
+
+        view = view & rowContent & Chr(10)
+    NEXT
+
+    ' Status bar
+    view = view & RenderStatusBar(m)
+
+    RETURN view
+END FUNCTION
+
+FUNCTION RenderCellAt(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, toolboxWidth AS INTEGER, contentWidth AS INTEGER, propertiesWidth AS INTEGER, contentHeight AS INTEGER, projectHeight AS INTEGER) AS STRING
+    ' Determine which panel this cell belongs to
+    IF col < toolboxWidth THEN
+        ' Left column: Toolbox (top) or Project Tree (bottom)
+        IF row < contentHeight - projectHeight THEN
+            RETURN RenderToolboxCell(m, row, col, toolboxWidth)
+        ELSE
+            DIM localRow AS INTEGER = row - (contentHeight - projectHeight)
+            RETURN RenderProjectCell(m, localRow, col, toolboxWidth)
+        ENDIF
+    ELSEIF col < toolboxWidth + contentWidth THEN
+        ' Middle: Form/Code (full height)
+        DIM localCol AS INTEGER = col - toolboxWidth
+        IF m.ViewMode = VIEW_FORM THEN
+            RETURN RenderFormCell(m, row, localCol, contentWidth)
+        ELSE
+            RETURN RenderCodeCell(m, row, localCol, contentWidth)
+        ENDIF
+    ELSE
+        DIM propCol AS INTEGER = col - toolboxWidth - contentWidth
+        RETURN RenderPropertiesCell(m, row, propCol, propertiesWidth)
+    ENDIF
+END FUNCTION
+
+FUNCTION RenderRow(m AS VDBTermModel, row AS INTEGER, toolboxWidth AS INTEGER, contentWidth AS INTEGER, propertiesWidth AS INTEGER, contentHeight AS INTEGER, projectHeight AS INTEGER) AS STRING
+    DIM result AS STRING = ""
+
+    ' Left column: Toolbox (top) or Project Tree (bottom)
+    IF row < contentHeight - projectHeight THEN
+        ' Toolbox area
+        result = result & RenderToolboxRow(m, row, toolboxWidth)
+    ELSE
+        ' Project tree area
+        DIM localRow AS INTEGER = row - (contentHeight - projectHeight)
+        result = result & RenderProjectRow(m, localRow, toolboxWidth)
+    ENDIF
+
+    ' Main content (full height)
+    IF m.ViewMode = VIEW_FORM THEN
+        result = result & RenderFormRow(m, row, contentWidth)
+    ELSE
+        result = result & RenderCodeRow(m, row, contentWidth)
+    ENDIF
+
+    ' Properties
+    result = result & RenderPropertiesRow(m, row, propertiesWidth)
+
+    RETURN result
+END FUNCTION
+
+' Toolbox rendering
+FUNCTION RenderToolboxRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
+    DIM content AS STRING = ""
+
+    IF row = 0 THEN
+        ' Title - always highlighted blue
+        content = styleToolboxSelected.Render(PadCenter("Toolbox", width))
+        RETURN content
+    ENDIF
+
+    DIM toolIdx AS INTEGER = row - 1
+    IF toolIdx >= 0 AND toolIdx <= 10 THEN
+        DIM ctlType AS INTEGER = toolIdx + 1
+        DIM icon AS STRING = GetToolboxIcon(ctlType)
+        DIM name AS STRING = GetControlTypeName(ctlType)
+        DIM item AS STRING = icon & " " & name
+        item = PadRight(item, width)
+
+        IF toolIdx = m.ToolboxIndex AND m.FocusArea = FOCUS_TOOLBOX THEN
+            content = styleToolboxSelected.Render(item)
+        ELSE
+            content = styleToolbox.Render(item)
+        ENDIF
+    ELSE
+        content = styleToolbox.Render(RepeatStr(" ", width))
+    ENDIF
+
+    RETURN content
+END FUNCTION
+
+FUNCTION RenderToolboxCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width AS INTEGER) AS STRING
+    ' Single cell version for overlay rendering - compute character at position
+    DIM ch AS STRING = " "
+    DIM selected AS BOOLEAN = FALSE
+
+    IF row = 0 THEN
+        ' Title row - always highlighted blue
+        DIM title AS STRING = PadCenter("Toolbox", width)
+        IF col < Len(title) THEN
+            ch = Mid(title, col + 1, 1)
+        ENDIF
+        RETURN styleToolboxSelected.Render(ch)
+    ELSE
+        DIM toolIdx AS INTEGER = row - 1
+        IF toolIdx >= 0 AND toolIdx <= 10 THEN
+            DIM ctlType AS INTEGER = toolIdx + 1
+            DIM icon AS STRING = GetToolboxIcon(ctlType)
+            DIM name AS STRING = GetControlTypeName(ctlType)
+            DIM item AS STRING = PadRight(icon & " " & name, width)
+            IF col < Len(item) THEN
+                ch = Mid(item, col + 1, 1)
+            ENDIF
+            selected = (toolIdx = m.ToolboxIndex AND m.FocusArea = FOCUS_TOOLBOX)
+        ENDIF
+    ENDIF
+
+    IF selected THEN
+        RETURN styleToolboxSelected.Render(ch)
+    ELSE
+        RETURN styleToolbox.Render(ch)
+    ENDIF
+END FUNCTION
+
+' Form canvas rendering
+FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
+    DIM content AS STRING = ""
+
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        ' No form loaded
+        content = styleFormCanvas.Render(PadRight(" No form loaded", width))
+        RETURN content
+    ENDIF
+
+    DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+
+    ' Row 0: Form title bar
+    IF row = 0 THEN
+        DIM titleBar AS STRING = "┌"
+        DIM titleText AS STRING = " " & form.Caption & " "
+        DIM innerWidth AS INTEGER = width - 2
+        DIM titleStart AS INTEGER = 1
+        DIM col AS INTEGER
+        FOR col = 0 TO innerWidth - 1
+            IF col >= titleStart AND col < titleStart + Len(titleText) THEN
+                titleBar = titleBar & Mid(titleText, col - titleStart + 1, 1)
+            ELSE
+                titleBar = titleBar & "─"
+            ENDIF
+        NEXT
+        titleBar = titleBar & "┐"
+        IF m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM THEN
+            RETURN styleControlSelected.Render(titleBar)
+        ELSE
+            RETURN styleMenuBar.Render(titleBar)
+        ENDIF
+    ENDIF
+
+    ' Row 1+: Form content with left and right borders
+    DIM formRow AS INTEGER = row - 1
+    DIM formCol AS INTEGER
+    DIM formCh AS STRING
+
+    ' Left border
+    IF m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM THEN
+        content = content & styleControlSelected.Render("│")
+    ELSE
+        content = content & styleMenuBar.Render("│")
+    ENDIF
+
+    ' Form content area (width - 2 for borders)
+    FOR formCol = 0 TO width - 3
+        formCh = " "
+
+        ' Show grid dots
+        IF m.ShowGrid AND formRow MOD 2 = 0 AND formCol MOD 4 = 0 THEN
+            formCh = "."
+        ENDIF
+
+        ' Check if any control occupies this position
+        DIM i AS INTEGER
+        DIM foundCtrl AS BOOLEAN = FALSE
+        FOR i = 0 TO Len(form.Controls) - 1
+            DIM ctrl AS VDBControl = form.Controls[i]
+            IF formRow >= ctrl.Y AND formRow < ctrl.Y + ctrl.Height AND formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
+                DIM localRow AS INTEGER = formRow - ctrl.Y
+                DIM localCol AS INTEGER = formCol - ctrl.X
+                DIM isSelected AS BOOLEAN = (i = m.SelectedCtrlIdx)
+
+                ' Check for selection handles at corners
+                IF isSelected THEN
+                    IF (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1) THEN
+                        formCh = "■"
+                        content = content & styleControlSelected.Render(formCh)
+                        foundCtrl = TRUE
+                        EXIT FOR
+                    ENDIF
+                ENDIF
+
+                formCh = RenderControlChar(ctrl, localRow, localCol, isSelected)
+                IF isSelected THEN
+                    content = content & styleControlSelected.Render(formCh)
+                ELSE
+                    content = content & styleControl.Render(formCh)
+                ENDIF
+                foundCtrl = TRUE
+                EXIT FOR
+            ENDIF
+        NEXT
+
+        IF NOT foundCtrl THEN
+            IF m.ShowGrid AND formCh = "." THEN
+                content = content & styleFormGrid.Render(formCh)
+            ELSE
+                content = content & styleFormCanvas.Render(formCh)
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' Right border
+    IF m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM THEN
+        content = content & styleControlSelected.Render("│")
+    ELSE
+        content = content & styleMenuBar.Render("│")
+    ENDIF
+
+    RETURN content
+END FUNCTION
+
+FUNCTION RenderFormCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width AS INTEGER) AS STRING
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN styleFormCanvas.Render(" ")
+    ENDIF
+
+    DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+    DIM formSelected AS BOOLEAN = (m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM)
+
+    ' Row 0: Title bar
+    IF row = 0 THEN
+        DIM titleText AS STRING = " " & form.Caption & " "
+        DIM titleCh AS STRING = "─"
+        IF col = 0 THEN
+            titleCh = "┌"
+        ELSEIF col = width - 1 THEN
+            titleCh = "┐"
+        ELSEIF col >= 1 AND col <= Len(titleText) THEN
+            titleCh = Mid(titleText, col, 1)
+        ENDIF
+        IF formSelected THEN
+            RETURN styleControlSelected.Render(titleCh)
+        ELSE
+            RETURN styleMenuBar.Render(titleCh)
+        ENDIF
+    ENDIF
+
+    ' Left and right borders
+    IF col = 0 OR col = width - 1 THEN
+        IF formSelected THEN
+            RETURN styleControlSelected.Render("│")
+        ELSE
+            RETURN styleMenuBar.Render("│")
+        ENDIF
+    ENDIF
+
+    ' Form content area
+    DIM formRow AS INTEGER = row - 1
+    DIM formCol AS INTEGER = col - 1
+    DIM ch AS STRING = " "
+
+    IF m.ShowGrid AND formRow MOD 2 = 0 AND formCol MOD 4 = 0 THEN
+        ch = "."
+    ENDIF
+
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF formRow >= ctrl.Y AND formRow < ctrl.Y + ctrl.Height AND formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
+            DIM localRow AS INTEGER = formRow - ctrl.Y
+            DIM localCol AS INTEGER = formCol - ctrl.X
+            DIM isSelected AS BOOLEAN = (i = m.SelectedCtrlIdx)
+
+            ' Check for selection handles at corners
+            IF isSelected THEN
+                IF (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1) THEN
+                    RETURN styleControlSelected.Render("■")
+                ENDIF
+            ENDIF
+
+            ch = RenderControlChar(ctrl, localRow, localCol, isSelected)
+            IF isSelected THEN
+                RETURN styleControlSelected.Render(ch)
+            ELSE
+                RETURN styleControl.Render(ch)
+            ENDIF
+        ENDIF
+    NEXT
+
+    IF m.ShowGrid AND ch = "." THEN
+        RETURN styleFormGrid.Render(ch)
+    ENDIF
+    RETURN styleFormCanvas.Render(ch)
+END FUNCTION
+
+' Render a single character of a control
+FUNCTION RenderControlChar(ctrl AS VDBControl, localRow AS INTEGER, localCol AS INTEGER, selected AS BOOLEAN) AS STRING
+    IF ctrl.CtlType = CTRL_BUTTON THEN
+        ' Button with border
+        IF localRow = 0 THEN
+            IF localCol = 0 THEN
+                RETURN "["
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "]"
+            ELSEIF localCol <= Len(ctrl.Caption) THEN
+                RETURN Mid(ctrl.Caption, localCol, 1)
+            ELSE
+                RETURN " "
+            ENDIF
+        ELSEIF localRow = ctrl.Height - 1 THEN
+            IF localCol = 0 THEN
+                RETURN "["
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "]"
+            ELSE
+                RETURN " "
+            ENDIF
+        ELSE
+            IF localCol = 0 OR localCol = ctrl.Width - 1 THEN
+                RETURN "|"
+            ELSEIF localCol <= Len(ctrl.Caption) THEN
+                RETURN Mid(ctrl.Caption, localCol, 1)
+            ELSE
+                RETURN " "
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_LABEL THEN
+        IF localCol < Len(ctrl.Caption) THEN
+            RETURN Mid(ctrl.Caption, localCol + 1, 1)
+        ENDIF
+        RETURN " "
+    ELSEIF ctrl.CtlType = CTRL_TEXTBOX THEN
+        IF localCol = 0 THEN
+            RETURN "["
+        ELSEIF localCol = ctrl.Width - 1 THEN
+            RETURN "]"
+        ELSEIF localCol - 1 < Len(ctrl.Value) THEN
+            RETURN Mid(ctrl.Value, localCol, 1)
+        ELSE
+            RETURN "_"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+        IF localCol = 0 THEN
+            RETURN "["
+        ELSEIF localCol = 1 THEN
+            IF ctrl.Value = "1" THEN
+                RETURN "X"
+            ELSE
+                RETURN " "
+            ENDIF
+        ELSEIF localCol = 2 THEN
+            RETURN "]"
+        ELSEIF localCol = 3 THEN
+            RETURN " "
+        ELSEIF localCol - 4 < Len(ctrl.Caption) THEN
+            RETURN Mid(ctrl.Caption, localCol - 3, 1)
+        ELSE
+            RETURN " "
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+        IF localCol = 0 THEN
+            RETURN "("
+        ELSEIF localCol = 1 THEN
+            IF ctrl.Value = "1" THEN
+                RETURN "o"
+            ELSE
+                RETURN " "
+            ENDIF
+        ELSEIF localCol = 2 THEN
+            RETURN ")"
+        ELSEIF localCol = 3 THEN
+            RETURN " "
+        ELSEIF localCol - 4 < Len(ctrl.Caption) THEN
+            RETURN Mid(ctrl.Caption, localCol - 3, 1)
+        ELSE
+            RETURN " "
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_LISTBOX THEN
+        IF localRow = 0 THEN
+            IF localCol = 0 THEN
+                RETURN "┌"
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "┐"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = ctrl.Height - 1 THEN
+            IF localCol = 0 THEN
+                RETURN "└"
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "┘"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSE
+            IF localCol = 0 OR localCol = ctrl.Width - 1 THEN
+                RETURN "│"
+            ELSE
+                RETURN " "
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_FRAME THEN
+        IF localRow = 0 THEN
+            IF localCol = 0 THEN
+                RETURN "┌"
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "┐"
+            ELSEIF localCol <= Len(ctrl.Caption) THEN
+                RETURN Mid(ctrl.Caption, localCol, 1)
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = ctrl.Height - 1 THEN
+            IF localCol = 0 THEN
+                RETURN "└"
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "┘"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSE
+            IF localCol = 0 OR localCol = ctrl.Width - 1 THEN
+                RETURN "│"
+            ELSE
+                RETURN " "
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+        IF localCol = 0 THEN
+            RETURN "["
+        ELSEIF localCol = 1 THEN
+            RETURN "T"
+        ELSEIF localCol = 2 THEN
+            RETURN "]"
+        ENDIF
+        RETURN " "
+    ENDIF
+
+    RETURN " "
+END FUNCTION
+
+' Code editor rendering
+FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
+    DIM content AS STRING = ""
+
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        content = styleCodeEditor.Render(PadRight(" No code loaded", width))
+        RETURN content
+    ENDIF
+
+    DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
+    DIM totalLines AS INTEGER = CountLines(code)
+    DIM lineIdx AS INTEGER = m.CodeScrollY + row
+
+    ' Line number
+    IF m.ShowLineNumbers THEN
+        IF lineIdx < totalLines THEN
+            content = content & styleCodeLineNum.Render(fmt.Sprintf("%4d ", lineIdx + 1))
+        ELSE
+            content = content & styleCodeLineNum.Render("     ")
+        ENDIF
+        width = width - 5
+    ENDIF
+
+    IF lineIdx >= totalLines THEN
+        content = content & styleCodeEditor.Render(RepeatStr(" ", width))
+        RETURN content
+    ENDIF
+
+    DIM lineText AS STRING = GetLine(code, lineIdx + 1)
+
+    ' Render line with syntax highlighting
+    DIM col AS INTEGER
+    FOR col = 0 TO width - 1
+        DIM actualCol AS INTEGER = m.CodeScrollX + col
+        DIM ch AS STRING = " "
+
+        IF actualCol < Len(lineText) THEN
+            ch = Mid(lineText, actualCol + 1, 1)
+        ENDIF
+
+        ' Cursor
+        IF lineIdx = m.CodeCursorY AND actualCol = m.CodeCursorX AND m.FocusArea = FOCUS_CODE THEN
+            content = content & styleCodeCursor.Render(ch)
+        ELSE
+            content = content & styleCodeEditor.Render(ch)
+        ENDIF
+    NEXT
+
+    RETURN content
+END FUNCTION
+
+FUNCTION RenderCodeCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width AS INTEGER) AS STRING
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN styleCodeEditor.Render(" ")
+    ENDIF
+
+    DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
+    DIM totalLines AS INTEGER = CountLines(code)
+    DIM lineIdx AS INTEGER = m.CodeScrollY + row
+
+    IF lineIdx >= totalLines THEN
+        RETURN styleCodeEditor.Render(" ")
+    ENDIF
+
+    DIM lineText AS STRING = GetLine(code, lineIdx + 1)
+    DIM actualCol AS INTEGER = m.CodeScrollX + col
+    DIM ch AS STRING = " "
+
+    IF actualCol < Len(lineText) THEN
+        ch = Mid(lineText, actualCol + 1, 1)
+    ENDIF
+
+    IF lineIdx = m.CodeCursorY AND actualCol = m.CodeCursorX AND m.FocusArea = FOCUS_CODE THEN
+        RETURN styleCodeCursor.Render(ch)
+    ENDIF
+    RETURN styleCodeEditor.Render(ch)
+END FUNCTION
+
+' Project tree rendering
+FUNCTION RenderProjectRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
+    DIM content AS STRING = ""
+
+    IF row = 0 THEN
+        ' Title - always highlighted blue
+        content = styleTreeSelected.Render(PadRight(" Project", width))
+        RETURN content
+    ENDIF
+
+    DIM itemIdx AS INTEGER = row - 1
+    DIM totalItems AS INTEGER = 0
+
+    IF m.ProjectLoaded THEN
+        totalItems = Len(m.Project.Forms) + Len(m.Project.Modules) + 2
+    ENDIF
+
+    IF itemIdx < totalItems AND m.ProjectLoaded THEN
+        DIM itemText AS STRING = ""
+
+        IF itemIdx = 0 THEN
+            itemText = "+ " & m.Project.Name
+        ELSEIF itemIdx <= Len(m.Project.Forms) THEN
+            DIM formIdx AS INTEGER = itemIdx - 1
+            IF formIdx < Len(m.Project.Forms) THEN
+                IF formIdx = m.CurrentFormIdx THEN
+                    itemText = "  > " & m.Project.Forms[formIdx].Name & ".frm"
+                ELSE
+                    itemText = "    " & m.Project.Forms[formIdx].Name & ".frm"
+                ENDIF
+            ENDIF
+        ELSE
+            DIM modIdx AS INTEGER = itemIdx - Len(m.Project.Forms) - 1
+            IF modIdx < Len(m.Project.Modules) THEN
+                itemText = "    " & m.Project.Modules[modIdx].Name & ".bas"
+            ENDIF
+        ENDIF
+
+        itemText = PadRight(itemText, width)
+        IF itemIdx = m.TreeIndex AND m.FocusArea = FOCUS_PROJECT THEN
+            content = styleTreeSelected.Render(itemText)
+        ELSE
+            content = styleTreeItem.Render(itemText)
+        ENDIF
+    ELSE
+        content = styleProjectTree.Render(RepeatStr(" ", width))
+    ENDIF
+
+    RETURN content
+END FUNCTION
+
+FUNCTION RenderProjectCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width AS INTEGER) AS STRING
+    ' Single cell version for overlay rendering - compute character at position
+    DIM ch AS STRING = " "
+    DIM selected AS BOOLEAN = FALSE
+    DIM isTreeItem AS BOOLEAN = FALSE
+
+    IF row = 0 THEN
+        ' Title row - always highlighted blue
+        DIM title AS STRING = PadRight(" Project", width)
+        IF col < Len(title) THEN
+            ch = Mid(title, col + 1, 1)
+        ENDIF
+        RETURN styleTreeSelected.Render(ch)
+    ELSE
+        DIM itemIdx AS INTEGER = row - 1
+        DIM totalItems AS INTEGER = 0
+
+        IF m.ProjectLoaded THEN
+            totalItems = Len(m.Project.Forms) + Len(m.Project.Modules) + 2
+        ENDIF
+
+        IF itemIdx < totalItems AND m.ProjectLoaded THEN
+            DIM itemText AS STRING = ""
+
+            IF itemIdx = 0 THEN
+                itemText = "+ " & m.Project.Name
+            ELSEIF itemIdx <= Len(m.Project.Forms) THEN
+                DIM formIdx AS INTEGER = itemIdx - 1
+                IF formIdx < Len(m.Project.Forms) THEN
+                    IF formIdx = m.CurrentFormIdx THEN
+                        itemText = "  > " & m.Project.Forms[formIdx].Name & ".frm"
+                    ELSE
+                        itemText = "    " & m.Project.Forms[formIdx].Name & ".frm"
+                    ENDIF
+                ENDIF
+            ELSE
+                DIM modIdx AS INTEGER = itemIdx - Len(m.Project.Forms) - 1
+                IF modIdx < Len(m.Project.Modules) THEN
+                    itemText = "    " & m.Project.Modules[modIdx].Name & ".bas"
+                ENDIF
+            ENDIF
+
+            itemText = PadRight(itemText, width)
+            IF col < Len(itemText) THEN
+                ch = Mid(itemText, col + 1, 1)
+            ENDIF
+            selected = (itemIdx = m.TreeIndex AND m.FocusArea = FOCUS_PROJECT)
+            isTreeItem = TRUE
+        ENDIF
+    ENDIF
+
+    IF selected THEN
+        RETURN styleTreeSelected.Render(ch)
+    ELSEIF isTreeItem THEN
+        RETURN styleTreeItem.Render(ch)
+    ELSE
+        RETURN styleProjectTree.Render(ch)
+    ENDIF
+END FUNCTION
+
+' Properties panel rendering
+FUNCTION RenderPropertiesRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
+    DIM content AS STRING = ""
+
+    IF row = 0 THEN
+        ' Title - always highlighted blue
+        content = stylePropSelected.Render(PadCenter("Properties", width))
+        RETURN content
+    ENDIF
+
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        content = styleProperties.Render(RepeatStr(" ", width))
+        RETURN content
+    ENDIF
+
+    ' Show properties of selected control or form
+    DIM propIdx AS INTEGER = row - 1
+    DIM propName AS STRING = ""
+    DIM propValue AS STRING = ""
+
+    IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+        DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
+        IF propIdx = 0 THEN
+            propName = "Name"
+            propValue = ctrl.CtlName
+        ELSEIF propIdx = 1 THEN
+            propName = "Type"
+            propValue = GetControlTypeName(ctrl.CtlType)
+        ELSEIF propIdx = 2 THEN
+            propName = "Caption"
+            propValue = ctrl.Caption
+        ELSEIF propIdx = 3 THEN
+            propName = "X"
+            propValue = Str(ctrl.X)
+        ELSEIF propIdx = 4 THEN
+            propName = "Y"
+            propValue = Str(ctrl.Y)
+        ELSEIF propIdx = 5 THEN
+            propName = "Width"
+            propValue = Str(ctrl.Width)
+        ELSEIF propIdx = 6 THEN
+            propName = "Height"
+            propValue = Str(ctrl.Height)
+        ELSEIF propIdx = 7 THEN
+            propName = "Enabled"
+            IF ctrl.Enabled THEN
+                propValue = "True"
+            ELSE
+                propValue = "False"
+            ENDIF
+        ELSEIF propIdx = 8 THEN
+            propName = "Visible"
+            IF ctrl.Visible THEN
+                propValue = "True"
+            ELSE
+                propValue = "False"
+            ENDIF
+        ELSEIF propIdx = 9 THEN
+            propName = "ZOrder"
+            propValue = Str(ctrl.ZOrder)
+        ENDIF
+    ELSE
+        ' Form properties
+        DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+        IF propIdx = 0 THEN
+            propName = "Name"
+            propValue = form.Name
+        ELSEIF propIdx = 1 THEN
+            propName = "Caption"
+            propValue = form.Caption
+        ELSEIF propIdx = 2 THEN
+            propName = "Width"
+            propValue = Str(form.Width)
+        ELSEIF propIdx = 3 THEN
+            propName = "Height"
+            propValue = Str(form.Height)
+        ENDIF
+    ENDIF
+
+    IF Len(propName) > 0 THEN
+        DIM half AS INTEGER = width / 2
+        DIM displayValue AS STRING = propValue
+
+        ' Show edit value when editing this property
+        IF propIdx = m.PropIndex AND m.PropEditing AND m.FocusArea = FOCUS_PROPERTIES THEN
+            displayValue = m.PropEditValue & "_"
+        ENDIF
+
+        DIM line AS STRING = PadRight(propName, half) & PadRight(displayValue, width - half)
+        IF propIdx = m.PropIndex AND m.FocusArea = FOCUS_PROPERTIES THEN
+            IF m.PropEditing THEN
+                ' Highlight edit mode differently
+                content = stylePropName.Render(PadRight(propName, half)) & styleCodeCursor.Render(PadRight(displayValue, width - half))
+            ELSE
+                content = stylePropSelected.Render(line)
+            ENDIF
+        ELSE
+            content = stylePropName.Render(PadRight(propName, half)) & stylePropValue.Render(PadRight(propValue, width - half))
+        ENDIF
+    ELSE
+        content = styleProperties.Render(RepeatStr(" ", width))
+    ENDIF
+
+    RETURN content
+END FUNCTION
+
+FUNCTION RenderPropertiesCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width AS INTEGER) AS STRING
+    ' Single cell version for overlay rendering - compute character at position
+    DIM ch AS STRING = " "
+
+    IF row = 0 THEN
+        ' Title row - always highlighted blue
+        DIM title AS STRING = PadCenter("Properties", width)
+        IF col < Len(title) THEN
+            ch = Mid(title, col + 1, 1)
+        ENDIF
+        RETURN stylePropSelected.Render(ch)
+    ENDIF
+
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN styleProperties.Render(ch)
+    ENDIF
+
+    ' Show properties of selected control or form
+    DIM propIdx AS INTEGER = row - 1
+    DIM propName AS STRING = ""
+    DIM propValue AS STRING = ""
+
+    IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+        DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
+        IF propIdx = 0 THEN
+            propName = "Name"
+            propValue = ctrl.CtlName
+        ELSEIF propIdx = 1 THEN
+            propName = "Type"
+            propValue = GetControlTypeName(ctrl.CtlType)
+        ELSEIF propIdx = 2 THEN
+            propName = "Caption"
+            propValue = ctrl.Caption
+        ELSEIF propIdx = 3 THEN
+            propName = "X"
+            propValue = Str(ctrl.X)
+        ELSEIF propIdx = 4 THEN
+            propName = "Y"
+            propValue = Str(ctrl.Y)
+        ELSEIF propIdx = 5 THEN
+            propName = "Width"
+            propValue = Str(ctrl.Width)
+        ELSEIF propIdx = 6 THEN
+            propName = "Height"
+            propValue = Str(ctrl.Height)
+        ELSEIF propIdx = 7 THEN
+            propName = "Enabled"
+            IF ctrl.Enabled THEN
+                propValue = "True"
+            ELSE
+                propValue = "False"
+            ENDIF
+        ELSEIF propIdx = 8 THEN
+            propName = "Visible"
+            IF ctrl.Visible THEN
+                propValue = "True"
+            ELSE
+                propValue = "False"
+            ENDIF
+        ELSEIF propIdx = 9 THEN
+            propName = "ZOrder"
+            propValue = Str(ctrl.ZOrder)
+        ENDIF
+    ELSE
+        ' Form properties
+        DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+        IF propIdx = 0 THEN
+            propName = "Name"
+            propValue = form.Name
+        ELSEIF propIdx = 1 THEN
+            propName = "Caption"
+            propValue = form.Caption
+        ELSEIF propIdx = 2 THEN
+            propName = "Width"
+            propValue = Str(form.Width)
+        ELSEIF propIdx = 3 THEN
+            propName = "Height"
+            propValue = Str(form.Height)
+        ENDIF
+    ENDIF
+
+    IF Len(propName) > 0 THEN
+        DIM half AS INTEGER = width / 2
+        DIM line AS STRING = PadRight(propName, half) & PadRight(propValue, width - half)
+        IF col < Len(line) THEN
+            ch = Mid(line, col + 1, 1)
+        ENDIF
+        IF propIdx = m.PropIndex AND m.FocusArea = FOCUS_PROPERTIES THEN
+            RETURN stylePropSelected.Render(ch)
+        ELSEIF col < half THEN
+            RETURN stylePropName.Render(ch)
+        ELSE
+            RETURN stylePropValue.Render(ch)
+        ENDIF
+    ENDIF
+
+    RETURN styleProperties.Render(ch)
+END FUNCTION
+
+' Menu bar rendering
+FUNCTION RenderMenuBar(m AS VDBTermModel) AS STRING
+    DIM bar AS STRING = ""
+
+    bar = bar & RenderMenuItemHL("File", 1, m.MenuOpen = MENU_FILE)
+    bar = bar & RenderMenuItemHL("Edit", 1, m.MenuOpen = MENU_EDIT)
+    bar = bar & RenderMenuItemHL("View", 1, m.MenuOpen = MENU_VIEW)
+    bar = bar & RenderMenuItemHL("Run", 1, m.MenuOpen = MENU_RUN)
+    bar = bar & RenderMenuItemHL("Debug", 1, m.MenuOpen = MENU_DEBUG)
+    bar = bar & RenderMenuItemHL("Options", 1, m.MenuOpen = MENU_OPTIONS)
+    bar = bar & RenderMenuItemHL("Help", 1, m.MenuOpen = MENU_HELP)
+
+    DIM used AS INTEGER = 52
+    IF m.Width > used THEN
+        bar = bar & styleMenuBar.Render(RepeatStr(" ", m.Width - used))
+    ENDIF
+
+    RETURN bar
+END FUNCTION
+
+FUNCTION RenderMenuItemHL(name AS STRING, hotkeyPos AS INTEGER, selected AS BOOLEAN) AS STRING
+    DIM before AS STRING = Left(name, hotkeyPos - 1)
+    DIM hotkey AS STRING = Mid(name, hotkeyPos, 1)
+    DIM after AS STRING = Mid(name, hotkeyPos + 1, Len(name) - hotkeyPos)
+
+    IF selected THEN
+        RETURN styleMenuSelected.Render(" " & before) & styleMenuHotkeySelected.Render(hotkey) & styleMenuSelected.Render(after & " ")
+    ELSE
+        RETURN styleMenuBar.Render(" " & before) & styleMenuHotkey.Render(hotkey) & styleMenuBar.Render(after & " ")
+    ENDIF
+END FUNCTION
+
+FUNCTION GetMenuOffset(menu AS INTEGER) AS INTEGER
+    IF menu = MENU_FILE THEN
+        RETURN 0
+    ELSEIF menu = MENU_EDIT THEN
+        RETURN 6
+    ELSEIF menu = MENU_VIEW THEN
+        RETURN 12
+    ELSEIF menu = MENU_RUN THEN
+        RETURN 18
+    ELSEIF menu = MENU_DEBUG THEN
+        RETURN 23
+    ELSEIF menu = MENU_OPTIONS THEN
+        RETURN 30
+    ELSEIF menu = MENU_HELP THEN
+        RETURN 39
+    ENDIF
+    RETURN 0
+END FUNCTION
+
+FUNCTION GetDropdownLines(m AS VDBTermModel) AS []STRING
+    DIM lines AS []STRING
+    ' All menu items must be exactly 18 characters to fit in 20-char box (1 border + 18 content + 1 border)
+
+    IF m.MenuOpen = MENU_FILE THEN
+        lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("New Project       ", 1, m.MenuIndex = 0) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Open Project      ", 1, m.MenuIndex = 1) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Save Project      ", 1, m.MenuIndex = 2) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("New Form          ", 5, m.MenuIndex = 4) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("New Module        ", 5, m.MenuIndex = 5) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Exit        Alt+X ", 2, m.MenuIndex = 7) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
+    ELSEIF m.MenuOpen = MENU_EDIT THEN
+        lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Cut        Ctrl+X ", 3, m.MenuIndex = 0) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Copy       Ctrl+C ", 1, m.MenuIndex = 1) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Paste      Ctrl+V ", 1, m.MenuIndex = 2) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Select All Ctrl+A ", 8, m.MenuIndex = 4) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Delete            ", 1, m.MenuIndex = 5) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Menu Editor...    ", 1, m.MenuIndex = 7) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
+    ELSEIF m.MenuOpen = MENU_VIEW THEN
+        lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Form View      F7 ", 1, m.MenuIndex = 0) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Code View      F7 ", 1, m.MenuIndex = 1) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Show Grid         ", 6, m.MenuIndex = 3) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Line Numbers      ", 1, m.MenuIndex = 4) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
+    ELSEIF m.MenuOpen = MENU_RUN THEN
+        lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Run            F5 ", 1, m.MenuIndex = 0) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Build             ", 1, m.MenuIndex = 1) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Set Startup       ", 5, m.MenuIndex = 3) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
+    ELSEIF m.MenuOpen = MENU_DEBUG THEN
+        lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Step           F8 ", 1, m.MenuIndex = 0) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Breakpoint     F9 ", 1, m.MenuIndex = 1) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Watch             ", 1, m.MenuIndex = 2) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Clear All         ", 1, m.MenuIndex = 4) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
+    ELSEIF m.MenuOpen = MENU_OPTIONS THEN
+        lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Environment       ", 1, m.MenuIndex = 0) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Editor            ", 1, m.MenuIndex = 1) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Colors            ", 1, m.MenuIndex = 3) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
+    ELSEIF m.MenuOpen = MENU_HELP THEN
+        lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Help           F1 ", 1, m.MenuIndex = 0) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("About             ", 1, m.MenuIndex = 1) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
+    ENDIF
+
+    RETURN lines
+END FUNCTION
+
+FUNCTION RenderDropdownItemHL(text AS STRING, hotkeyPos AS INTEGER, selected AS BOOLEAN) AS STRING
+    DIM before AS STRING = Left(text, hotkeyPos - 1)
+    DIM hotkey AS STRING = Mid(text, hotkeyPos, 1)
+    DIM after AS STRING = Mid(text, hotkeyPos + 1, Len(text) - hotkeyPos)
+
+    IF selected THEN
+        RETURN styleDropdownSelected.Render(before) & styleDropdownHotkeySelected.Render(hotkey) & styleDropdownSelected.Render(after)
+    ELSE
+        RETURN styleDropdown.Render(before) & styleDropdownHotkey.Render(hotkey) & styleDropdown.Render(after)
+    ENDIF
+END FUNCTION
+
+' Status bar rendering
+FUNCTION RenderStatusBar(m AS VDBTermModel) AS STRING
+    DIM status AS STRING = " "
+
+    IF m.ProjectLoaded THEN
+        status = status & m.Project.Name
+        IF m.Project.Modified THEN
+            status = status & " *"
+        ENDIF
+        status = status & " | "
+        IF m.CurrentFormIdx < Len(m.Project.Forms) THEN
+            status = status & m.Project.Forms[m.CurrentFormIdx].Name
+        ENDIF
+    ELSE
+        status = status & "[No Project]"
+    ENDIF
+
+    status = status & " | "
+    IF m.ViewMode = VIEW_FORM THEN
+        status = status & "Form"
+    ELSE
+        status = status & "Code Ln " & Str(m.CodeCursorY + 1) & " Col " & Str(m.CodeCursorX + 1)
+    ENDIF
+
+    IF Len(m.Message) > 0 THEN
+        status = status & " | " & m.Message
+    ENDIF
+
+    status = status & " | F1=Help F5=Run F7=View F10=Menu"
+
+    RETURN styleStatusBar.Render(PadRight(status, m.Width))
+END FUNCTION
+
+' Dialog rendering
+FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
+    DIM lines AS []STRING
+    DIM title AS STRING = ""
+    DIM width AS INTEGER = 40
+    DIM contentLines AS []STRING
+
+    IF m.DialogMode = DIALOG_HELP THEN
+        title = " VDBTerm Help "
+        width = 50
+        contentLines = APPEND(contentLines, "  VDBTerm - Visual DBasic Terminal IDE")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Keyboard Shortcuts:")
+        contentLines = APPEND(contentLines, "    F1     - Help")
+        contentLines = APPEND(contentLines, "    F5     - Run project")
+        contentLines = APPEND(contentLines, "    F7     - Toggle Form/Code view")
+        contentLines = APPEND(contentLines, "    F10    - Open menu")
+        contentLines = APPEND(contentLines, "    Tab    - Cycle focus areas")
+        contentLines = APPEND(contentLines, "    Arrows - Navigate/Move controls")
+        contentLines = APPEND(contentLines, "    +/-    - Resize selected control")
+        contentLines = APPEND(contentLines, "    Delete - Delete selected control")
+        contentLines = APPEND(contentLines, "    Enter  - Add control from toolbox")
+        contentLines = APPEND(contentLines, "    Ctrl+Q - Exit")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Mouse Controls:")
+        contentLines = APPEND(contentLines, "    Click  - Select panels/controls/menu")
+        contentLines = APPEND(contentLines, "    Drag   - Move controls on form")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Press Enter or Esc to close")
+    ELSEIF m.DialogMode = DIALOG_ABOUT THEN
+        title = " About VDBTerm "
+        width = 44
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "      VDBTerm v1.0")
+        contentLines = APPEND(contentLines, "      Visual DBasic Terminal IDE")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "   A modern clone of VBDos Pro")
+        contentLines = APPEND(contentLines, "   Written in DBasic for DBasic")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "   Create visual terminal applications")
+        contentLines = APPEND(contentLines, "   with forms, controls, and events.")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Press Enter or Esc to close")
+    ELSEIF m.DialogMode = DIALOG_OPEN_PROJECT THEN
+        title = " Open Project "
+        width = 40
+        contentLines = APPEND(contentLines, "  File Name:")
+        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_NEW_PROJECT THEN
+        title = " New Project "
+        width = 40
+        contentLines = APPEND(contentLines, "  Project Name:")
+        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_SAVE_PROJECT THEN
+        title = " Save Project "
+        width = 40
+        contentLines = APPEND(contentLines, "  File Name:")
+        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_NEW_FORM THEN
+        title = " New Form "
+        width = 40
+        contentLines = APPEND(contentLines, "  Form Name:")
+        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_NEW_MODULE THEN
+        title = " New Module "
+        width = 40
+        contentLines = APPEND(contentLines, "  Module Name:")
+        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
+        title = " Exit "
+        width = 36
+        contentLines = APPEND(contentLines, "  Project has been modified.")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Exit without saving?")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < Yes (Y) >   < No (N) >")
+    ELSEIF m.DialogMode = DIALOG_ENVIRONMENT THEN
+        title = " Environment Options "
+        width = 44
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Snap to Grid:    [" & IIFStr(m.SnapToGrid, "X", " ") & "]")
+        contentLines = APPEND(contentLines, "  Grid Size:       [" & PadRight(Str(m.GridSize), 3) & "]")
+        contentLines = APPEND(contentLines, "  Auto Save:       [ ]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_EDITOR THEN
+        title = " Editor Options "
+        width = 44
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Tab Size:        [" & PadRight(Str(m.TabSize), 3) & "]")
+        contentLines = APPEND(contentLines, "  Auto Indent:     [" & IIFStr(m.AutoIndent, "X", " ") & "]")
+        contentLines = APPEND(contentLines, "  Line Numbers:    [" & IIFStr(m.ShowLineNumbers, "X", " ") & "]")
+        contentLines = APPEND(contentLines, "  Syntax Highlight:[ ]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_COLORS THEN
+        title = " Color Options "
+        width = 44
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Color Scheme:")
+        contentLines = APPEND(contentLines, "    ( ) Classic Blue")
+        contentLines = APPEND(contentLines, "    (o) Dark Mode")
+        contentLines = APPEND(contentLines, "    ( ) Light Mode")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_MENU_EDITOR THEN
+        title = " Menu Editor "
+        width = 50
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Menu Items:                        ")
+        contentLines = APPEND(contentLines, "  ┌────────────────────────────────┐ ")
+        contentLines = APPEND(contentLines, "  │ &File                          │ ")
+        contentLines = APPEND(contentLines, "  │   &New                         │ ")
+        contentLines = APPEND(contentLines, "  │   &Open                        │ ")
+        contentLines = APPEND(contentLines, "  │   &Save                        │ ")
+        contentLines = APPEND(contentLines, "  │   -                            │ ")
+        contentLines = APPEND(contentLines, "  │   E&xit                        │ ")
+        contentLines = APPEND(contentLines, "  └────────────────────────────────┘ ")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  Caption: [" & PadRight(m.DialogInput, 20) & "]")
+        contentLines = APPEND(contentLines, "  Name:    [" & PadRight(m.DialogInput2, 20) & "]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  [Insert] [Delete] [Up] [Down]")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "  < OK >            < Cancel >")
+    ENDIF
+
+    ' Build dialog box
+    DIM innerWidth AS INTEGER = width - 2
+    DIM i AS INTEGER
+
+    ' Top border with title
+    DIM titleStart AS INTEGER = (innerWidth - Len(title)) / 2
+    DIM borderTop AS STRING = "╔"
+    FOR i = 0 TO innerWidth - 1
+        IF i >= titleStart AND i < titleStart + Len(title) THEN
+            borderTop = borderTop & Mid(title, i - titleStart + 1, 1)
+        ELSE
+            borderTop = borderTop & "═"
+        ENDIF
+    NEXT
+    borderTop = borderTop & "╗"
+    lines = APPEND(lines, styleDialog.Render(borderTop))
+
+    ' Content lines
+    FOR i = 0 TO Len(contentLines) - 1
+        DIM lineContent AS STRING = PadRight(contentLines[i], innerWidth)
+        lines = APPEND(lines, styleDialog.Render("║" & lineContent & "║"))
+    NEXT
+
+    ' Bottom border
+    DIM borderBottom AS STRING = "╚"
+    FOR i = 1 TO innerWidth
+        borderBottom = borderBottom & "═"
+    NEXT
+    borderBottom = borderBottom & "╝"
+    lines = APPEND(lines, styleDialog.Render(borderBottom))
+
+    RETURN lines
+END FUNCTION
+
+FUNCTION GetDialogSize(m AS VDBTermModel) AS (INTEGER, INTEGER)
+    IF m.DialogMode = DIALOG_HELP THEN
+        RETURN 50, 21
+    ELSEIF m.DialogMode = DIALOG_ABOUT THEN
+        RETURN 44, 13
+    ELSEIF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
+        RETURN 36, 7
+    ELSEIF m.DialogMode = DIALOG_NEW_PROJECT OR m.DialogMode = DIALOG_SAVE_PROJECT OR m.DialogMode = DIALOG_NEW_FORM OR m.DialogMode = DIALOG_NEW_MODULE OR m.DialogMode = DIALOG_OPEN_PROJECT THEN
+        RETURN 40, 6
+    ELSEIF m.DialogMode = DIALOG_ENVIRONMENT THEN
+        RETURN 44, 8
+    ELSEIF m.DialogMode = DIALOG_EDITOR THEN
+        RETURN 44, 9
+    ELSEIF m.DialogMode = DIALOG_COLORS THEN
+        RETURN 44, 10
+    ELSEIF m.DialogMode = DIALOG_MENU_EDITOR THEN
+        RETURN 50, 20
+    ENDIF
+    RETURN 40, 8
+END FUNCTION
