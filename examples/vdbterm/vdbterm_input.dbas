@@ -641,8 +641,12 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             DIM dragContentY AS INTEGER = y - 1
             DIM dragLocalX AS INTEGER = x - toolboxWidth
 
-            DIM newX AS INTEGER = dragLocalX - m.DragStartX
-            DIM newY AS INTEGER = dragContentY - m.DragStartY
+            ' Adjust for form title bar and left border
+            DIM formX AS INTEGER = dragLocalX - 1
+            DIM formY AS INTEGER = dragContentY - 1
+
+            DIM newX AS INTEGER = formX - m.DragStartX
+            DIM newY AS INTEGER = formY - m.DragStartY
 
             IF newX < 0 THEN
                 newX = 0
@@ -787,19 +791,29 @@ FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
         RETURN m, NIL
     ENDIF
 
+    ' Adjust for form title bar (row 0) and left border (column 0)
+    DIM formX AS INTEGER = x - 1
+    DIM formY AS INTEGER = y - 1
+
+    IF formX < 0 OR formY < 0 THEN
+        ' Clicked on border/title - deselect
+        m.SelectedCtrlIdx = -1
+        RETURN m, NIL
+    ENDIF
+
     DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
 
     ' Check if click is on a control (iterate in reverse to get topmost first)
     DIM i AS INTEGER
     FOR i = ctrlCount - 1 TO 0 STEP -1
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[i]
-        IF x >= ctrl.X AND x < ctrl.X + ctrl.Width AND y >= ctrl.Y AND y < ctrl.Y + ctrl.Height THEN
+        IF formX >= ctrl.X AND formX < ctrl.X + ctrl.Width AND formY >= ctrl.Y AND formY < ctrl.Y + ctrl.Height THEN
             m.SelectedCtrlIdx = i
             ' Start drag operation - use outline dragging for performance
             m.IsDragging = TRUE
             m.DragSkipFrame = FALSE
-            m.DragStartX = x - ctrl.X
-            m.DragStartY = y - ctrl.Y
+            m.DragStartX = formX - ctrl.X
+            m.DragStartY = formY - ctrl.Y
             m.DragOutlineX = ctrl.X
             m.DragOutlineY = ctrl.Y
             m.DragCtrlWidth = ctrl.Width
