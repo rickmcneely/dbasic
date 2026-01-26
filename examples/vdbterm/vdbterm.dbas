@@ -110,6 +110,7 @@ TYPE VDBControl
     DIM Enabled AS BOOLEAN
     DIM Visible AS BOOLEAN
     DIM TabIndex AS INTEGER
+    DIM ZOrder AS INTEGER
     DIM Value AS STRING
     DIM ForeColor AS INTEGER
     DIM BackColor AS INTEGER
@@ -1603,6 +1604,8 @@ FUNCTION GetCurrentPropertyValue(m AS VDBTermModel) AS STRING
             RETURN IIFStr(ctrl.Enabled, "True", "False")
         ELSEIF m.PropIndex = 8 THEN
             RETURN IIFStr(ctrl.Visible, "True", "False")
+        ELSEIF m.PropIndex = 9 THEN
+            RETURN Str(ctrl.ZOrder)
         ENDIF
     ELSE
         DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
@@ -1651,6 +1654,8 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Enabled = (val = "True" OR val = "true" OR val = "1")
         ELSEIF m.PropIndex = 8 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Visible = (val = "True" OR val = "true" OR val = "1")
+        ELSEIF m.PropIndex = 9 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ZOrder = ParseIntStr(val)
         ENDIF
         m.Project.Modified = TRUE
     ELSE
@@ -1739,22 +1744,22 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
 
         ' Check which panel was clicked
         IF x < toolboxWidth THEN
-            ' Toolbox panel
-            RETURN HandleToolboxClick(m, contentY)
-        ELSEIF x < toolboxWidth + contentWidth THEN
-            ' Main content area
-            DIM localX AS INTEGER = x - toolboxWidth
+            ' Left column: Toolbox (top) or Project Tree (bottom)
             IF contentY < contentHeight - projectHeight THEN
-                ' Form or Code area
-                IF m.ViewMode = VIEW_FORM THEN
-                    RETURN HandleFormClick(m, localX, contentY)
-                ELSE
-                    RETURN HandleCodeClick(m, localX, contentY)
-                ENDIF
+                ' Toolbox panel
+                RETURN HandleToolboxClick(m, contentY)
             ELSE
                 ' Project tree
                 DIM localY AS INTEGER = contentY - (contentHeight - projectHeight)
                 RETURN HandleProjectClick(m, localY)
+            ENDIF
+        ELSEIF x < toolboxWidth + contentWidth THEN
+            ' Main content area (full height)
+            DIM localX AS INTEGER = x - toolboxWidth
+            IF m.ViewMode = VIEW_FORM THEN
+                RETURN HandleFormClick(m, localX, contentY)
+            ELSE
+                RETURN HandleCodeClick(m, localX, contentY)
             ENDIF
         ELSE
             ' Properties panel
@@ -2276,18 +2281,20 @@ END FUNCTION
 FUNCTION RenderCellAt(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, toolboxWidth AS INTEGER, contentWidth AS INTEGER, propertiesWidth AS INTEGER, contentHeight AS INTEGER, projectHeight AS INTEGER) AS STRING
     ' Determine which panel this cell belongs to
     IF col < toolboxWidth THEN
-        RETURN RenderToolboxCell(m, row, col, toolboxWidth)
-    ELSEIF col < toolboxWidth + contentWidth THEN
-        DIM localCol AS INTEGER = col - toolboxWidth
+        ' Left column: Toolbox (top) or Project Tree (bottom)
         IF row < contentHeight - projectHeight THEN
-            IF m.ViewMode = VIEW_FORM THEN
-                RETURN RenderFormCell(m, row, localCol, contentWidth)
-            ELSE
-                RETURN RenderCodeCell(m, row, localCol, contentWidth)
-            ENDIF
+            RETURN RenderToolboxCell(m, row, col, toolboxWidth)
         ELSE
             DIM localRow AS INTEGER = row - (contentHeight - projectHeight)
-            RETURN RenderProjectCell(m, localRow, localCol, contentWidth)
+            RETURN RenderProjectCell(m, localRow, col, toolboxWidth)
+        ENDIF
+    ELSEIF col < toolboxWidth + contentWidth THEN
+        ' Middle: Form/Code (full height)
+        DIM localCol AS INTEGER = col - toolboxWidth
+        IF m.ViewMode = VIEW_FORM THEN
+            RETURN RenderFormCell(m, row, localCol, contentWidth)
+        ELSE
+            RETURN RenderCodeCell(m, row, localCol, contentWidth)
         ENDIF
     ELSE
         DIM propCol AS INTEGER = col - toolboxWidth - contentWidth
@@ -2298,19 +2305,21 @@ END FUNCTION
 FUNCTION RenderRow(m AS VDBTermModel, row AS INTEGER, toolboxWidth AS INTEGER, contentWidth AS INTEGER, propertiesWidth AS INTEGER, contentHeight AS INTEGER, projectHeight AS INTEGER) AS STRING
     DIM result AS STRING = ""
 
-    ' Toolbox
-    result = result & RenderToolboxRow(m, row, toolboxWidth)
-
-    ' Main content or project tree
+    ' Left column: Toolbox (top) or Project Tree (bottom)
     IF row < contentHeight - projectHeight THEN
-        IF m.ViewMode = VIEW_FORM THEN
-            result = result & RenderFormRow(m, row, contentWidth)
-        ELSE
-            result = result & RenderCodeRow(m, row, contentWidth)
-        ENDIF
+        ' Toolbox area
+        result = result & RenderToolboxRow(m, row, toolboxWidth)
     ELSE
+        ' Project tree area
         DIM localRow AS INTEGER = row - (contentHeight - projectHeight)
-        result = result & RenderProjectRow(m, localRow, contentWidth)
+        result = result & RenderProjectRow(m, localRow, toolboxWidth)
+    ENDIF
+
+    ' Main content (full height)
+    IF m.ViewMode = VIEW_FORM THEN
+        result = result & RenderFormRow(m, row, contentWidth)
+    ELSE
+        result = result & RenderCodeRow(m, row, contentWidth)
     ENDIF
 
     ' Properties
@@ -2324,12 +2333,8 @@ FUNCTION RenderToolboxRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
     DIM content AS STRING = ""
 
     IF row = 0 THEN
-        ' Title
-        IF m.FocusArea = FOCUS_TOOLBOX THEN
-            content = styleToolboxSelected.Render(PadCenter("Toolbox", width))
-        ELSE
-            content = styleToolbox.Render(PadCenter("Toolbox", width))
-        ENDIF
+        ' Title - always highlighted blue
+        content = styleToolboxSelected.Render(PadCenter("Toolbox", width))
         RETURN content
     ENDIF
 
@@ -2359,12 +2364,12 @@ FUNCTION RenderToolboxCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
     DIM selected AS BOOLEAN = FALSE
 
     IF row = 0 THEN
-        ' Title row
+        ' Title row - always highlighted blue
         DIM title AS STRING = PadCenter("Toolbox", width)
         IF col < Len(title) THEN
             ch = Mid(title, col + 1, 1)
         ENDIF
-        selected = (m.FocusArea = FOCUS_TOOLBOX)
+        RETURN styleToolboxSelected.Render(ch)
     ELSE
         DIM toolIdx AS INTEGER = row - 1
         IF toolIdx >= 0 AND toolIdx <= 10 THEN
@@ -2794,12 +2799,8 @@ FUNCTION RenderProjectRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
     DIM content AS STRING = ""
 
     IF row = 0 THEN
-        ' Border
-        IF m.FocusArea = FOCUS_PROJECT THEN
-            content = styleTreeSelected.Render(PadRight(" Project", width))
-        ELSE
-            content = styleProjectTree.Render(PadRight(" Project", width))
-        ENDIF
+        ' Title - always highlighted blue
+        content = styleTreeSelected.Render(PadRight(" Project", width))
         RETURN content
     ENDIF
 
@@ -2814,7 +2815,7 @@ FUNCTION RenderProjectRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
         DIM itemText AS STRING = ""
 
         IF itemIdx = 0 THEN
-            itemText = "■ " & m.Project.Name
+            itemText = "+ " & m.Project.Name
         ELSEIF itemIdx <= Len(m.Project.Forms) THEN
             DIM formIdx AS INTEGER = itemIdx - 1
             IF formIdx < Len(m.Project.Forms) THEN
@@ -2851,12 +2852,12 @@ FUNCTION RenderProjectCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
     DIM isTreeItem AS BOOLEAN = FALSE
 
     IF row = 0 THEN
-        ' Border row
+        ' Title row - always highlighted blue
         DIM title AS STRING = PadRight(" Project", width)
         IF col < Len(title) THEN
             ch = Mid(title, col + 1, 1)
         ENDIF
-        selected = (m.FocusArea = FOCUS_PROJECT)
+        RETURN styleTreeSelected.Render(ch)
     ELSE
         DIM itemIdx AS INTEGER = row - 1
         DIM totalItems AS INTEGER = 0
@@ -2869,7 +2870,7 @@ FUNCTION RenderProjectCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
             DIM itemText AS STRING = ""
 
             IF itemIdx = 0 THEN
-                itemText = "■ " & m.Project.Name
+                itemText = "+ " & m.Project.Name
             ELSEIF itemIdx <= Len(m.Project.Forms) THEN
                 DIM formIdx AS INTEGER = itemIdx - 1
                 IF formIdx < Len(m.Project.Forms) THEN
@@ -2909,11 +2910,8 @@ FUNCTION RenderPropertiesRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER
     DIM content AS STRING = ""
 
     IF row = 0 THEN
-        IF m.FocusArea = FOCUS_PROPERTIES THEN
-            content = stylePropSelected.Render(PadCenter("Properties", width))
-        ELSE
-            content = styleProperties.Render(PadCenter("Properties", width))
-        ENDIF
+        ' Title - always highlighted blue
+        content = stylePropSelected.Render(PadCenter("Properties", width))
         RETURN content
     ENDIF
 
@@ -2964,6 +2962,9 @@ FUNCTION RenderPropertiesRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER
             ELSE
                 propValue = "False"
             ENDIF
+        ELSEIF propIdx = 9 THEN
+            propName = "ZOrder"
+            propValue = Str(ctrl.ZOrder)
         ENDIF
     ELSE
         ' Form properties
@@ -3015,16 +3016,12 @@ FUNCTION RenderPropertiesCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER,
     DIM ch AS STRING = " "
 
     IF row = 0 THEN
-        ' Title row
+        ' Title row - always highlighted blue
         DIM title AS STRING = PadCenter("Properties", width)
         IF col < Len(title) THEN
             ch = Mid(title, col + 1, 1)
         ENDIF
-        IF m.FocusArea = FOCUS_PROPERTIES THEN
-            RETURN stylePropSelected.Render(ch)
-        ELSE
-            RETURN styleProperties.Render(ch)
-        ENDIF
+        RETURN stylePropSelected.Render(ch)
     ENDIF
 
     IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
@@ -3073,6 +3070,9 @@ FUNCTION RenderPropertiesCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER,
             ELSE
                 propValue = "False"
             ENDIF
+        ELSEIF propIdx = 9 THEN
+            propName = "ZOrder"
+            propValue = Str(ctrl.ZOrder)
         ENDIF
     ELSE
         ' Form properties
