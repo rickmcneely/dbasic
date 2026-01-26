@@ -255,6 +255,22 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
     NEXT
     DIM numRowCtrls AS INTEGER = Len(rowCtrlIndices)
 
+    ' Check if drag outline intersects this row
+    DIM outlineOnRow AS BOOLEAN = FALSE
+    DIM outlineY1 AS INTEGER = 0
+    DIM outlineY2 AS INTEGER = 0
+    DIM outlineX1 AS INTEGER = 0
+    DIM outlineX2 AS INTEGER = 0
+    IF m.IsDragging AND m.SelectedCtrlIdx >= 0 THEN
+        outlineY1 = m.DragOutlineY
+        outlineY2 = m.DragOutlineY + m.DragCtrlHeight - 1
+        outlineX1 = m.DragOutlineX
+        outlineX2 = m.DragOutlineX + m.DragCtrlWidth - 1
+        IF formRow >= outlineY1 AND formRow <= outlineY2 THEN
+            outlineOnRow = TRUE
+        ENDIF
+    ENDIF
+
     ' Build row content - use chunks for better performance
     DIM gridChunk AS STRING = ""
     DIM canvasChunk AS STRING = ""
@@ -269,14 +285,14 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             formCh = "."
         ENDIF
 
-        ' Check only controls that intersect this row
-        DIM foundCtrl AS BOOLEAN = FALSE
-        DIM j AS INTEGER
-        FOR j = 0 TO numRowCtrls - 1
-            DIM ctrlIdx AS INTEGER = rowCtrlIndices[j]
-            DIM ctrl AS VDBControl = form.Controls[ctrlIdx]
-            IF formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
-                ' Flush any pending canvas/grid content
+        ' Check for drag outline first (drawn on top)
+        DIM isOutline AS BOOLEAN = FALSE
+        IF outlineOnRow AND formCol >= outlineX1 AND formCol <= outlineX2 THEN
+            ' Check if on outline border
+            DIM onTopBottom AS BOOLEAN = (formRow = outlineY1 OR formRow = outlineY2)
+            DIM onLeftRight AS BOOLEAN = (formCol = outlineX1 OR formCol = outlineX2)
+            IF onTopBottom OR onLeftRight THEN
+                ' Flush pending chunks
                 IF Len(canvasChunk) > 0 THEN
                     content = content & styleFormCanvas.Render(canvasChunk)
                     canvasChunk = ""
@@ -285,45 +301,79 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
                     content = content & styleFormGrid.Render(gridChunk)
                     gridChunk = ""
                 ENDIF
+                ' Draw outline character
+                DIM outlineCh AS STRING = "+"
+                IF onTopBottom AND NOT onLeftRight THEN
+                    outlineCh = "-"
+                ELSEIF onLeftRight AND NOT onTopBottom THEN
+                    outlineCh = "|"
+                ENDIF
+                content = content & styleControlSelected.Render(outlineCh)
+                isOutline = TRUE
+            ENDIF
+        ENDIF
 
-                DIM localRow AS INTEGER = formRow - ctrl.Y
-                DIM localCol AS INTEGER = formCol - ctrl.X
-                DIM isSelected AS BOOLEAN = (ctrlIdx = m.SelectedCtrlIdx)
+        IF NOT isOutline THEN
+            ' Check only controls that intersect this row
+            DIM foundCtrl AS BOOLEAN = FALSE
+            DIM j AS INTEGER
+            FOR j = 0 TO numRowCtrls - 1
+                DIM ctrlIdx AS INTEGER = rowCtrlIndices[j]
+                ' Skip the dragged control during drag - it's represented by outline
+                DIM skipCtrl AS BOOLEAN = (m.IsDragging AND ctrlIdx = m.SelectedCtrlIdx)
+                IF NOT skipCtrl THEN
+                    DIM ctrl AS VDBControl = form.Controls[ctrlIdx]
+                    IF formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
+                        ' Flush any pending canvas/grid content
+                        IF Len(canvasChunk) > 0 THEN
+                            content = content & styleFormCanvas.Render(canvasChunk)
+                            canvasChunk = ""
+                        ENDIF
+                        IF Len(gridChunk) > 0 THEN
+                            content = content & styleFormGrid.Render(gridChunk)
+                            gridChunk = ""
+                        ENDIF
 
-                ' Check for selection handles at corners
-                IF isSelected THEN
-                    IF (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1) THEN
-                        content = content & styleControlSelected.Render("■")
+                        DIM localRow AS INTEGER = formRow - ctrl.Y
+                        DIM localCol AS INTEGER = formCol - ctrl.X
+                        DIM isSelected AS BOOLEAN = (ctrlIdx = m.SelectedCtrlIdx)
+
+                        ' Check for selection handles at corners
+                        IF isSelected THEN
+                            IF (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1) THEN
+                                content = content & styleControlSelected.Render("■")
+                                foundCtrl = TRUE
+                                EXIT FOR
+                            ENDIF
+                        ENDIF
+
+                        formCh = RenderControlChar(ctrl, localRow, localCol, isSelected)
+                        IF isSelected THEN
+                            content = content & styleControlSelected.Render(formCh)
+                        ELSE
+                            content = content & styleControl.Render(formCh)
+                        ENDIF
                         foundCtrl = TRUE
                         EXIT FOR
                     ENDIF
                 ENDIF
+            NEXT
 
-                formCh = RenderControlChar(ctrl, localRow, localCol, isSelected)
-                IF isSelected THEN
-                    content = content & styleControlSelected.Render(formCh)
+            IF NOT foundCtrl THEN
+                ' Batch similar characters together
+                IF m.ShowGrid AND formCh = "." THEN
+                    IF Len(canvasChunk) > 0 THEN
+                        content = content & styleFormCanvas.Render(canvasChunk)
+                        canvasChunk = ""
+                    ENDIF
+                    gridChunk = gridChunk & formCh
                 ELSE
-                    content = content & styleControl.Render(formCh)
+                    IF Len(gridChunk) > 0 THEN
+                        content = content & styleFormGrid.Render(gridChunk)
+                        gridChunk = ""
+                    ENDIF
+                    canvasChunk = canvasChunk & formCh
                 ENDIF
-                foundCtrl = TRUE
-                EXIT FOR
-            ENDIF
-        NEXT
-
-        IF NOT foundCtrl THEN
-            ' Batch similar characters together
-            IF m.ShowGrid AND formCh = "." THEN
-                IF Len(canvasChunk) > 0 THEN
-                    content = content & styleFormCanvas.Render(canvasChunk)
-                    canvasChunk = ""
-                ENDIF
-                gridChunk = gridChunk & formCh
-            ELSE
-                IF Len(gridChunk) > 0 THEN
-                    content = content & styleFormGrid.Render(gridChunk)
-                    gridChunk = ""
-                ENDIF
-                canvasChunk = canvasChunk & formCh
             ENDIF
         ENDIF
     NEXT

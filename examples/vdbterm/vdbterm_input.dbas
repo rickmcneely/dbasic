@@ -630,38 +630,44 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             RETURN HandlePropertiesClick(m, contentY)
         ENDIF
 
-    ' Handle mouse drag for moving controls in form view
-    ' Skip every other frame to reduce rendering overhead
+    ' Handle mouse drag - only update outline position, not actual control
     ELSEIF action = tea.MouseActionMotion AND m.IsDragging THEN
+        ' Skip every other frame to reduce rendering overhead
         m.DragSkipFrame = NOT m.DragSkipFrame
         IF m.DragSkipFrame THEN
             RETURN m, NIL
         ENDIF
         IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
-            DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
-            IF m.SelectedCtrlIdx < ctrlCount THEN
-                DIM dragContentY AS INTEGER = y - 1
-                DIM dragLocalX AS INTEGER = x - toolboxWidth
+            DIM dragContentY AS INTEGER = y - 1
+            DIM dragLocalX AS INTEGER = x - toolboxWidth
 
-                DIM newX AS INTEGER = dragLocalX - m.DragStartX
-                DIM newY AS INTEGER = dragContentY - m.DragStartY
+            DIM newX AS INTEGER = dragLocalX - m.DragStartX
+            DIM newY AS INTEGER = dragContentY - m.DragStartY
 
-                IF newX < 0 THEN
-                    newX = 0
-                ENDIF
-                IF newY < 0 THEN
-                    newY = 0
-                ENDIF
-
-                m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = newX
-                m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = newY
-                m.Project.Modified = TRUE
+            IF newX < 0 THEN
+                newX = 0
             ENDIF
+            IF newY < 0 THEN
+                newY = 0
+            ENDIF
+
+            ' Only update outline position during drag
+            m.DragOutlineX = newX
+            m.DragOutlineY = newY
         ENDIF
 
-    ' Handle mouse release
+    ' Handle mouse release - move control to final position
     ELSEIF action = tea.MouseActionRelease THEN
         IF m.IsDragging THEN
+            ' Apply the final outline position to the actual control
+            IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+                DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+                IF m.SelectedCtrlIdx < ctrlCount THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
+                    m.Project.Modified = TRUE
+                ENDIF
+            ENDIF
             m.IsDragging = FALSE
             m.Message = "Control moved"
         ENDIF
@@ -789,12 +795,16 @@ FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[i]
         IF x >= ctrl.X AND x < ctrl.X + ctrl.Width AND y >= ctrl.Y AND y < ctrl.Y + ctrl.Height THEN
             m.SelectedCtrlIdx = i
-            ' Start drag operation
+            ' Start drag operation - use outline dragging for performance
             m.IsDragging = TRUE
             m.DragSkipFrame = FALSE
             m.DragStartX = x - ctrl.X
             m.DragStartY = y - ctrl.Y
-            m.Message = "Selected: " & ctrl.CtlName
+            m.DragOutlineX = ctrl.X
+            m.DragOutlineY = ctrl.Y
+            m.DragCtrlWidth = ctrl.Width
+            m.DragCtrlHeight = ctrl.Height
+            m.Message = "Dragging: " & ctrl.CtlName
             RETURN m, NIL
         ENDIF
     NEXT

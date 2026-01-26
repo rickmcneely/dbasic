@@ -77,6 +77,10 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM DragStartX AS INTEGER
     DIM DragStartY AS INTEGER
     DIM DragSkipFrame AS BOOLEAN
+    DIM DragOutlineX AS INTEGER
+    DIM DragOutlineY AS INTEGER
+    DIM DragCtrlWidth AS INTEGER
+    DIM DragCtrlHeight AS INTEGER
 
     ' Code editor state
     DIM CodeCursorX AS INTEGER
