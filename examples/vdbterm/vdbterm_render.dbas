@@ -1628,12 +1628,12 @@ FUNCTION GetPopupLines(m AS VDBTermModel) AS []STRING
         ENDIF
     ENDIF
 
-    ' Title bar
+    ' Title bar (using Unicode box-drawing characters like dropdown menus)
     DIM title AS STRING = " " & titleText & " Events "
     DIM titlePadded AS STRING = PadCenter(title, width - 2)
-    lines = APPEND(lines, styleDropdown.Render(Chr(218) & RepeatStr(Chr(196), width - 2) & Chr(191)))
-    lines = APPEND(lines, styleDropdownSelected.Render(Chr(179) & titlePadded & Chr(179)))
-    lines = APPEND(lines, styleDropdown.Render(Chr(195) & RepeatStr(Chr(196), width - 2) & Chr(180)))
+    lines = APPEND(lines, styleDropdown.Render("┌" & RepeatStr("─", width - 2) & "┐"))
+    lines = APPEND(lines, styleDropdownSelected.Render("│" & titlePadded & "│"))
+    lines = APPEND(lines, styleDropdown.Render("├" & RepeatStr("─", width - 2) & "┤"))
 
     ' Event items
     DIM i AS INTEGER
@@ -1641,14 +1641,14 @@ FUNCTION GetPopupLines(m AS VDBTermModel) AS []STRING
         DIM eventName AS STRING = m.PopupEvents[i]
         DIM itemText AS STRING = " " & PadRight(eventName, width - 4) & " "
         IF i = m.PopupIndex THEN
-            lines = APPEND(lines, styleDropdown.Render(Chr(179)) & styleDropdownSelected.Render(itemText) & styleDropdown.Render(Chr(179)))
+            lines = APPEND(lines, styleDropdown.Render("│") & styleDropdownSelected.Render(itemText) & styleDropdown.Render("│"))
         ELSE
-            lines = APPEND(lines, styleDropdown.Render(Chr(179)) & styleDropdown.Render(itemText) & styleDropdown.Render(Chr(179)))
+            lines = APPEND(lines, styleDropdown.Render("│") & styleDropdown.Render(itemText) & styleDropdown.Render("│"))
         ENDIF
     NEXT
 
     ' Bottom border
-    lines = APPEND(lines, styleDropdown.Render(Chr(192) & RepeatStr(Chr(196), width - 2) & Chr(217)))
+    lines = APPEND(lines, styleDropdown.Render("└" & RepeatStr("─", width - 2) & "┘"))
 
     RETURN lines
 END FUNCTION
