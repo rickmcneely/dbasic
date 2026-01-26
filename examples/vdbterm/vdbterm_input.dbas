@@ -417,13 +417,26 @@ FUNCTION HandlePropertiesInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, 
             ENDIF
             m.PropEditing = FALSE
             m.PropEditValue = ""
+            m.PropEditFresh = FALSE
         ELSEIF key = "backspace" THEN
-            IF Len(m.PropEditValue) > 0 THEN
+            IF m.PropEditFresh THEN
+                ' Backspace on fresh edit clears all
+                m.PropEditValue = ""
+                m.PropEditFresh = FALSE
+            ELSEIF Len(m.PropEditValue) > 0 THEN
                 m.PropEditValue = Left(m.PropEditValue, Len(m.PropEditValue) - 1)
             ENDIF
+        ELSEIF key = "left" OR key = "right" OR key = "home" OR key = "end" THEN
+            ' Arrow keys deselect (keep value, allow editing)
+            m.PropEditFresh = FALSE
         ELSEIF Len(key) = 1 THEN
-            ' Add character to edit value
-            m.PropEditValue = m.PropEditValue & key
+            ' On first keystroke, clear existing value (like selected text replacement)
+            IF m.PropEditFresh THEN
+                m.PropEditValue = key
+                m.PropEditFresh = FALSE
+            ELSE
+                m.PropEditValue = m.PropEditValue & key
+            ENDIF
         ENDIF
     ELSE
         ' Handle navigation mode
@@ -434,10 +447,11 @@ FUNCTION HandlePropertiesInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, 
         ELSEIF key = "down" THEN
             m.PropIndex = m.PropIndex + 1
         ELSEIF key = "enter" OR key = "f2" THEN
-            ' Start editing - load current value
+            ' Start editing - load current value (shown as selected)
             m.PropEditValue = GetCurrentPropertyValue(m)
             IF Len(m.PropEditValue) > 0 OR CanEditProperty(m) THEN
                 m.PropEditing = TRUE
+                m.PropEditFresh = TRUE
             ENDIF
         ENDIF
     ENDIF
@@ -479,8 +493,12 @@ FUNCTION GetCurrentPropertyValue(m AS VDBTermModel) AS STRING
         ELSEIF m.PropIndex = 1 THEN
             RETURN form.Caption
         ELSEIF m.PropIndex = 2 THEN
-            RETURN Str(form.Width)
+            RETURN Str(form.X)
         ELSEIF m.PropIndex = 3 THEN
+            RETURN Str(form.Y)
+        ELSEIF m.PropIndex = 4 THEN
+            RETURN Str(form.Width)
+        ELSEIF m.PropIndex = 5 THEN
             RETURN Str(form.Height)
         ENDIF
     ENDIF
@@ -529,8 +547,12 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
         ELSEIF m.PropIndex = 1 THEN
             m.Project.Forms[m.CurrentFormIdx].Caption = val
         ELSEIF m.PropIndex = 2 THEN
-            m.Project.Forms[m.CurrentFormIdx].Width = ParseIntStr(val)
+            m.Project.Forms[m.CurrentFormIdx].X = ParseIntStr(val)
         ELSEIF m.PropIndex = 3 THEN
+            m.Project.Forms[m.CurrentFormIdx].Y = ParseIntStr(val)
+        ELSEIF m.PropIndex = 4 THEN
+            m.Project.Forms[m.CurrentFormIdx].Width = ParseIntStr(val)
+        ELSEIF m.PropIndex = 5 THEN
             m.Project.Forms[m.CurrentFormIdx].Height = ParseIntStr(val)
         ENDIF
         m.Project.Modified = TRUE
@@ -600,8 +622,7 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
 
         ' If dialog is open, handle dialog clicks
         IF m.DialogMode <> DIALOG_NONE THEN
-            ' For now, just allow Escape to close (no mouse handling in dialogs)
-            RETURN m, NIL
+            RETURN HandleDialogClick(m, x, y, contentHeight)
         ENDIF
 
         ' Adjust y for content area (subtract 1 for menu bar)
@@ -631,34 +652,51 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             RETURN HandlePropertiesClick(m, contentY)
         ENDIF
 
-    ' Handle mouse drag - only update outline position, not actual control
+    ' Handle mouse drag - only update outline position, not actual control/form
     ELSEIF action = tea.MouseActionMotion AND m.IsDragging THEN
         ' Skip every other frame to reduce rendering overhead
         m.DragSkipFrame = NOT m.DragSkipFrame
         IF m.DragSkipFrame THEN
             RETURN m, NIL
         ENDIF
-        IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+        IF m.ViewMode = VIEW_FORM THEN
             DIM dragContentY AS INTEGER = y - 1
             DIM dragLocalX AS INTEGER = x - toolboxWidth
 
-            ' Adjust for form title bar and left border
-            DIM formX AS INTEGER = dragLocalX - 1
-            DIM formY AS INTEGER = dragContentY - 1
+            IF m.DraggingForm THEN
+                ' Form drag - position relative to canvas
+                DIM newFormX AS INTEGER = dragLocalX - m.DragStartX
+                DIM newFormY AS INTEGER = dragContentY - m.DragStartY
 
-            DIM newX AS INTEGER = formX - m.DragStartX
-            DIM newY AS INTEGER = formY - m.DragStartY
+                IF newFormX < 0 THEN
+                    newFormX = 0
+                ENDIF
+                IF newFormY < 0 THEN
+                    newFormY = 0
+                ENDIF
 
-            IF newX < 0 THEN
-                newX = 0
+                m.DragOutlineX = newFormX
+                m.DragOutlineY = newFormY
+            ELSEIF m.SelectedCtrlIdx >= 0 THEN
+                ' Control drag - position relative to form content area
+                DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+                DIM ctrlFormX AS INTEGER = dragLocalX - form.X - 1
+                DIM ctrlFormY AS INTEGER = dragContentY - form.Y - 1
+
+                DIM newX AS INTEGER = ctrlFormX - m.DragStartX
+                DIM newY AS INTEGER = ctrlFormY - m.DragStartY
+
+                IF newX < 0 THEN
+                    newX = 0
+                ENDIF
+                IF newY < 0 THEN
+                    newY = 0
+                ENDIF
+
+                ' Only update outline position during drag
+                m.DragOutlineX = newX
+                m.DragOutlineY = newY
             ENDIF
-            IF newY < 0 THEN
-                newY = 0
-            ENDIF
-
-            ' Only update outline position during drag
-            m.DragOutlineX = newX
-            m.DragOutlineY = newY
         ENDIF
 
     ' Handle mouse resize - update outline size based on corner being dragged
@@ -667,64 +705,94 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
         IF m.DragSkipFrame THEN
             RETURN m, NIL
         ENDIF
-        IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+        IF m.ViewMode = VIEW_FORM THEN
             DIM resizeContentY AS INTEGER = y - 1
             DIM resizeLocalX AS INTEGER = x - toolboxWidth
-            DIM resFormX AS INTEGER = resizeLocalX - 1
-            DIM resFormY AS INTEGER = resizeContentY - 1
+
+            DIM resizeForm AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+
+            ' For form resize, use screen coordinates relative to form origin
+            ' For control resize, adjust for form position and borders
+            DIM resFormX AS INTEGER = resizeLocalX
+            DIM resFormY AS INTEGER = resizeContentY
+            IF NOT m.ResizingForm THEN
+                resFormX = resizeLocalX - resizeForm.X - 1
+                resFormY = resizeContentY - resizeForm.Y - 1
+            ENDIF
 
             DIM resNewX AS INTEGER = m.ResizeOrigX
             DIM resNewY AS INTEGER = m.ResizeOrigY
             DIM resNewW AS INTEGER = m.ResizeOrigW
             DIM resNewH AS INTEGER = m.ResizeOrigH
 
-            IF m.ResizeCorner = HANDLE_TL THEN
-                ' Top-left corner: move origin, shrink from top-left
-                resNewX = resFormX
-                resNewY = resFormY
-                resNewW = m.ResizeOrigX + m.ResizeOrigW - resFormX
-                resNewH = m.ResizeOrigY + m.ResizeOrigH - resFormY
-            ELSEIF m.ResizeCorner = HANDLE_TR THEN
-                ' Top-right corner: move Y, change width, shrink from top
-                resNewY = resFormY
-                resNewW = resFormX - m.ResizeOrigX + 1
-                resNewH = m.ResizeOrigY + m.ResizeOrigH - resFormY
-            ELSEIF m.ResizeCorner = HANDLE_BL THEN
-                ' Bottom-left corner: move X, change height, shrink from left
-                resNewX = resFormX
-                resNewW = m.ResizeOrigX + m.ResizeOrigW - resFormX
-                resNewH = resFormY - m.ResizeOrigY + 1
-            ELSEIF m.ResizeCorner = HANDLE_BR THEN
-                ' Bottom-right corner: just change width and height
-                resNewW = resFormX - m.ResizeOrigX + 1
-                resNewH = resFormY - m.ResizeOrigY + 1
-            ELSEIF m.ResizeCorner = HANDLE_TOP THEN
-                ' Top edge: move Y, change height (vertical only)
-                resNewY = resFormY
-                resNewH = m.ResizeOrigY + m.ResizeOrigH - resFormY
-            ELSEIF m.ResizeCorner = HANDLE_BOTTOM THEN
-                ' Bottom edge: change height only
-                resNewH = resFormY - m.ResizeOrigY + 1
-            ELSEIF m.ResizeCorner = HANDLE_LEFT THEN
-                ' Left edge: move X, change width (horizontal only)
-                resNewX = resFormX
-                resNewW = m.ResizeOrigX + m.ResizeOrigW - resFormX
-            ELSEIF m.ResizeCorner = HANDLE_RIGHT THEN
-                ' Right edge: change width only
-                resNewW = resFormX - m.ResizeOrigX + 1
+            IF m.ResizingForm THEN
+                ' Form resize - calculate new size based on mouse position relative to form origin
+                IF m.ResizeCorner = HANDLE_TR OR m.ResizeCorner = HANDLE_BR OR m.ResizeCorner = HANDLE_RIGHT THEN
+                    resNewW = resFormX - resizeForm.X + 1
+                ENDIF
+                IF m.ResizeCorner = HANDLE_BL OR m.ResizeCorner = HANDLE_BR OR m.ResizeCorner = HANDLE_BOTTOM THEN
+                    resNewH = resFormY - resizeForm.Y + 1
+                ENDIF
+                ' Form doesn't support resizing from top/left (would need to move controls)
+            ELSE
+                ' Control resize
+                IF m.SelectedCtrlIdx < 0 THEN
+                    RETURN m, NIL
+                ENDIF
+                IF m.ResizeCorner = HANDLE_TL THEN
+                    ' Top-left corner: move origin, shrink from top-left
+                    resNewX = resFormX
+                    resNewY = resFormY
+                    resNewW = m.ResizeOrigX + m.ResizeOrigW - resFormX
+                    resNewH = m.ResizeOrigY + m.ResizeOrigH - resFormY
+                ELSEIF m.ResizeCorner = HANDLE_TR THEN
+                    ' Top-right corner: move Y, change width, shrink from top
+                    resNewY = resFormY
+                    resNewW = resFormX - m.ResizeOrigX + 1
+                    resNewH = m.ResizeOrigY + m.ResizeOrigH - resFormY
+                ELSEIF m.ResizeCorner = HANDLE_BL THEN
+                    ' Bottom-left corner: move X, change height, shrink from left
+                    resNewX = resFormX
+                    resNewW = m.ResizeOrigX + m.ResizeOrigW - resFormX
+                    resNewH = resFormY - m.ResizeOrigY + 1
+                ELSEIF m.ResizeCorner = HANDLE_BR THEN
+                    ' Bottom-right corner: just change width and height
+                    resNewW = resFormX - m.ResizeOrigX + 1
+                    resNewH = resFormY - m.ResizeOrigY + 1
+                ELSEIF m.ResizeCorner = HANDLE_TOP THEN
+                    ' Top edge: move Y, change height (vertical only)
+                    resNewY = resFormY
+                    resNewH = m.ResizeOrigY + m.ResizeOrigH - resFormY
+                ELSEIF m.ResizeCorner = HANDLE_BOTTOM THEN
+                    ' Bottom edge: change height only
+                    resNewH = resFormY - m.ResizeOrigY + 1
+                ELSEIF m.ResizeCorner = HANDLE_LEFT THEN
+                    ' Left edge: move X, change width (horizontal only)
+                    resNewX = resFormX
+                    resNewW = m.ResizeOrigX + m.ResizeOrigW - resFormX
+                ELSEIF m.ResizeCorner = HANDLE_RIGHT THEN
+                    ' Right edge: change width only
+                    resNewW = resFormX - m.ResizeOrigX + 1
+                ENDIF
             ENDIF
 
             ' Enforce minimum size
-            IF resNewW < 2 THEN
-                resNewW = 2
+            DIM minW AS INTEGER = 5
+            DIM minH AS INTEGER = 3
+            IF NOT m.ResizingForm THEN
+                minW = 2
+                minH = 1
+            ENDIF
+            IF resNewW < minW THEN
+                resNewW = minW
                 IF m.ResizeCorner = HANDLE_TL OR m.ResizeCorner = HANDLE_BL OR m.ResizeCorner = HANDLE_LEFT THEN
-                    resNewX = m.ResizeOrigX + m.ResizeOrigW - 2
+                    resNewX = m.ResizeOrigX + m.ResizeOrigW - minW
                 ENDIF
             ENDIF
-            IF resNewH < 1 THEN
-                resNewH = 1
+            IF resNewH < minH THEN
+                resNewH = minH
                 IF m.ResizeCorner = HANDLE_TL OR m.ResizeCorner = HANDLE_TR OR m.ResizeCorner = HANDLE_TOP THEN
-                    resNewY = m.ResizeOrigY + m.ResizeOrigH - 1
+                    resNewY = m.ResizeOrigY + m.ResizeOrigH - minH
                 ENDIF
             ENDIF
             IF resNewX < 0 THEN
@@ -743,31 +811,55 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
     ' Handle mouse release - apply final position/size
     ELSEIF action = tea.MouseActionRelease THEN
         IF m.IsDragging THEN
-            ' Apply the final outline position to the actual control
-            IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
-                DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
-                IF m.SelectedCtrlIdx < ctrlCount THEN
-                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
-                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
+            IF m.DraggingForm THEN
+                ' Apply the final position to the form
+                IF m.ViewMode = VIEW_FORM THEN
+                    m.Project.Forms[m.CurrentFormIdx].X = m.DragOutlineX
+                    m.Project.Forms[m.CurrentFormIdx].Y = m.DragOutlineY
                     m.Project.Modified = TRUE
                 ENDIF
+                m.IsDragging = FALSE
+                m.DraggingForm = FALSE
+                m.Message = "Form moved"
+            ELSE
+                ' Apply the final outline position to the actual control
+                IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+                    DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+                    IF m.SelectedCtrlIdx < ctrlCount THEN
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
+                        m.Project.Modified = TRUE
+                    ENDIF
+                ENDIF
+                m.IsDragging = FALSE
+                m.Message = "Control moved"
             ENDIF
-            m.IsDragging = FALSE
-            m.Message = "Control moved"
         ELSEIF m.IsResizing THEN
-            ' Apply the final size to the actual control
-            IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
-                DIM ctrlCount2 AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
-                IF m.SelectedCtrlIdx < ctrlCount2 THEN
-                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
-                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
-                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width = m.DragCtrlWidth
-                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Height = m.DragCtrlHeight
+            IF m.ResizingForm THEN
+                ' Apply the final size to the form
+                IF m.ViewMode = VIEW_FORM THEN
+                    m.Project.Forms[m.CurrentFormIdx].Width = m.DragCtrlWidth
+                    m.Project.Forms[m.CurrentFormIdx].Height = m.DragCtrlHeight
                     m.Project.Modified = TRUE
                 ENDIF
+                m.IsResizing = FALSE
+                m.ResizingForm = FALSE
+                m.Message = "Form resized"
+            ELSE
+                ' Apply the final size to the actual control
+                IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+                    DIM ctrlCount2 AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+                    IF m.SelectedCtrlIdx < ctrlCount2 THEN
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width = m.DragCtrlWidth
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Height = m.DragCtrlHeight
+                        m.Project.Modified = TRUE
+                    ENDIF
+                ENDIF
+                m.IsResizing = FALSE
+                m.Message = "Control resized"
             ENDIF
-            m.IsResizing = FALSE
-            m.Message = "Control resized"
         ENDIF
     ENDIF
 
@@ -885,25 +977,118 @@ FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
         RETURN m, NIL
     ENDIF
 
-    ' Adjust for form title bar (row 0) and left border (column 0)
-    DIM formX AS INTEGER = x - 1
-    DIM formY AS INTEGER = y - 1
+    DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+    DIM formX AS INTEGER = form.X
+    DIM formY AS INTEGER = form.Y
+    DIM formW AS INTEGER = form.Width
+    DIM formH AS INTEGER = form.Height
 
-    IF formX < 0 OR formY < 0 THEN
-        ' Clicked on border/title - deselect
+    ' Check if click is outside form bounds
+    IF x < formX OR x >= formX + formW OR y < formY OR y >= formY + formH THEN
+        ' Click outside form - select form (deselect any control)
         m.SelectedCtrlIdx = -1
         RETURN m, NIL
     ENDIF
 
-    DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+    ' Coordinates relative to form
+    DIM relX AS INTEGER = x - formX
+    DIM relY AS INTEGER = y - formY
+
+    ' Check if clicking on form border/handles when form is selected
+    DIM formIsSelected AS BOOLEAN = (m.SelectedCtrlIdx < 0)
+    DIM onFormBorder AS BOOLEAN = (relX = 0 OR relX = formW - 1 OR relY = 0 OR relY = formH - 1)
+
+    IF formIsSelected AND onFormBorder THEN
+        DIM centerCol AS INTEGER = formW / 2
+        DIM centerRow AS INTEGER = formH / 2
+        DIM formHandle AS INTEGER = HANDLE_NONE
+
+        ' Check title bar (row 0)
+        IF relY = 0 THEN
+            IF relX = 0 THEN
+                formHandle = HANDLE_TL
+            ELSEIF relX = formW - 1 THEN
+                formHandle = HANDLE_TR
+            ELSEIF relX = centerCol AND formW >= 3 THEN
+                formHandle = HANDLE_TOP
+            ENDIF
+        ' Check bottom border (row formH-1)
+        ELSEIF relY = formH - 1 THEN
+            IF relX = 0 THEN
+                formHandle = HANDLE_BL
+            ELSEIF relX = formW - 1 THEN
+                formHandle = HANDLE_BR
+            ELSEIF relX = centerCol AND formW >= 3 THEN
+                formHandle = HANDLE_BOTTOM
+            ENDIF
+        ' Check left edge
+        ELSEIF relX = 0 AND relY = centerRow AND formH >= 3 THEN
+            formHandle = HANDLE_LEFT
+        ' Check right edge
+        ELSEIF relX = formW - 1 AND relY = centerRow AND formH >= 3 THEN
+            formHandle = HANDLE_RIGHT
+        ENDIF
+
+        IF formHandle <> HANDLE_NONE THEN
+            ' Start form resize operation
+            m.IsResizing = TRUE
+            m.ResizingForm = TRUE
+            m.IsDragging = FALSE
+            m.DraggingForm = FALSE
+            m.DragSkipFrame = FALSE
+            m.ResizeCorner = formHandle
+            m.ResizeOrigX = formX
+            m.ResizeOrigY = formY
+            m.ResizeOrigW = formW
+            m.ResizeOrigH = formH
+            m.DragOutlineX = formX
+            m.DragOutlineY = formY
+            m.DragCtrlWidth = formW
+            m.DragCtrlHeight = formH
+            m.Message = "Resizing form"
+            RETURN m, NIL
+        ELSE
+            ' Clicked on form border but not a handle - start form drag
+            m.IsDragging = TRUE
+            m.DraggingForm = TRUE
+            m.IsResizing = FALSE
+            m.DragSkipFrame = FALSE
+            m.DragStartX = relX
+            m.DragStartY = relY
+            m.DragOutlineX = formX
+            m.DragOutlineY = formY
+            m.DragCtrlWidth = formW
+            m.DragCtrlHeight = formH
+            m.Message = "Moving form"
+            RETURN m, NIL
+        ENDIF
+    ENDIF
+
+    ' Click on form border when form is not selected - select the form
+    IF onFormBorder THEN
+        m.SelectedCtrlIdx = -1
+        RETURN m, NIL
+    ENDIF
+
+    ' Coordinates relative to form content area (inside borders)
+    DIM contentX AS INTEGER = relX - 1
+    DIM contentY AS INTEGER = relY - 1
+
+    IF contentX < 0 OR contentY < 0 THEN
+        ' This shouldn't happen if we're past the border checks
+        m.SelectedCtrlIdx = -1
+        RETURN m, NIL
+    ENDIF
+
+    DIM ctrlCount AS INTEGER = Len(form.Controls)
 
     ' Check if click is on a control (iterate in reverse to get topmost first)
     DIM i AS INTEGER
     FOR i = ctrlCount - 1 TO 0 STEP -1
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[i]
-        IF formX >= ctrl.X AND formX < ctrl.X + ctrl.Width AND formY >= ctrl.Y AND formY < ctrl.Y + ctrl.Height THEN
-            DIM localX AS INTEGER = formX - ctrl.X
-            DIM localY AS INTEGER = formY - ctrl.Y
+        IF contentX >= ctrl.X AND contentX < ctrl.X + ctrl.Width AND contentY >= ctrl.Y AND contentY < ctrl.Y + ctrl.Height THEN
+            DIM localX AS INTEGER = contentX - ctrl.X
+            DIM localY AS INTEGER = contentY - ctrl.Y
             DIM isSelected AS BOOLEAN = (i = m.SelectedCtrlIdx)
 
             ' Check if clicking on a resize handle of already-selected control
@@ -940,8 +1125,9 @@ FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
                 ENDIF
 
                 IF handle <> HANDLE_NONE THEN
-                    ' Start resize operation
+                    ' Start resize operation for control
                     m.IsResizing = TRUE
+                    m.ResizingForm = FALSE
                     m.IsDragging = FALSE
                     m.DragSkipFrame = FALSE
                     m.ResizeCorner = handle
@@ -1055,6 +1241,91 @@ FUNCTION HandleProjectClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.
             m.CurrentFormIdx = itemIdx
             m.SelectedCtrlIdx = -1
         ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleDialogClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, contentHeight AS INTEGER) AS (tea.Model, tea.Cmd)
+    ' Calculate dialog position and size
+    DIM dialogWidth AS INTEGER
+    DIM dialogHeight AS INTEGER
+    dialogWidth, dialogHeight = GetDialogSize(m)
+
+    DIM dialogStartRow AS INTEGER = (contentHeight - dialogHeight) / 2 + 1  ' +1 for menu bar
+    DIM dialogStartCol AS INTEGER = (m.Width - dialogWidth) / 2
+
+    IF dialogStartRow < 1 THEN
+        dialogStartRow = 1
+    ENDIF
+    IF dialogStartCol < 0 THEN
+        dialogStartCol = 0
+    ENDIF
+
+    ' Check if click is inside dialog
+    DIM relX AS INTEGER = x - dialogStartCol
+    DIM relY AS INTEGER = y - dialogStartRow
+
+    IF relX < 0 OR relX >= dialogWidth OR relY < 0 OR relY >= dialogHeight THEN
+        ' Click outside dialog - close it for simple dialogs
+        IF m.DialogMode = DIALOG_HELP OR m.DialogMode = DIALOG_ABOUT THEN
+            m.DialogMode = DIALOG_NONE
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Handle clicks based on dialog type
+    IF m.DialogMode = DIALOG_HELP OR m.DialogMode = DIALOG_ABOUT THEN
+        ' Any click closes the dialog
+        m.DialogMode = DIALOG_NONE
+        RETURN m, NIL
+    ENDIF
+
+    IF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
+        ' Check for Yes/No button clicks
+        ' "  < Yes (Y) >   < No (N) >" is on row 4 (0-indexed: content starts at row 1)
+        IF relY = 5 THEN
+            IF relX >= 2 AND relX < 14 THEN
+                ' Yes button clicked
+                RETURN m, tea.Quit
+            ELSEIF relX >= 16 AND relX < 28 THEN
+                ' No button clicked
+                m.DialogMode = DIALOG_NONE
+            ENDIF
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' For input dialogs (New Project, Save Project, New Form, New Module, Open Project)
+    IF m.DialogMode = DIALOG_NEW_PROJECT OR m.DialogMode = DIALOG_SAVE_PROJECT OR m.DialogMode = DIALOG_NEW_FORM OR m.DialogMode = DIALOG_NEW_MODULE OR m.DialogMode = DIALOG_OPEN_PROJECT THEN
+        ' Check for OK/Cancel button clicks
+        ' "  < OK >        < Cancel >" is on row 4 (content row 3)
+        IF relY = 4 THEN
+            IF relX >= 2 AND relX < 10 THEN
+                ' OK button clicked - simulate Enter
+                RETURN HandleDialogInput(m, "enter")
+            ELSEIF relX >= 16 AND relX < 28 THEN
+                ' Cancel button clicked - simulate Escape
+                m.DialogMode = DIALOG_NONE
+            ENDIF
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' For options dialogs
+    IF m.DialogMode = DIALOG_ENVIRONMENT OR m.DialogMode = DIALOG_EDITOR OR m.DialogMode = DIALOG_COLORS THEN
+        ' Check for OK/Cancel button clicks on the last content row
+        DIM btnRow AS INTEGER = dialogHeight - 2
+        IF relY = btnRow THEN
+            IF relX >= 2 AND relX < 10 THEN
+                ' OK button clicked
+                m.DialogMode = DIALOG_NONE
+            ELSEIF relX >= 16 AND relX < 28 THEN
+                ' Cancel button clicked
+                m.DialogMode = DIALOG_NONE
+            ENDIF
+        ENDIF
+        RETURN m, NIL
     ENDIF
 
     RETURN m, NIL

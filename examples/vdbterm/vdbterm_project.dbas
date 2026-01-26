@@ -12,6 +12,8 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     DIM form AS VDBForm
     form.Name = "Form1"
     form.Caption = "VDBTerm Demo Form"
+    form.X = 0
+    form.Y = 0
     form.Width = 60
     form.Height = 20
     form.BackColor = 7
@@ -109,6 +111,8 @@ FUNCTION NewForm(name AS STRING) AS VDBForm
     DIM form AS VDBForm
     form.Name = name
     form.Caption = name
+    form.X = 0
+    form.Y = 0
     form.Width = 60
     form.Height = 20
     form.BackColor = 7

@@ -29,6 +29,8 @@ END TYPE
 TYPE VDBForm
     DIM Name AS STRING
     DIM Caption AS STRING
+    DIM X AS INTEGER
+    DIM Y AS INTEGER
     DIM Width AS INTEGER
     DIM Height AS INTEGER
     DIM BackColor AS INTEGER
@@ -74,6 +76,7 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM FormScrollX AS INTEGER
     DIM FormScrollY AS INTEGER
     DIM IsDragging AS BOOLEAN
+    DIM DraggingForm AS BOOLEAN
     DIM DragStartX AS INTEGER
     DIM DragStartY AS INTEGER
     DIM DragSkipFrame AS BOOLEAN
@@ -82,6 +85,7 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM DragCtrlWidth AS INTEGER
     DIM DragCtrlHeight AS INTEGER
     DIM IsResizing AS BOOLEAN
+    DIM ResizingForm AS BOOLEAN
     DIM ResizeCorner AS INTEGER
     DIM ResizeOrigX AS INTEGER
     DIM ResizeOrigY AS INTEGER
@@ -102,6 +106,7 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM PropIndex AS INTEGER
     DIM PropEditing AS BOOLEAN
     DIM PropEditValue AS STRING
+    DIM PropEditFresh AS BOOLEAN
 
     ' Project tree state
     DIM TreeIndex AS INTEGER

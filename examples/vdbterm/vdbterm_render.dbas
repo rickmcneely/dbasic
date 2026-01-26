@@ -212,44 +212,133 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
     DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
     DIM formSelected AS BOOLEAN = (m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM)
 
-    ' Row 0: Form title bar
-    IF row = 0 THEN
-        DIM titleBar AS STRING = "┌"
-        DIM titleText AS STRING = " " & form.Caption & " "
-        DIM innerWidth AS INTEGER = width - 2
-        DIM titleStart AS INTEGER = 1
-        DIM col AS INTEGER
-        FOR col = 0 TO innerWidth - 1
-            IF col >= titleStart AND col < titleStart + Len(titleText) THEN
-                titleBar = titleBar & Mid(titleText, col - titleStart + 1, 1)
-            ELSE
-                titleBar = titleBar & "─"
-            ENDIF
-        NEXT
-        titleBar = titleBar & "┐"
-        IF formSelected THEN
-            RETURN styleControlSelected.Render(titleBar)
-        ELSE
-            RETURN styleMenuBar.Render(titleBar)
-        ENDIF
+    ' Form position and dimensions
+    ' Use drag position/dimensions during form drag/resize for live preview
+    DIM formX AS INTEGER = form.X
+    DIM formY AS INTEGER = form.Y
+    DIM formW AS INTEGER = form.Width
+    DIM formH AS INTEGER = form.Height
+    IF m.IsDragging AND m.DraggingForm THEN
+        formX = m.DragOutlineX
+        formY = m.DragOutlineY
+    ENDIF
+    IF m.IsResizing AND m.ResizingForm THEN
+        formW = m.DragCtrlWidth
+        formH = m.DragCtrlHeight
     ENDIF
 
-    ' Row 1+: Form content with left and right borders
-    DIM formRow AS INTEGER = row - 1
+    ' Handle positions for form resize
+    DIM centerCol AS INTEGER = formW / 2
+    DIM centerRow AS INTEGER = formH / 2
 
-    ' Left border
-    IF formSelected THEN
+    ' Check if row is outside form bounds
+    IF row < formY OR row >= formY + formH THEN
+        ' Row is outside form - render canvas
+        content = styleFormCanvas.Render(RepeatStr(" ", width))
+        RETURN content
+    ENDIF
+
+    ' Row relative to form
+    DIM formRow AS INTEGER = row - formY
+
+    ' Canvas before the form
+    IF formX > 0 THEN
+        content = content & styleFormCanvas.Render(RepeatStr(" ", formX))
+    ENDIF
+
+    ' Row 0 of form: Title bar
+    IF formRow = 0 THEN
+        DIM titleText AS STRING = " " & form.Caption & " "
+        DIM titleStart AS INTEGER = 1
+        DIM col AS INTEGER
+        FOR col = 0 TO formW - 1
+            DIM titleCh AS STRING = "─"
+            DIM isHandle AS BOOLEAN = FALSE
+            IF col = 0 THEN
+                titleCh = "┌"
+                IF formSelected THEN
+                    isHandle = TRUE
+                ENDIF
+            ELSEIF col = formW - 1 THEN
+                titleCh = "┐"
+                IF formSelected THEN
+                    isHandle = TRUE
+                ENDIF
+            ELSEIF col = centerCol AND formW >= 3 AND formSelected THEN
+                isHandle = TRUE
+            ELSEIF col >= titleStart AND col < titleStart + Len(titleText) THEN
+                titleCh = Mid(titleText, col - titleStart + 1, 1)
+            ENDIF
+            IF isHandle THEN
+                content = content & styleControlSelected.Render("■")
+            ELSEIF formSelected THEN
+                content = content & styleControlSelected.Render(titleCh)
+            ELSE
+                content = content & styleMenuBar.Render(titleCh)
+            ENDIF
+        NEXT
+        ' Fill rest of row with canvas (after form)
+        DIM remainW AS INTEGER = width - formX - formW
+        IF remainW > 0 THEN
+            content = content & styleFormCanvas.Render(RepeatStr(" ", remainW))
+        ENDIF
+        RETURN content
+    ENDIF
+
+    ' Bottom border row of form
+    IF formRow = formH - 1 THEN
+        DIM bCol AS INTEGER
+        FOR bCol = 0 TO formW - 1
+            DIM bottomCh AS STRING = "─"
+            DIM isBHandle AS BOOLEAN = FALSE
+            IF bCol = 0 THEN
+                bottomCh = "└"
+                IF formSelected THEN
+                    isBHandle = TRUE
+                ENDIF
+            ELSEIF bCol = formW - 1 THEN
+                bottomCh = "┘"
+                IF formSelected THEN
+                    isBHandle = TRUE
+                ENDIF
+            ELSEIF bCol = centerCol AND formW >= 3 AND formSelected THEN
+                isBHandle = TRUE
+            ENDIF
+            IF isBHandle THEN
+                content = content & styleControlSelected.Render("■")
+            ELSEIF formSelected THEN
+                content = content & styleControlSelected.Render(bottomCh)
+            ELSE
+                content = content & styleMenuBar.Render(bottomCh)
+            ENDIF
+        NEXT
+        ' Fill rest of row with canvas (after form)
+        DIM remainW2 AS INTEGER = width - formX - formW
+        IF remainW2 > 0 THEN
+            content = content & styleFormCanvas.Render(RepeatStr(" ", remainW2))
+        ENDIF
+        RETURN content
+    ENDIF
+
+    ' Row 1 to formH-2: Form content with left and right borders
+    DIM contentRow AS INTEGER = formRow - 1
+
+    ' Left border (with handle at center row if selected)
+    DIM isLeftHandle AS BOOLEAN = (formSelected AND formRow = centerRow AND formH >= 3)
+    IF isLeftHandle THEN
+        content = content & styleControlSelected.Render("■")
+    ELSEIF formSelected THEN
         content = content & styleControlSelected.Render("│")
     ELSE
         content = content & styleMenuBar.Render("│")
     ENDIF
 
-    ' Pre-filter: collect only controls that intersect this row
+    ' Pre-filter: collect only controls that intersect this content row
     DIM rowCtrlIndices AS []INTEGER
     DIM i AS INTEGER
     FOR i = 0 TO Len(form.Controls) - 1
         DIM c AS VDBControl = form.Controls[i]
-        IF formRow >= c.Y AND formRow < c.Y + c.Height THEN
+        IF contentRow >= c.Y AND contentRow < c.Y + c.Height THEN
             rowCtrlIndices = APPEND(rowCtrlIndices, i)
         ENDIF
     NEXT
@@ -261,12 +350,13 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
     DIM outlineY2 AS INTEGER = 0
     DIM outlineX1 AS INTEGER = 0
     DIM outlineX2 AS INTEGER = 0
-    IF (m.IsDragging OR m.IsResizing) AND m.SelectedCtrlIdx >= 0 THEN
+    DIM showControlOutline AS BOOLEAN = (m.IsDragging OR m.IsResizing) AND m.SelectedCtrlIdx >= 0 AND NOT m.ResizingForm AND NOT m.DraggingForm
+    IF showControlOutline THEN
         outlineY1 = m.DragOutlineY
         outlineY2 = m.DragOutlineY + m.DragCtrlHeight - 1
         outlineX1 = m.DragOutlineX
         outlineX2 = m.DragOutlineX + m.DragCtrlWidth - 1
-        IF formRow >= outlineY1 AND formRow <= outlineY2 THEN
+        IF contentRow >= outlineY1 AND contentRow <= outlineY2 THEN
             outlineOnRow = TRUE
         ENDIF
     ENDIF
@@ -277,11 +367,12 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
     DIM formCol AS INTEGER
     DIM formCh AS STRING
 
-    FOR formCol = 0 TO width - 3
+    ' Content area is formW - 2 (minus left and right borders)
+    FOR formCol = 0 TO formW - 3
         formCh = " "
 
         ' Show grid dots
-        IF m.ShowGrid AND formRow MOD 2 = 0 AND formCol MOD 4 = 0 THEN
+        IF m.ShowGrid AND contentRow MOD 2 = 0 AND formCol MOD 4 = 0 THEN
             formCh = "."
         ENDIF
 
@@ -289,7 +380,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
         DIM isOutline AS BOOLEAN = FALSE
         IF outlineOnRow AND formCol >= outlineX1 AND formCol <= outlineX2 THEN
             ' Check if on outline border
-            DIM onTopBottom AS BOOLEAN = (formRow = outlineY1 OR formRow = outlineY2)
+            DIM onTopBottom AS BOOLEAN = (contentRow = outlineY1 OR contentRow = outlineY2)
             DIM onLeftRight AS BOOLEAN = (formCol = outlineX1 OR formCol = outlineX2)
             IF onTopBottom OR onLeftRight THEN
                 ' Flush pending chunks
@@ -320,7 +411,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             FOR j = 0 TO numRowCtrls - 1
                 DIM ctrlIdx AS INTEGER = rowCtrlIndices[j]
                 ' Skip the dragged/resized control - it's represented by outline
-                DIM skipCtrl AS BOOLEAN = ((m.IsDragging OR m.IsResizing) AND ctrlIdx = m.SelectedCtrlIdx)
+                DIM skipCtrl AS BOOLEAN = ((m.IsDragging OR m.IsResizing) AND ctrlIdx = m.SelectedCtrlIdx AND NOT m.DraggingForm)
                 IF NOT skipCtrl THEN
                     DIM ctrl AS VDBControl = form.Controls[ctrlIdx]
                     IF formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
@@ -334,7 +425,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
                             gridChunk = ""
                         ENDIF
 
-                        DIM localRow AS INTEGER = formRow - ctrl.Y
+                        DIM localRow AS INTEGER = contentRow - ctrl.Y
                         DIM localCol AS INTEGER = formCol - ctrl.X
                         DIM isSelected AS BOOLEAN = (ctrlIdx = m.SelectedCtrlIdx)
 
@@ -394,11 +485,20 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
         content = content & styleFormGrid.Render(gridChunk)
     ENDIF
 
-    ' Right border
-    IF formSelected THEN
+    ' Right border (with handle at center row if selected)
+    DIM isRightHandle AS BOOLEAN = (formSelected AND formRow = centerRow AND formH >= 3)
+    IF isRightHandle THEN
+        content = content & styleControlSelected.Render("■")
+    ELSEIF formSelected THEN
         content = content & styleControlSelected.Render("│")
     ELSE
         content = content & styleMenuBar.Render("│")
+    ENDIF
+
+    ' Fill rest of row with canvas (after form)
+    DIM remainW3 AS INTEGER = width - formX - formW
+    IF remainW3 > 0 THEN
+        content = content & styleFormCanvas.Render(RepeatStr(" ", remainW3))
     ENDIF
 
     RETURN content
@@ -412,59 +512,116 @@ FUNCTION RenderFormCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
     DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
     DIM formSelected AS BOOLEAN = (m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM)
 
-    ' Row 0: Title bar
-    IF row = 0 THEN
+    ' Form position and dimensions (with drag/resize preview)
+    DIM formX AS INTEGER = form.X
+    DIM formY AS INTEGER = form.Y
+    DIM formW AS INTEGER = form.Width
+    DIM formH AS INTEGER = form.Height
+    IF m.IsDragging AND m.DraggingForm THEN
+        formX = m.DragOutlineX
+        formY = m.DragOutlineY
+    ENDIF
+    IF m.IsResizing AND m.ResizingForm THEN
+        formW = m.DragCtrlWidth
+        formH = m.DragCtrlHeight
+    ENDIF
+    DIM centerCol AS INTEGER = formW / 2
+    DIM centerRow AS INTEGER = formH / 2
+
+    ' Outside form bounds - just canvas
+    IF col < formX OR col >= formX + formW OR row < formY OR row >= formY + formH THEN
+        RETURN styleFormCanvas.Render(" ")
+    ENDIF
+
+    ' Coordinates relative to form
+    DIM relCol AS INTEGER = col - formX
+    DIM relRow AS INTEGER = row - formY
+
+    ' Row 0 of form: Title bar
+    IF relRow = 0 THEN
         DIM titleText AS STRING = " " & form.Caption & " "
         DIM titleCh AS STRING = "─"
-        IF col = 0 THEN
+        DIM isTopHandle AS BOOLEAN = FALSE
+        IF relCol = 0 THEN
             titleCh = "┌"
-        ELSEIF col = width - 1 THEN
+            isTopHandle = formSelected
+        ELSEIF relCol = formW - 1 THEN
             titleCh = "┐"
-        ELSEIF col >= 1 AND col <= Len(titleText) THEN
-            titleCh = Mid(titleText, col, 1)
+            isTopHandle = formSelected
+        ELSEIF relCol = centerCol AND formW >= 3 AND formSelected THEN
+            isTopHandle = TRUE
+        ELSEIF relCol >= 1 AND relCol <= Len(titleText) THEN
+            titleCh = Mid(titleText, relCol, 1)
         ENDIF
-        IF formSelected THEN
+        IF isTopHandle THEN
+            RETURN styleControlSelected.Render("■")
+        ELSEIF formSelected THEN
             RETURN styleControlSelected.Render(titleCh)
         ELSE
             RETURN styleMenuBar.Render(titleCh)
         ENDIF
     ENDIF
 
+    ' Bottom border row of form
+    IF relRow = formH - 1 THEN
+        DIM bottomCh AS STRING = "─"
+        DIM isBottomHandle AS BOOLEAN = FALSE
+        IF relCol = 0 THEN
+            bottomCh = "└"
+            isBottomHandle = formSelected
+        ELSEIF relCol = formW - 1 THEN
+            bottomCh = "┘"
+            isBottomHandle = formSelected
+        ELSEIF relCol = centerCol AND formW >= 3 AND formSelected THEN
+            isBottomHandle = TRUE
+        ENDIF
+        IF isBottomHandle THEN
+            RETURN styleControlSelected.Render("■")
+        ELSEIF formSelected THEN
+            RETURN styleControlSelected.Render(bottomCh)
+        ELSE
+            RETURN styleMenuBar.Render(bottomCh)
+        ENDIF
+    ENDIF
+
     ' Left and right borders
-    IF col = 0 OR col = width - 1 THEN
-        IF formSelected THEN
+    IF relCol = 0 OR relCol = formW - 1 THEN
+        DIM isSideHandle AS BOOLEAN = (formSelected AND relRow = centerRow AND formH >= 3)
+        IF isSideHandle THEN
+            RETURN styleControlSelected.Render("■")
+        ELSEIF formSelected THEN
             RETURN styleControlSelected.Render("│")
         ELSE
             RETURN styleMenuBar.Render("│")
         ENDIF
     ENDIF
 
-    ' Form content area
-    DIM formRow AS INTEGER = row - 1
-    DIM formCol AS INTEGER = col - 1
+    ' Form content area (relative to form interior)
+    DIM contentRow AS INTEGER = relRow - 1
+    DIM contentCol AS INTEGER = relCol - 1
     DIM ch AS STRING = " "
 
-    IF m.ShowGrid AND formRow MOD 2 = 0 AND formCol MOD 4 = 0 THEN
+    IF m.ShowGrid AND contentRow MOD 2 = 0 AND contentCol MOD 4 = 0 THEN
         ch = "."
     ENDIF
 
     DIM i AS INTEGER
     FOR i = 0 TO Len(form.Controls) - 1
         DIM ctrl AS VDBControl = form.Controls[i]
-        IF formRow >= ctrl.Y AND formRow < ctrl.Y + ctrl.Height AND formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
-            DIM localRow AS INTEGER = formRow - ctrl.Y
-            DIM localCol AS INTEGER = formCol - ctrl.X
+        IF contentRow >= ctrl.Y AND contentRow < ctrl.Y + ctrl.Height AND contentCol >= ctrl.X AND contentCol < ctrl.X + ctrl.Width THEN
+            DIM localRow AS INTEGER = contentRow - ctrl.Y
+            DIM localCol AS INTEGER = contentCol - ctrl.X
             DIM isSelected AS BOOLEAN = (i = m.SelectedCtrlIdx)
 
             ' Check for selection handles (corners and edges)
             IF isSelected THEN
                 DIM isCorner AS BOOLEAN = (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1)
-                DIM centerCol AS INTEGER = ctrl.Width / 2
-                DIM centerRow AS INTEGER = ctrl.Height / 2
-                DIM isTopEdge AS BOOLEAN = (localRow = 0 AND localCol = centerCol AND ctrl.Width >= 3)
-                DIM isBottomEdge AS BOOLEAN = (localRow = ctrl.Height - 1 AND localCol = centerCol AND ctrl.Width >= 3)
-                DIM isLeftEdge AS BOOLEAN = (localCol = 0 AND localRow = centerRow AND ctrl.Height >= 3)
-                DIM isRightEdge AS BOOLEAN = (localCol = ctrl.Width - 1 AND localRow = centerRow AND ctrl.Height >= 3)
+                DIM ctrlCenterCol AS INTEGER = ctrl.Width / 2
+                DIM ctrlCenterRow AS INTEGER = ctrl.Height / 2
+                DIM isTopEdge AS BOOLEAN = (localRow = 0 AND localCol = ctrlCenterCol AND ctrl.Width >= 3)
+                DIM isBottomEdge AS BOOLEAN = (localRow = ctrl.Height - 1 AND localCol = ctrlCenterCol AND ctrl.Width >= 3)
+                DIM isLeftEdge AS BOOLEAN = (localCol = 0 AND localRow = ctrlCenterRow AND ctrl.Height >= 3)
+                DIM isRightEdge AS BOOLEAN = (localCol = ctrl.Width - 1 AND localRow = ctrlCenterRow AND ctrl.Height >= 3)
 
                 IF isCorner OR isTopEdge OR isBottomEdge OR isLeftEdge OR isRightEdge THEN
                     RETURN styleControlSelected.Render("■")
@@ -892,9 +1049,15 @@ FUNCTION RenderPropertiesRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER
             propName = "Caption"
             propValue = form.Caption
         ELSEIF propIdx = 2 THEN
+            propName = "X"
+            propValue = Str(form.X)
+        ELSEIF propIdx = 3 THEN
+            propName = "Y"
+            propValue = Str(form.Y)
+        ELSEIF propIdx = 4 THEN
             propName = "Width"
             propValue = Str(form.Width)
-        ELSEIF propIdx = 3 THEN
+        ELSEIF propIdx = 5 THEN
             propName = "Height"
             propValue = Str(form.Height)
         ENDIF
@@ -1000,9 +1163,15 @@ FUNCTION RenderPropertiesCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER,
             propName = "Caption"
             propValue = form.Caption
         ELSEIF propIdx = 2 THEN
+            propName = "X"
+            propValue = Str(form.X)
+        ELSEIF propIdx = 3 THEN
+            propName = "Y"
+            propValue = Str(form.Y)
+        ELSEIF propIdx = 4 THEN
             propName = "Width"
             propValue = Str(form.Width)
-        ELSEIF propIdx = 3 THEN
+        ELSEIF propIdx = 5 THEN
             propName = "Height"
             propValue = Str(form.Height)
         ENDIF
