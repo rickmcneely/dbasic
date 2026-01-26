@@ -253,7 +253,7 @@ FUNCTION RenderWidgetsCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
     ENDIF
 END FUNCTION
 
-' Toolbox panel rendering (non-visible widgets: Timer)
+' Toolbox panel rendering (non-visible widgets: Timer, Serial, TCP/IP, UDP/IP)
 FUNCTION RenderToolboxRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
     DIM content AS STRING = ""
 
@@ -263,10 +263,10 @@ FUNCTION RenderToolboxRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
         RETURN content
     ENDIF
 
-    ' Non-visible widgets: Timer(11)
+    ' Non-visible widgets
     DIM toolIdx AS INTEGER = row - 1
     IF toolIdx >= 0 AND toolIdx < NONVISIBLE_WIDGET_COUNT THEN
-        DIM ctlType AS INTEGER = CTRL_TIMER + toolIdx
+        DIM ctlType AS INTEGER = ToolboxIndexToCtrlType(toolIdx)
         DIM icon AS STRING = GetToolboxIcon(ctlType)
         DIM name AS STRING = GetControlTypeName(ctlType)
         DIM item AS STRING = icon & " " & name
@@ -299,7 +299,7 @@ FUNCTION RenderToolboxCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
     ELSE
         DIM toolIdx AS INTEGER = row - 1
         IF toolIdx >= 0 AND toolIdx < NONVISIBLE_WIDGET_COUNT THEN
-            DIM ctlType AS INTEGER = CTRL_TIMER + toolIdx
+            DIM ctlType AS INTEGER = ToolboxIndexToCtrlType(toolIdx)
             DIM icon AS STRING = GetToolboxIcon(ctlType)
             DIM name AS STRING = GetControlTypeName(ctlType)
             DIM item AS STRING = PadRight(icon & " " & name, width)

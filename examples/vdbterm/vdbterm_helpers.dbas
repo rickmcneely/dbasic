@@ -65,6 +65,21 @@ FUNCTION WidgetIndexToCtrlType(widgetIdx AS INTEGER) AS INTEGER
     ENDIF
 END FUNCTION
 
+' Map toolbox panel index to control type
+' Non-visible tools: Timer(11), Serial(16), TCP/IP(17), UDP/IP(18)
+FUNCTION ToolboxIndexToCtrlType(toolIdx AS INTEGER) AS INTEGER
+    IF toolIdx = 0 THEN
+        RETURN CTRL_TIMER
+    ELSEIF toolIdx = 1 THEN
+        RETURN CTRL_SERIAL
+    ELSEIF toolIdx = 2 THEN
+        RETURN CTRL_TCPIP
+    ELSEIF toolIdx = 3 THEN
+        RETURN CTRL_UDPIP
+    ENDIF
+    RETURN CTRL_TIMER
+END FUNCTION
+
 ' Count lines in a string
 FUNCTION CountLines(content AS STRING) AS INTEGER
     IF Len(content) = 0 THEN
@@ -148,6 +163,12 @@ FUNCTION GetControlTypeName(ctlType AS INTEGER) AS STRING
         RETURN "Spinner"
     ELSEIF ctlType = CTRL_TABLE THEN
         RETURN "Table"
+    ELSEIF ctlType = CTRL_SERIAL THEN
+        RETURN "Serial"
+    ELSEIF ctlType = CTRL_TCPIP THEN
+        RETURN "TCP/IP"
+    ELSEIF ctlType = CTRL_UDPIP THEN
+        RETURN "UDP/IP"
     ENDIF
     RETURN "Unknown"
 END FUNCTION
@@ -184,6 +205,12 @@ FUNCTION GetToolboxIcon(ctlType AS INTEGER) AS STRING
         RETURN "[*] "
     ELSEIF ctlType = CTRL_TABLE THEN
         RETURN "[#] "
+    ELSEIF ctlType = CTRL_SERIAL THEN
+        RETURN "SER "
+    ELSEIF ctlType = CTRL_TCPIP THEN
+        RETURN "TCP "
+    ELSEIF ctlType = CTRL_UDPIP THEN
+        RETURN "UDP "
     ENDIF
     RETURN "??? "
 END FUNCTION
@@ -588,6 +615,20 @@ FUNCTION GetControlEvents(ctlType AS INTEGER) AS []STRING
         events = APPEND(events, "DblClick")
         events = APPEND(events, "CellSelect")
         events = APPEND(events, "RowSelect")
+    ELSEIF ctlType = CTRL_SERIAL THEN
+        events = APPEND(events, "DataReceived")
+        events = APPEND(events, "Error")
+        events = APPEND(events, "Connect")
+        events = APPEND(events, "Disconnect")
+    ELSEIF ctlType = CTRL_TCPIP THEN
+        events = APPEND(events, "DataReceived")
+        events = APPEND(events, "Error")
+        events = APPEND(events, "Connect")
+        events = APPEND(events, "Disconnect")
+        events = APPEND(events, "Accept")
+    ELSEIF ctlType = CTRL_UDPIP THEN
+        events = APPEND(events, "DataReceived")
+        events = APPEND(events, "Error")
     ENDIF
 
     RETURN events
