@@ -660,7 +660,72 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             m.DragOutlineY = newY
         ENDIF
 
-    ' Handle mouse release - move control to final position
+    ' Handle mouse resize - update outline size based on corner being dragged
+    ELSEIF action = tea.MouseActionMotion AND m.IsResizing THEN
+        m.DragSkipFrame = NOT m.DragSkipFrame
+        IF m.DragSkipFrame THEN
+            RETURN m, NIL
+        ENDIF
+        IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+            DIM resizeContentY AS INTEGER = y - 1
+            DIM resizeLocalX AS INTEGER = x - toolboxWidth
+            DIM resFormX AS INTEGER = resizeLocalX - 1
+            DIM resFormY AS INTEGER = resizeContentY - 1
+
+            DIM resNewX AS INTEGER = m.ResizeOrigX
+            DIM resNewY AS INTEGER = m.ResizeOrigY
+            DIM resNewW AS INTEGER = m.ResizeOrigW
+            DIM resNewH AS INTEGER = m.ResizeOrigH
+
+            IF m.ResizeCorner = CORNER_TL THEN
+                ' Top-left: move origin, shrink from top-left
+                resNewX = resFormX
+                resNewY = resFormY
+                resNewW = m.ResizeOrigX + m.ResizeOrigW - resFormX
+                resNewH = m.ResizeOrigY + m.ResizeOrigH - resFormY
+            ELSEIF m.ResizeCorner = CORNER_TR THEN
+                ' Top-right: move Y, change width, shrink from top
+                resNewY = resFormY
+                resNewW = resFormX - m.ResizeOrigX + 1
+                resNewH = m.ResizeOrigY + m.ResizeOrigH - resFormY
+            ELSEIF m.ResizeCorner = CORNER_BL THEN
+                ' Bottom-left: move X, change height, shrink from left
+                resNewX = resFormX
+                resNewW = m.ResizeOrigX + m.ResizeOrigW - resFormX
+                resNewH = resFormY - m.ResizeOrigY + 1
+            ELSEIF m.ResizeCorner = CORNER_BR THEN
+                ' Bottom-right: just change width and height
+                resNewW = resFormX - m.ResizeOrigX + 1
+                resNewH = resFormY - m.ResizeOrigY + 1
+            ENDIF
+
+            ' Enforce minimum size
+            IF resNewW < 2 THEN
+                resNewW = 2
+                IF m.ResizeCorner = CORNER_TL OR m.ResizeCorner = CORNER_BL THEN
+                    resNewX = m.ResizeOrigX + m.ResizeOrigW - 2
+                ENDIF
+            ENDIF
+            IF resNewH < 1 THEN
+                resNewH = 1
+                IF m.ResizeCorner = CORNER_TL OR m.ResizeCorner = CORNER_TR THEN
+                    resNewY = m.ResizeOrigY + m.ResizeOrigH - 1
+                ENDIF
+            ENDIF
+            IF resNewX < 0 THEN
+                resNewX = 0
+            ENDIF
+            IF resNewY < 0 THEN
+                resNewY = 0
+            ENDIF
+
+            m.DragOutlineX = resNewX
+            m.DragOutlineY = resNewY
+            m.DragCtrlWidth = resNewW
+            m.DragCtrlHeight = resNewH
+        ENDIF
+
+    ' Handle mouse release - apply final position/size
     ELSEIF action = tea.MouseActionRelease THEN
         IF m.IsDragging THEN
             ' Apply the final outline position to the actual control
@@ -674,6 +739,20 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             ENDIF
             m.IsDragging = FALSE
             m.Message = "Control moved"
+        ELSEIF m.IsResizing THEN
+            ' Apply the final size to the actual control
+            IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+                DIM ctrlCount2 AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+                IF m.SelectedCtrlIdx < ctrlCount2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width = m.DragCtrlWidth
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Height = m.DragCtrlHeight
+                    m.Project.Modified = TRUE
+                ENDIF
+            ENDIF
+            m.IsResizing = FALSE
+            m.Message = "Control resized"
         ENDIF
     ENDIF
 
@@ -808,12 +887,54 @@ FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
     FOR i = ctrlCount - 1 TO 0 STEP -1
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[i]
         IF formX >= ctrl.X AND formX < ctrl.X + ctrl.Width AND formY >= ctrl.Y AND formY < ctrl.Y + ctrl.Height THEN
+            DIM localX AS INTEGER = formX - ctrl.X
+            DIM localY AS INTEGER = formY - ctrl.Y
+            DIM isSelected AS BOOLEAN = (i = m.SelectedCtrlIdx)
+
+            ' Check if clicking on a corner handle of already-selected control
+            IF isSelected THEN
+                DIM onTop AS BOOLEAN = (localY = 0)
+                DIM onBottom AS BOOLEAN = (localY = ctrl.Height - 1)
+                DIM onLeft AS BOOLEAN = (localX = 0)
+                DIM onRight AS BOOLEAN = (localX = ctrl.Width - 1)
+
+                DIM corner AS INTEGER = CORNER_NONE
+                IF onTop AND onLeft THEN
+                    corner = CORNER_TL
+                ELSEIF onTop AND onRight THEN
+                    corner = CORNER_TR
+                ELSEIF onBottom AND onLeft THEN
+                    corner = CORNER_BL
+                ELSEIF onBottom AND onRight THEN
+                    corner = CORNER_BR
+                ENDIF
+
+                IF corner <> CORNER_NONE THEN
+                    ' Start resize operation
+                    m.IsResizing = TRUE
+                    m.IsDragging = FALSE
+                    m.DragSkipFrame = FALSE
+                    m.ResizeCorner = corner
+                    m.ResizeOrigX = ctrl.X
+                    m.ResizeOrigY = ctrl.Y
+                    m.ResizeOrigW = ctrl.Width
+                    m.ResizeOrigH = ctrl.Height
+                    m.DragOutlineX = ctrl.X
+                    m.DragOutlineY = ctrl.Y
+                    m.DragCtrlWidth = ctrl.Width
+                    m.DragCtrlHeight = ctrl.Height
+                    m.Message = "Resizing: " & ctrl.CtlName
+                    RETURN m, NIL
+                ENDIF
+            ENDIF
+
+            ' Select the control and start drag operation
             m.SelectedCtrlIdx = i
-            ' Start drag operation - use outline dragging for performance
             m.IsDragging = TRUE
+            m.IsResizing = FALSE
             m.DragSkipFrame = FALSE
-            m.DragStartX = formX - ctrl.X
-            m.DragStartY = formY - ctrl.Y
+            m.DragStartX = localX
+            m.DragStartY = localY
             m.DragOutlineX = ctrl.X
             m.DragOutlineY = ctrl.Y
             m.DragCtrlWidth = ctrl.Width

@@ -81,6 +81,12 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM DragOutlineY AS INTEGER
     DIM DragCtrlWidth AS INTEGER
     DIM DragCtrlHeight AS INTEGER
+    DIM IsResizing AS BOOLEAN
+    DIM ResizeCorner AS INTEGER
+    DIM ResizeOrigX AS INTEGER
+    DIM ResizeOrigY AS INTEGER
+    DIM ResizeOrigW AS INTEGER
+    DIM ResizeOrigH AS INTEGER
 
     ' Code editor state
     DIM CodeCursorX AS INTEGER

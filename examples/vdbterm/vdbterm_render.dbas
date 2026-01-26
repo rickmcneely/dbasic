@@ -255,13 +255,13 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
     NEXT
     DIM numRowCtrls AS INTEGER = Len(rowCtrlIndices)
 
-    ' Check if drag outline intersects this row
+    ' Check if drag/resize outline intersects this row
     DIM outlineOnRow AS BOOLEAN = FALSE
     DIM outlineY1 AS INTEGER = 0
     DIM outlineY2 AS INTEGER = 0
     DIM outlineX1 AS INTEGER = 0
     DIM outlineX2 AS INTEGER = 0
-    IF m.IsDragging AND m.SelectedCtrlIdx >= 0 THEN
+    IF (m.IsDragging OR m.IsResizing) AND m.SelectedCtrlIdx >= 0 THEN
         outlineY1 = m.DragOutlineY
         outlineY2 = m.DragOutlineY + m.DragCtrlHeight - 1
         outlineX1 = m.DragOutlineX
@@ -319,8 +319,8 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             DIM j AS INTEGER
             FOR j = 0 TO numRowCtrls - 1
                 DIM ctrlIdx AS INTEGER = rowCtrlIndices[j]
-                ' Skip the dragged control during drag - it's represented by outline
-                DIM skipCtrl AS BOOLEAN = (m.IsDragging AND ctrlIdx = m.SelectedCtrlIdx)
+                ' Skip the dragged/resized control - it's represented by outline
+                DIM skipCtrl AS BOOLEAN = ((m.IsDragging OR m.IsResizing) AND ctrlIdx = m.SelectedCtrlIdx)
                 IF NOT skipCtrl THEN
                     DIM ctrl AS VDBControl = form.Controls[ctrlIdx]
                     IF formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
