@@ -624,7 +624,7 @@ FUNCTION GenerateCode(proj AS VDBProject) AS STRING
     NEXT
 
     ' Generate render helpers (shared across all forms)
-    code = code & GenerateRenderHelpers()
+    code = code & GenerateRenderHelpers(proj)
 
     ' Generate module code
     FOR i = 0 TO Len(proj.Modules) - 1

@@ -1,0 +1,20 @@
+IMPORT "fmt" AS fmt
+
+INCLUDE "vdbterm_const.dbas"
+INCLUDE "vdbterm_types.dbas"
+INCLUDE "vdbterm_helpers.dbas"
+INCLUDE "vdbterm_project.dbas"
+INCLUDE "vdbterm_codegen.dbas"
+
+SUB Main()
+    DIM proj AS VDBProject
+    DIM err AS STRING
+    proj, err = LoadProject("/home/zditech/DBasic/examples/vdbterm/examples/basic_widgets.vdbp")
+    IF err <> "" THEN
+        fmt.Println("Error: " & err)
+        RETURN
+    ENDIF
+    DIM code AS STRING = GenerateCode(proj)
+    WriteFile("/tmp/basic_widgets_gen.dbas", code)
+    fmt.Println("Generated code saved to /tmp/basic_widgets_gen.dbas")
+END SUB

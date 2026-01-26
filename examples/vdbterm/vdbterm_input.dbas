@@ -484,6 +484,26 @@ FUNCTION HandleCodeInputMsg(m AS VDBTermModel, msg AS tea.Msg) AS (tea.Model, te
         RETURN m, NIL
     ENDIF
 
+    ' Check for Tab key - insert spaces manually since textarea doesn't handle it
+    DIM tabKeyMsg AS tea.KeyMsg
+    DIM tabKeyOk AS BOOLEAN
+    tabKeyMsg, tabKeyOk = msg.(tea.KeyMsg)
+    IF tabKeyOk THEN
+        DIM tabKey AS STRING = tabKeyMsg.String()
+        IF tabKey = "tab" THEN
+            ' Insert spaces based on TabSize setting
+            DIM spaces AS STRING = RepeatStr(" ", m.TabSize)
+            m.CodeEditor.InsertString(spaces)
+            ' Sync to form
+            m.Project.Forms[m.CurrentFormIdx].Code = GetEditorCode(m.CodeEditor)
+            m.Project.Modified = TRUE
+            ' Update cursor position
+            m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
+            m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
+            RETURN m, NIL
+        ENDIF
+    ENDIF
+
     ' Get previous code to detect changes
     DIM prevCode AS STRING = GetEditorCode(m.CodeEditor)
 
@@ -926,7 +946,10 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             IF m.ViewMode = VIEW_FORM THEN
                 RETURN HandleFormClick(m, localX, contentY)
             ELSE
-                RETURN HandleCodeClick(m, localX, contentY, mouseMsg.Ctrl)
+                ' Mouse positioning not supported in textarea v1
+                ' Just set focus to code area
+                m.FocusArea = FOCUS_CODE
+                RETURN m, NIL
             ENDIF
         ELSE
             ' Properties panel

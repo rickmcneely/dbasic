@@ -998,18 +998,45 @@ FUNCTION RenderControlChar(ctrl AS VDBControl, localRow AS INTEGER, localCol AS 
 END FUNCTION
 
 ' Code editor rendering
-' Cache for highlighted lines to avoid re-highlighting on every render
-DIM cachedHighlightCode AS STRING
-DIM cachedHighlightLines AS []STRING
+' Render a single line of code with syntax highlighting
+FUNCTION RenderHighlightedLine(lineText AS STRING, width AS INTEGER, cursorCol AS INTEGER, showCursor AS BOOLEAN) AS STRING
+    DIM result AS STRING = ""
+    DIM lineLen AS INTEGER = Len(lineText)
 
-' Get highlighted lines with caching
-FUNCTION GetCachedHighlightedLines(code AS STRING) AS []STRING
-    IF code = cachedHighlightCode AND Len(cachedHighlightLines) > 0 THEN
-        RETURN cachedHighlightLines
-    ENDIF
-    cachedHighlightCode = code
-    cachedHighlightLines = GetHighlightedLines(code)
-    RETURN cachedHighlightLines
+    ' Tokenize the line for syntax highlighting
+    DIM tokens AS []SyntaxToken = TokenizeLine(lineText)
+
+    ' Render character by character with appropriate styling
+    DIM col AS INTEGER
+    FOR col = 0 TO width - 1
+        DIM ch AS STRING = " "
+        IF col < lineLen THEN
+            ch = Mid(lineText, col + 1, 1)
+        ENDIF
+
+        ' Check if this is cursor position
+        IF showCursor AND col = cursorCol THEN
+            result = result & styleCodeCursor.Render(ch)
+        ELSE
+            ' Get token type for this column
+            DIM tokType AS INTEGER = GetTokenTypeForColumn(tokens, col)
+            IF tokType = TOKEN_KEYWORD THEN
+                result = result & styleCodeKeyword.Render(ch)
+            ELSEIF tokType = TOKEN_TYPE THEN
+                result = result & styleCodeKeyword.Render(ch)
+            ELSEIF tokType = TOKEN_STRING THEN
+                result = result & styleCodeString.Render(ch)
+            ELSEIF tokType = TOKEN_COMMENT THEN
+                result = result & styleCodeComment.Render(ch)
+            ELSEIF tokType = TOKEN_NUMBER THEN
+                result = result & styleCodeNumber.Render(ch)
+            ELSE
+                result = result & styleCodeEditor.Render(ch)
+            ENDIF
+        ENDIF
+    NEXT
+
+    RETURN result
 END FUNCTION
 
 FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
@@ -1020,36 +1047,56 @@ FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
         RETURN content
     ENDIF
 
-    ' Use the textarea's built-in view for proper cursor/scroll handling
+    ' Get code from form (or from textarea if initialized)
+    DIM code AS STRING
     IF m.CodeEditorInited THEN
-        DIM editorLines AS []STRING = GetEditorViewLines(m.CodeEditor)
-        IF row < Len(editorLines) THEN
-            DIM line AS STRING = editorLines[row]
-            ' Pad to fill width
-            content = line
-            ' Note: line may contain ANSI codes, padding is approximate
-            RETURN content
-        ELSE
-            ' Empty row beyond editor content
-            RETURN styleCodeEditor.Render(RepeatStr(" ", width))
-        ENDIF
+        code = GetEditorCode(m.CodeEditor)
+    ELSE
+        code = m.Project.Forms[m.CurrentFormIdx].Code
     ENDIF
 
-    ' Fallback to legacy rendering if textarea not initialized
-    DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
     DIM totalLines AS INTEGER = CountLines(code)
-    DIM lineIdx AS INTEGER = m.CodeScrollY + row
 
-    ' Line number
+    ' Get cursor position from textarea
+    DIM cursorLine AS INTEGER = 0
+    DIM cursorCol AS INTEGER = 0
+    IF m.CodeEditorInited THEN
+        cursorLine = GetEditorCursorLine(m.CodeEditor)
+        cursorCol = GetEditorCursorCol(m.CodeEditor)
+    ELSE
+        cursorLine = m.CodeCursorY
+        cursorCol = m.CodeCursorX
+    ENDIF
+
+    ' Calculate scroll position to keep cursor visible
+    ' Use row as the display line, calculate what code line it represents
+    DIM contentHeight AS INTEGER = m.Height - 4  ' approximate visible rows
+    DIM scrollY AS INTEGER = 0
+    IF cursorLine >= contentHeight THEN
+        scrollY = cursorLine - contentHeight + 1
+    ENDIF
+    ' For now, use simple scrolling: row maps to code line
+    ' More sophisticated scrolling can keep cursor centered
+    DIM lineIdx AS INTEGER = row
+
+    ' Adjust for scroll if cursor would be off screen
+    IF cursorLine >= contentHeight THEN
+        lineIdx = scrollY + row
+    ENDIF
+
+    ' Line number column
+    DIM lineNumWidth AS INTEGER = 0
     IF m.ShowLineNumbers THEN
+        lineNumWidth = 5
         IF lineIdx < totalLines THEN
             content = content & styleCodeLineNum.Render(fmt.Sprintf("%4d ", lineIdx + 1))
         ELSE
             content = content & styleCodeLineNum.Render("     ")
         ENDIF
-        width = width - 5
+        width = width - lineNumWidth
     ENDIF
 
+    ' Empty line beyond code
     IF lineIdx >= totalLines THEN
         content = content & styleCodeEditor.Render(RepeatStr(" ", width))
         RETURN content
@@ -1057,7 +1104,28 @@ FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
 
     ' Get the line text
     DIM lineText AS STRING = GetLine(code, lineIdx + 1)
-    content = content & styleCodeEditor.Render(PadRight(lineText, width))
+
+    ' Determine if cursor is on this line
+    DIM showCursor AS BOOLEAN = (lineIdx = cursorLine AND m.FocusArea = FOCUS_CODE)
+
+    ' Render with syntax highlighting
+    IF m.SyntaxHighlight THEN
+        content = content & RenderHighlightedLine(lineText, width, cursorCol, showCursor)
+    ELSE
+        ' No syntax highlighting - just render plain text with cursor
+        DIM col AS INTEGER
+        FOR col = 0 TO width - 1
+            DIM ch AS STRING = " "
+            IF col < Len(lineText) THEN
+                ch = Mid(lineText, col + 1, 1)
+            ENDIF
+            IF showCursor AND col = cursorCol THEN
+                content = content & styleCodeCursor.Render(ch)
+            ELSE
+                content = content & styleCodeEditor.Render(ch)
+            ENDIF
+        NEXT
+    ENDIF
 
     RETURN content
 END FUNCTION
@@ -1067,31 +1135,69 @@ FUNCTION RenderCodeCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
         RETURN styleCodeEditor.Render(" ")
     ENDIF
 
-    DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
+    ' Get code from form (or from textarea if initialized)
+    DIM code AS STRING
+    IF m.CodeEditorInited THEN
+        code = GetEditorCode(m.CodeEditor)
+    ELSE
+        code = m.Project.Forms[m.CurrentFormIdx].Code
+    ENDIF
+
     DIM totalLines AS INTEGER = CountLines(code)
-    DIM lineIdx AS INTEGER = m.CodeScrollY + row
+
+    ' Get cursor position from textarea
+    DIM cursorLine AS INTEGER = 0
+    DIM cursorCol AS INTEGER = 0
+    IF m.CodeEditorInited THEN
+        cursorLine = GetEditorCursorLine(m.CodeEditor)
+        cursorCol = GetEditorCursorCol(m.CodeEditor)
+    ELSE
+        cursorLine = m.CodeCursorY
+        cursorCol = m.CodeCursorX
+    ENDIF
+
+    ' Account for line numbers
+    DIM lineNumWidth AS INTEGER = 0
+    IF m.ShowLineNumbers THEN
+        lineNumWidth = 5
+    ENDIF
+
+    DIM lineIdx AS INTEGER = row
+
+    ' Handle line number column
+    IF m.ShowLineNumbers AND col < lineNumWidth THEN
+        IF lineIdx < totalLines THEN
+            DIM lineNumStr AS STRING = fmt.Sprintf("%4d ", lineIdx + 1)
+            IF col < Len(lineNumStr) THEN
+                RETURN styleCodeLineNum.Render(Mid(lineNumStr, col + 1, 1))
+            ENDIF
+        ENDIF
+        RETURN styleCodeLineNum.Render(" ")
+    ENDIF
+
+    ' Adjust column for line number offset
+    DIM codeCol AS INTEGER = col - lineNumWidth
 
     IF lineIdx >= totalLines THEN
         RETURN styleCodeEditor.Render(" ")
     ENDIF
 
     DIM lineText AS STRING = GetLine(code, lineIdx + 1)
-    DIM actualCol AS INTEGER = m.CodeScrollX + col
     DIM ch AS STRING = " "
 
-    IF actualCol < Len(lineText) THEN
-        ch = Mid(lineText, actualCol + 1, 1)
+    IF codeCol < Len(lineText) THEN
+        ch = Mid(lineText, codeCol + 1, 1)
     ENDIF
 
     ' Cursor takes priority
-    IF lineIdx = m.CodeCursorY AND actualCol = m.CodeCursorX AND m.FocusArea = FOCUS_CODE THEN
+    IF lineIdx = cursorLine AND codeCol = cursorCol AND m.FocusArea = FOCUS_CODE THEN
         RETURN styleCodeCursor.Render(ch)
     ENDIF
 
     ' Apply syntax highlighting
     IF m.SyntaxHighlight THEN
         DIM tokens AS []SyntaxToken = TokenizeLine(lineText)
-        DIM tokType AS INTEGER = GetTokenTypeForColumn(tokens, actualCol)
+        DIM tokType AS INTEGER = GetTokenTypeForColumn(tokens, codeCol)
         IF tokType = TOKEN_KEYWORD OR tokType = TOKEN_TYPE THEN
             RETURN styleCodeKeyword.Render(ch)
         ELSEIF tokType = TOKEN_STRING THEN
@@ -1532,7 +1638,14 @@ FUNCTION RenderStatusBar(m AS VDBTermModel) AS STRING
     IF m.ViewMode = VIEW_FORM THEN
         status = status & "Form"
     ELSE
-        status = status & "Code Ln " & Str(m.CodeCursorY + 1) & " Col " & Str(m.CodeCursorX + 1)
+        ' Get cursor position from textarea if initialized
+        DIM cursorLine AS INTEGER = m.CodeCursorY
+        DIM cursorCol AS INTEGER = m.CodeCursorX
+        IF m.CodeEditorInited THEN
+            cursorLine = GetEditorCursorLine(m.CodeEditor)
+            cursorCol = GetEditorCursorCol(m.CodeEditor)
+        ENDIF
+        status = status & "Code Ln " & Str(cursorLine + 1) & " Col " & Str(cursorCol + 1)
     ENDIF
 
     IF Len(m.Message) > 0 THEN
