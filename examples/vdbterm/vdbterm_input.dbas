@@ -1699,11 +1699,43 @@ FUNCTION HandlePropertiesClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, t
     ' Row 0 is the title, properties start at row 1
     IF y >= 1 THEN
         DIM newPropIndex AS INTEGER = y - 1
+        DIM now AS time.Time = time.Now()
 
         ' If clicking on a different property while editing, cancel current edit
         IF m.PropEditing AND newPropIndex <> m.PropIndex THEN
             m.PropEditing = FALSE
             m.PropEditValue = ""
+        ENDIF
+
+        ' Check for double-click on same property (within 500ms)
+        DIM isDoubleClick AS BOOLEAN = FALSE
+        IF newPropIndex = m.PropLastClickIdx THEN
+            DIM elapsed AS time.Duration = now.Sub(m.PropLastClickTime)
+            IF elapsed < time.Millisecond * 300 THEN
+                isDoubleClick = TRUE
+            ENDIF
+        ENDIF
+
+        ' Update last click tracking
+        m.PropLastClickTime = now
+        m.PropLastClickIdx = newPropIndex
+
+        ' Handle double-click on boolean property
+        IF isDoubleClick AND m.SelectedCtrlIdx >= 0 THEN
+            ' Check if we have a valid control selected
+            IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                IF m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+                    DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
+                    ' If it's a boolean property, toggle it
+                    IF IsPropertyBoolean(ctrl, newPropIndex) THEN
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx] = ToggleBooleanProperty(ctrl, newPropIndex)
+                        m.Project.Modified = TRUE
+                        ' Reset click tracking to prevent triple-click toggle
+                        m.PropLastClickIdx = -1
+                        RETURN m, NIL
+                    ENDIF
+                ENDIF
+            ENDIF
         ENDIF
 
         m.PropIndex = newPropIndex

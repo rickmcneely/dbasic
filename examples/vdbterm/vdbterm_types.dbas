@@ -2,6 +2,7 @@
 ' Data structures for controls, forms, modules, projects, and the main model
 
 IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
+IMPORT "time" AS time
 
 ' Syntax highlighting token
 TYPE SyntaxToken
@@ -170,6 +171,8 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM PropEditing AS BOOLEAN
     DIM PropEditValue AS STRING
     DIM PropEditFresh AS BOOLEAN
+    DIM PropLastClickTime AS time.Time
+    DIM PropLastClickIdx AS INTEGER
 
     ' Project tree state
     DIM TreeIndex AS INTEGER

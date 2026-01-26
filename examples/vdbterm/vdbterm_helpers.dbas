@@ -878,6 +878,122 @@ FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRIN
     RETURN ""
 END FUNCTION
 
+' Check if a property at given index is a boolean type
+FUNCTION IsPropertyBoolean(ctrl AS VDBControl, propIdx AS INTEGER) AS BOOLEAN
+    ' Adjust index for controls without Caption
+    DIM hasCaption AS BOOLEAN = ControlUsesCaption(ctrl.CtlType)
+    DIM adjIdx AS INTEGER = propIdx
+    IF NOT hasCaption AND propIdx >= 2 THEN
+        adjIdx = propIdx + 1
+    ENDIF
+
+    ' Base boolean properties: Enabled (7), Visible (8)
+    IF adjIdx = 7 OR adjIdx = 8 THEN
+        RETURN TRUE
+    ENDIF
+
+    ' Type-specific boolean properties
+    DIM typeStartIdx AS INTEGER = 10
+    IF NOT hasCaption THEN
+        typeStartIdx = 9
+    ENDIF
+    DIM typeIdx AS INTEGER = propIdx - typeStartIdx
+
+    IF ctrl.CtlType = CTRL_TEXTBOX THEN
+        ' CursorBlink (typeIdx = 5)
+        IF typeIdx = 5 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_LISTBOX THEN
+        ' ShowTitle (2), ShowStatus (3), ShowFilter (4), InfiniteScroll (5)
+        IF typeIdx >= 2 AND typeIdx <= 5 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_COMBOBOX THEN
+        ' ShowFilter (1)
+        IF typeIdx = 1 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TEXTAREA THEN
+        ' ShowLineNums (3)
+        IF typeIdx = 3 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_PROGRESS THEN
+        ' ShowPercent (2)
+        IF typeIdx = 2 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TABLE THEN
+        ' ShowHeaders (2)
+        IF typeIdx = 2 THEN
+            RETURN TRUE
+        ENDIF
+    ENDIF
+
+    RETURN FALSE
+END FUNCTION
+
+' Toggle a boolean property and return the modified control
+FUNCTION ToggleBooleanProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBControl
+    ' Adjust index for controls without Caption
+    DIM hasCaption AS BOOLEAN = ControlUsesCaption(ctrl.CtlType)
+    DIM adjIdx AS INTEGER = propIdx
+    IF NOT hasCaption AND propIdx >= 2 THEN
+        adjIdx = propIdx + 1
+    ENDIF
+
+    ' Base boolean properties
+    IF adjIdx = 7 THEN
+        ctrl.Enabled = NOT ctrl.Enabled
+        RETURN ctrl
+    ELSEIF adjIdx = 8 THEN
+        ctrl.Visible = NOT ctrl.Visible
+        RETURN ctrl
+    ENDIF
+
+    ' Type-specific boolean properties
+    DIM typeStartIdx AS INTEGER = 10
+    IF NOT hasCaption THEN
+        typeStartIdx = 9
+    ENDIF
+    DIM typeIdx AS INTEGER = propIdx - typeStartIdx
+
+    IF ctrl.CtlType = CTRL_TEXTBOX THEN
+        IF typeIdx = 5 THEN
+            ctrl.CursorBlink = NOT ctrl.CursorBlink
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_LISTBOX THEN
+        IF typeIdx = 2 THEN
+            ctrl.ShowTitle = NOT ctrl.ShowTitle
+        ELSEIF typeIdx = 3 THEN
+            ctrl.ShowStatusBar = NOT ctrl.ShowStatusBar
+        ELSEIF typeIdx = 4 THEN
+            ctrl.ShowFilter = NOT ctrl.ShowFilter
+        ELSEIF typeIdx = 5 THEN
+            ctrl.InfiniteScrolling = NOT ctrl.InfiniteScrolling
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_COMBOBOX THEN
+        IF typeIdx = 1 THEN
+            ctrl.ShowFilter = NOT ctrl.ShowFilter
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TEXTAREA THEN
+        IF typeIdx = 3 THEN
+            ctrl.ShowLineNumbers = NOT ctrl.ShowLineNumbers
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_PROGRESS THEN
+        IF typeIdx = 2 THEN
+            ctrl.ShowPercentage = NOT ctrl.ShowPercentage
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TABLE THEN
+        IF typeIdx = 2 THEN
+            ctrl.ShowHeaders = NOT ctrl.ShowHeaders
+        ENDIF
+    ENDIF
+
+    RETURN ctrl
+END FUNCTION
+
 ' Get property value for a control at given index
 FUNCTION GetControlPropertyValue(ctrl AS VDBControl, propIdx AS INTEGER) AS STRING
     ' Adjust index for controls without Caption
