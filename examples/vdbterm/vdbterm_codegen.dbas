@@ -1,0 +1,976 @@
+' VDBTerm Code Generation
+' BubbleTea application generation from VDBTerm forms
+
+' Generate import statements based on controls used
+FUNCTION GenerateImports(form AS VDBForm) AS STRING
+    DIM code AS STRING = ""
+    DIM needTextInput AS BOOLEAN = FALSE
+    DIM needList AS BOOLEAN = FALSE
+    DIM needTimer AS BOOLEAN = FALSE
+
+    ' Scan controls to determine needed imports
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_TEXTBOX THEN
+            needTextInput = TRUE
+        ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
+            needList = TRUE
+        ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+            needTimer = TRUE
+        ENDIF
+    NEXT
+
+    ' Core imports
+    code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbletea" & Chr(34) & " AS tea" & Chr(10)
+    code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/lipgloss" & Chr(34) & " AS lipgloss" & Chr(10)
+    code = code & "IMPORT " & Chr(34) & "fmt" & Chr(34) & " AS fmt" & Chr(10)
+    code = code & "IMPORT " & Chr(34) & "strings" & Chr(34) & " AS strings" & Chr(10)
+
+    ' Conditional imports
+    IF needTextInput THEN
+        code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/textinput" & Chr(34) & " AS textinput" & Chr(10)
+    ENDIF
+    IF needList THEN
+        code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/list" & Chr(34) & " AS list" & Chr(10)
+    ENDIF
+    IF needTimer THEN
+        code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/timer" & Chr(34) & " AS timer" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "time" & Chr(34) & " AS time" & Chr(10)
+    ENDIF
+
+    code = code & Chr(10)
+    RETURN code
+END FUNCTION
+
+' Generate form type definition
+FUNCTION GenerateFormType(form AS VDBForm) AS STRING
+    DIM code AS STRING = ""
+    DIM formTypeName AS STRING = form.Name & "Model"
+
+    code = code & "' Form model (implements tea.Model)" & Chr(10)
+    code = code & "TYPE " & formTypeName & " IMPLEMENTS tea.Model" & Chr(10)
+
+    ' Control components - generate field for each control
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+
+        IF ctrl.CtlType = CTRL_TEXTBOX THEN
+            code = code & "    DIM " & ctrl.CtlName & " AS textinput.Model" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
+            code = code & "    DIM " & ctrl.CtlName & " AS list.Model" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+            code = code & "    DIM " & ctrl.CtlName & " AS timer.Model" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Running AS BOOLEAN" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
+            code = code & "    DIM " & ctrl.CtlName & "_Focused AS BOOLEAN" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_LABEL THEN
+            code = code & "    DIM " & ctrl.CtlName & "_Text AS STRING" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+            code = code & "    DIM " & ctrl.CtlName & "_Checked AS BOOLEAN" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Focused AS BOOLEAN" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+            code = code & "    DIM " & ctrl.CtlName & "_Selected AS BOOLEAN" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Focused AS BOOLEAN" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_FRAME THEN
+            code = code & "    DIM " & ctrl.CtlName & "_Caption AS STRING" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_HSCROLL OR ctrl.CtlType = CTRL_VSCROLL THEN
+            code = code & "    DIM " & ctrl.CtlName & "_Value AS INTEGER" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Min AS INTEGER" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Max AS INTEGER" & Chr(10)
+        ENDIF
+    NEXT
+
+    code = code & Chr(10)
+    code = code & "    ' Focus management" & Chr(10)
+    code = code & "    DIM FocusIndex AS INTEGER" & Chr(10)
+    code = code & "    DIM FocusableControls AS []STRING" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Form dimensions" & Chr(10)
+    code = code & "    DIM Width AS INTEGER" & Chr(10)
+    code = code & "    DIM Height AS INTEGER" & Chr(10)
+    code = code & "    DIM Caption AS STRING" & Chr(10)
+    code = code & "END TYPE" & Chr(10) & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Get list of focusable controls
+FUNCTION GetFocusableControls(form AS VDBForm) AS []STRING
+    DIM focusable AS []STRING
+    DIM i AS INTEGER
+
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        ' TextBox, Button, CheckBox, Option, ListBox, ComboBox are focusable
+        IF ctrl.CtlType = CTRL_TEXTBOX OR ctrl.CtlType = CTRL_BUTTON OR ctrl.CtlType = CTRL_CHECKBOX OR ctrl.CtlType = CTRL_OPTION OR ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
+            focusable = APPEND(focusable, ctrl.CtlName)
+        ENDIF
+    NEXT
+
+    RETURN focusable
+END FUNCTION
+
+' Generate Init() method
+FUNCTION GenerateInit(form AS VDBForm) AS STRING
+    DIM code AS STRING = ""
+    DIM formTypeName AS STRING = form.Name & "Model"
+    DIM focusable AS []STRING = GetFocusableControls(form)
+
+    code = code & "' Initialize form and all controls" & Chr(10)
+    code = code & "FUNCTION (m AS " & formTypeName & ") Init() AS tea.Cmd" & Chr(10)
+    code = code & "    DIM cmds AS []tea.Cmd" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Set form dimensions" & Chr(10)
+    code = code & "    m.Width = " & Str(form.Width) & Chr(10)
+    code = code & "    m.Height = " & Str(form.Height) & Chr(10)
+    code = code & "    m.Caption = " & Chr(34) & form.Caption & Chr(34) & Chr(10)
+    code = code & Chr(10)
+
+    ' Initialize each control
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+
+        IF ctrl.CtlType = CTRL_TEXTBOX THEN
+            code = code & "    ' Initialize " & ctrl.CtlName & " (TextBox)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = textinput.New()" & Chr(10)
+            IF ctrl.Placeholder <> "" THEN
+                code = code & "    m." & ctrl.CtlName & ".Placeholder = " & Chr(34) & ctrl.Placeholder & Chr(34) & Chr(10)
+            ENDIF
+            IF ctrl.Prompt <> "" THEN
+                code = code & "    m." & ctrl.CtlName & ".Prompt = " & Chr(34) & ctrl.Prompt & Chr(34) & Chr(10)
+            ENDIF
+            code = code & "    m." & ctrl.CtlName & ".SetWidth(" & Str(ctrl.Width) & ")" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".CharLimit = " & Str(ctrl.CharLimit) & Chr(10)
+            IF ctrl.EchoMode = 1 THEN
+                code = code & "    m." & ctrl.CtlName & ".EchoMode = textinput.EchoPassword" & Chr(10)
+            ELSEIF ctrl.EchoMode = 2 THEN
+                code = code & "    m." & ctrl.CtlName & ".EchoMode = textinput.EchoNone" & Chr(10)
+            ENDIF
+            IF ctrl.Value <> "" THEN
+                code = code & "    m." & ctrl.CtlName & ".SetValue(" & Chr(34) & ctrl.Value & Chr(34) & ")" & Chr(10)
+            ENDIF
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
+            code = code & "    ' Initialize " & ctrl.CtlName & " (ListBox)" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_items AS []list.Item" & Chr(10)
+            ' Parse Items string (semicolon-separated) and add items
+            IF ctrl.Items <> "" THEN
+                code = code & "    ' Items: " & ctrl.Items & Chr(10)
+            ENDIF
+            code = code & "    m." & ctrl.CtlName & " = list.New(" & ctrl.CtlName & "_items, list.NewDefaultDelegate(), " & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ")" & Chr(10)
+            IF ctrl.ShowTitle THEN
+                code = code & "    m." & ctrl.CtlName & ".SetShowTitle(TRUE)" & Chr(10)
+            ELSE
+                code = code & "    m." & ctrl.CtlName & ".SetShowTitle(FALSE)" & Chr(10)
+            ENDIF
+            IF ctrl.ShowStatusBar THEN
+                code = code & "    m." & ctrl.CtlName & ".SetShowStatusBar(TRUE)" & Chr(10)
+            ELSE
+                code = code & "    m." & ctrl.CtlName & ".SetShowStatusBar(FALSE)" & Chr(10)
+            ENDIF
+            IF ctrl.ShowFilter THEN
+                code = code & "    m." & ctrl.CtlName & ".SetFilteringEnabled(TRUE)" & Chr(10)
+            ELSE
+                code = code & "    m." & ctrl.CtlName & ".SetFilteringEnabled(FALSE)" & Chr(10)
+            ENDIF
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+            DIM interval AS INTEGER = ctrl.Interval
+            IF interval <= 0 THEN
+                interval = 1000
+            ENDIF
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Timer)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = timer.New(time.Millisecond * " & Str(interval) & ")" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Running = FALSE" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_LABEL THEN
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Label)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Text = " & Chr(34) & ctrl.Caption & Chr(34) & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Button)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Focused = FALSE" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+            DIM checked AS STRING = "FALSE"
+            IF ctrl.Value = "1" THEN
+                checked = "TRUE"
+            ENDIF
+            code = code & "    ' Initialize " & ctrl.CtlName & " (CheckBox)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Checked = " & checked & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Focused = FALSE" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+            DIM selected AS STRING = "FALSE"
+            IF ctrl.Value = "1" THEN
+                selected = "TRUE"
+            ENDIF
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Option)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Selected = " & selected & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Focused = FALSE" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_FRAME THEN
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Frame)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Caption = " & Chr(34) & ctrl.Caption & Chr(34) & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_HSCROLL OR ctrl.CtlType = CTRL_VSCROLL THEN
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Scrollbar)" & Chr(10)
+            DIM scrollVal AS INTEGER = 0
+            IF ctrl.Value <> "" THEN
+                scrollVal = ParseIntStr(ctrl.Value)
+            ENDIF
+            code = code & "    m." & ctrl.CtlName & "_Value = " & Str(scrollVal) & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Min = " & Str(ctrl.MinValue) & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Max = " & Str(ctrl.MaxValue) & Chr(10)
+            code = code & Chr(10)
+        ENDIF
+    NEXT
+
+    ' Initialize focus order
+    code = code & "    ' Initialize focus order" & Chr(10)
+    code = code & "    m.FocusableControls = []STRING{"
+    FOR i = 0 TO Len(focusable) - 1
+        IF i > 0 THEN
+            code = code & ", "
+        ENDIF
+        code = code & Chr(34) & focusable[i] & Chr(34)
+    NEXT
+    code = code & "}" & Chr(10)
+    code = code & "    m.FocusIndex = 0" & Chr(10)
+
+    ' Set initial focus
+    IF Len(focusable) > 0 THEN
+        DIM firstCtrl AS STRING = focusable[0]
+        DIM ctrlType AS INTEGER = GetControlType(form, firstCtrl)
+        IF ctrlType = CTRL_TEXTBOX THEN
+            code = code & "    m." & firstCtrl & ".Focus()" & Chr(10)
+            code = code & "    cmds = APPEND(cmds, textinput.Blink)" & Chr(10)
+        ELSEIF ctrlType = CTRL_BUTTON OR ctrlType = CTRL_CHECKBOX OR ctrlType = CTRL_OPTION THEN
+            code = code & "    m." & firstCtrl & "_Focused = TRUE" & Chr(10)
+        ENDIF
+    ENDIF
+
+    code = code & Chr(10)
+    code = code & "    ' Call user Form_Load" & Chr(10)
+    code = code & "    m = " & form.Name & "_Load(m)" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    RETURN tea.Batch(cmds)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10) & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Helper to get control type by name
+FUNCTION GetControlType(form AS VDBForm, name AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        IF form.Controls[i].CtlName = name THEN
+            RETURN form.Controls[i].CtlType
+        ENDIF
+    NEXT
+    RETURN -1
+END FUNCTION
+
+' Generate Update() method with event routing
+FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
+    DIM code AS STRING = ""
+    DIM formTypeName AS STRING = form.Name & "Model"
+
+    code = code & "' Handle input messages" & Chr(10)
+    code = code & "FUNCTION (m AS " & formTypeName & ") Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)" & Chr(10)
+    code = code & "    DIM cmds AS []tea.Cmd" & Chr(10)
+    code = code & Chr(10)
+
+    ' Check for quit
+    code = code & "    ' Handle quit" & Chr(10)
+    code = code & "    DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM ok AS BOOLEAN" & Chr(10)
+    code = code & "    keyMsg, ok = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    IF ok THEN" & Chr(10)
+    code = code & "        DIM key AS STRING = keyMsg.String()" & Chr(10)
+    code = code & Chr(10)
+    code = code & "        ' Quit on Ctrl+C or Escape" & Chr(10)
+    code = code & "        IF key = " & Chr(34) & "ctrl+c" & Chr(34) & " OR key = " & Chr(34) & "esc" & Chr(34) & " THEN" & Chr(10)
+    code = code & "            RETURN m, tea.Quit" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & Chr(10)
+
+    ' Tab cycling
+    code = code & "        ' Tab cycles focus" & Chr(10)
+    code = code & "        IF key = " & Chr(34) & "tab" & Chr(34) & " THEN" & Chr(10)
+    code = code & "            m = CycleFocus(m, 1)" & Chr(10)
+    code = code & "            RETURN m, NIL" & Chr(10)
+    code = code & "        ELSEIF key = " & Chr(34) & "shift+tab" & Chr(34) & " THEN" & Chr(10)
+    code = code & "            m = CycleFocus(m, -1)" & Chr(10)
+    code = code & "            RETURN m, NIL" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & Chr(10)
+
+    ' Handle events for focusable controls
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+
+        IF ctrl.CtlType = CTRL_BUTTON THEN
+            code = code & "        ' Enter on " & ctrl.CtlName & " triggers click" & Chr(10)
+            code = code & "        IF key = " & Chr(34) & "enter" & Chr(34) & " AND m." & ctrl.CtlName & "_Focused THEN" & Chr(10)
+            code = code & "            m = " & ctrl.CtlName & "_Click(m)" & Chr(10)
+            code = code & "            RETURN m, NIL" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+            code = code & "        ' Space toggles " & ctrl.CtlName & Chr(10)
+            code = code & "        IF (key = " & Chr(34) & "enter" & Chr(34) & " OR key = " & Chr(34) & " " & Chr(34) & ") AND m." & ctrl.CtlName & "_Focused THEN" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & "_Checked = NOT m." & ctrl.CtlName & "_Checked" & Chr(10)
+            code = code & "            m = " & ctrl.CtlName & "_Change(m)" & Chr(10)
+            code = code & "            RETURN m, NIL" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+            code = code & "        ' Space selects " & ctrl.CtlName & Chr(10)
+            code = code & "        IF (key = " & Chr(34) & "enter" & Chr(34) & " OR key = " & Chr(34) & " " & Chr(34) & ") AND m." & ctrl.CtlName & "_Focused THEN" & Chr(10)
+            code = code & "            m = SelectOption(m, " & Chr(34) & ctrl.CtlName & Chr(34) & ")" & Chr(10)
+            code = code & "            m = " & ctrl.CtlName & "_Click(m)" & Chr(10)
+            code = code & "            RETURN m, NIL" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
+            code = code & Chr(10)
+        ENDIF
+    NEXT
+
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+
+    ' Route messages to focused control
+    code = code & "    ' Route to focused control" & Chr(10)
+    code = code & "    IF Len(m.FocusableControls) > 0 AND m.FocusIndex >= 0 AND m.FocusIndex < Len(m.FocusableControls) THEN" & Chr(10)
+    code = code & "        DIM focused AS STRING = m.FocusableControls[m.FocusIndex]" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate routing for each focusable control type
+    DIM first AS BOOLEAN = TRUE
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+
+        IF ctrl.CtlType = CTRL_TEXTBOX THEN
+            IF first THEN
+                code = code & "        IF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "        ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "            DIM cmd AS tea.Cmd" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & ", cmd = m." & ctrl.CtlName & ".Update(msg)" & Chr(10)
+            code = code & "            cmds = APPEND(cmds, cmd)" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
+            IF first THEN
+                code = code & "        IF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "        ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "            DIM cmd AS tea.Cmd" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & ", cmd = m." & ctrl.CtlName & ".Update(msg)" & Chr(10)
+            code = code & "            cmds = APPEND(cmds, cmd)" & Chr(10)
+        ENDIF
+    NEXT
+
+    IF NOT first THEN
+        code = code & "        ENDIF" & Chr(10)
+    ENDIF
+
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+
+    ' Handle timer messages
+    DIM hasTimer AS BOOLEAN = FALSE
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_TIMER THEN
+            IF NOT hasTimer THEN
+                code = code & "    ' Handle timer messages" & Chr(10)
+                code = code & "    DIM timerMsg AS timer.TickMsg" & Chr(10)
+                code = code & "    timerMsg, ok = msg.(timer.TickMsg)" & Chr(10)
+                code = code & "    IF ok THEN" & Chr(10)
+                hasTimer = TRUE
+            ENDIF
+            code = code & "        IF m." & ctrl.CtlName & "_Running THEN" & Chr(10)
+            code = code & "            DIM cmd AS tea.Cmd" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & ", cmd = m." & ctrl.CtlName & ".Update(msg)" & Chr(10)
+            code = code & "            cmds = APPEND(cmds, cmd)" & Chr(10)
+            code = code & "            m = " & ctrl.CtlName & "_Timer(m)" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
+        ENDIF
+    NEXT
+    IF hasTimer THEN
+        code = code & "    ENDIF" & Chr(10)
+        code = code & Chr(10)
+    ENDIF
+
+    code = code & "    RETURN m, tea.Batch(cmds)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10) & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Generate View() method with layout
+FUNCTION GenerateView(form AS VDBForm) AS STRING
+    DIM code AS STRING = ""
+    DIM formTypeName AS STRING = form.Name & "Model"
+
+    code = code & "' Render the form" & Chr(10)
+    code = code & "FUNCTION (m AS " & formTypeName & ") View() AS STRING" & Chr(10)
+    code = code & "    DIM view AS STRING = " & Chr(34) & Chr(34) & Chr(10)
+    code = code & Chr(10)
+
+    ' Create form buffer
+    code = code & "    ' Create buffer for form layout" & Chr(10)
+    code = code & "    DIM lines AS []STRING" & Chr(10)
+    code = code & "    DIM i AS INTEGER" & Chr(10)
+    code = code & "    FOR i = 0 TO m.Height - 1" & Chr(10)
+    code = code & "        lines = APPEND(lines, strings.Repeat(" & Chr(34) & " " & Chr(34) & ", m.Width))" & Chr(10)
+    code = code & "    NEXT" & Chr(10)
+    code = code & Chr(10)
+
+    ' Render form border
+    code = code & "    ' Form border style" & Chr(10)
+    code = code & "    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle()." & Chr(10)
+    code = code & "        Border(lipgloss.RoundedBorder())." & Chr(10)
+    code = code & "        BorderForeground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & "))." & Chr(10)
+    code = code & "        Width(m.Width)." & Chr(10)
+    code = code & "        Height(m.Height)" & Chr(10)
+    code = code & Chr(10)
+
+    ' Render controls - sorted by ZOrder for proper layering
+    code = code & "    ' Render controls" & Chr(10)
+    code = code & "    DIM content AS STRING = " & Chr(34) & Chr(34) & Chr(10)
+    code = code & Chr(10)
+
+    ' First render Frame controls (background)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_FRAME THEN
+            code = code & "    ' Render " & ctrl.CtlName & " (Frame)" & Chr(10)
+            code = code & "    content = content & RenderFrame(m." & ctrl.CtlName & "_Caption, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ")" & Chr(10)
+            code = code & Chr(10)
+        ENDIF
+    NEXT
+
+    ' Then render other controls
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+
+        IF ctrl.CtlType = CTRL_LABEL THEN
+            code = code & "    ' Render " & ctrl.CtlName & " (Label)" & Chr(10)
+            code = code & "    content = content & RenderLabel(m." & ctrl.CtlName & "_Text, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Width) & ")" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_TEXTBOX THEN
+            code = code & "    ' Render " & ctrl.CtlName & " (TextBox)" & Chr(10)
+            code = code & "    content = content & RenderTextInput(m." & ctrl.CtlName & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ")" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
+            code = code & "    ' Render " & ctrl.CtlName & " (Button)" & Chr(10)
+            code = code & "    content = content & RenderButton(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+            code = code & "    ' Render " & ctrl.CtlName & " (CheckBox)" & Chr(10)
+            code = code & "    content = content & RenderCheckBox(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", m." & ctrl.CtlName & "_Checked, m." & ctrl.CtlName & "_Focused)" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+            code = code & "    ' Render " & ctrl.CtlName & " (Option)" & Chr(10)
+            code = code & "    content = content & RenderOption(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", m." & ctrl.CtlName & "_Selected, m." & ctrl.CtlName & "_Focused)" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
+            code = code & "    ' Render " & ctrl.CtlName & " (ListBox)" & Chr(10)
+            code = code & "    content = content & RenderListBox(m." & ctrl.CtlName & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ")" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_HSCROLL THEN
+            code = code & "    ' Render " & ctrl.CtlName & " (HScrollBar)" & Chr(10)
+            code = code & "    content = content & RenderHScroll(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Width) & ")" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_VSCROLL THEN
+            code = code & "    ' Render " & ctrl.CtlName & " (VScrollBar)" & Chr(10)
+            code = code & "    content = content & RenderVScroll(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Height) & ")" & Chr(10)
+            code = code & Chr(10)
+        ENDIF
+    NEXT
+
+    ' Apply border and return
+    code = code & "    ' Apply border and title" & Chr(10)
+    code = code & "    view = lipgloss.JoinVertical(lipgloss.Left," & Chr(10)
+    code = code & "        lipgloss.NewStyle().Bold(TRUE).Render(m.Caption)," & Chr(10)
+    code = code & "        borderStyle.Render(content))" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    RETURN view" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10) & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Generate control render helper functions
+FUNCTION GenerateRenderHelpers() AS STRING
+    DIM code AS STRING = ""
+
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Render Helper Functions" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderLabel
+    code = code & "FUNCTION RenderLabel(text AS STRING, x AS INTEGER, y AS INTEGER, width AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle()." & Chr(10)
+    code = code & "        Width(width)" & Chr(10)
+    code = code & "    DIM rendered AS STRING = style.Render(text)" & Chr(10)
+    code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderTextInput
+    code = code & "FUNCTION RenderTextInput(input AS textinput.Model, x AS INTEGER, y AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM rendered AS STRING = input.View()" & Chr(10)
+    code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderButton
+    code = code & "FUNCTION RenderButton(caption AS STRING, x AS INTEGER, y AS INTEGER, width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style" & Chr(10)
+    code = code & "    IF focused THEN" & Chr(10)
+    code = code & "        style = lipgloss.NewStyle()." & Chr(10)
+    code = code & "            Background(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & "))." & Chr(10)
+    code = code & "            Foreground(lipgloss.Color(" & Chr(34) & "230" & Chr(34) & "))." & Chr(10)
+    code = code & "            Bold(TRUE)." & Chr(10)
+    code = code & "            Padding(0, 1)." & Chr(10)
+    code = code & "            Width(width)" & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        style = lipgloss.NewStyle()." & Chr(10)
+    code = code & "            Background(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & "))." & Chr(10)
+    code = code & "            Foreground(lipgloss.Color(" & Chr(34) & "0" & Chr(34) & "))." & Chr(10)
+    code = code & "            Padding(0, 1)." & Chr(10)
+    code = code & "            Width(width)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM rendered AS STRING = style.Render(" & Chr(34) & "[ " & Chr(34) & " & caption & " & Chr(34) & " ]" & Chr(34) & ")" & Chr(10)
+    code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderCheckBox
+    code = code & "FUNCTION RenderCheckBox(caption AS STRING, x AS INTEGER, y AS INTEGER, checked AS BOOLEAN, focused AS BOOLEAN) AS STRING" & Chr(10)
+    code = code & "    DIM checkMark AS STRING" & Chr(10)
+    code = code & "    IF checked THEN" & Chr(10)
+    code = code & "        checkMark = " & Chr(34) & "[X]" & Chr(34) & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        checkMark = " & Chr(34) & "[ ]" & Chr(34) & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style" & Chr(10)
+    code = code & "    IF focused THEN" & Chr(10)
+    code = code & "        style = lipgloss.NewStyle().Bold(TRUE).Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & "))" & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        style = lipgloss.NewStyle()" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM rendered AS STRING = style.Render(checkMark & " & Chr(34) & " " & Chr(34) & " & caption)" & Chr(10)
+    code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderOption
+    code = code & "FUNCTION RenderOption(caption AS STRING, x AS INTEGER, y AS INTEGER, selected AS BOOLEAN, focused AS BOOLEAN) AS STRING" & Chr(10)
+    code = code & "    DIM indicator AS STRING" & Chr(10)
+    code = code & "    IF selected THEN" & Chr(10)
+    code = code & "        indicator = " & Chr(34) & "(o)" & Chr(34) & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        indicator = " & Chr(34) & "( )" & Chr(34) & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style" & Chr(10)
+    code = code & "    IF focused THEN" & Chr(10)
+    code = code & "        style = lipgloss.NewStyle().Bold(TRUE).Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & "))" & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        style = lipgloss.NewStyle()" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM rendered AS STRING = style.Render(indicator & " & Chr(34) & " " & Chr(34) & " & caption)" & Chr(10)
+    code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderListBox
+    code = code & "FUNCTION RenderListBox(lst AS list.Model, x AS INTEGER, y AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM rendered AS STRING = lst.View()" & Chr(10)
+    code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderFrame
+    code = code & "FUNCTION RenderFrame(caption AS STRING, x AS INTEGER, y AS INTEGER, width AS INTEGER, height AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle()." & Chr(10)
+    code = code & "        Border(lipgloss.RoundedBorder())." & Chr(10)
+    code = code & "        BorderForeground(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & "))." & Chr(10)
+    code = code & "        Width(width - 2)." & Chr(10)
+    code = code & "        Height(height - 2)" & Chr(10)
+    code = code & "    DIM content AS STRING = strings.Repeat(" & Chr(34) & Chr(10) & Chr(34) & ", height - 2)" & Chr(10)
+    code = code & "    DIM rendered AS STRING = style.Render(content)" & Chr(10)
+    code = code & "    ' Add caption to top border" & Chr(10)
+    code = code & "    IF caption <> " & Chr(34) & Chr(34) & " THEN" & Chr(10)
+    code = code & "        rendered = " & Chr(34) & " " & Chr(34) & " & caption & " & Chr(34) & " " & Chr(34) & " & rendered" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderHScroll
+    code = code & "FUNCTION RenderHScroll(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, x AS INTEGER, y AS INTEGER, width AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM range AS INTEGER = maxVal - minVal" & Chr(10)
+    code = code & "    IF range <= 0 THEN" & Chr(10)
+    code = code & "        range = 1" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM pos AS INTEGER = ((value - minVal) * (width - 3)) / range" & Chr(10)
+    code = code & "    DIM bar AS STRING = " & Chr(34) & "<" & Chr(34) & Chr(10)
+    code = code & "    DIM i AS INTEGER" & Chr(10)
+    code = code & "    FOR i = 0 TO width - 3" & Chr(10)
+    code = code & "        IF i = pos THEN" & Chr(10)
+    code = code & "            bar = bar & " & Chr(34) & "#" & Chr(34) & Chr(10)
+    code = code & "        ELSE" & Chr(10)
+    code = code & "            bar = bar & " & Chr(34) & "-" & Chr(34) & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "    NEXT" & Chr(10)
+    code = code & "    bar = bar & " & Chr(34) & ">" & Chr(34) & Chr(10)
+    code = code & "    RETURN PositionContent(bar, x, y)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderVScroll
+    code = code & "FUNCTION RenderVScroll(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, x AS INTEGER, y AS INTEGER, height AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM range AS INTEGER = maxVal - minVal" & Chr(10)
+    code = code & "    IF range <= 0 THEN" & Chr(10)
+    code = code & "        range = 1" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM pos AS INTEGER = ((value - minVal) * (height - 2)) / range" & Chr(10)
+    code = code & "    DIM bar AS STRING = " & Chr(34) & "^" & Chr(34) & " & Chr(10)" & Chr(10)
+    code = code & "    DIM i AS INTEGER" & Chr(10)
+    code = code & "    FOR i = 0 TO height - 3" & Chr(10)
+    code = code & "        IF i = pos THEN" & Chr(10)
+    code = code & "            bar = bar & " & Chr(34) & "#" & Chr(34) & " & Chr(10)" & Chr(10)
+    code = code & "        ELSE" & Chr(10)
+    code = code & "            bar = bar & " & Chr(34) & "|" & Chr(34) & " & Chr(10)" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "    NEXT" & Chr(10)
+    code = code & "    bar = bar & " & Chr(34) & "v" & Chr(34) & Chr(10)
+    code = code & "    RETURN PositionContent(bar, x, y)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' PositionContent helper
+    code = code & "FUNCTION PositionContent(content AS STRING, x AS INTEGER, y AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    ' Position content using ANSI cursor movement" & Chr(10)
+    code = code & "    ' In practice, we use lipgloss.Place or similar" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle()." & Chr(10)
+    code = code & "        MarginLeft(x)." & Chr(10)
+    code = code & "        MarginTop(y)" & Chr(10)
+    code = code & "    RETURN style.Render(content)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Generate focus management helpers
+FUNCTION GenerateFocusHelpers(form AS VDBForm) AS STRING
+    DIM code AS STRING = ""
+    DIM formTypeName AS STRING = form.Name & "Model"
+
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Focus Management" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+
+    ' CycleFocus
+    code = code & "FUNCTION CycleFocus(m AS " & formTypeName & ", direction AS INTEGER) AS " & formTypeName & Chr(10)
+    code = code & "    IF Len(m.FocusableControls) = 0 THEN" & Chr(10)
+    code = code & "        RETURN m" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Clear current focus" & Chr(10)
+    code = code & "    m = ClearFocus(m)" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Move to next/prev control" & Chr(10)
+    code = code & "    m.FocusIndex = m.FocusIndex + direction" & Chr(10)
+    code = code & "    IF m.FocusIndex >= Len(m.FocusableControls) THEN" & Chr(10)
+    code = code & "        m.FocusIndex = 0" & Chr(10)
+    code = code & "    ELSEIF m.FocusIndex < 0 THEN" & Chr(10)
+    code = code & "        m.FocusIndex = Len(m.FocusableControls) - 1" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Set new focus" & Chr(10)
+    code = code & "    m = SetFocus(m, m.FocusableControls[m.FocusIndex])" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    RETURN m" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' ClearFocus
+    code = code & "FUNCTION ClearFocus(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_TEXTBOX THEN
+            code = code & "    m." & ctrl.CtlName & ".Blur()" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_BUTTON OR ctrl.CtlType = CTRL_CHECKBOX OR ctrl.CtlType = CTRL_OPTION THEN
+            code = code & "    m." & ctrl.CtlName & "_Focused = FALSE" & Chr(10)
+        ENDIF
+    NEXT
+    code = code & "    RETURN m" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' SetFocus
+    code = code & "FUNCTION SetFocus(m AS " & formTypeName & ", name AS STRING) AS " & formTypeName & Chr(10)
+    DIM first AS BOOLEAN = TRUE
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_TEXTBOX THEN
+            IF first THEN
+                code = code & "    IF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "    ELSEIF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "        m." & ctrl.CtlName & ".Focus()" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_BUTTON OR ctrl.CtlType = CTRL_CHECKBOX OR ctrl.CtlType = CTRL_OPTION THEN
+            IF first THEN
+                code = code & "    IF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "    ELSEIF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "        m." & ctrl.CtlName & "_Focused = TRUE" & Chr(10)
+        ENDIF
+    NEXT
+    IF NOT first THEN
+        code = code & "    ENDIF" & Chr(10)
+    ENDIF
+    code = code & "    RETURN m" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' SelectOption - for radio button groups
+    code = code & "FUNCTION SelectOption(m AS " & formTypeName & ", name AS STRING) AS " & formTypeName & Chr(10)
+    code = code & "    ' Deselect all options, select the specified one" & Chr(10)
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_OPTION THEN
+            code = code & "    m." & ctrl.CtlName & "_Selected = FALSE" & Chr(10)
+        ENDIF
+    NEXT
+    first = TRUE
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_OPTION THEN
+            IF first THEN
+                code = code & "    IF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "    ELSEIF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "        m." & ctrl.CtlName & "_Selected = TRUE" & Chr(10)
+        ENDIF
+    NEXT
+    IF NOT first THEN
+        code = code & "    ENDIF" & Chr(10)
+    ENDIF
+    code = code & "    RETURN m" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Extract and transform event handlers from form code
+FUNCTION ExtractEventHandlers(form AS VDBForm) AS STRING
+    DIM code AS STRING = ""
+    DIM formTypeName AS STRING = form.Name & "Model"
+
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Event Handlers" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate Form_Load handler (always present)
+    code = code & "' Form_Load event" & Chr(10)
+    code = code & "FUNCTION " & form.Name & "_Load(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+    ' Extract Form_Load content from form.Code
+    DIM loadCode AS STRING = ExtractSubContent(form.Code, "Form_Load")
+    IF loadCode <> "" THEN
+        code = code & TransformEventCode(loadCode, form)
+    ELSE
+        code = code & "    ' Add initialization code here" & Chr(10)
+    ENDIF
+
+    code = code & "    RETURN m" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate handlers for each control that needs one
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+
+        IF ctrl.CtlType = CTRL_BUTTON THEN
+            ' Button_Click handler
+            code = code & "' " & ctrl.CtlName & "_Click event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_Click(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM clickCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_Click")
+            IF clickCode <> "" THEN
+                code = code & TransformEventCode(clickCode, form)
+            ELSE
+                code = code & "    ' Add click handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+            ' CheckBox_Change handler
+            code = code & "' " & ctrl.CtlName & "_Change event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_Change(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM changeCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_Change")
+            IF changeCode <> "" THEN
+                code = code & TransformEventCode(changeCode, form)
+            ELSE
+                code = code & "    ' Add change handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+            ' Option_Click handler
+            code = code & "' " & ctrl.CtlName & "_Click event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_Click(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM optClickCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_Click")
+            IF optClickCode <> "" THEN
+                code = code & TransformEventCode(optClickCode, form)
+            ELSE
+                code = code & "    ' Add click handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+            ' Timer_Timer handler
+            code = code & "' " & ctrl.CtlName & "_Timer event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_Timer(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM timerCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_Timer")
+            IF timerCode <> "" THEN
+                code = code & TransformEventCode(timerCode, form)
+            ELSE
+                code = code & "    ' Add timer handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
+        ENDIF
+    NEXT
+
+    RETURN code
+END FUNCTION
+
+' Extract content between SUB name() and END SUB
+FUNCTION ExtractSubContent(code AS STRING, subName AS STRING) AS STRING
+    ' Find SUB subName()
+    DIM startMarker AS STRING = "SUB " & subName & "()"
+    DIM startPos AS INTEGER = InStrPos(1, code, startMarker)
+    IF startPos = 0 THEN
+        RETURN ""
+    ENDIF
+
+    ' Skip past the SUB line
+    DIM afterStart AS INTEGER = InStrPos(startPos, code, Chr(10))
+    IF afterStart = 0 THEN
+        RETURN ""
+    ENDIF
+
+    ' Find END SUB
+    DIM endPos AS INTEGER = InStrPos(afterStart, code, "END SUB")
+    IF endPos = 0 THEN
+        RETURN ""
+    ENDIF
+
+    ' Extract content between
+    DIM content AS STRING = Mid(code, afterStart + 1, endPos - afterStart - 1)
+    RETURN content
+END FUNCTION
+
+' Transform VB-style event code to BubbleTea model-passing style
+FUNCTION TransformEventCode(code AS STRING, form AS VDBForm) AS STRING
+    DIM result AS STRING = code
+
+    ' Transform control property access: txtName.Text -> m.txtName.Value()
+    ' Transform control property set: txtName.Text = x -> m.txtName.SetValue(x)
+    ' Transform label.Caption = x -> m.label_Text = x
+    ' Transform checkbox.Value = x -> m.checkbox_Checked = x
+
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+
+        IF ctrl.CtlType = CTRL_TEXTBOX THEN
+            ' txtName.Text -> m.txtName.Value()
+            result = ReplaceAll(result, ctrl.CtlName & ".Text", "m." & ctrl.CtlName & ".Value()")
+        ELSEIF ctrl.CtlType = CTRL_LABEL THEN
+            ' lblName.Caption -> m.lblName_Text
+            result = ReplaceAll(result, ctrl.CtlName & ".Caption", "m." & ctrl.CtlName & "_Text")
+        ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+            ' chkName.Value -> m.chkName_Checked
+            result = ReplaceAll(result, ctrl.CtlName & ".Value", "m." & ctrl.CtlName & "_Checked")
+        ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+            ' optName.Value -> m.optName_Selected
+            result = ReplaceAll(result, ctrl.CtlName & ".Value", "m." & ctrl.CtlName & "_Selected")
+        ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+            ' timerName.Enabled -> m.timerName_Running
+            result = ReplaceAll(result, ctrl.CtlName & ".Enabled", "m." & ctrl.CtlName & "_Running")
+        ENDIF
+    NEXT
+
+    ' Add indentation
+    DIM lines AS []STRING = SplitStr(result, Chr(10))
+    result = ""
+    FOR i = 0 TO Len(lines) - 1
+        DIM line AS STRING = TrimStr(lines[i])
+        IF line <> "" THEN
+            result = result & "    " & line & Chr(10)
+        ENDIF
+    NEXT
+
+    RETURN result
+END FUNCTION
+
+' Generate main entry point
+FUNCTION GenerateMain(startupForm AS STRING) AS STRING
+    DIM code AS STRING = ""
+
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Main Entry Point" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+    code = code & "SUB Main()" & Chr(10)
+    code = code & "    DIM model AS " & startupForm & "Model" & Chr(10)
+    code = code & "    DIM p AS tea.Program = tea.NewProgram(model, tea.WithAltScreen())" & Chr(10)
+    code = code & "    DIM err AS ERROR" & Chr(10)
+    code = code & "    _, err = p.Run()" & Chr(10)
+    code = code & "    IF err <> NIL THEN" & Chr(10)
+    code = code & "        fmt.Println(" & Chr(34) & "Error running program:" & Chr(34) & ", err)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "END SUB" & Chr(10)
+
+    RETURN code
+END FUNCTION

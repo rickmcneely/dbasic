@@ -1,0 +1,135 @@
+{
+  "name": "TimerDemo",
+  "startupForm": "frmTimer",
+  "forms": [
+    {
+      "name": "frmTimer",
+      "caption": "Timer Control Demo",
+      "width": 45,
+      "height": 16,
+      "controls": [
+        {
+          "id": 1,
+          "type": 2,
+          "name": "lblTitle",
+          "caption": "Timer and Animation Demo",
+          "x": 2,
+          "y": 1,
+          "width": 30,
+          "height": 1
+        },
+        {
+          "id": 3,
+          "type": 2,
+          "name": "lblTime",
+          "caption": "00:00:00",
+          "x": 6,
+          "y": 5,
+          "width": 12,
+          "height": 1
+        },
+        {
+          "id": 5,
+          "type": 2,
+          "name": "lblCounter",
+          "caption": "0",
+          "x": 30,
+          "y": 5,
+          "width": 8,
+          "height": 1
+        },
+        {
+          "id": 6,
+          "type": 13,
+          "name": "prgAnim",
+          "caption": "",
+          "x": 2,
+          "y": 9,
+          "width": 40,
+          "height": 1
+        },
+        {
+          "id": 7,
+          "type": 14,
+          "name": "spnAnim",
+          "caption": "",
+          "x": 20,
+          "y": 10,
+          "width": 3,
+          "height": 1
+        },
+        {
+          "id": 8,
+          "type": 1,
+          "name": "btnStart",
+          "caption": "Start",
+          "x": 2,
+          "y": 12,
+          "width": 10,
+          "height": 3
+        },
+        {
+          "id": 9,
+          "type": 1,
+          "name": "btnStop",
+          "caption": "Stop",
+          "x": 14,
+          "y": 12,
+          "width": 10,
+          "height": 3
+        },
+        {
+          "id": 10,
+          "type": 1,
+          "name": "btnReset",
+          "caption": "Reset",
+          "x": 26,
+          "y": 12,
+          "width": 10,
+          "height": 3
+        },
+        {
+          "id": 11,
+          "type": 11,
+          "name": "tmrClock",
+          "caption": "",
+          "x": 38,
+          "y": 12,
+          "width": 3,
+          "height": 1
+        },
+        {
+          "id": 12,
+          "type": 11,
+          "name": "tmrAnim",
+          "caption": "",
+          "x": 38,
+          "y": 13,
+          "width": 3,
+          "height": 1
+        },
+        {
+          "id": 2,
+          "type": 8,
+          "name": "fraClock",
+          "caption": "Clock",
+          "x": 2,
+          "y": 3,
+          "width": 20,
+          "height": 5
+        },
+        {
+          "id": 4,
+          "type": 8,
+          "name": "fraCounter",
+          "caption": "Counter",
+          "x": 24,
+          "y": 3,
+          "width": 18,
+          "height": 5
+        }
+      ]
+    }
+  ],
+  "modules": []
+}

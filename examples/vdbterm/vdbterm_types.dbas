@@ -32,6 +32,46 @@ TYPE VDBControl
     DIM Value AS STRING
     DIM ForeColor AS INTEGER
     DIM BackColor AS INTEGER
+
+    ' TextBox (textinput.Model) properties
+    DIM Placeholder AS STRING
+    DIM CharLimit AS INTEGER
+    DIM EchoMode AS INTEGER      ' 0=Normal, 1=Password, 2=None
+    DIM Prompt AS STRING
+    DIM CursorBlink AS BOOLEAN   ' Enable cursor blinking
+
+    ' ListBox (list.Model) properties
+    DIM ShowTitle AS BOOLEAN
+    DIM ShowStatusBar AS BOOLEAN
+    DIM ShowFilter AS BOOLEAN
+    DIM Items AS STRING          ' Semicolon-separated list items
+    DIM Title AS STRING          ' Title text when ShowTitle is true
+    DIM InfiniteScrolling AS BOOLEAN
+
+    ' Timer properties
+    DIM Interval AS INTEGER      ' Milliseconds
+
+    ' Option (radio) properties
+    DIM GroupName AS STRING      ' Groups radio buttons together
+
+    ' Scrollbar properties
+    DIM MinValue AS INTEGER
+    DIM MaxValue AS INTEGER
+
+    ' TextArea (textarea.Model) properties
+    DIM ShowLineNumbers AS BOOLEAN
+
+    ' Progress (progress.Model) properties
+    DIM Total AS INTEGER         ' Total value for progress (Value is current)
+    DIM ShowPercentage AS BOOLEAN
+
+    ' Spinner (spinner.Model) properties
+    DIM SpinnerStyle AS INTEGER  ' 0=Line, 1=Dot, 2=MiniDot, 3=Jump, 4=Pulse, 5=Points
+
+    ' Table (table.Model) properties
+    DIM Columns AS STRING        ' Semicolon-separated column headers
+    DIM Rows AS STRING           ' Pipe-separated rows, semicolon-separated cells
+    DIM ShowHeaders AS BOOLEAN
 END TYPE
 
 ' Form definition
@@ -82,8 +122,17 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM CurrentFormIdx AS INTEGER
     DIM SelectedCtrlIdx AS INTEGER
     DIM ToolboxIndex AS INTEGER
+    DIM WidgetsIndex AS INTEGER
     DIM FormScrollX AS INTEGER
     DIM FormScrollY AS INTEGER
+
+    ' Left panel layout (heights are user-adjustable)
+    DIM ProjectHeight AS INTEGER
+    DIM WidgetsHeight AS INTEGER
+    DIM ToolboxHeight AS INTEGER
+    DIM PanelDragging AS INTEGER
+    DIM PanelDragStartY AS INTEGER
+    DIM PanelDragOrigHeight AS INTEGER
     DIM IsDragging AS BOOLEAN
     DIM DraggingForm AS BOOLEAN
     DIM DragStartX AS INTEGER
@@ -100,6 +149,8 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM ResizeOrigY AS INTEGER
     DIM ResizeOrigW AS INTEGER
     DIM ResizeOrigH AS INTEGER
+    DIM DraggingFromWidgets AS BOOLEAN
+    DIM DragWidgetType AS INTEGER
 
     ' Code editor state (textarea component)
     DIM CodeEditor AS textarea.Model
@@ -147,4 +198,13 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM TabSize AS INTEGER
     DIM AutoIndent AS BOOLEAN
     DIM SyntaxHighlight AS BOOLEAN
+
+    ' Event popup state
+    DIM PopupMode AS INTEGER
+    DIM PopupX AS INTEGER
+    DIM PopupY AS INTEGER
+    DIM PopupCtrlIdx AS INTEGER      ' Control index for events popup (-1 for form)
+    DIM PopupCtrlType AS INTEGER     ' Control type (for Widgets/Toolbox popups)
+    DIM PopupEvents AS []STRING      ' Available events for the control
+    DIM PopupIndex AS INTEGER        ' Selected event index
 END TYPE

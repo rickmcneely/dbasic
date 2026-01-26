@@ -13,6 +13,7 @@ INCLUDE "vdbterm_const.dbas"
 INCLUDE "vdbterm_types.dbas"
 INCLUDE "vdbterm_styles.dbas"
 INCLUDE "vdbterm_helpers.dbas"
+INCLUDE "vdbterm_codegen.dbas"
 INCLUDE "vdbterm_project.dbas"
 INCLUDE "vdbterm_syntax.dbas"
 INCLUDE "vdbterm_highlight.dbas"
@@ -83,6 +84,11 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN HandleMenuInput(m, key)
     ENDIF
 
+    ' Popup input (event context menu)
+    IF m.PopupMode <> POPUP_NONE THEN
+        RETURN HandlePopupInput(m, key)
+    ENDIF
+
     ' Global shortcuts
     IF key = "f10" OR key = "alt+f" THEN
         m.MenuOpen = MENU_FILE
@@ -140,8 +146,8 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' Cycle focus areas
         DIM prevFocus AS INTEGER = m.FocusArea
         m.FocusArea = m.FocusArea + 1
-        IF m.FocusArea > FOCUS_PROJECT THEN
-            m.FocusArea = FOCUS_TOOLBOX
+        IF m.FocusArea > FOCUS_PROPERTIES THEN
+            m.FocusArea = FOCUS_PROJECT
         ENDIF
         ' Manage textarea focus
         IF m.CodeEditorInited THEN
@@ -156,8 +162,8 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' Cycle focus backwards
         DIM prevFocus2 AS INTEGER = m.FocusArea
         m.FocusArea = m.FocusArea - 1
-        IF m.FocusArea < FOCUS_TOOLBOX THEN
-            m.FocusArea = FOCUS_PROJECT
+        IF m.FocusArea < FOCUS_PROJECT THEN
+            m.FocusArea = FOCUS_PROPERTIES
         ENDIF
         ' Manage textarea focus
         IF m.CodeEditorInited THEN
@@ -171,7 +177,11 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     ENDIF
 
     ' Route input based on focus area
-    IF m.FocusArea = FOCUS_TOOLBOX THEN
+    IF m.FocusArea = FOCUS_PROJECT THEN
+        RETURN HandleProjectInput(m, key)
+    ELSEIF m.FocusArea = FOCUS_WIDGETS THEN
+        RETURN HandleWidgetsInput(m, key)
+    ELSEIF m.FocusArea = FOCUS_TOOLBOX THEN
         RETURN HandleToolboxInput(m, key)
     ELSEIF m.FocusArea = FOCUS_FORM THEN
         RETURN HandleFormInput(m, key)
@@ -180,8 +190,6 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN HandleCodeInputMsg(m, msg)
     ELSEIF m.FocusArea = FOCUS_PROPERTIES THEN
         RETURN HandlePropertiesInput(m, key)
-    ELSEIF m.FocusArea = FOCUS_PROJECT THEN
-        RETURN HandleProjectInput(m, key)
     ENDIF
 
     RETURN m, NIL
@@ -198,10 +206,11 @@ SUB Main()
     model.Width = 100
     model.Height = 30
     model.ViewMode = VIEW_FORM
-    model.FocusArea = FOCUS_TOOLBOX
+    model.FocusArea = FOCUS_PROJECT
     model.CurrentFormIdx = 0
     model.SelectedCtrlIdx = -1
     model.ToolboxIndex = 0
+    model.WidgetsIndex = 0
     model.MenuOpen = MENU_NONE
     model.MenuIndex = 0
     model.DialogMode = DIALOG_NONE
@@ -213,6 +222,12 @@ SUB Main()
     model.AutoIndent = TRUE
     model.SyntaxHighlight = TRUE
     model.Message = "Welcome to VDBTerm! F10=menu, F1=help. Mouse enabled."
+
+    ' Left panel layout (heights are adjustable by dragging captions)
+    model.ProjectHeight = 8
+    model.WidgetsHeight = 12
+    model.ToolboxHeight = 4
+    model.PanelDragging = PANEL_DRAG_NONE
 
     ' Initialize code editor (textarea)
     model.CodeEditor = InitCodeEditor(60, 20)

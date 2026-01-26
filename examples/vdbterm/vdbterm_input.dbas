@@ -31,6 +31,11 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
             m.Project = NewProject(m.DialogInput)
             m.ProjectLoaded = TRUE
             m.CurrentFormIdx = 0
+            m.SelectedCtrlIdx = -1
+            m.TreeIndex = 0
+            ' Initialize tree expansion - all forms expanded by default
+            m.TreeExpanded = []BOOLEAN{}
+            m = EnsureTreeExpanded(m)
             m.Message = "New project: " & m.DialogInput
             m.DialogMode = DIALOG_NONE
         ELSEIF m.DialogMode = DIALOG_NEW_FORM THEN
@@ -38,6 +43,8 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
             addForm = NewForm(m.DialogInput)
             m.Project.Forms = APPEND(m.Project.Forms, addForm)
             m.CurrentFormIdx = Len(m.Project.Forms) - 1
+            m.SelectedCtrlIdx = -1
+            m.TreeExpanded = APPEND(m.TreeExpanded, TRUE)  ' Expand new form in tree
             m.Project.Modified = TRUE
             m.Message = "New form: " & m.DialogInput
             m.DialogMode = DIALOG_NONE
@@ -51,6 +58,25 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
         ELSEIF m.DialogMode = DIALOG_SAVE_PROJECT THEN
             SaveProject(@m.Project, m.DialogInput)
             m.Message = "Project saved: " & m.DialogInput
+            m.DialogMode = DIALOG_NONE
+        ELSEIF m.DialogMode = DIALOG_OPEN_PROJECT THEN
+            DIM loadedProj AS VDBProject
+            DIM loadErr AS STRING
+            loadedProj, loadErr = LoadProject(m.DialogInput)
+            IF loadErr = "" THEN
+                m.Project = loadedProj
+                m.ProjectLoaded = TRUE
+                m.CurrentFormIdx = 0
+                m.SelectedCtrlIdx = -1
+                m.TreeIndex = 0
+                ' Initialize tree expansion - all forms expanded by default
+                m.TreeExpanded = []BOOLEAN{}
+                m = EnsureTreeExpanded(m)
+                m.Message = "Project loaded: " & loadedProj.Name
+            ELSE
+                m.ErrorMsg = loadErr
+                m.Message = "Failed to load project"
+            ENDIF
             m.DialogMode = DIALOG_NONE
         ENDIF
         RETURN m, NIL
@@ -220,19 +246,21 @@ FUNCTION ExecuteMenuItem(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
     RETURN m, NIL
 END FUNCTION
 
-FUNCTION HandleToolboxInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+' Handle input for Widgets panel (visible widgets: Button, Label, TextBox, etc.)
+FUNCTION HandleWidgetsInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
     IF key = "up" THEN
-        IF m.ToolboxIndex > 0 THEN
-            m.ToolboxIndex = m.ToolboxIndex - 1
+        IF m.WidgetsIndex > 0 THEN
+            m.WidgetsIndex = m.WidgetsIndex - 1
         ENDIF
     ELSEIF key = "down" THEN
-        IF m.ToolboxIndex < 10 THEN
-            m.ToolboxIndex = m.ToolboxIndex + 1
+        IF m.WidgetsIndex < VISIBLE_WIDGET_COUNT - 1 THEN
+            m.WidgetsIndex = m.WidgetsIndex + 1
         ENDIF
     ELSEIF key = "enter" OR key = " " THEN
-        ' Add control to form
+        ' Add visible control to form
         IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
-            DIM ctlType AS INTEGER = m.ToolboxIndex + 1
+            ' Visible widgets are types 1-10 (CTRL_BUTTON to CTRL_VSCROLL)
+            DIM ctlType AS INTEGER = m.WidgetsIndex + 1
             DIM ctlName AS STRING = GetControlTypeName(ctlType) & Str(m.Project.Forms[m.CurrentFormIdx].NextCtrlID)
             DIM ctrl AS VDBControl = NewControl(ctlType, ctlName, 5, 5)
             ctrl.ID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
@@ -242,6 +270,37 @@ FUNCTION HandleToolboxInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea
             m.SelectedCtrlIdx = Len(m.Project.Forms[m.CurrentFormIdx].Controls) - 1
             m.Project.Modified = TRUE
             m.FocusArea = FOCUS_FORM
+            m.Message = "Added " & ctlName
+        ENDIF
+    ENDIF
+    RETURN m, NIL
+END FUNCTION
+
+' Handle input for Toolbox panel (non-visible widgets: Timer)
+FUNCTION HandleToolboxInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF key = "up" THEN
+        IF m.ToolboxIndex > 0 THEN
+            m.ToolboxIndex = m.ToolboxIndex - 1
+        ENDIF
+    ELSEIF key = "down" THEN
+        IF m.ToolboxIndex < NONVISIBLE_WIDGET_COUNT - 1 THEN
+            m.ToolboxIndex = m.ToolboxIndex + 1
+        ENDIF
+    ELSEIF key = "enter" OR key = " " THEN
+        ' Add non-visible control to form
+        IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+            ' Non-visible widgets start at CTRL_TIMER (11)
+            DIM ctlType AS INTEGER = CTRL_TIMER + m.ToolboxIndex
+            DIM ctlName AS STRING = GetControlTypeName(ctlType) & Str(m.Project.Forms[m.CurrentFormIdx].NextCtrlID)
+            DIM ctrl AS VDBControl = NewControl(ctlType, ctlName, 0, 0)
+            ctrl.ID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
+            ctrl.ZOrder = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
+            ctrl.Width = 3
+            ctrl.Height = 1
+            m.Project.Forms[m.CurrentFormIdx].NextCtrlID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID + 1
+            m.Project.Forms[m.CurrentFormIdx].Controls = APPEND(m.Project.Forms[m.CurrentFormIdx].Controls, ctrl)
+            m.SelectedCtrlIdx = Len(m.Project.Forms[m.CurrentFormIdx].Controls) - 1
+            m.Project.Modified = TRUE
             m.Message = "Added " & ctlName
         ENDIF
     ENDIF
@@ -451,8 +510,8 @@ FUNCTION HandlePropertiesInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, 
         ' Handle editing mode
         IF key = "enter" OR key = "esc" THEN
             IF key = "enter" THEN
-                ' Apply the edited value
                 m = ApplyPropertyEdit(m)
+                m.Message = "Property updated"
             ENDIF
             m.PropEditing = FALSE
             m.PropEditValue = ""
@@ -484,7 +543,17 @@ FUNCTION HandlePropertiesInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, 
                 m.PropIndex = m.PropIndex - 1
             ENDIF
         ELSEIF key = "down" THEN
-            m.PropIndex = m.PropIndex + 1
+            ' Limit to valid property range
+            DIM maxIdx AS INTEGER = 5  ' Form has 6 properties (0-5)
+            IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+                    DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
+                    maxIdx = GetControlPropertyCount(ctrl) - 1
+                ENDIF
+            ENDIF
+            IF m.PropIndex < maxIdx THEN
+                m.PropIndex = m.PropIndex + 1
+            ENDIF
         ELSEIF key = "enter" OR key = "f2" THEN
             ' Start editing - load current value (shown as selected)
             m.PropEditValue = GetCurrentPropertyValue(m)
@@ -504,27 +573,11 @@ FUNCTION GetCurrentPropertyValue(m AS VDBTermModel) AS STRING
 
     IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
-        IF m.PropIndex = 0 THEN
-            RETURN ctrl.CtlName
-        ELSEIF m.PropIndex = 1 THEN
-            RETURN "" ' Type is read-only
-        ELSEIF m.PropIndex = 2 THEN
-            RETURN ctrl.Caption
-        ELSEIF m.PropIndex = 3 THEN
-            RETURN Str(ctrl.X)
-        ELSEIF m.PropIndex = 4 THEN
-            RETURN Str(ctrl.Y)
-        ELSEIF m.PropIndex = 5 THEN
-            RETURN Str(ctrl.Width)
-        ELSEIF m.PropIndex = 6 THEN
-            RETURN Str(ctrl.Height)
-        ELSEIF m.PropIndex = 7 THEN
-            RETURN IIFStr(ctrl.Enabled, "True", "False")
-        ELSEIF m.PropIndex = 8 THEN
-            RETURN IIFStr(ctrl.Visible, "True", "False")
-        ELSEIF m.PropIndex = 9 THEN
-            RETURN Str(ctrl.ZOrder)
+        ' Type property (index 1) is read-only
+        IF m.PropIndex = 1 THEN
+            RETURN ""
         ENDIF
+        RETURN GetControlPropertyValue(ctrl, m.PropIndex)
     ELSE
         DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
         IF m.PropIndex = 0 THEN
@@ -545,11 +598,21 @@ FUNCTION GetCurrentPropertyValue(m AS VDBTermModel) AS STRING
 END FUNCTION
 
 FUNCTION CanEditProperty(m AS VDBTermModel) AS BOOLEAN
-    IF m.SelectedCtrlIdx >= 0 THEN
-        ' Type property (index 1) is read-only
-        RETURN m.PropIndex <> 1
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN FALSE
     ENDIF
-    RETURN TRUE
+
+    IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+        DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
+        ' Type property (index 1) is read-only
+        IF m.PropIndex = 1 THEN
+            RETURN FALSE
+        ENDIF
+        ' Check if property index is valid for this control type
+        RETURN m.PropIndex < GetControlPropertyCount(ctrl)
+    ENDIF
+    ' Form properties (0-5 are valid)
+    RETURN m.PropIndex <= 5
 END FUNCTION
 
 FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
@@ -560,24 +623,132 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
     DIM val AS STRING = m.PropEditValue
 
     IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+        DIM ctlType AS INTEGER = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].CtlType
+
+        ' Adjust index for controls without Caption
+        DIM hasCaption AS BOOLEAN = ControlUsesCaption(ctlType)
+        DIM adjIdx AS INTEGER = m.PropIndex
+        IF NOT hasCaption AND m.PropIndex >= 2 THEN
+            adjIdx = m.PropIndex + 1
+        ENDIF
+
+        ' Base properties
         IF m.PropIndex = 0 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].CtlName = val
-        ELSEIF m.PropIndex = 2 THEN
+        ELSEIF hasCaption AND m.PropIndex = 2 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Caption = val
-        ELSEIF m.PropIndex = 3 THEN
+        ELSEIF adjIdx = 3 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = ParseIntStr(val)
-        ELSEIF m.PropIndex = 4 THEN
+        ELSEIF adjIdx = 4 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = ParseIntStr(val)
-        ELSEIF m.PropIndex = 5 THEN
+        ELSEIF adjIdx = 5 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width = ParseIntStr(val)
-        ELSEIF m.PropIndex = 6 THEN
+        ELSEIF adjIdx = 6 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Height = ParseIntStr(val)
-        ELSEIF m.PropIndex = 7 THEN
+        ELSEIF adjIdx = 7 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Enabled = (val = "True" OR val = "true" OR val = "1")
-        ELSEIF m.PropIndex = 8 THEN
+        ELSEIF adjIdx = 8 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Visible = (val = "True" OR val = "true" OR val = "1")
-        ELSEIF m.PropIndex = 9 THEN
+        ELSEIF adjIdx = 9 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ZOrder = ParseIntStr(val)
+        ELSE
+            ' Type-specific properties
+            DIM typeStartIdx AS INTEGER = 10
+            IF NOT hasCaption THEN
+                typeStartIdx = 9
+            ENDIF
+            DIM typeIdx AS INTEGER = m.PropIndex - typeStartIdx
+            IF ctlType = CTRL_TEXTBOX THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Value = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Placeholder = val
+                ELSEIF typeIdx = 2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].CharLimit = ParseIntStr(val)
+                ELSEIF typeIdx = 3 THEN
+                    IF val = "Normal" OR val = "normal" OR val = "0" THEN
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].EchoMode = 0
+                    ELSEIF val = "Password" OR val = "password" OR val = "1" THEN
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].EchoMode = 1
+                    ELSE
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].EchoMode = 2
+                    ENDIF
+                ELSEIF typeIdx = 4 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Prompt = val
+                ELSEIF typeIdx = 5 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].CursorBlink = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
+            ELSEIF ctlType = CTRL_LISTBOX THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Items = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Title = val
+                ELSEIF typeIdx = 2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowTitle = (val = "True" OR val = "true" OR val = "1")
+                ELSEIF typeIdx = 3 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowStatusBar = (val = "True" OR val = "true" OR val = "1")
+                ELSEIF typeIdx = 4 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowFilter = (val = "True" OR val = "true" OR val = "1")
+                ELSEIF typeIdx = 5 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].InfiniteScrolling = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
+            ELSEIF ctlType = CTRL_COMBOBOX THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Items = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowFilter = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
+            ELSEIF ctlType = CTRL_TIMER THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Interval = ParseIntStr(val)
+                ENDIF
+            ELSEIF ctlType = CTRL_OPTION THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].GroupName = val
+                ENDIF
+            ELSEIF ctlType = CTRL_HSCROLL OR ctlType = CTRL_VSCROLL THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Value = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].MinValue = ParseIntStr(val)
+                ELSEIF typeIdx = 2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].MaxValue = ParseIntStr(val)
+                ENDIF
+            ELSEIF ctlType = CTRL_CHECKBOX THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Value = val
+                ENDIF
+            ELSEIF ctlType = CTRL_TEXTAREA THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Value = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Placeholder = val
+                ELSEIF typeIdx = 2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].CharLimit = ParseIntStr(val)
+                ELSEIF typeIdx = 3 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowLineNumbers = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
+            ELSEIF ctlType = CTRL_PROGRESS THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Value = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Total = ParseIntStr(val)
+                ELSEIF typeIdx = 2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowPercentage = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
+            ELSEIF ctlType = CTRL_SPINNER THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].SpinnerStyle = ParseIntStr(val)
+                ENDIF
+            ELSEIF ctlType = CTRL_TABLE THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Columns = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Rows = val
+                ELSEIF typeIdx = 2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowHeaders = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
+            ENDIF
         ENDIF
         m.Project.Modified = TRUE
     ELSE
@@ -601,17 +772,59 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
 END FUNCTION
 
 FUNCTION HandleProjectInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    ' Ensure tree expansion array is properly sized
+    m = EnsureTreeExpanded(m)
+
+    DIM totalItems AS INTEGER = GetTreeItemCount(m)
+
     IF key = "up" THEN
         IF m.TreeIndex > 0 THEN
             m.TreeIndex = m.TreeIndex - 1
         ENDIF
     ELSEIF key = "down" THEN
-        m.TreeIndex = m.TreeIndex + 1
-    ELSEIF key = "enter" THEN
-        ' Select form/module
-        IF m.TreeIndex < Len(m.Project.Forms) THEN
-            m.CurrentFormIdx = m.TreeIndex
+        IF m.TreeIndex < totalItems - 1 THEN
+            m.TreeIndex = m.TreeIndex + 1
+        ENDIF
+    ELSEIF key = "enter" OR key = " " THEN
+        ' Get info about selected item
+        DIM itemType AS INTEGER
+        DIM formIdx AS INTEGER
+        DIM ctrlIdx AS INTEGER
+        itemType, formIdx, ctrlIdx = GetTreeItemInfo(m, m.TreeIndex)
+
+        IF itemType = 1 THEN
+            ' Form: toggle expansion and select it
+            IF formIdx < Len(m.TreeExpanded) THEN
+                m.TreeExpanded[formIdx] = NOT m.TreeExpanded[formIdx]
+            ENDIF
+            m.CurrentFormIdx = formIdx
             m.SelectedCtrlIdx = -1
+            m.FocusArea = FOCUS_FORM
+        ELSEIF itemType = 2 THEN
+            ' Control: select it in the form editor
+            m.CurrentFormIdx = formIdx
+            m.SelectedCtrlIdx = ctrlIdx
+            m.FocusArea = FOCUS_FORM
+        ENDIF
+    ELSEIF key = "left" THEN
+        ' Collapse form if on a form row
+        DIM itemType2 AS INTEGER
+        DIM formIdx2 AS INTEGER
+        DIM unused2 AS INTEGER
+        itemType2, formIdx2, unused2 = GetTreeItemInfo(m, m.TreeIndex)
+        unused2 = unused2  ' Suppress unused warning
+        IF itemType2 = 1 AND formIdx2 < Len(m.TreeExpanded) THEN
+            m.TreeExpanded[formIdx2] = FALSE
+        ENDIF
+    ELSEIF key = "right" THEN
+        ' Expand form if on a form row
+        DIM itemType3 AS INTEGER
+        DIM formIdx3 AS INTEGER
+        DIM unused3 AS INTEGER
+        itemType3, formIdx3, unused3 = GetTreeItemInfo(m, m.TreeIndex)
+        unused3 = unused3  ' Suppress unused warning
+        IF itemType3 = 1 AND formIdx3 < Len(m.TreeExpanded) THEN
+            m.TreeExpanded[formIdx3] = TRUE
         ENDIF
     ENDIF
     RETURN m, NIL
@@ -628,14 +841,17 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
     DIM button AS tea.MouseButton = mouseMsg.Button
 
     ' Calculate layout dimensions (same as View())
-    DIM toolboxWidth AS INTEGER = 16
+    DIM leftPanelWidth AS INTEGER = 16
     DIM propertiesWidth AS INTEGER = 22
-    DIM projectHeight AS INTEGER = 8
     DIM contentHeight AS INTEGER = m.Height - 4
-    DIM contentWidth AS INTEGER = m.Width - toolboxWidth - propertiesWidth
+    DIM contentWidth AS INTEGER = m.Width - leftPanelWidth - propertiesWidth
     IF contentWidth < 20 THEN
         contentWidth = 20
     ENDIF
+
+    ' Panel boundaries (relative to content area, after menu bar row)
+    DIM widgetsStart AS INTEGER = m.ProjectHeight
+    DIM toolboxStart AS INTEGER = m.ProjectHeight + m.WidgetsHeight
 
     ' Handle mouse press events
     IF action = tea.MouseActionPress AND button = tea.MouseButtonLeft THEN
@@ -664,23 +880,48 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             RETURN HandleDialogClick(m, x, y, contentHeight)
         ENDIF
 
+        ' If popup is open, handle popup clicks
+        IF m.PopupMode <> POPUP_NONE THEN
+            RETURN HandlePopupClick(m, x, y, contentHeight)
+        ENDIF
+
         ' Adjust y for content area (subtract 1 for menu bar)
         DIM contentY AS INTEGER = y - 1
 
         ' Check which panel was clicked
-        IF x < toolboxWidth THEN
-            ' Left column: Toolbox (top) or Project Tree (bottom)
-            IF contentY < contentHeight - projectHeight THEN
-                ' Toolbox panel
-                RETURN HandleToolboxClick(m, contentY)
+        IF x < leftPanelWidth THEN
+            ' Left column: Project (top) → Widgets (middle) → Toolbox (bottom)
+            IF contentY < m.ProjectHeight THEN
+                ' Project tree area
+                RETURN HandleProjectClick(m, contentY)
+            ELSEIF contentY < toolboxStart THEN
+                ' Widgets panel area
+                DIM widgetsLocalY AS INTEGER = contentY - widgetsStart
+                ' Check if clicking on Widgets caption (first row of Widgets area)
+                IF widgetsLocalY = 0 THEN
+                    ' Start dragging Widgets caption to resize Project/Widgets
+                    m.PanelDragging = PANEL_DRAG_WIDGETS
+                    m.PanelDragStartY = y
+                    m.PanelDragOrigHeight = m.ProjectHeight
+                    RETURN m, NIL
+                ENDIF
+                RETURN HandleWidgetsClick(m, widgetsLocalY, TRUE)
             ELSE
-                ' Project tree
-                DIM localY AS INTEGER = contentY - (contentHeight - projectHeight)
-                RETURN HandleProjectClick(m, localY)
+                ' Toolbox panel area
+                DIM toolboxLocalY AS INTEGER = contentY - toolboxStart
+                ' Check if clicking on Toolbox caption (first row of Toolbox area)
+                IF toolboxLocalY = 0 THEN
+                    ' Start dragging Toolbox caption to resize Widgets/Toolbox
+                    m.PanelDragging = PANEL_DRAG_TOOLBOX
+                    m.PanelDragStartY = y
+                    m.PanelDragOrigHeight = m.WidgetsHeight
+                    RETURN m, NIL
+                ENDIF
+                RETURN HandleToolboxClick(m, toolboxLocalY)
             ENDIF
-        ELSEIF x < toolboxWidth + contentWidth THEN
+        ELSEIF x < leftPanelWidth + contentWidth THEN
             ' Main content area (full height)
-            DIM localX AS INTEGER = x - toolboxWidth
+            DIM localX AS INTEGER = x - leftPanelWidth
             IF m.ViewMode = VIEW_FORM THEN
                 RETURN HandleFormClick(m, localX, contentY)
             ELSE
@@ -691,6 +932,82 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             RETURN HandlePropertiesClick(m, contentY)
         ENDIF
 
+    ' Handle right-click for context menus (events popup)
+    ELSEIF action = tea.MouseActionPress AND button = tea.MouseButtonRight THEN
+        ' Close any existing popup first
+        m.PopupMode = POPUP_NONE
+
+        ' Adjust y for content area (subtract 1 for menu bar)
+        DIM rcContentY AS INTEGER = y - 1
+
+        IF x < leftPanelWidth THEN
+            ' Left column: Project tree, Widgets, or Toolbox
+            IF rcContentY < m.ProjectHeight THEN
+                ' Project tree - check if clicking on a control
+                RETURN HandleProjectRightClick(m, rcContentY, x, y)
+            ELSEIF rcContentY < toolboxStart THEN
+                ' Widgets panel
+                DIM rcWidgetsLocalY AS INTEGER = rcContentY - widgetsStart
+                RETURN HandleWidgetsRightClick(m, rcWidgetsLocalY, x, y)
+            ELSE
+                ' Toolbox panel
+                DIM rcToolboxLocalY AS INTEGER = rcContentY - toolboxStart
+                RETURN HandleToolboxRightClick(m, rcToolboxLocalY, x, y)
+            ENDIF
+        ELSEIF x < leftPanelWidth + contentWidth THEN
+            ' Main content area - form designer
+            IF m.ViewMode = VIEW_FORM THEN
+                DIM rcLocalX AS INTEGER = x - leftPanelWidth
+                RETURN HandleFormRightClick(m, rcLocalX, rcContentY, x, y)
+            ENDIF
+        ENDIF
+
+    ' Handle panel caption dragging
+    ELSEIF action = tea.MouseActionMotion AND m.PanelDragging <> PANEL_DRAG_NONE THEN
+        DIM dragDelta AS INTEGER = y - m.PanelDragStartY
+
+        IF m.PanelDragging = PANEL_DRAG_WIDGETS THEN
+            ' Dragging Widgets caption - moves boundary between Project and Widgets
+            ' Project grows/shrinks, Widgets shrinks/grows, Toolbox unchanged
+            DIM newProjectHeight AS INTEGER = m.PanelDragOrigHeight + dragDelta
+            ' Enforce minimum Project height
+            IF newProjectHeight < 3 THEN
+                newProjectHeight = 3
+            ENDIF
+            ' Maximum: leave at least 3 for Widgets and current Toolbox
+            DIM maxProjectHeight AS INTEGER = contentHeight - 3 - m.ToolboxHeight
+            IF newProjectHeight > maxProjectHeight THEN
+                newProjectHeight = maxProjectHeight
+            ENDIF
+            ' Calculate how much Project changed and adjust Widgets to compensate
+            DIM deltaProject AS INTEGER = newProjectHeight - m.ProjectHeight
+            m.ProjectHeight = newProjectHeight
+            m.WidgetsHeight = m.WidgetsHeight - deltaProject
+            IF m.WidgetsHeight < 3 THEN
+                m.WidgetsHeight = 3
+            ENDIF
+        ELSEIF m.PanelDragging = PANEL_DRAG_TOOLBOX THEN
+            ' Dragging Toolbox caption - moves boundary between Widgets and Toolbox
+            ' Widgets grows/shrinks, Toolbox shrinks/grows, Project unchanged
+            DIM newWidgetsHeight AS INTEGER = m.PanelDragOrigHeight + dragDelta
+            ' Enforce minimum Widgets height
+            IF newWidgetsHeight < 3 THEN
+                newWidgetsHeight = 3
+            ENDIF
+            ' Maximum: leave at least 2 for Toolbox
+            DIM maxWidgetsHeight AS INTEGER = contentHeight - m.ProjectHeight - 2
+            IF newWidgetsHeight > maxWidgetsHeight THEN
+                newWidgetsHeight = maxWidgetsHeight
+            ENDIF
+            m.WidgetsHeight = newWidgetsHeight
+            ' Recalculate Toolbox height to fill remaining space
+            m.ToolboxHeight = contentHeight - m.ProjectHeight - m.WidgetsHeight
+            IF m.ToolboxHeight < 2 THEN
+                m.ToolboxHeight = 2
+            ENDIF
+        ENDIF
+        RETURN m, NIL
+
     ' Handle mouse drag - only update outline position, not actual control/form
     ELSEIF action = tea.MouseActionMotion AND m.IsDragging THEN
         ' Skip every other frame to reduce rendering overhead
@@ -700,7 +1017,7 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
         ENDIF
         IF m.ViewMode = VIEW_FORM THEN
             DIM dragContentY AS INTEGER = y - 1
-            DIM dragLocalX AS INTEGER = x - toolboxWidth
+            DIM dragLocalX AS INTEGER = x - leftPanelWidth
 
             IF m.DraggingForm THEN
                 ' Form drag - position relative to canvas
@@ -746,7 +1063,7 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
         ENDIF
         IF m.ViewMode = VIEW_FORM THEN
             DIM resizeContentY AS INTEGER = y - 1
-            DIM resizeLocalX AS INTEGER = x - toolboxWidth
+            DIM resizeLocalX AS INTEGER = x - leftPanelWidth
 
             DIM resizeForm AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
 
@@ -847,9 +1164,56 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             m.DragCtrlHeight = resNewH
         ENDIF
 
+    ' Handle mouse drag for widget from toolbox
+    ELSEIF action = tea.MouseActionMotion AND m.DraggingFromWidgets THEN
+        m.DragSkipFrame = NOT m.DragSkipFrame
+        IF m.DragSkipFrame THEN
+            RETURN m, NIL
+        ENDIF
+        IF m.ViewMode = VIEW_FORM THEN
+            DIM widgetDragY AS INTEGER = y - 1
+            DIM widgetDragX AS INTEGER = x - leftPanelWidth
+
+            ' Check if mouse is over the form area
+            IF widgetDragX >= 0 AND widgetDragX < contentWidth THEN
+                DIM wdForm AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+                ' Calculate position relative to form content area (inside border)
+                DIM formRelX AS INTEGER = widgetDragX - wdForm.X - 1
+                DIM formRelY AS INTEGER = widgetDragY - wdForm.Y - 1
+
+                ' Clamp to form bounds
+                IF formRelX < 0 THEN
+                    formRelX = 0
+                ENDIF
+                IF formRelY < 0 THEN
+                    formRelY = 0
+                ENDIF
+                IF formRelX + m.DragCtrlWidth > wdForm.Width - 2 THEN
+                    formRelX = wdForm.Width - 2 - m.DragCtrlWidth
+                    IF formRelX < 0 THEN
+                        formRelX = 0
+                    ENDIF
+                ENDIF
+                IF formRelY + m.DragCtrlHeight > wdForm.Height - 2 THEN
+                    formRelY = wdForm.Height - 2 - m.DragCtrlHeight
+                    IF formRelY < 0 THEN
+                        formRelY = 0
+                    ENDIF
+                ENDIF
+
+                m.DragOutlineX = formRelX
+                m.DragOutlineY = formRelY
+            ENDIF
+        ENDIF
+
     ' Handle mouse release - apply final position/size
     ELSEIF action = tea.MouseActionRelease THEN
-        IF m.IsDragging THEN
+        IF m.PanelDragging <> PANEL_DRAG_NONE THEN
+            ' End panel caption dragging
+            m.PanelDragging = PANEL_DRAG_NONE
+            m.Message = "Panel resized"
+            RETURN m, NIL
+        ELSEIF m.IsDragging THEN
             IF m.DraggingForm THEN
                 ' Apply the final position to the form
                 IF m.ViewMode = VIEW_FORM THEN
@@ -899,6 +1263,27 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
                 m.IsResizing = FALSE
                 m.Message = "Control resized"
             ENDIF
+        ELSEIF m.DraggingFromWidgets THEN
+            ' Drop widget from toolbox onto form
+            IF m.ViewMode = VIEW_FORM AND m.DragOutlineX >= 0 AND m.DragOutlineY >= 0 THEN
+                DIM ctlType AS INTEGER = m.DragWidgetType
+                DIM ctlName AS STRING = GetControlTypeName(ctlType) & Str(m.Project.Forms[m.CurrentFormIdx].NextCtrlID)
+                DIM newCtrl AS VDBControl = NewControl(ctlType, ctlName, m.DragOutlineX, m.DragOutlineY)
+                newCtrl.ID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
+                newCtrl.ZOrder = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
+                m.Project.Forms[m.CurrentFormIdx].NextCtrlID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID + 1
+                m.Project.Forms[m.CurrentFormIdx].Controls = APPEND(m.Project.Forms[m.CurrentFormIdx].Controls, newCtrl)
+                m.SelectedCtrlIdx = Len(m.Project.Forms[m.CurrentFormIdx].Controls) - 1
+                m.Project.Modified = TRUE
+                m.FocusArea = FOCUS_FORM
+                m.Message = "Added " & ctlName & " at (" & Str(m.DragOutlineX) & "," & Str(m.DragOutlineY) & ")"
+            ELSE
+                m.Message = "Drop cancelled - not over form"
+            ENDIF
+            m.DraggingFromWidgets = FALSE
+            m.DragWidgetType = 0
+            m.DragOutlineX = -1
+            m.DragOutlineY = -1
         ENDIF
     ENDIF
 
@@ -997,12 +1382,39 @@ FUNCTION HandleDropdownClick(m AS VDBTermModel, row AS INTEGER) AS (tea.Model, t
     RETURN HandleMenuInput(m, "enter")
 END FUNCTION
 
+' Handle click on Widgets panel (visible widgets: Button, Label, TextBox, etc.)
+FUNCTION HandleWidgetsClick(m AS VDBTermModel, y AS INTEGER, startDrag AS BOOLEAN) AS (tea.Model, tea.Cmd)
+    m.FocusArea = FOCUS_WIDGETS
+
+    ' Row 0 is the title (handled in HandleMouseInput for dragging), items start at row 1
+    DIM itemIdx AS INTEGER = y - 1
+    IF itemIdx >= 0 AND itemIdx < VISIBLE_WIDGET_COUNT THEN
+        m.WidgetsIndex = itemIdx
+
+        ' Start drag operation if requested
+        IF startDrag AND m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+            m.DraggingFromWidgets = TRUE
+            m.DragWidgetType = WidgetIndexToCtrlType(itemIdx)
+            ' Set initial outline size based on widget defaults
+            DIM tempCtrl AS VDBControl = NewControl(m.DragWidgetType, "temp", 0, 0)
+            m.DragCtrlWidth = tempCtrl.Width
+            m.DragCtrlHeight = tempCtrl.Height
+            m.DragOutlineX = -1  ' Will be set when mouse enters form area
+            m.DragOutlineY = -1
+            m.Message = "Drag to form to place " & GetControlTypeName(m.DragWidgetType)
+        ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+' Handle click on Toolbox panel (non-visible widgets: Timer)
 FUNCTION HandleToolboxClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.Cmd)
     m.FocusArea = FOCUS_TOOLBOX
 
-    ' Row 0 is the title, items start at row 1
+    ' Row 0 is the title (handled in HandleMouseInput for dragging), items start at row 1
     DIM itemIdx AS INTEGER = y - 1
-    IF itemIdx >= 0 AND itemIdx <= 10 THEN
+    IF itemIdx >= 0 AND itemIdx < NONVISIBLE_WIDGET_COUNT THEN
         m.ToolboxIndex = itemIdx
     ENDIF
 
@@ -1121,9 +1533,9 @@ FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
 
     DIM ctrlCount AS INTEGER = Len(form.Controls)
 
-    ' Check if click is on a control (iterate in reverse to get topmost first)
+    ' Check if click is on a control (iterate forward - first in array is topmost visually)
     DIM i AS INTEGER
-    FOR i = ctrlCount - 1 TO 0 STEP -1
+    FOR i = 0 TO ctrlCount - 1
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[i]
         IF contentX >= ctrl.X AND contentX < ctrl.X + ctrl.Width AND contentY >= ctrl.Y AND contentY < ctrl.Y + ctrl.Height THEN
             DIM localX AS INTEGER = contentX - ctrl.X
@@ -1303,15 +1715,305 @@ END FUNCTION
 FUNCTION HandleProjectClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.Cmd)
     m.FocusArea = FOCUS_PROJECT
 
+    ' Ensure tree expansion array is properly sized
+    m = EnsureTreeExpanded(m)
+
     ' Row 0 is the title, items start at row 1
     DIM itemIdx AS INTEGER = y - 1
     IF itemIdx >= 0 THEN
-        m.TreeIndex = itemIdx
-        ' If clicking on a form, select it
-        IF itemIdx < Len(m.Project.Forms) THEN
-            m.CurrentFormIdx = itemIdx
-            m.SelectedCtrlIdx = -1
+        DIM totalItems AS INTEGER = GetTreeItemCount(m)
+        IF itemIdx < totalItems THEN
+            m.TreeIndex = itemIdx
+
+            ' Get info about clicked item
+            DIM itemType AS INTEGER
+            DIM formIdx AS INTEGER
+            DIM ctrlIdx AS INTEGER
+            itemType, formIdx, ctrlIdx = GetTreeItemInfo(m, itemIdx)
+
+            IF itemType = 1 THEN
+                ' Clicked on a form - toggle expansion and select it
+                IF formIdx < Len(m.TreeExpanded) THEN
+                    m.TreeExpanded[formIdx] = NOT m.TreeExpanded[formIdx]
+                ENDIF
+                m.CurrentFormIdx = formIdx
+                m.SelectedCtrlIdx = -1
+            ELSEIF itemType = 2 THEN
+                ' Clicked on a control - select it in the form editor
+                m.CurrentFormIdx = formIdx
+                m.SelectedCtrlIdx = ctrlIdx
+                m.FocusArea = FOCUS_FORM
+            ENDIF
         ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+' ============================================================================
+' RIGHT-CLICK HANDLERS (Event Popup)
+' ============================================================================
+
+FUNCTION HandleProjectRightClick(m AS VDBTermModel, localY AS INTEGER, screenX AS INTEGER, screenY AS INTEGER) AS (tea.Model, tea.Cmd)
+    ' Ensure tree expansion array is properly sized
+    m = EnsureTreeExpanded(m)
+
+    ' Row 0 is the title, items start at row 1
+    DIM itemIdx AS INTEGER = localY - 1
+    IF itemIdx >= 0 THEN
+        DIM totalItems AS INTEGER = GetTreeItemCount(m)
+        IF itemIdx < totalItems THEN
+            ' Get info about clicked item
+            DIM itemType AS INTEGER
+            DIM formIdx AS INTEGER
+            DIM ctrlIdx AS INTEGER
+            itemType, formIdx, ctrlIdx = GetTreeItemInfo(m, itemIdx)
+
+            IF itemType = 1 THEN
+                ' Right-clicked on a form - show form events
+                m.CurrentFormIdx = formIdx
+                m.SelectedCtrlIdx = -1
+                m.PopupMode = POPUP_EVENTS
+                m.PopupX = screenX
+                m.PopupY = screenY
+                m.PopupCtrlIdx = -1  ' -1 means form itself
+                m.PopupCtrlType = CTRL_FORM
+                m.PopupEvents = GetControlEvents(CTRL_FORM)
+                m.PopupIndex = 0
+            ELSEIF itemType = 2 THEN
+                ' Right-clicked on a control - show control events
+                m.CurrentFormIdx = formIdx
+                m.SelectedCtrlIdx = ctrlIdx
+                DIM ctrl AS VDBControl = m.Project.Forms[formIdx].Controls[ctrlIdx]
+                m.PopupMode = POPUP_EVENTS
+                m.PopupX = screenX
+                m.PopupY = screenY
+                m.PopupCtrlIdx = ctrlIdx
+                m.PopupCtrlType = ctrl.CtlType
+                m.PopupEvents = GetControlEvents(ctrl.CtlType)
+                m.PopupIndex = 0
+            ENDIF
+        ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleWidgetsRightClick(m AS VDBTermModel, localY AS INTEGER, screenX AS INTEGER, screenY AS INTEGER) AS (tea.Model, tea.Cmd)
+    ' Row 0 is title, widgets start at row 1
+    IF localY >= 1 THEN
+        DIM widgetIdx AS INTEGER = localY - 1
+        IF widgetIdx < VISIBLE_WIDGET_COUNT THEN
+            DIM ctlType AS INTEGER = WidgetIndexToCtrlType(widgetIdx)
+            m.PopupMode = POPUP_EVENTS
+            m.PopupX = screenX
+            m.PopupY = screenY
+            m.PopupCtrlIdx = -2  ' -2 means widget panel (not a real control)
+            m.PopupCtrlType = ctlType
+            m.PopupEvents = GetControlEvents(ctlType)
+            m.PopupIndex = 0
+        ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleToolboxRightClick(m AS VDBTermModel, localY AS INTEGER, screenX AS INTEGER, screenY AS INTEGER) AS (tea.Model, tea.Cmd)
+    ' Row 0 is title, tools start at row 1
+    IF localY >= 1 THEN
+        DIM toolIdx AS INTEGER = localY - 1
+        IF toolIdx < NONVISIBLE_WIDGET_COUNT THEN
+            ' Timer is the only non-visible widget
+            m.PopupMode = POPUP_EVENTS
+            m.PopupX = screenX
+            m.PopupY = screenY
+            m.PopupCtrlIdx = -2  ' -2 means toolbox panel (not a real control)
+            m.PopupCtrlType = CTRL_TIMER
+            m.PopupEvents = GetControlEvents(CTRL_TIMER)
+            m.PopupIndex = 0
+        ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleFormRightClick(m AS VDBTermModel, localX AS INTEGER, localY AS INTEGER, screenX AS INTEGER, screenY AS INTEGER) AS (tea.Model, tea.Cmd)
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN m, NIL
+    ENDIF
+
+    DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+
+    ' Calculate position within form content
+    DIM formStartX AS INTEGER = 1
+    DIM formStartY AS INTEGER = 1
+    DIM contentX AS INTEGER = localX - formStartX - form.X
+    DIM contentY AS INTEGER = localY - formStartY - form.Y
+
+    ' Check if click is on form or a control
+    DIM ctrlCount AS INTEGER = Len(form.Controls)
+    DIM i AS INTEGER
+
+    ' Iterate forward to get topmost control (first in array is on top)
+    FOR i = 0 TO ctrlCount - 1
+        DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[i]
+        IF contentX >= ctrl.X AND contentX < ctrl.X + ctrl.Width AND contentY >= ctrl.Y AND contentY < ctrl.Y + ctrl.Height THEN
+            ' Found a control
+            m.SelectedCtrlIdx = i
+            m.PopupMode = POPUP_EVENTS
+            m.PopupX = screenX
+            m.PopupY = screenY
+            m.PopupCtrlIdx = i
+            m.PopupCtrlType = ctrl.CtlType
+            m.PopupEvents = GetControlEvents(ctrl.CtlType)
+            m.PopupIndex = 0
+            RETURN m, NIL
+        ENDIF
+    NEXT
+
+    ' No control found - right-clicked on form background
+    m.SelectedCtrlIdx = -1
+    m.PopupMode = POPUP_EVENTS
+    m.PopupX = screenX
+    m.PopupY = screenY
+    m.PopupCtrlIdx = -1  ' -1 means form itself
+    m.PopupCtrlType = CTRL_FORM
+    m.PopupEvents = GetControlEvents(CTRL_FORM)
+    m.PopupIndex = 0
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandlePopupClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, contentHeight AS INTEGER) AS (tea.Model, tea.Cmd)
+    ' Calculate popup position and size
+    DIM popupWidth AS INTEGER = GetPopupWidth(m)
+    DIM popupHeight AS INTEGER = Len(m.PopupEvents) + 4  ' +4 for title bar and borders
+
+    DIM popupStartRow AS INTEGER = m.PopupY
+    DIM popupStartCol AS INTEGER = m.PopupX
+
+    ' Adjust if popup would go off screen
+    IF popupStartRow + popupHeight > contentHeight + 1 THEN
+        popupStartRow = contentHeight + 1 - popupHeight
+    ENDIF
+    IF popupStartCol + popupWidth > m.Width THEN
+        popupStartCol = m.Width - popupWidth
+    ENDIF
+    IF popupStartRow < 1 THEN
+        popupStartRow = 1
+    ENDIF
+    IF popupStartCol < 0 THEN
+        popupStartCol = 0
+    ENDIF
+
+    ' Check if click is inside popup
+    DIM relX AS INTEGER = x - popupStartCol
+    DIM relY AS INTEGER = y - popupStartRow
+
+    IF relX < 0 OR relX >= popupWidth OR relY < 0 OR relY >= popupHeight THEN
+        ' Click outside popup - close it
+        m.PopupMode = POPUP_NONE
+        RETURN m, NIL
+    ENDIF
+
+    ' Check if clicking on an event item (rows 3+ are event items, 0-indexed: row 3 = first event)
+    DIM eventRow AS INTEGER = relY - 3
+    IF eventRow >= 0 AND eventRow < Len(m.PopupEvents) THEN
+        m.PopupIndex = eventRow
+        DIM eventName AS STRING = m.PopupEvents[eventRow]
+        RETURN OpenOrCreateEventHandler(m, eventName)
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandlePopupInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF key = "esc" THEN
+        m.PopupMode = POPUP_NONE
+        RETURN m, NIL
+    ELSEIF key = "up" THEN
+        IF m.PopupIndex > 0 THEN
+            m.PopupIndex = m.PopupIndex - 1
+        ENDIF
+    ELSEIF key = "down" THEN
+        IF m.PopupIndex < Len(m.PopupEvents) - 1 THEN
+            m.PopupIndex = m.PopupIndex + 1
+        ENDIF
+    ELSEIF key = "enter" THEN
+        ' Select the event - open or create handler
+        IF m.PopupIndex < Len(m.PopupEvents) THEN
+            DIM eventName AS STRING = m.PopupEvents[m.PopupIndex]
+            RETURN OpenOrCreateEventHandler(m, eventName)
+        ENDIF
+        m.PopupMode = POPUP_NONE
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION OpenOrCreateEventHandler(m AS VDBTermModel, eventName AS STRING) AS (tea.Model, tea.Cmd)
+    m.PopupMode = POPUP_NONE
+
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        RETURN m, NIL
+    ENDIF
+
+    ' Get control name
+    DIM ctrlName AS STRING
+    IF m.PopupCtrlIdx = -1 THEN
+        ' Form itself
+        ctrlName = m.Project.Forms[m.CurrentFormIdx].Name
+    ELSEIF m.PopupCtrlIdx = -2 THEN
+        ' Widget/Toolbox panel - just show message, can't create handler
+        m.Message = GetControlTypeName(m.PopupCtrlType) & " events: " & eventName
+        RETURN m, NIL
+    ELSE
+        ' Control
+        ctrlName = m.Project.Forms[m.CurrentFormIdx].Controls[m.PopupCtrlIdx].CtlName
+    ENDIF
+
+    ' Get form code
+    DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
+
+    ' Look for existing handler
+    DIM lineNum AS INTEGER = FindEventHandler(code, ctrlName, eventName)
+
+    IF lineNum > 0 THEN
+        ' Found existing handler - navigate to it
+        m.ViewMode = VIEW_CODE
+        m.FocusArea = FOCUS_CODE
+        m.CodeCursorY = lineNum - 1
+        m.CodeCursorX = 0
+        m.CodeScrollY = lineNum - 3
+        IF m.CodeScrollY < 0 THEN
+            m.CodeScrollY = 0
+        ENDIF
+        m.Message = "Opened: " & ctrlName & "_" & eventName
+    ELSE
+        ' Create new handler stub
+        DIM stub AS STRING = GenerateEventStub(ctrlName, eventName)
+        m.Project.Forms[m.CurrentFormIdx].Code = code & stub
+        m.Project.Modified = TRUE
+
+        ' Navigate to the new handler
+        DIM newCode AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
+        lineNum = FindEventHandler(newCode, ctrlName, eventName)
+        m.ViewMode = VIEW_CODE
+        m.FocusArea = FOCUS_CODE
+        IF lineNum > 0 THEN
+            m.CodeCursorY = lineNum - 1
+            m.CodeCursorX = 0
+            m.CodeScrollY = lineNum - 3
+            IF m.CodeScrollY < 0 THEN
+                m.CodeScrollY = 0
+            ENDIF
+        ENDIF
+        m.Message = "Created: " & ctrlName & "_" & eventName
+    ENDIF
+
+    ' Update textarea if initialized
+    IF m.CodeEditorInited THEN
+        m.CodeEditor.SetValue(m.Project.Forms[m.CurrentFormIdx].Code)
     ENDIF
 
     RETURN m, NIL

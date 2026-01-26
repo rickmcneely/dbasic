@@ -46,6 +46,25 @@ FUNCTION MaxInt(a AS INTEGER, b AS INTEGER) AS INTEGER
     RETURN b
 END FUNCTION
 
+' Map widget panel index to control type
+' Visible widgets: Button(1), Label(2), TextBox(3), CheckBox(4), Option(5),
+'                  ListBox(6), ComboBox(7), Frame(8), HScroll(9), VScroll(10),
+'                  TextArea(12), Progress(13), Spinner(14), Table(15)
+' Timer(11) is non-visible (in Toolbox)
+FUNCTION WidgetIndexToCtrlType(widgetIdx AS INTEGER) AS INTEGER
+    IF widgetIdx < 10 THEN
+        ' First 10 visible widgets map directly
+        RETURN widgetIdx + 1
+    ELSE
+        ' New widgets skip Timer (11)
+        ' widgetIdx 10 -> CTRL_TEXTAREA (12)
+        ' widgetIdx 11 -> CTRL_PROGRESS (13)
+        ' widgetIdx 12 -> CTRL_SPINNER (14)
+        ' widgetIdx 13 -> CTRL_TABLE (15)
+        RETURN widgetIdx + 2
+    ENDIF
+END FUNCTION
+
 ' Count lines in a string
 FUNCTION CountLines(content AS STRING) AS INTEGER
     IF Len(content) = 0 THEN
@@ -121,6 +140,14 @@ FUNCTION GetControlTypeName(ctlType AS INTEGER) AS STRING
         RETURN "VScrollBar"
     ELSEIF ctlType = CTRL_TIMER THEN
         RETURN "Timer"
+    ELSEIF ctlType = CTRL_TEXTAREA THEN
+        RETURN "TextArea"
+    ELSEIF ctlType = CTRL_PROGRESS THEN
+        RETURN "Progress"
+    ELSEIF ctlType = CTRL_SPINNER THEN
+        RETURN "Spinner"
+    ELSEIF ctlType = CTRL_TABLE THEN
+        RETURN "Table"
     ENDIF
     RETURN "Unknown"
 END FUNCTION
@@ -149,6 +176,14 @@ FUNCTION GetToolboxIcon(ctlType AS INTEGER) AS STRING
         RETURN "[|] "
     ELSEIF ctlType = CTRL_TIMER THEN
         RETURN " T  "
+    ELSEIF ctlType = CTRL_TEXTAREA THEN
+        RETURN "[~~]"
+    ELSEIF ctlType = CTRL_PROGRESS THEN
+        RETURN "[=>]"
+    ELSEIF ctlType = CTRL_SPINNER THEN
+        RETURN "[*] "
+    ELSEIF ctlType = CTRL_TABLE THEN
+        RETURN "[#] "
     ENDIF
     RETURN "??? "
 END FUNCTION
@@ -252,6 +287,49 @@ FUNCTION IsNumericStr(s AS STRING) AS BOOLEAN
     NEXT
 
     RETURN TRUE
+END FUNCTION
+
+' Split a string by delimiter into an array
+FUNCTION SplitStr(s AS STRING, delim AS STRING) AS []STRING
+    DIM result AS []STRING
+    DIM current AS STRING = ""
+    DIM i AS INTEGER
+    DIM delimLen AS INTEGER = Len(delim)
+
+    IF delimLen = 0 THEN
+        result = APPEND(result, s)
+        RETURN result
+    ENDIF
+
+    FOR i = 1 TO Len(s)
+        IF Mid(s, i, delimLen) = delim THEN
+            result = APPEND(result, current)
+            current = ""
+            i = i + delimLen - 1
+        ELSE
+            current = current & Mid(s, i, 1)
+        ENDIF
+    NEXT
+
+    result = APPEND(result, current)
+    RETURN result
+END FUNCTION
+
+' Find position of substring in string (1-indexed, returns 0 if not found)
+FUNCTION InStrPos(start AS INTEGER, s AS STRING, search AS STRING) AS INTEGER
+    DIM searchLen AS INTEGER = Len(search)
+    IF searchLen = 0 OR start > Len(s) THEN
+        RETURN 0
+    ENDIF
+
+    DIM i AS INTEGER
+    FOR i = start TO Len(s) - searchLen + 1
+        IF Mid(s, i, searchLen) = search THEN
+            RETURN i
+        ENDIF
+    NEXT
+
+    RETURN 0
 END FUNCTION
 
 ' Evaluate a numeric expression that may contain reserved variables
@@ -358,4 +436,581 @@ FUNCTION EvalSimpleExpr(expr AS STRING, fallback AS INTEGER) AS INTEGER
     ENDIF
 
     RETURN fallback
+END FUNCTION
+
+' Project tree helper: Get total items in tree (with expansion state)
+' Returns total number of visible rows in project tree
+FUNCTION GetTreeItemCount(m AS VDBTermModel) AS INTEGER
+    IF NOT m.ProjectLoaded THEN
+        RETURN 0
+    ENDIF
+
+    ' Row 0: Project name
+    DIM count AS INTEGER = 1
+
+    ' Forms and their controls
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(m.Project.Forms) - 1
+        count = count + 1  ' The form itself
+        ' If form is expanded, add its controls
+        IF i < Len(m.TreeExpanded) AND m.TreeExpanded[i] THEN
+            count = count + Len(m.Project.Forms[i].Controls)
+        ENDIF
+    NEXT
+
+    ' Modules
+    count = count + Len(m.Project.Modules)
+
+    RETURN count
+END FUNCTION
+
+' Project tree helper: Get info about a tree row
+' Returns: itemType (0=project, 1=form, 2=control, 3=module), formIdx, ctrlIdx
+FUNCTION GetTreeItemInfo(m AS VDBTermModel, rowIdx AS INTEGER) AS (INTEGER, INTEGER, INTEGER)
+    IF NOT m.ProjectLoaded THEN
+        RETURN 0, -1, -1
+    ENDIF
+
+    ' Row 0: Project name
+    IF rowIdx = 0 THEN
+        RETURN 0, -1, -1
+    ENDIF
+
+    DIM currentRow AS INTEGER = 1
+    DIM i AS INTEGER
+
+    ' Forms and their controls
+    FOR i = 0 TO Len(m.Project.Forms) - 1
+        IF currentRow = rowIdx THEN
+            ' This is a form row
+            RETURN 1, i, -1
+        ENDIF
+        currentRow = currentRow + 1
+
+        ' If form is expanded, check controls
+        IF i < Len(m.TreeExpanded) AND m.TreeExpanded[i] THEN
+            DIM ctrlCount AS INTEGER = Len(m.Project.Forms[i].Controls)
+            IF rowIdx < currentRow + ctrlCount THEN
+                ' This is a control row
+                DIM ctrlIdx AS INTEGER = rowIdx - currentRow
+                RETURN 2, i, ctrlIdx
+            ENDIF
+            currentRow = currentRow + ctrlCount
+        ENDIF
+    NEXT
+
+    ' Modules
+    DIM modIdx AS INTEGER = rowIdx - currentRow
+    IF modIdx >= 0 AND modIdx < Len(m.Project.Modules) THEN
+        RETURN 3, modIdx, -1
+    ENDIF
+
+    RETURN 0, -1, -1
+END FUNCTION
+
+' Project tree helper: Ensure TreeExpanded array is properly sized
+FUNCTION EnsureTreeExpanded(m AS VDBTermModel) AS VDBTermModel
+    DIM formCount AS INTEGER = Len(m.Project.Forms)
+    WHILE Len(m.TreeExpanded) < formCount
+        m.TreeExpanded = APPEND(m.TreeExpanded, TRUE)  ' Default to expanded
+    WEND
+    RETURN m
+END FUNCTION
+
+' Get available events for a control type
+FUNCTION GetControlEvents(ctlType AS INTEGER) AS []STRING
+    DIM events AS []STRING
+
+    IF ctlType = CTRL_FORM THEN
+        events = APPEND(events, "Load")
+        events = APPEND(events, "Unload")
+        events = APPEND(events, "Activate")
+        events = APPEND(events, "Deactivate")
+        events = APPEND(events, "Resize")
+        events = APPEND(events, "KeyPress")
+    ELSEIF ctlType = CTRL_BUTTON THEN
+        events = APPEND(events, "Click")
+        events = APPEND(events, "MouseDown")
+        events = APPEND(events, "MouseUp")
+        events = APPEND(events, "GotFocus")
+        events = APPEND(events, "LostFocus")
+    ELSEIF ctlType = CTRL_LABEL THEN
+        events = APPEND(events, "Click")
+        events = APPEND(events, "DblClick")
+    ELSEIF ctlType = CTRL_TEXTBOX THEN
+        events = APPEND(events, "Change")
+        events = APPEND(events, "KeyPress")
+        events = APPEND(events, "GotFocus")
+        events = APPEND(events, "LostFocus")
+        events = APPEND(events, "Validate")
+    ELSEIF ctlType = CTRL_CHECKBOX THEN
+        events = APPEND(events, "Click")
+        events = APPEND(events, "Change")
+        events = APPEND(events, "GotFocus")
+        events = APPEND(events, "LostFocus")
+    ELSEIF ctlType = CTRL_OPTION THEN
+        events = APPEND(events, "Click")
+        events = APPEND(events, "Change")
+        events = APPEND(events, "GotFocus")
+        events = APPEND(events, "LostFocus")
+    ELSEIF ctlType = CTRL_LISTBOX THEN
+        events = APPEND(events, "Click")
+        events = APPEND(events, "DblClick")
+        events = APPEND(events, "Change")
+        events = APPEND(events, "GotFocus")
+        events = APPEND(events, "LostFocus")
+    ELSEIF ctlType = CTRL_COMBOBOX THEN
+        events = APPEND(events, "Click")
+        events = APPEND(events, "Change")
+        events = APPEND(events, "DropDown")
+        events = APPEND(events, "GotFocus")
+        events = APPEND(events, "LostFocus")
+    ELSEIF ctlType = CTRL_FRAME THEN
+        events = APPEND(events, "Click")
+        events = APPEND(events, "DblClick")
+    ELSEIF ctlType = CTRL_HSCROLL OR ctlType = CTRL_VSCROLL THEN
+        events = APPEND(events, "Change")
+        events = APPEND(events, "Scroll")
+    ELSEIF ctlType = CTRL_TIMER THEN
+        events = APPEND(events, "Timer")
+    ELSEIF ctlType = CTRL_TEXTAREA THEN
+        events = APPEND(events, "Change")
+        events = APPEND(events, "KeyPress")
+        events = APPEND(events, "GotFocus")
+        events = APPEND(events, "LostFocus")
+    ELSEIF ctlType = CTRL_PROGRESS THEN
+        events = APPEND(events, "Change")
+        events = APPEND(events, "Complete")
+    ELSEIF ctlType = CTRL_SPINNER THEN
+        events = APPEND(events, "Spin")
+    ELSEIF ctlType = CTRL_TABLE THEN
+        events = APPEND(events, "Click")
+        events = APPEND(events, "DblClick")
+        events = APPEND(events, "CellSelect")
+        events = APPEND(events, "RowSelect")
+    ENDIF
+
+    RETURN events
+END FUNCTION
+
+' Find an event handler in code and return its line number (1-indexed), or 0 if not found
+FUNCTION FindEventHandler(code AS STRING, ctrlName AS STRING, eventName AS STRING) AS INTEGER
+    ' Look for SUB ctrlName_eventName() or FUNCTION ctrlName_eventName(
+    DIM searchSub AS STRING = "SUB " & ctrlName & "_" & eventName
+    DIM searchFunc AS STRING = "FUNCTION " & ctrlName & "_" & eventName
+
+    DIM lineNum AS INTEGER = 1
+    DIM i AS INTEGER = 1
+    DIM lineStart AS INTEGER = 1
+
+    WHILE i <= Len(code)
+        DIM ch AS STRING = Mid(code, i, 1)
+        IF ch = Chr(10) THEN
+            ' Check this line
+            DIM lineText AS STRING = Mid(code, lineStart, i - lineStart)
+            DIM upperLine AS STRING = UCase(lineText)
+
+            ' Check for SUB or FUNCTION definition
+            DIM subPos AS INTEGER = InStrPos(1, upperLine, UCase(searchSub))
+            DIM funcPos AS INTEGER = InStrPos(1, upperLine, UCase(searchFunc))
+
+            IF subPos > 0 OR funcPos > 0 THEN
+                RETURN lineNum
+            ENDIF
+
+            lineNum = lineNum + 1
+            lineStart = i + 1
+        ENDIF
+        i = i + 1
+    WEND
+
+    ' Check last line (if no trailing newline)
+    IF lineStart <= Len(code) THEN
+        DIM lineText AS STRING = Mid(code, lineStart, Len(code) - lineStart + 1)
+        DIM upperLine AS STRING = UCase(lineText)
+        DIM subPos AS INTEGER = InStrPos(1, upperLine, UCase(searchSub))
+        DIM funcPos AS INTEGER = InStrPos(1, upperLine, UCase(searchFunc))
+        IF subPos > 0 OR funcPos > 0 THEN
+            RETURN lineNum
+        ENDIF
+    ENDIF
+
+    RETURN 0
+END FUNCTION
+
+' Generate event handler stub code
+FUNCTION GenerateEventStub(ctrlName AS STRING, eventName AS STRING) AS STRING
+    DIM stub AS STRING = ""
+    stub = stub & Chr(10)
+    stub = stub & "SUB " & ctrlName & "_" & eventName & "()" & Chr(10)
+    stub = stub & "    ' TODO: Add event handler code" & Chr(10)
+    stub = stub & "END SUB" & Chr(10)
+    RETURN stub
+END FUNCTION
+
+' Check if a control type uses the Caption property
+FUNCTION ControlUsesCaption(ctlType AS INTEGER) AS BOOLEAN
+    ' Controls that display Caption: Button, Label, Checkbox, Option, Frame
+    IF ctlType = CTRL_BUTTON OR ctlType = CTRL_LABEL OR ctlType = CTRL_CHECKBOX OR ctlType = CTRL_OPTION OR ctlType = CTRL_FRAME THEN
+        RETURN TRUE
+    ENDIF
+    ' Controls that don't use Caption: TextBox, ListBox, ComboBox, HScroll, VScroll, Timer
+    RETURN FALSE
+END FUNCTION
+
+' Get the total number of properties for a control (including type-specific)
+FUNCTION GetControlPropertyCount(ctrl AS VDBControl) AS INTEGER
+    ' Base properties: Name, Type, [Caption], X, Y, Width, Height, Enabled, Visible, ZOrder
+    ' Caption is only included for controls that use it
+    DIM baseCount AS INTEGER = 9
+    IF ControlUsesCaption(ctrl.CtlType) THEN
+        baseCount = 10
+    ENDIF
+
+    ' Add type-specific property count
+    IF ctrl.CtlType = CTRL_TEXTBOX THEN
+        ' Value, Placeholder, CharLimit, EchoMode, Prompt, CursorBlink
+        RETURN baseCount + 6
+    ELSEIF ctrl.CtlType = CTRL_LISTBOX THEN
+        ' Items, Title, ShowTitle, ShowStatusBar, ShowFilter, InfiniteScrolling
+        RETURN baseCount + 6
+    ELSEIF ctrl.CtlType = CTRL_COMBOBOX THEN
+        ' Items, ShowFilter
+        RETURN baseCount + 2
+    ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+        ' Interval
+        RETURN baseCount + 1
+    ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+        ' GroupName
+        RETURN baseCount + 1
+    ELSEIF ctrl.CtlType = CTRL_HSCROLL OR ctrl.CtlType = CTRL_VSCROLL THEN
+        ' Value, MinValue, MaxValue
+        RETURN baseCount + 3
+    ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+        ' Value
+        RETURN baseCount + 1
+    ELSEIF ctrl.CtlType = CTRL_TEXTAREA THEN
+        ' Value, Placeholder, CharLimit, ShowLineNumbers
+        RETURN baseCount + 4
+    ELSEIF ctrl.CtlType = CTRL_PROGRESS THEN
+        ' Value, Total, ShowPercentage
+        RETURN baseCount + 3
+    ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
+        ' SpinnerStyle
+        RETURN baseCount + 1
+    ELSEIF ctrl.CtlType = CTRL_TABLE THEN
+        ' Columns, Rows, ShowHeaders
+        RETURN baseCount + 3
+    ENDIF
+
+    RETURN baseCount
+END FUNCTION
+
+' Get property name for a control at given index
+FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRING
+    ' Adjust index for controls without Caption
+    DIM hasCaption AS BOOLEAN = ControlUsesCaption(ctrl.CtlType)
+    DIM adjIdx AS INTEGER = propIdx
+
+    ' For controls without Caption, indices 2+ are shifted down by 1
+    ' So we need to shift them back up to map to the standard property positions
+    IF NOT hasCaption AND propIdx >= 2 THEN
+        adjIdx = propIdx + 1
+    ENDIF
+
+    ' Base properties
+    IF propIdx = 0 THEN
+        RETURN "Name"
+    ELSEIF propIdx = 1 THEN
+        RETURN "Type"
+    ELSEIF hasCaption AND propIdx = 2 THEN
+        RETURN "Caption"
+    ELSEIF adjIdx = 3 THEN
+        RETURN "X"
+    ELSEIF adjIdx = 4 THEN
+        RETURN "Y"
+    ELSEIF adjIdx = 5 THEN
+        RETURN "Width"
+    ELSEIF adjIdx = 6 THEN
+        RETURN "Height"
+    ELSEIF adjIdx = 7 THEN
+        RETURN "Enabled"
+    ELSEIF adjIdx = 8 THEN
+        RETURN "Visible"
+    ELSEIF adjIdx = 9 THEN
+        RETURN "ZOrder"
+    ENDIF
+
+    ' Type-specific properties
+    DIM typeStartIdx AS INTEGER = 10
+    IF NOT hasCaption THEN
+        typeStartIdx = 9
+    ENDIF
+    DIM typeIdx AS INTEGER = propIdx - typeStartIdx
+
+    IF ctrl.CtlType = CTRL_TEXTBOX THEN
+        IF typeIdx = 0 THEN
+            RETURN "Value"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "Placeholder"
+        ELSEIF typeIdx = 2 THEN
+            RETURN "CharLimit"
+        ELSEIF typeIdx = 3 THEN
+            RETURN "EchoMode"
+        ELSEIF typeIdx = 4 THEN
+            RETURN "Prompt"
+        ELSEIF typeIdx = 5 THEN
+            RETURN "CursorBlink"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_LISTBOX THEN
+        IF typeIdx = 0 THEN
+            RETURN "Items"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "Title"
+        ELSEIF typeIdx = 2 THEN
+            RETURN "ShowTitle"
+        ELSEIF typeIdx = 3 THEN
+            RETURN "ShowStatus"
+        ELSEIF typeIdx = 4 THEN
+            RETURN "ShowFilter"
+        ELSEIF typeIdx = 5 THEN
+            RETURN "InfiniteScroll"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_COMBOBOX THEN
+        IF typeIdx = 0 THEN
+            RETURN "Items"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "ShowFilter"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+        IF typeIdx = 0 THEN
+            RETURN "Interval"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+        IF typeIdx = 0 THEN
+            RETURN "GroupName"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_HSCROLL OR ctrl.CtlType = CTRL_VSCROLL THEN
+        IF typeIdx = 0 THEN
+            RETURN "Value"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "MinValue"
+        ELSEIF typeIdx = 2 THEN
+            RETURN "MaxValue"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+        IF typeIdx = 0 THEN
+            RETURN "Value"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TEXTAREA THEN
+        IF typeIdx = 0 THEN
+            RETURN "Value"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "Placeholder"
+        ELSEIF typeIdx = 2 THEN
+            RETURN "CharLimit"
+        ELSEIF typeIdx = 3 THEN
+            RETURN "ShowLineNums"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_PROGRESS THEN
+        IF typeIdx = 0 THEN
+            RETURN "Value"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "Total"
+        ELSEIF typeIdx = 2 THEN
+            RETURN "ShowPercent"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
+        IF typeIdx = 0 THEN
+            RETURN "SpinnerStyle"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TABLE THEN
+        IF typeIdx = 0 THEN
+            RETURN "Columns"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "Rows"
+        ELSEIF typeIdx = 2 THEN
+            RETURN "ShowHeaders"
+        ENDIF
+    ENDIF
+
+    RETURN ""
+END FUNCTION
+
+' Get property value for a control at given index
+FUNCTION GetControlPropertyValue(ctrl AS VDBControl, propIdx AS INTEGER) AS STRING
+    ' Adjust index for controls without Caption
+    DIM hasCaption AS BOOLEAN = ControlUsesCaption(ctrl.CtlType)
+    DIM adjIdx AS INTEGER = propIdx
+    IF NOT hasCaption AND propIdx >= 2 THEN
+        adjIdx = propIdx + 1
+    ENDIF
+
+    ' Base properties
+    IF propIdx = 0 THEN
+        RETURN ctrl.CtlName
+    ELSEIF propIdx = 1 THEN
+        RETURN GetControlTypeName(ctrl.CtlType)
+    ELSEIF hasCaption AND propIdx = 2 THEN
+        RETURN ctrl.Caption
+    ELSEIF adjIdx = 3 THEN
+        RETURN Str(ctrl.X)
+    ELSEIF adjIdx = 4 THEN
+        RETURN Str(ctrl.Y)
+    ELSEIF adjIdx = 5 THEN
+        RETURN Str(ctrl.Width)
+    ELSEIF adjIdx = 6 THEN
+        RETURN Str(ctrl.Height)
+    ELSEIF adjIdx = 7 THEN
+        IF ctrl.Enabled THEN
+            RETURN "True"
+        ELSE
+            RETURN "False"
+        ENDIF
+    ELSEIF adjIdx = 8 THEN
+        IF ctrl.Visible THEN
+            RETURN "True"
+        ELSE
+            RETURN "False"
+        ENDIF
+    ELSEIF adjIdx = 9 THEN
+        RETURN Str(ctrl.ZOrder)
+    ENDIF
+
+    ' Type-specific properties
+    DIM typeStartIdx AS INTEGER = 10
+    IF NOT hasCaption THEN
+        typeStartIdx = 9
+    ENDIF
+    DIM typeIdx AS INTEGER = propIdx - typeStartIdx
+
+    IF ctrl.CtlType = CTRL_TEXTBOX THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.Value
+        ELSEIF typeIdx = 1 THEN
+            RETURN ctrl.Placeholder
+        ELSEIF typeIdx = 2 THEN
+            RETURN Str(ctrl.CharLimit)
+        ELSEIF typeIdx = 3 THEN
+            IF ctrl.EchoMode = 0 THEN
+                RETURN "Normal"
+            ELSEIF ctrl.EchoMode = 1 THEN
+                RETURN "Password"
+            ELSE
+                RETURN "None"
+            ENDIF
+        ELSEIF typeIdx = 4 THEN
+            RETURN ctrl.Prompt
+        ELSEIF typeIdx = 5 THEN
+            IF ctrl.CursorBlink THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_LISTBOX THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.Items
+        ELSEIF typeIdx = 1 THEN
+            RETURN ctrl.Title
+        ELSEIF typeIdx = 2 THEN
+            IF ctrl.ShowTitle THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ELSEIF typeIdx = 3 THEN
+            IF ctrl.ShowStatusBar THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ELSEIF typeIdx = 4 THEN
+            IF ctrl.ShowFilter THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ELSEIF typeIdx = 5 THEN
+            IF ctrl.InfiniteScrolling THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_COMBOBOX THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.Items
+        ELSEIF typeIdx = 1 THEN
+            IF ctrl.ShowFilter THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+        IF typeIdx = 0 THEN
+            RETURN Str(ctrl.Interval)
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.GroupName
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_HSCROLL OR ctrl.CtlType = CTRL_VSCROLL THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.Value
+        ELSEIF typeIdx = 1 THEN
+            RETURN Str(ctrl.MinValue)
+        ELSEIF typeIdx = 2 THEN
+            RETURN Str(ctrl.MaxValue)
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.Value
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TEXTAREA THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.Value
+        ELSEIF typeIdx = 1 THEN
+            RETURN ctrl.Placeholder
+        ELSEIF typeIdx = 2 THEN
+            RETURN Str(ctrl.CharLimit)
+        ELSEIF typeIdx = 3 THEN
+            IF ctrl.ShowLineNumbers THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_PROGRESS THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.Value
+        ELSEIF typeIdx = 1 THEN
+            RETURN Str(ctrl.Total)
+        ELSEIF typeIdx = 2 THEN
+            IF ctrl.ShowPercentage THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
+        IF typeIdx = 0 THEN
+            RETURN Str(ctrl.SpinnerStyle)
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TABLE THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.Columns
+        ELSEIF typeIdx = 1 THEN
+            RETURN ctrl.Rows
+        ELSEIF typeIdx = 2 THEN
+            IF ctrl.ShowHeaders THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ENDIF
+    ENDIF
+
+    RETURN ""
 END FUNCTION

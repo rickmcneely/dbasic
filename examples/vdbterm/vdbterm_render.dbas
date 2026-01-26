@@ -8,11 +8,10 @@ FUNCTION (m AS VDBTermModel) View() AS STRING
     view = RenderMenuBar(m) & Chr(10)
 
     ' Calculate layout dimensions
-    DIM toolboxWidth AS INTEGER = 16
+    DIM leftPanelWidth AS INTEGER = 16
     DIM propertiesWidth AS INTEGER = 22
-    DIM projectHeight AS INTEGER = 8
     DIM contentHeight AS INTEGER = m.Height - 4
-    DIM contentWidth AS INTEGER = m.Width - toolboxWidth - propertiesWidth
+    DIM contentWidth AS INTEGER = m.Width - leftPanelWidth - propertiesWidth
 
     IF contentWidth < 20 THEN
         contentWidth = 20
@@ -43,22 +42,58 @@ FUNCTION (m AS VDBTermModel) View() AS STRING
         ENDIF
     ENDIF
 
+    ' Get popup overlay (events context menu)
+    DIM popupLines AS []STRING
+    DIM popupWidth AS INTEGER = 0
+    DIM popupStartRow AS INTEGER = 0
+    DIM popupStartCol AS INTEGER = 0
+    IF m.PopupMode <> POPUP_NONE THEN
+        popupLines = GetPopupLines(m)
+        popupWidth = GetPopupWidth(m)
+        popupStartRow = m.PopupY - 1  ' -1 for menu bar offset
+        popupStartCol = m.PopupX
+        ' Adjust if popup would go off screen
+        IF popupStartRow + Len(popupLines) > contentHeight THEN
+            popupStartRow = contentHeight - Len(popupLines)
+        ENDIF
+        IF popupStartCol + popupWidth > m.Width THEN
+            popupStartCol = m.Width - popupWidth
+        ENDIF
+        IF popupStartRow < 0 THEN
+            popupStartRow = 0
+        ENDIF
+        IF popupStartCol < 0 THEN
+            popupStartCol = 0
+        ENDIF
+    ENDIF
+
     ' Render main content area row by row
     DIM row AS INTEGER
     FOR row = 0 TO contentHeight - 1
         DIM rowContent AS STRING = ""
 
-        ' Check for dialog overlay
+        ' Check for dialog overlay (highest priority)
         DIM dialogRowIdx AS INTEGER = row - dialogStartRow
         IF m.DialogMode <> DIALOG_NONE AND dialogRowIdx >= 0 AND dialogRowIdx < Len(dialogLines) THEN
             ' Render with dialog overlay
             DIM col AS INTEGER
             FOR col = 0 TO dialogStartCol - 1
-                rowContent = rowContent & RenderCellAt(m, row, col, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+                rowContent = rowContent & RenderCellAt(m, row, col, leftPanelWidth, contentWidth, propertiesWidth, contentHeight)
             NEXT
             rowContent = rowContent & dialogLines[dialogRowIdx]
             FOR col = dialogStartCol + dialogWidth TO m.Width - 1
-                rowContent = rowContent & RenderCellAt(m, row, col, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+                rowContent = rowContent & RenderCellAt(m, row, col, leftPanelWidth, contentWidth, propertiesWidth, contentHeight)
+            NEXT
+        ' Check for popup overlay (events context menu)
+        ELSEIF m.PopupMode <> POPUP_NONE AND row >= popupStartRow AND row < popupStartRow + Len(popupLines) THEN
+            DIM popupRowIdx AS INTEGER = row - popupStartRow
+            DIM col3 AS INTEGER
+            FOR col3 = 0 TO popupStartCol - 1
+                rowContent = rowContent & RenderCellAt(m, row, col3, leftPanelWidth, contentWidth, propertiesWidth, contentHeight)
+            NEXT
+            rowContent = rowContent & popupLines[popupRowIdx]
+            FOR col3 = popupStartCol + popupWidth TO m.Width - 1
+                rowContent = rowContent & RenderCellAt(m, row, col3, leftPanelWidth, contentWidth, propertiesWidth, contentHeight)
             NEXT
         ' Check for dropdown overlay
         ELSEIF m.MenuOpen <> MENU_NONE AND row < Len(dropdownLines) THEN
@@ -66,15 +101,15 @@ FUNCTION (m AS VDBTermModel) View() AS STRING
             DIM dropWidth AS INTEGER = 20
             DIM col2 AS INTEGER
             FOR col2 = 0 TO dropOffset - 1
-                rowContent = rowContent & RenderCellAt(m, row, col2, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+                rowContent = rowContent & RenderCellAt(m, row, col2, leftPanelWidth, contentWidth, propertiesWidth, contentHeight)
             NEXT
             rowContent = rowContent & dropdownLines[row]
             FOR col2 = dropOffset + dropWidth TO m.Width - 1
-                rowContent = rowContent & RenderCellAt(m, row, col2, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+                rowContent = rowContent & RenderCellAt(m, row, col2, leftPanelWidth, contentWidth, propertiesWidth, contentHeight)
             NEXT
         ELSE
             ' Normal rendering
-            rowContent = RenderRow(m, row, toolboxWidth, contentWidth, propertiesWidth, contentHeight, projectHeight)
+            rowContent = RenderRow(m, row, leftPanelWidth, contentWidth, propertiesWidth, contentHeight)
         ENDIF
 
         view = view & rowContent & Chr(10)
@@ -86,41 +121,57 @@ FUNCTION (m AS VDBTermModel) View() AS STRING
     RETURN view
 END FUNCTION
 
-FUNCTION RenderCellAt(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, toolboxWidth AS INTEGER, contentWidth AS INTEGER, propertiesWidth AS INTEGER, contentHeight AS INTEGER, projectHeight AS INTEGER) AS STRING
+FUNCTION RenderCellAt(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, leftPanelWidth AS INTEGER, contentWidth AS INTEGER, propertiesWidth AS INTEGER, contentHeight AS INTEGER) AS STRING
     ' Determine which panel this cell belongs to
-    IF col < toolboxWidth THEN
-        ' Left column: Toolbox (top) or Project Tree (bottom)
-        IF row < contentHeight - projectHeight THEN
-            RETURN RenderToolboxCell(m, row, col, toolboxWidth)
+    IF col < leftPanelWidth THEN
+        ' Left column: Project (top) → Widgets (middle) → Toolbox (bottom)
+        DIM widgetsStart AS INTEGER = m.ProjectHeight
+        DIM toolboxStart AS INTEGER = m.ProjectHeight + m.WidgetsHeight
+
+        IF row < m.ProjectHeight THEN
+            ' Project tree area
+            RETURN RenderProjectCell(m, row, col, leftPanelWidth)
+        ELSEIF row < toolboxStart THEN
+            ' Widgets area
+            DIM localRow AS INTEGER = row - widgetsStart
+            RETURN RenderWidgetsCell(m, localRow, col, leftPanelWidth)
         ELSE
-            DIM localRow AS INTEGER = row - (contentHeight - projectHeight)
-            RETURN RenderProjectCell(m, localRow, col, toolboxWidth)
+            ' Toolbox area
+            DIM localRow2 AS INTEGER = row - toolboxStart
+            RETURN RenderToolboxCell(m, localRow2, col, leftPanelWidth)
         ENDIF
-    ELSEIF col < toolboxWidth + contentWidth THEN
+    ELSEIF col < leftPanelWidth + contentWidth THEN
         ' Middle: Form/Code (full height)
-        DIM localCol AS INTEGER = col - toolboxWidth
+        DIM localCol AS INTEGER = col - leftPanelWidth
         IF m.ViewMode = VIEW_FORM THEN
             RETURN RenderFormCell(m, row, localCol, contentWidth)
         ELSE
             RETURN RenderCodeCell(m, row, localCol, contentWidth)
         ENDIF
     ELSE
-        DIM propCol AS INTEGER = col - toolboxWidth - contentWidth
+        DIM propCol AS INTEGER = col - leftPanelWidth - contentWidth
         RETURN RenderPropertiesCell(m, row, propCol, propertiesWidth)
     ENDIF
 END FUNCTION
 
-FUNCTION RenderRow(m AS VDBTermModel, row AS INTEGER, toolboxWidth AS INTEGER, contentWidth AS INTEGER, propertiesWidth AS INTEGER, contentHeight AS INTEGER, projectHeight AS INTEGER) AS STRING
+FUNCTION RenderRow(m AS VDBTermModel, row AS INTEGER, leftPanelWidth AS INTEGER, contentWidth AS INTEGER, propertiesWidth AS INTEGER, contentHeight AS INTEGER) AS STRING
     DIM result AS STRING = ""
 
-    ' Left column: Toolbox (top) or Project Tree (bottom)
-    IF row < contentHeight - projectHeight THEN
-        ' Toolbox area
-        result = result & RenderToolboxRow(m, row, toolboxWidth)
-    ELSE
+    ' Left column: Project (top) → Widgets (middle) → Toolbox (bottom)
+    DIM widgetsStart AS INTEGER = m.ProjectHeight
+    DIM toolboxStart AS INTEGER = m.ProjectHeight + m.WidgetsHeight
+
+    IF row < m.ProjectHeight THEN
         ' Project tree area
-        DIM localRow AS INTEGER = row - (contentHeight - projectHeight)
-        result = result & RenderProjectRow(m, localRow, toolboxWidth)
+        result = result & RenderProjectRow(m, row, leftPanelWidth)
+    ELSEIF row < toolboxStart THEN
+        ' Widgets area
+        DIM localRow AS INTEGER = row - widgetsStart
+        result = result & RenderWidgetsRow(m, localRow, leftPanelWidth)
+    ELSE
+        ' Toolbox area
+        DIM localRow2 AS INTEGER = row - toolboxStart
+        result = result & RenderToolboxRow(m, localRow2, leftPanelWidth)
     ENDIF
 
     ' Main content (full height)
@@ -136,19 +187,86 @@ FUNCTION RenderRow(m AS VDBTermModel, row AS INTEGER, toolboxWidth AS INTEGER, c
     RETURN result
 END FUNCTION
 
-' Toolbox rendering
+' Widgets panel rendering (visible widgets: Button, Label, TextBox, etc.)
+FUNCTION RenderWidgetsRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
+    DIM content AS STRING = ""
+
+    IF row = 0 THEN
+        ' Title - draggable caption (highlighted blue)
+        content = styleToolboxSelected.Render(PadCenter("= Widgets", width))
+        RETURN content
+    ENDIF
+
+    ' Visible widgets: Button(1), Label(2), TextBox(3), CheckBox(4), Option(5),
+    '                  ListBox(6), ComboBox(7), Frame(8), HScroll(9), VScroll(10),
+    '                  TextArea(12), Progress(13), Spinner(14), Table(15)
+    DIM widgetIdx AS INTEGER = row - 1
+    IF widgetIdx >= 0 AND widgetIdx < VISIBLE_WIDGET_COUNT THEN
+        DIM ctlType AS INTEGER = WidgetIndexToCtrlType(widgetIdx)
+        DIM icon AS STRING = GetToolboxIcon(ctlType)
+        DIM name AS STRING = GetControlTypeName(ctlType)
+        DIM item AS STRING = icon & " " & name
+        item = PadRight(item, width)
+
+        IF widgetIdx = m.WidgetsIndex AND m.FocusArea = FOCUS_WIDGETS THEN
+            content = styleToolboxSelected.Render(item)
+        ELSE
+            content = styleToolbox.Render(item)
+        ENDIF
+    ELSE
+        content = styleToolbox.Render(RepeatStr(" ", width))
+    ENDIF
+
+    RETURN content
+END FUNCTION
+
+FUNCTION RenderWidgetsCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width AS INTEGER) AS STRING
+    ' Single cell version for overlay rendering
+    DIM ch AS STRING = " "
+    DIM selected AS BOOLEAN = FALSE
+
+    IF row = 0 THEN
+        ' Title row - draggable caption
+        DIM title AS STRING = PadCenter("= Widgets", width)
+        IF col < Len(title) THEN
+            ch = Mid(title, col + 1, 1)
+        ENDIF
+        RETURN styleToolboxSelected.Render(ch)
+    ELSE
+        DIM widgetIdx AS INTEGER = row - 1
+        IF widgetIdx >= 0 AND widgetIdx < VISIBLE_WIDGET_COUNT THEN
+            DIM ctlType AS INTEGER = WidgetIndexToCtrlType(widgetIdx)
+            DIM icon AS STRING = GetToolboxIcon(ctlType)
+            DIM name AS STRING = GetControlTypeName(ctlType)
+            DIM item AS STRING = PadRight(icon & " " & name, width)
+            IF col < Len(item) THEN
+                ch = Mid(item, col + 1, 1)
+            ENDIF
+            selected = (widgetIdx = m.WidgetsIndex AND m.FocusArea = FOCUS_WIDGETS)
+        ENDIF
+    ENDIF
+
+    IF selected THEN
+        RETURN styleToolboxSelected.Render(ch)
+    ELSE
+        RETURN styleToolbox.Render(ch)
+    ENDIF
+END FUNCTION
+
+' Toolbox panel rendering (non-visible widgets: Timer)
 FUNCTION RenderToolboxRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
     DIM content AS STRING = ""
 
     IF row = 0 THEN
-        ' Title - always highlighted blue
-        content = styleToolboxSelected.Render(PadCenter("Toolbox", width))
+        ' Title - draggable caption (highlighted blue)
+        content = styleToolboxSelected.Render(PadCenter("= Toolbox", width))
         RETURN content
     ENDIF
 
+    ' Non-visible widgets: Timer(11)
     DIM toolIdx AS INTEGER = row - 1
-    IF toolIdx >= 0 AND toolIdx <= 10 THEN
-        DIM ctlType AS INTEGER = toolIdx + 1
+    IF toolIdx >= 0 AND toolIdx < NONVISIBLE_WIDGET_COUNT THEN
+        DIM ctlType AS INTEGER = CTRL_TIMER + toolIdx
         DIM icon AS STRING = GetToolboxIcon(ctlType)
         DIM name AS STRING = GetControlTypeName(ctlType)
         DIM item AS STRING = icon & " " & name
@@ -172,16 +290,16 @@ FUNCTION RenderToolboxCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
     DIM selected AS BOOLEAN = FALSE
 
     IF row = 0 THEN
-        ' Title row - always highlighted blue
-        DIM title AS STRING = PadCenter("Toolbox", width)
+        ' Title row - draggable caption
+        DIM title AS STRING = PadCenter("= Toolbox", width)
         IF col < Len(title) THEN
             ch = Mid(title, col + 1, 1)
         ENDIF
         RETURN styleToolboxSelected.Render(ch)
     ELSE
         DIM toolIdx AS INTEGER = row - 1
-        IF toolIdx >= 0 AND toolIdx <= 10 THEN
-            DIM ctlType AS INTEGER = toolIdx + 1
+        IF toolIdx >= 0 AND toolIdx < NONVISIBLE_WIDGET_COUNT THEN
+            DIM ctlType AS INTEGER = CTRL_TIMER + toolIdx
             DIM icon AS STRING = GetToolboxIcon(ctlType)
             DIM name AS STRING = GetControlTypeName(ctlType)
             DIM item AS STRING = PadRight(icon & " " & name, width)
@@ -350,7 +468,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
     DIM outlineY2 AS INTEGER = 0
     DIM outlineX1 AS INTEGER = 0
     DIM outlineX2 AS INTEGER = 0
-    DIM showControlOutline AS BOOLEAN = (m.IsDragging OR m.IsResizing) AND m.SelectedCtrlIdx >= 0 AND NOT m.ResizingForm AND NOT m.DraggingForm
+    DIM showControlOutline AS BOOLEAN = ((m.IsDragging OR m.IsResizing) AND m.SelectedCtrlIdx >= 0 AND NOT m.ResizingForm AND NOT m.DraggingForm) OR (m.DraggingFromWidgets AND m.DragOutlineX >= 0)
     IF showControlOutline THEN
         outlineY1 = m.DragOutlineY
         outlineY2 = m.DragOutlineY + m.DragCtrlHeight - 1
@@ -784,6 +902,96 @@ FUNCTION RenderControlChar(ctrl AS VDBControl, localRow AS INTEGER, localCol AS 
             RETURN "]"
         ENDIF
         RETURN " "
+    ELSEIF ctrl.CtlType = CTRL_TEXTAREA THEN
+        ' Multi-line text area with border
+        IF localRow = 0 THEN
+            IF localCol = 0 THEN
+                RETURN "┌"
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "┐"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = ctrl.Height - 1 THEN
+            IF localCol = 0 THEN
+                RETURN "└"
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "┘"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSE
+            IF localCol = 0 OR localCol = ctrl.Width - 1 THEN
+                RETURN "│"
+            ELSE
+                RETURN " "
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_PROGRESS THEN
+        ' Progress bar [=====>    ]
+        IF localCol = 0 THEN
+            RETURN "["
+        ELSEIF localCol = ctrl.Width - 1 THEN
+            RETURN "]"
+        ELSE
+            DIM progressVal AS INTEGER = ParseIntStr(ctrl.Value)
+            DIM total AS INTEGER = ctrl.Total
+            IF total <= 0 THEN
+                total = 100
+            ENDIF
+            DIM innerWidth AS INTEGER = ctrl.Width - 2
+            DIM filled AS INTEGER = (progressVal * innerWidth) / total
+            DIM innerCol AS INTEGER = localCol - 1
+            IF innerCol < filled THEN
+                RETURN "="
+            ELSEIF innerCol = filled AND progressVal < total THEN
+                RETURN ">"
+            ELSE
+                RETURN " "
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
+        ' Spinner [*]
+        IF localCol = 0 THEN
+            RETURN "["
+        ELSEIF localCol = 1 THEN
+            RETURN "*"
+        ELSEIF localCol = 2 THEN
+            RETURN "]"
+        ENDIF
+        RETURN " "
+    ELSEIF ctrl.CtlType = CTRL_TABLE THEN
+        ' Table with borders
+        IF localRow = 0 THEN
+            IF localCol = 0 THEN
+                RETURN "┌"
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "┐"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = ctrl.Height - 1 THEN
+            IF localCol = 0 THEN
+                RETURN "└"
+            ELSEIF localCol = ctrl.Width - 1 THEN
+                RETURN "┘"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = 1 AND ctrl.ShowHeaders THEN
+            ' Header row
+            IF localCol = 0 OR localCol = ctrl.Width - 1 THEN
+                RETURN "│"
+            ELSE
+                RETURN "═"
+            ENDIF
+        ELSE
+            IF localCol = 0 OR localCol = ctrl.Width - 1 THEN
+                RETURN "│"
+            ELSE
+                RETURN " "
+            ENDIF
+        ENDIF
     ENDIF
 
     RETURN " "
@@ -953,31 +1161,44 @@ FUNCTION RenderProjectRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
     ENDIF
 
     DIM itemIdx AS INTEGER = row - 1
-    DIM totalItems AS INTEGER = 0
-
-    IF m.ProjectLoaded THEN
-        totalItems = Len(m.Project.Forms) + Len(m.Project.Modules) + 2
-    ENDIF
+    DIM totalItems AS INTEGER = GetTreeItemCount(m)
 
     IF itemIdx < totalItems AND m.ProjectLoaded THEN
         DIM itemText AS STRING = ""
+        DIM itemType AS INTEGER
+        DIM formIdx AS INTEGER
+        DIM ctrlIdx AS INTEGER
+        itemType, formIdx, ctrlIdx = GetTreeItemInfo(m, itemIdx)
 
-        IF itemIdx = 0 THEN
+        IF itemType = 0 THEN
+            ' Project name
             itemText = "+ " & m.Project.Name
-        ELSEIF itemIdx <= Len(m.Project.Forms) THEN
-            DIM formIdx AS INTEGER = itemIdx - 1
-            IF formIdx < Len(m.Project.Forms) THEN
-                IF formIdx = m.CurrentFormIdx THEN
-                    itemText = "  > " & m.Project.Forms[formIdx].Name & ".frm"
-                ELSE
-                    itemText = "    " & m.Project.Forms[formIdx].Name & ".frm"
-                ENDIF
+        ELSEIF itemType = 1 THEN
+            ' Form - show +/- based on expansion state
+            DIM expanded AS BOOLEAN = FALSE
+            IF formIdx < Len(m.TreeExpanded) THEN
+                expanded = m.TreeExpanded[formIdx]
             ENDIF
-        ELSE
-            DIM modIdx AS INTEGER = itemIdx - Len(m.Project.Forms) - 1
-            IF modIdx < Len(m.Project.Modules) THEN
-                itemText = "    " & m.Project.Modules[modIdx].Name & ".bas"
+            DIM expandChar AS STRING = "+"
+            IF expanded THEN
+                expandChar = "-"
             ENDIF
+            DIM formMarker AS STRING = " "
+            IF formIdx = m.CurrentFormIdx THEN
+                formMarker = ">"
+            ENDIF
+            itemText = " " & expandChar & formMarker & m.Project.Forms[formIdx].Name & ".frm"
+        ELSEIF itemType = 2 THEN
+            ' Control under a form
+            DIM ctrl AS VDBControl = m.Project.Forms[formIdx].Controls[ctrlIdx]
+            DIM ctrlMarker AS STRING = " "
+            IF formIdx = m.CurrentFormIdx AND ctrlIdx = m.SelectedCtrlIdx THEN
+                ctrlMarker = ">"
+            ENDIF
+            itemText = "   " & ctrlMarker & ctrl.CtlName
+        ELSEIF itemType = 3 THEN
+            ' Module
+            itemText = "    " & m.Project.Modules[formIdx].Name & ".bas"
         ENDIF
 
         itemText = PadRight(itemText, width)
@@ -1008,31 +1229,40 @@ FUNCTION RenderProjectCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
         RETURN styleTreeSelected.Render(ch)
     ELSE
         DIM itemIdx AS INTEGER = row - 1
-        DIM totalItems AS INTEGER = 0
-
-        IF m.ProjectLoaded THEN
-            totalItems = Len(m.Project.Forms) + Len(m.Project.Modules) + 2
-        ENDIF
+        DIM totalItems AS INTEGER = GetTreeItemCount(m)
 
         IF itemIdx < totalItems AND m.ProjectLoaded THEN
             DIM itemText AS STRING = ""
+            DIM itemType AS INTEGER
+            DIM formIdx AS INTEGER
+            DIM ctrlIdx AS INTEGER
+            itemType, formIdx, ctrlIdx = GetTreeItemInfo(m, itemIdx)
 
-            IF itemIdx = 0 THEN
+            IF itemType = 0 THEN
                 itemText = "+ " & m.Project.Name
-            ELSEIF itemIdx <= Len(m.Project.Forms) THEN
-                DIM formIdx AS INTEGER = itemIdx - 1
-                IF formIdx < Len(m.Project.Forms) THEN
-                    IF formIdx = m.CurrentFormIdx THEN
-                        itemText = "  > " & m.Project.Forms[formIdx].Name & ".frm"
-                    ELSE
-                        itemText = "    " & m.Project.Forms[formIdx].Name & ".frm"
-                    ENDIF
+            ELSEIF itemType = 1 THEN
+                DIM expanded AS BOOLEAN = FALSE
+                IF formIdx < Len(m.TreeExpanded) THEN
+                    expanded = m.TreeExpanded[formIdx]
                 ENDIF
-            ELSE
-                DIM modIdx AS INTEGER = itemIdx - Len(m.Project.Forms) - 1
-                IF modIdx < Len(m.Project.Modules) THEN
-                    itemText = "    " & m.Project.Modules[modIdx].Name & ".bas"
+                DIM expandChar AS STRING = "+"
+                IF expanded THEN
+                    expandChar = "-"
                 ENDIF
+                DIM formMarker AS STRING = " "
+                IF formIdx = m.CurrentFormIdx THEN
+                    formMarker = ">"
+                ENDIF
+                itemText = " " & expandChar & formMarker & m.Project.Forms[formIdx].Name & ".frm"
+            ELSEIF itemType = 2 THEN
+                DIM ctrl AS VDBControl = m.Project.Forms[formIdx].Controls[ctrlIdx]
+                DIM ctrlMarker AS STRING = " "
+                IF formIdx = m.CurrentFormIdx AND ctrlIdx = m.SelectedCtrlIdx THEN
+                    ctrlMarker = ">"
+                ENDIF
+                itemText = "   " & ctrlMarker & ctrl.CtlName
+            ELSEIF itemType = 3 THEN
+                itemText = "    " & m.Project.Modules[formIdx].Name & ".bas"
             ENDIF
 
             itemText = PadRight(itemText, width)
@@ -1075,45 +1305,8 @@ FUNCTION RenderPropertiesRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER
 
     IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
-        IF propIdx = 0 THEN
-            propName = "Name"
-            propValue = ctrl.CtlName
-        ELSEIF propIdx = 1 THEN
-            propName = "Type"
-            propValue = GetControlTypeName(ctrl.CtlType)
-        ELSEIF propIdx = 2 THEN
-            propName = "Caption"
-            propValue = ctrl.Caption
-        ELSEIF propIdx = 3 THEN
-            propName = "X"
-            propValue = Str(ctrl.X)
-        ELSEIF propIdx = 4 THEN
-            propName = "Y"
-            propValue = Str(ctrl.Y)
-        ELSEIF propIdx = 5 THEN
-            propName = "Width"
-            propValue = Str(ctrl.Width)
-        ELSEIF propIdx = 6 THEN
-            propName = "Height"
-            propValue = Str(ctrl.Height)
-        ELSEIF propIdx = 7 THEN
-            propName = "Enabled"
-            IF ctrl.Enabled THEN
-                propValue = "True"
-            ELSE
-                propValue = "False"
-            ENDIF
-        ELSEIF propIdx = 8 THEN
-            propName = "Visible"
-            IF ctrl.Visible THEN
-                propValue = "True"
-            ELSE
-                propValue = "False"
-            ENDIF
-        ELSEIF propIdx = 9 THEN
-            propName = "ZOrder"
-            propValue = Str(ctrl.ZOrder)
-        ENDIF
+        propName = GetControlPropertyName(ctrl, propIdx)
+        propValue = GetControlPropertyValue(ctrl, propIdx)
     ELSE
         ' Form properties
         DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
@@ -1189,45 +1382,8 @@ FUNCTION RenderPropertiesCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER,
 
     IF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
-        IF propIdx = 0 THEN
-            propName = "Name"
-            propValue = ctrl.CtlName
-        ELSEIF propIdx = 1 THEN
-            propName = "Type"
-            propValue = GetControlTypeName(ctrl.CtlType)
-        ELSEIF propIdx = 2 THEN
-            propName = "Caption"
-            propValue = ctrl.Caption
-        ELSEIF propIdx = 3 THEN
-            propName = "X"
-            propValue = Str(ctrl.X)
-        ELSEIF propIdx = 4 THEN
-            propName = "Y"
-            propValue = Str(ctrl.Y)
-        ELSEIF propIdx = 5 THEN
-            propName = "Width"
-            propValue = Str(ctrl.Width)
-        ELSEIF propIdx = 6 THEN
-            propName = "Height"
-            propValue = Str(ctrl.Height)
-        ELSEIF propIdx = 7 THEN
-            propName = "Enabled"
-            IF ctrl.Enabled THEN
-                propValue = "True"
-            ELSE
-                propValue = "False"
-            ENDIF
-        ELSEIF propIdx = 8 THEN
-            propName = "Visible"
-            IF ctrl.Visible THEN
-                propValue = "True"
-            ELSE
-                propValue = "False"
-            ENDIF
-        ELSEIF propIdx = 9 THEN
-            propName = "ZOrder"
-            propValue = Str(ctrl.ZOrder)
-        ENDIF
+        propName = GetControlPropertyName(ctrl, propIdx)
+        propValue = GetControlPropertyValue(ctrl, propIdx)
     ELSE
         ' Form properties
         DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
@@ -1430,6 +1586,71 @@ FUNCTION RenderStatusBar(m AS VDBTermModel) AS STRING
     status = status & " | F1=Help F5=Run F7=View F10=Menu"
 
     RETURN styleStatusBar.Render(PadRight(status, m.Width))
+END FUNCTION
+
+' Popup rendering (events context menu)
+FUNCTION GetPopupWidth(m AS VDBTermModel) AS INTEGER
+    ' Calculate width based on longest event name + padding
+    DIM maxLen AS INTEGER = 10  ' Minimum width
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(m.PopupEvents) - 1
+        DIM eventLen AS INTEGER = Len(m.PopupEvents[i]) + 4  ' +4 for padding/icons
+        IF eventLen > maxLen THEN
+            maxLen = eventLen
+        ENDIF
+    NEXT
+    ' Add border
+    RETURN maxLen + 2
+END FUNCTION
+
+FUNCTION GetPopupLines(m AS VDBTermModel) AS []STRING
+    DIM lines AS []STRING
+    DIM width AS INTEGER = GetPopupWidth(m)
+
+    ' Get control/widget name for title
+    DIM titleText AS STRING = ""
+    IF m.PopupCtrlIdx = -1 THEN
+        ' Form events
+        IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+            titleText = m.Project.Forms[m.CurrentFormIdx].Name
+        ELSE
+            titleText = "Form"
+        ENDIF
+    ELSEIF m.PopupCtrlIdx = -2 THEN
+        ' Widget/Toolbox panel
+        titleText = GetControlTypeName(m.PopupCtrlType)
+    ELSE
+        ' Control
+        IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) AND m.PopupCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+            titleText = m.Project.Forms[m.CurrentFormIdx].Controls[m.PopupCtrlIdx].CtlName
+        ELSE
+            titleText = GetControlTypeName(m.PopupCtrlType)
+        ENDIF
+    ENDIF
+
+    ' Title bar
+    DIM title AS STRING = " " & titleText & " Events "
+    DIM titlePadded AS STRING = PadCenter(title, width - 2)
+    lines = APPEND(lines, styleDropdown.Render(Chr(218) & RepeatStr(Chr(196), width - 2) & Chr(191)))
+    lines = APPEND(lines, styleDropdownSelected.Render(Chr(179) & titlePadded & Chr(179)))
+    lines = APPEND(lines, styleDropdown.Render(Chr(195) & RepeatStr(Chr(196), width - 2) & Chr(180)))
+
+    ' Event items
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(m.PopupEvents) - 1
+        DIM eventName AS STRING = m.PopupEvents[i]
+        DIM itemText AS STRING = " " & PadRight(eventName, width - 4) & " "
+        IF i = m.PopupIndex THEN
+            lines = APPEND(lines, styleDropdown.Render(Chr(179)) & styleDropdownSelected.Render(itemText) & styleDropdown.Render(Chr(179)))
+        ELSE
+            lines = APPEND(lines, styleDropdown.Render(Chr(179)) & styleDropdown.Render(itemText) & styleDropdown.Render(Chr(179)))
+        ENDIF
+    NEXT
+
+    ' Bottom border
+    lines = APPEND(lines, styleDropdown.Render(Chr(192) & RepeatStr(Chr(196), width - 2) & Chr(217)))
+
+    RETURN lines
 END FUNCTION
 
 ' Dialog rendering

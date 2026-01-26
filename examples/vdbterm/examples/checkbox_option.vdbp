@@ -1,0 +1,155 @@
+{
+  "name": "CheckboxOption",
+  "startupForm": "frmOptions",
+  "forms": [
+    {
+      "name": "frmOptions",
+      "caption": "CheckBox and Option Demo",
+      "width": 45,
+      "height": 18,
+      "controls": [
+        {
+          "id": 1,
+          "type": 2,
+          "name": "lblTitle",
+          "caption": "Text Formatting Options",
+          "x": 2,
+          "y": 1,
+          "width": 25,
+          "height": 1
+        },
+        {
+          "id": 3,
+          "type": 4,
+          "name": "chkBold",
+          "caption": "Bold",
+          "x": 4,
+          "y": 4,
+          "width": 12,
+          "height": 1
+        },
+        {
+          "id": 4,
+          "type": 4,
+          "name": "chkItalic",
+          "caption": "Italic",
+          "x": 4,
+          "y": 5,
+          "width": 12,
+          "height": 1
+        },
+        {
+          "id": 5,
+          "type": 4,
+          "name": "chkUnderline",
+          "caption": "Underline",
+          "x": 4,
+          "y": 6,
+          "width": 12,
+          "height": 1
+        },
+        {
+          "id": 7,
+          "type": 5,
+          "name": "optRed",
+          "caption": "Red",
+          "x": 24,
+          "y": 4,
+          "width": 12,
+          "height": 1
+        },
+        {
+          "id": 8,
+          "type": 5,
+          "name": "optGreen",
+          "caption": "Green",
+          "x": 24,
+          "y": 5,
+          "width": 12,
+          "height": 1
+        },
+        {
+          "id": 9,
+          "type": 5,
+          "name": "optBlue",
+          "caption": "Blue",
+          "x": 24,
+          "y": 6,
+          "width": 12,
+          "height": 1
+        },
+        {
+          "id": 11,
+          "type": 5,
+          "name": "optSmall",
+          "caption": "Small",
+          "x": 4,
+          "y": 11,
+          "width": 10,
+          "height": 1
+        },
+        {
+          "id": 12,
+          "type": 5,
+          "name": "optMedium",
+          "caption": "Medium",
+          "x": 16,
+          "y": 11,
+          "width": 10,
+          "height": 1
+        },
+        {
+          "id": 13,
+          "type": 5,
+          "name": "optLarge",
+          "caption": "Large",
+          "x": 28,
+          "y": 11,
+          "width": 10,
+          "height": 1
+        },
+        {
+          "id": 14,
+          "type": 2,
+          "name": "lblPreview",
+          "caption": "Preview: Sample Text",
+          "x": 2,
+          "y": 15,
+          "width": 38,
+          "height": 1
+        },
+        {
+          "id": 2,
+          "type": 8,
+          "name": "fraStyle",
+          "caption": "Style",
+          "x": 2,
+          "y": 3,
+          "width": 18,
+          "height": 6
+        },
+        {
+          "id": 6,
+          "type": 8,
+          "name": "fraColor",
+          "caption": "Color",
+          "x": 22,
+          "y": 3,
+          "width": 18,
+          "height": 6
+        },
+        {
+          "id": 10,
+          "type": 8,
+          "name": "fraSize",
+          "caption": "Size",
+          "x": 2,
+          "y": 10,
+          "width": 38,
+          "height": 4
+        }
+      ]
+    }
+  ],
+  "modules": []
+}
