@@ -338,9 +338,17 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
                         DIM localCol AS INTEGER = formCol - ctrl.X
                         DIM isSelected AS BOOLEAN = (ctrlIdx = m.SelectedCtrlIdx)
 
-                        ' Check for selection handles at corners
+                        ' Check for selection handles (corners and edges)
                         IF isSelected THEN
-                            IF (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1) THEN
+                            DIM isCorner AS BOOLEAN = (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1)
+                            DIM centerCol AS INTEGER = ctrl.Width / 2
+                            DIM centerRow AS INTEGER = ctrl.Height / 2
+                            DIM isTopEdge AS BOOLEAN = (localRow = 0 AND localCol = centerCol AND ctrl.Width >= 3)
+                            DIM isBottomEdge AS BOOLEAN = (localRow = ctrl.Height - 1 AND localCol = centerCol AND ctrl.Width >= 3)
+                            DIM isLeftEdge AS BOOLEAN = (localCol = 0 AND localRow = centerRow AND ctrl.Height >= 3)
+                            DIM isRightEdge AS BOOLEAN = (localCol = ctrl.Width - 1 AND localRow = centerRow AND ctrl.Height >= 3)
+
+                            IF isCorner OR isTopEdge OR isBottomEdge OR isLeftEdge OR isRightEdge THEN
                                 content = content & styleControlSelected.Render("■")
                                 foundCtrl = TRUE
                                 EXIT FOR
@@ -448,9 +456,17 @@ FUNCTION RenderFormCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
             DIM localCol AS INTEGER = formCol - ctrl.X
             DIM isSelected AS BOOLEAN = (i = m.SelectedCtrlIdx)
 
-            ' Check for selection handles at corners
+            ' Check for selection handles (corners and edges)
             IF isSelected THEN
-                IF (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1) THEN
+                DIM isCorner AS BOOLEAN = (localRow = 0 OR localRow = ctrl.Height - 1) AND (localCol = 0 OR localCol = ctrl.Width - 1)
+                DIM centerCol AS INTEGER = ctrl.Width / 2
+                DIM centerRow AS INTEGER = ctrl.Height / 2
+                DIM isTopEdge AS BOOLEAN = (localRow = 0 AND localCol = centerCol AND ctrl.Width >= 3)
+                DIM isBottomEdge AS BOOLEAN = (localRow = ctrl.Height - 1 AND localCol = centerCol AND ctrl.Width >= 3)
+                DIM isLeftEdge AS BOOLEAN = (localCol = 0 AND localRow = centerRow AND ctrl.Height >= 3)
+                DIM isRightEdge AS BOOLEAN = (localCol = ctrl.Width - 1 AND localRow = centerRow AND ctrl.Height >= 3)
+
+                IF isCorner OR isTopEdge OR isBottomEdge OR isLeftEdge OR isRightEdge THEN
                     RETURN styleControlSelected.Render("■")
                 ENDIF
             ENDIF

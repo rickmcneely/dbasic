@@ -35,12 +35,14 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     ctrl = NewControl(CTRL_LABEL, "lblTitle", 2, 1)
     ctrl.Caption = "VDBTerm Demo"
     ctrl.Width = 20
+    ctrl.ZOrder = form.NextCtrlID
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
     ' Text input field
     ctrl = NewControl(CTRL_TEXTBOX, "txtInput", 2, 3)
     ctrl.Width = 25
+    ctrl.ZOrder = form.NextCtrlID
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
@@ -48,12 +50,14 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     ctrl = NewControl(CTRL_BUTTON, "btnOK", 2, 5)
     ctrl.Caption = "OK"
     ctrl.Width = 10
+    ctrl.ZOrder = form.NextCtrlID
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
     ctrl = NewControl(CTRL_BUTTON, "btnCancel", 14, 5)
     ctrl.Caption = "Cancel"
     ctrl.Width = 10
+    ctrl.ZOrder = form.NextCtrlID
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
@@ -61,6 +65,7 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     ctrl = NewControl(CTRL_CHECKBOX, "chkOption", 2, 8)
     ctrl.Caption = "Enable feature"
     ctrl.Width = 18
+    ctrl.ZOrder = form.NextCtrlID
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
@@ -68,12 +73,14 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     ctrl = NewControl(CTRL_OPTION, "optChoice1", 2, 10)
     ctrl.Caption = "Option A"
     ctrl.Width = 12
+    ctrl.ZOrder = form.NextCtrlID
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
     ctrl = NewControl(CTRL_OPTION, "optChoice2", 2, 11)
     ctrl.Caption = "Option B"
     ctrl.Width = 12
+    ctrl.ZOrder = form.NextCtrlID
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
@@ -81,6 +88,7 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     ctrl = NewControl(CTRL_LISTBOX, "lstItems", 30, 3)
     ctrl.Width = 18
     ctrl.Height = 6
+    ctrl.ZOrder = form.NextCtrlID
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
@@ -89,6 +97,7 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     ctrl.Caption = "Options"
     ctrl.Width = 22
     ctrl.Height = 10
+    ctrl.ZOrder = form.NextCtrlID
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
