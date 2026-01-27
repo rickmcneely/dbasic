@@ -240,7 +240,23 @@ SUB Main()
     DIM args AS []STRING = os.Args
     IF Len(args) > 1 THEN
         ' Load project file
-        model.Message = "Loading: " & args[1]
+        DIM loadedProj AS VDBProject
+        DIM loadErr AS STRING
+        loadedProj, loadErr = LoadProject(args[1])
+        IF loadErr = "" THEN
+            model.Project = loadedProj
+            model.ProjectLoaded = TRUE
+            model.Message = "Loaded: " & args[1]
+            ' Sync initial code to editor
+            IF Len(model.Project.Forms) > 0 THEN
+                model.CodeEditor = SyncCodeToEditor(model.CodeEditor, model.Project.Forms[0].Code)
+            ENDIF
+        ELSE
+            model.Message = "Error loading: " & loadErr
+            ' Fall back to new project
+            model.Project = NewProject("Project1")
+            model.ProjectLoaded = TRUE
+        ENDIF
     ELSE
         ' Create new project
         model.Project = NewProject("Project1")

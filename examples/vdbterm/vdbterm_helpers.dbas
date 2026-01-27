@@ -827,6 +827,14 @@ FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRIN
         IF typeIdx = 0 THEN
             RETURN "Interval"
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_LABEL THEN
+        IF typeIdx = 0 THEN
+            RETURN "Justify"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
+        IF typeIdx = 0 THEN
+            RETURN "Border"
+        ENDIF
     ELSEIF ctrl.CtlType = CTRL_OPTION THEN
         IF typeIdx = 0 THEN
             RETURN "GroupName"
@@ -929,6 +937,11 @@ FUNCTION IsPropertyBoolean(ctrl AS VDBControl, propIdx AS INTEGER) AS BOOLEAN
         IF typeIdx = 2 THEN
             RETURN TRUE
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
+        ' Border (0)
+        IF typeIdx = 0 THEN
+            RETURN TRUE
+        ENDIF
     ENDIF
 
     RETURN FALSE
@@ -988,6 +1001,10 @@ FUNCTION ToggleBooleanProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBCon
     ELSEIF ctrl.CtlType = CTRL_TABLE THEN
         IF typeIdx = 2 THEN
             ctrl.ShowHeaders = NOT ctrl.ShowHeaders
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
+        IF typeIdx = 0 THEN
+            ctrl.Border = NOT ctrl.Border
         ENDIF
     ENDIF
 
@@ -1108,6 +1125,24 @@ FUNCTION GetControlPropertyValue(ctrl AS VDBControl, propIdx AS INTEGER) AS STRI
     ELSEIF ctrl.CtlType = CTRL_TIMER THEN
         IF typeIdx = 0 THEN
             RETURN Str(ctrl.Interval)
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_LABEL THEN
+        IF typeIdx = 0 THEN
+            IF ctrl.Justification = JUSTIFY_LEFT THEN
+                RETURN "Left"
+            ELSEIF ctrl.Justification = JUSTIFY_CENTER THEN
+                RETURN "Center"
+            ELSE
+                RETURN "Right"
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
+        IF typeIdx = 0 THEN
+            IF ctrl.Border THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
         ENDIF
     ELSEIF ctrl.CtlType = CTRL_OPTION THEN
         IF typeIdx = 0 THEN

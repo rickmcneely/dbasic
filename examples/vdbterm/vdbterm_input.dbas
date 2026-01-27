@@ -723,6 +723,20 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
                 IF typeIdx = 0 THEN
                     m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Interval = ParseIntStr(val)
                 ENDIF
+            ELSEIF ctlType = CTRL_LABEL THEN
+                IF typeIdx = 0 THEN
+                    IF val = "Left" OR val = "left" OR val = "0" THEN
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Justification = JUSTIFY_LEFT
+                    ELSEIF val = "Center" OR val = "center" OR val = "1" THEN
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Justification = JUSTIFY_CENTER
+                    ELSEIF val = "Right" OR val = "right" OR val = "2" THEN
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Justification = JUSTIFY_RIGHT
+                    ENDIF
+                ENDIF
+            ELSEIF ctlType = CTRL_BUTTON THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Border = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
             ELSEIF ctlType = CTRL_OPTION THEN
                 IF typeIdx = 0 THEN
                     m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].GroupName = val

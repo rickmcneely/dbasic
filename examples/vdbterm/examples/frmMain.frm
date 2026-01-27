@@ -1,140 +1,115 @@
 ' frmMain Code - All Widgets Showcase
 ' Comprehensive demo of all VDBTerm widget types
 
+DIM prgDirection AS INTEGER
+
 SUB Form_Load()
-    ' Initialize Label (type 2) - already set via Caption property
+    ' Initialize title
     lblTitle.Caption = "VDBTerm Widget Showcase"
 
-    ' Initialize TextBox (type 3)
-    txtName.Value = ""
-    txtName.Placeholder = "Enter your name"
+    ' Add items to listbox
+    lstItems.AddItem("Apple")
+    lstItems.AddItem("Banana")
+    lstItems.AddItem("Cherry")
+    lstItems.AddItem("Date")
+    lstItems.AddItem("Elderberry")
 
-    ' Initialize CheckBox (type 4)
-    chkActive.Value = "1"
-    chkNotify.Value = "0"
+    ' Set default option
+    optLow.Selected = TRUE
 
-    ' Initialize Option/Radio (type 5)
-    optLow.Value = "0"
-    optMed.Value = "1"
-    optHigh.Value = "0"
-
-    ' Initialize ComboBox (type 7)
-    cboCategory.Items = "General;Technical;Support;Sales;Other"
-
-    ' Initialize ListBox (type 6)
-    lstItems.Items = "Item 1;Item 2;Item 3;Item 4;Item 5"
-    lstItems.ShowTitle = TRUE
-    lstItems.Title = "Select Item"
-
-    ' Initialize TextArea (type 12)
-    txtEditor.Value = "Multi-line text editor.\nEdit content here."
-    txtEditor.ShowLineNumbers = TRUE
-
-    ' Initialize Progress (type 13)
-    prgStatus.Value = "0"
-    prgStatus.Total = 100
-    prgStatus.ShowPercentage = TRUE
-
-    ' Initialize Spinner (type 14)
-    spnWorking.SpinnerStyle = 1
-    spnWorking.Visible = FALSE
-
-    ' Initialize Table (type 15)
-    tblResults.Columns = "ID;Status;Value"
-    tblResults.Rows = ""
-    tblResults.ShowHeaders = TRUE
-
-    ' Initialize Timer (type 11) - non-visible
-    tmrUpdate.Interval = 500
-    tmrUpdate.Enabled = FALSE
-END SUB
-
-SUB btnOK_Click()
-    ' Demonstrate gathering form data
-    DIM result AS STRING = "Name: " & txtName.Value
-    result = result & "\nActive: " & chkActive.Value
-    result = result & "\nNotify: " & chkNotify.Value
-
-    IF optLow.Value = "1" THEN
-        result = result & "\nPriority: Low"
-    ELSEIF optMed.Value = "1" THEN
-        result = result & "\nPriority: Medium"
-    ELSE
-        result = result & "\nPriority: High"
-    ENDIF
-
-    txtEditor.Value = result
-
-    ' Start progress demo
-    prgStatus.Value = "0"
-    spnWorking.Visible = TRUE
-    tmrUpdate.Enabled = TRUE
-END SUB
-
-SUB btnCancel_Click()
-    ' Reset form
-    txtName.Value = ""
-    chkActive.Value = "0"
-    chkNotify.Value = "0"
-    optMed.Value = "1"
-    optLow.Value = "0"
-    optHigh.Value = "0"
-    prgStatus.Value = "0"
-    spnWorking.Visible = FALSE
-    tmrUpdate.Enabled = FALSE
-    txtEditor.Value = ""
-    tblResults.Rows = ""
-END SUB
-
-SUB optLow_Click()
-    optMed.Value = "0"
-    optHigh.Value = "0"
-END SUB
-
-SUB optMed_Click()
-    optLow.Value = "0"
-    optHigh.Value = "0"
-END SUB
-
-SUB optHigh_Click()
-    optLow.Value = "0"
-    optMed.Value = "0"
-END SUB
-
-SUB lstItems_Click()
-    ' Add selected item to table
-    DIM rowCount AS INTEGER = CountRows(tblResults.Rows)
-    DIM newRow AS STRING = Str(rowCount + 1) & ";Selected;" & lstItems.Value
-    IF tblResults.Rows = "" THEN
-        tblResults.Rows = newRow
-    ELSE
-        tblResults.Rows = tblResults.Rows & "|" & newRow
-    ENDIF
+    ' Set initial progress and direction
+    prgStatus.Value = 0
+    prgDirection = 5
 END SUB
 
 SUB tmrUpdate_Timer()
-    ' Animate progress bar
-    DIM current AS INTEGER = ParseInt(prgStatus.Value)
-    IF current < 100 THEN
-        current = current + 10
-        prgStatus.Value = Str(current)
+    ' Astable mode - ride the progress bar up and down
+    prgStatus.Value = prgStatus.Value + prgDirection
+
+    ' Reverse direction at boundaries
+    IF prgStatus.Value >= 100 THEN
+        prgStatus.Value = 100
+        prgDirection = -5
+    ELSEIF prgStatus.Value <= 0 THEN
+        prgStatus.Value = 0
+        prgDirection = 5
+    ENDIF
+
+    ' Debug: show current value in title
+    lblTitle.Caption = "TICK! " & Str(prgStatus.Value) & "%"
+END SUB
+
+SUB btnOK_Click()
+    ' Show current form state
+    DIM msg AS STRING = "Name: " & txtName.Text
+    IF chkActive.Checked THEN
+        msg = msg & " [Active]"
+    ENDIF
+    IF chkNotify.Checked THEN
+        msg = msg & " [Notify]"
+    ENDIF
+    IF optLow.Selected THEN
+        msg = msg & " (Low)"
+    ELSEIF optMed.Selected THEN
+        msg = msg & " (Med)"
     ELSE
+        msg = msg & " (High)"
+    ENDIF
+    IF lstItems.SelectedIndex >= 0 THEN
+        msg = msg & " Item: " & lstItems.SelectedItem
+    ENDIF
+    lblTitle.Caption = msg
+END SUB
+
+SUB btnCancel_Click()
+    ' Reset the form
+    txtName.Text = ""
+    chkActive.Checked = FALSE
+    chkNotify.Checked = FALSE
+    optLow.Selected = TRUE
+    optMed.Selected = FALSE
+    optHigh.Selected = FALSE
+    lstItems.SelectedIndex = 0
+    prgStatus.Value = 0
+    prgDirection = 5
+    lblTitle.Caption = "Form Reset!"
+END SUB
+
+SUB chkActive_Click()
+    IF chkActive.Checked THEN
+        lblTitle.Caption = "TIMER STARTING..."
+        tmrUpdate.Enabled = TRUE
+    ELSE
+        lblTitle.Caption = "TIMER STOPPED"
         tmrUpdate.Enabled = FALSE
-        spnWorking.Visible = FALSE
-        lblProgress.Caption = "Complete!"
     ENDIF
 END SUB
 
-FUNCTION CountRows(rows AS STRING) AS INTEGER
-    IF rows = "" THEN
-        RETURN 0
+SUB chkNotify_Click()
+    IF chkNotify.Checked THEN
+        lblTitle.Caption = "Notifications enabled"
+    ELSE
+        lblTitle.Caption = "Notifications disabled"
     ENDIF
-    DIM count AS INTEGER = 1
-    DIM i AS INTEGER
-    FOR i = 1 TO Len(rows)
-        IF Mid(rows, i, 1) = "|" THEN
-            count = count + 1
-        ENDIF
-    NEXT
-    RETURN count
-END FUNCTION
+END SUB
+
+SUB optLow_Click()
+    lblTitle.Caption = "Priority: Low"
+    prgStatus.Value = 25
+END SUB
+
+SUB optMed_Click()
+    lblTitle.Caption = "Priority: Medium"
+    prgStatus.Value = 50
+END SUB
+
+SUB optHigh_Click()
+    lblTitle.Caption = "Priority: High"
+    prgStatus.Value = 100
+END SUB
+
+SUB lstItems_Click()
+    IF lstItems.SelectedIndex >= 0 THEN
+        lblTitle.Caption = "Selected: " & lstItems.SelectedItem
+    ENDIF
+END SUB

@@ -18,15 +18,63 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     form.Height = 20
     form.BackColor = 7
     form.Code = "' Form1 Code - VDBTerm Demo" & Chr(10) & Chr(10)
-    form.Code = form.Code & "' This form demonstrates various VDBTerm controls" & Chr(10)
-    form.Code = form.Code & "' Use arrow keys to move controls, +/- to resize" & Chr(10)
-    form.Code = form.Code & "' Click with mouse to select and drag controls" & Chr(10) & Chr(10)
+    form.Code = form.Code & "' This form demonstrates various VDBTerm controls" & Chr(10) & Chr(10)
     form.Code = form.Code & "SUB Form_Load()" & Chr(10)
-    form.Code = form.Code & "    ' Initialize form controls" & Chr(10)
-    form.Code = form.Code & "    lblTitle.Caption = " & Chr(34) & "Welcome to VDBTerm!" & Chr(34) & Chr(10)
+    form.Code = form.Code & "    ' Initialize the title" & Chr(10)
+    form.Code = form.Code & "    lblTitle.Caption = " & Chr(34) & "Welcome to VDBTerm!" & Chr(34) & Chr(10) & Chr(10)
+    form.Code = form.Code & "    ' Add items to the listbox" & Chr(10)
+    form.Code = form.Code & "    lstItems.AddItem(" & Chr(34) & "Apple" & Chr(34) & ")" & Chr(10)
+    form.Code = form.Code & "    lstItems.AddItem(" & Chr(34) & "Banana" & Chr(34) & ")" & Chr(10)
+    form.Code = form.Code & "    lstItems.AddItem(" & Chr(34) & "Cherry" & Chr(34) & ")" & Chr(10)
+    form.Code = form.Code & "    lstItems.AddItem(" & Chr(34) & "Date" & Chr(34) & ")" & Chr(10)
+    form.Code = form.Code & "    lstItems.AddItem(" & Chr(34) & "Elderberry" & Chr(34) & ")" & Chr(10) & Chr(10)
+    form.Code = form.Code & "    ' Set default option" & Chr(10)
+    form.Code = form.Code & "    optChoice1.Selected = TRUE" & Chr(10)
     form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
     form.Code = form.Code & "SUB btnOK_Click()" & Chr(10)
-    form.Code = form.Code & "    ' Handle OK button click" & Chr(10)
+    form.Code = form.Code & "    ' Show current form state" & Chr(10)
+    form.Code = form.Code & "    DIM msg AS STRING = " & Chr(34) & "Input: " & Chr(34) & " & txtInput.Text" & Chr(10)
+    form.Code = form.Code & "    IF chkOption.Checked THEN" & Chr(10)
+    form.Code = form.Code & "        msg = msg & " & Chr(34) & " [Feature ON]" & Chr(34) & Chr(10)
+    form.Code = form.Code & "    ENDIF" & Chr(10)
+    form.Code = form.Code & "    IF optChoice1.Selected THEN" & Chr(10)
+    form.Code = form.Code & "        msg = msg & " & Chr(34) & " (Option A)" & Chr(34) & Chr(10)
+    form.Code = form.Code & "    ELSE" & Chr(10)
+    form.Code = form.Code & "        msg = msg & " & Chr(34) & " (Option B)" & Chr(34) & Chr(10)
+    form.Code = form.Code & "    ENDIF" & Chr(10)
+    form.Code = form.Code & "    IF lstItems.SelectedIndex >= 0 THEN" & Chr(10)
+    form.Code = form.Code & "        msg = msg & " & Chr(34) & " Fruit: " & Chr(34) & " & lstItems.SelectedItem" & Chr(10)
+    form.Code = form.Code & "    ENDIF" & Chr(10)
+    form.Code = form.Code & "    lblTitle.Caption = msg" & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB btnCancel_Click()" & Chr(10)
+    form.Code = form.Code & "    ' Reset the form" & Chr(10)
+    form.Code = form.Code & "    txtInput.Text = " & Chr(34) & Chr(34) & Chr(10)
+    form.Code = form.Code & "    chkOption.Checked = FALSE" & Chr(10)
+    form.Code = form.Code & "    optChoice1.Selected = TRUE" & Chr(10)
+    form.Code = form.Code & "    optChoice2.Selected = FALSE" & Chr(10)
+    form.Code = form.Code & "    lstItems.SelectedIndex = 0" & Chr(10)
+    form.Code = form.Code & "    lblTitle.Caption = " & Chr(34) & "Form Reset!" & Chr(34) & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB chkOption_Click()" & Chr(10)
+    form.Code = form.Code & "    ' Toggle feedback" & Chr(10)
+    form.Code = form.Code & "    IF chkOption.Checked THEN" & Chr(10)
+    form.Code = form.Code & "        lblTitle.Caption = " & Chr(34) & "Feature Enabled!" & Chr(34) & Chr(10)
+    form.Code = form.Code & "    ELSE" & Chr(10)
+    form.Code = form.Code & "        lblTitle.Caption = " & Chr(34) & "Feature Disabled" & Chr(34) & Chr(10)
+    form.Code = form.Code & "    ENDIF" & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB optChoice1_Click()" & Chr(10)
+    form.Code = form.Code & "    lblTitle.Caption = " & Chr(34) & "Option A selected" & Chr(34) & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB optChoice2_Click()" & Chr(10)
+    form.Code = form.Code & "    lblTitle.Caption = " & Chr(34) & "Option B selected" & Chr(34) & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB lstItems_Click()" & Chr(10)
+    form.Code = form.Code & "    ' Show selected item" & Chr(10)
+    form.Code = form.Code & "    IF lstItems.SelectedIndex >= 0 THEN" & Chr(10)
+    form.Code = form.Code & "        lblTitle.Caption = " & Chr(34) & "Selected: " & Chr(34) & " & lstItems.SelectedItem" & Chr(10)
+    form.Code = form.Code & "    ENDIF" & Chr(10)
     form.Code = form.Code & "END SUB" & Chr(10)
     form.NextCtrlID = 1
 
@@ -578,6 +626,11 @@ FUNCTION ParseControlObject(js AS STRING) AS VDBControl
         ctrl.ShowPercentage = TRUE
     ELSEIF ctrl.CtlType = CTRL_TABLE THEN
         ctrl.ShowHeaders = TRUE
+    ELSEIF ctrl.CtlType = CTRL_TIMER THEN
+        ctrl.Interval = ExtractJSONInt(js, "interval")
+        IF ctrl.Interval <= 0 THEN
+            ctrl.Interval = 1000
+        ENDIF
     ENDIF
 
     RETURN ctrl
