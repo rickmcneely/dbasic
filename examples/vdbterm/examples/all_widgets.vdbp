@@ -7,7 +7,6 @@
       "caption": "All Widgets Showcase",
       "width": 80,
       "height": 24,
-      "code": "' All Widgets Demo Code\n\nDIM prgDirection AS INTEGER\n\nSUB Form_Load()\n    ' Initialize title\n    lblTitle.Caption = \"VDBTerm Widget Showcase\"\n    \n    ' Add items to listbox\n    lstItems.AddItem(\"Apple\")\n    lstItems.AddItem(\"Banana\")\n    lstItems.AddItem(\"Cherry\")\n    lstItems.AddItem(\"Date\")\n    lstItems.AddItem(\"Elderberry\")\n    \n    ' Set default option\n    optLow.Selected = TRUE\n    \n    ' Set initial progress and direction\n    prgStatus.Value = 0\n    prgDirection = 5\n    \n    ' Start the timer (astable mode)\n    tmrUpdate.Enabled = TRUE\nEND SUB\n\nSUB tmrUpdate_Timer()\n    ' Astable mode - ride the progress bar up and down\n    prgStatus.Value = prgStatus.Value + prgDirection\n    \n    ' Reverse direction at boundaries\n    IF prgStatus.Value >= 100 THEN\n        prgStatus.Value = 100\n        prgDirection = -5\n    ELSEIF prgStatus.Value <= 0 THEN\n        prgStatus.Value = 0\n        prgDirection = 5\n    ENDIF\nEND SUB\n\nSUB btnOK_Click()\n    ' Show current form state\n    DIM msg AS STRING = \"Name: \" & txtName.Text\n    IF chkActive.Checked THEN\n        msg = msg & \" [Active]\"\n    ENDIF\n    IF chkNotify.Checked THEN\n        msg = msg & \" [Notify]\"\n    ENDIF\n    IF optLow.Selected THEN\n        msg = msg & \" (Low)\"\n    ELSEIF optMed.Selected THEN\n        msg = msg & \" (Med)\"\n    ELSE\n        msg = msg & \" (High)\"\n    ENDIF\n    IF lstItems.SelectedIndex >= 0 THEN\n        msg = msg & \" Item: \" & lstItems.SelectedItem\n    ENDIF\n    lblTitle.Caption = msg\nEND SUB\n\nSUB btnCancel_Click()\n    ' Reset the form\n    txtName.Text = \"\"\n    chkActive.Checked = FALSE\n    chkNotify.Checked = FALSE\n    optLow.Selected = TRUE\n    optMed.Selected = FALSE\n    optHigh.Selected = FALSE\n    lstItems.SelectedIndex = 0\n    prgStatus.Value = 0\n    prgDirection = 5\n    lblTitle.Caption = \"Form Reset!\"\nEND SUB\n\nSUB chkActive_Click()\n    IF chkActive.Checked THEN\n        lblTitle.Caption = \"Active: ON\"\n    ELSE\n        lblTitle.Caption = \"Active: OFF\"\n    ENDIF\nEND SUB\n\nSUB chkNotify_Click()\n    IF chkNotify.Checked THEN\n        lblTitle.Caption = \"Notifications enabled\"\n    ELSE\n        lblTitle.Caption = \"Notifications disabled\"\n    ENDIF\nEND SUB\n\nSUB optLow_Click()\n    lblTitle.Caption = \"Priority: Low\"\n    prgStatus.Value = 25\nEND SUB\n\nSUB optMed_Click()\n    lblTitle.Caption = \"Priority: Medium\"\n    prgStatus.Value = 50\nEND SUB\n\nSUB optHigh_Click()\n    lblTitle.Caption = \"Priority: High\"\n    prgStatus.Value = 100\nEND SUB\n\nSUB lstItems_Click()\n    IF lstItems.SelectedIndex >= 0 THEN\n        lblTitle.Caption = \"Selected: \" & lstItems.SelectedItem\n    ENDIF\nEND SUB\n",
       "controls": [
         {
           "id": 1,
@@ -164,7 +163,7 @@
           "type": 1,
           "name": "btnOK",
           "caption": "OK",
-          "x": 60,
+          "x": 59,
           "y": 1,
           "width": 8,
           "height": 1
@@ -174,7 +173,7 @@
           "type": 1,
           "name": "btnCancel",
           "caption": "Cancel",
-          "x": 70,
+          "x": 69,
           "y": 1,
           "width": 8,
           "height": 1
@@ -187,8 +186,7 @@
           "x": 75,
           "y": 21,
           "width": 3,
-          "height": 1,
-          "interval": 200
+          "height": 1
         },
         {
           "id": 2,
@@ -233,5 +231,6 @@
       ]
     }
   ],
-  "modules": []
+  "modules": [
+  ]
 }
