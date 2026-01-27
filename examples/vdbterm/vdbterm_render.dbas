@@ -793,8 +793,16 @@ FUNCTION RenderControlChar(ctrl AS VDBControl, localRow AS INTEGER, localCol AS 
             ENDIF
         ENDIF
     ELSEIF ctrl.CtlType = CTRL_LABEL THEN
-        IF localCol < Len(ctrl.Caption) THEN
-            RETURN Mid(ctrl.Caption, localCol + 1, 1)
+        DIM labelLen AS INTEGER = Len(ctrl.Caption)
+        DIM textStart AS INTEGER = 0
+        IF ctrl.Justification = JUSTIFY_CENTER THEN
+            textStart = (ctrl.Width - labelLen) / 2
+        ELSEIF ctrl.Justification = JUSTIFY_RIGHT THEN
+            textStart = ctrl.Width - labelLen
+        ENDIF
+        DIM textCol AS INTEGER = localCol - textStart
+        IF textCol >= 0 AND textCol < labelLen THEN
+            RETURN Mid(ctrl.Caption, textCol + 1, 1)
         ENDIF
         RETURN " "
     ELSEIF ctrl.CtlType = CTRL_TEXTBOX THEN
