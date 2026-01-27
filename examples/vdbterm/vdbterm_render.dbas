@@ -1591,7 +1591,7 @@ FUNCTION GetDropdownLines(m AS VDBTermModel) AS []STRING
     ELSEIF m.MenuOpen = MENU_OPTIONS THEN
         lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
         lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Environment       ", 1, m.MenuIndex = 0) & styleDropdown.Render("│"))
-        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Editor            ", 1, m.MenuIndex = 1) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Editor            ", 2, m.MenuIndex = 1) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
         lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Colors            ", 1, m.MenuIndex = 3) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))

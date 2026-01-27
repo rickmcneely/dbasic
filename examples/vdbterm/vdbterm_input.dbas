@@ -210,7 +210,95 @@ FUNCTION HandleMenuInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cm
         RETURN ExecuteMenuItem(m)
     ENDIF
 
+    ' Check for hotkey selection (single character keys)
+    IF Len(key) = 1 THEN
+        DIM hotKeyIdx AS INTEGER = GetMenuHotkeyIndex(m.MenuOpen, key)
+        IF hotKeyIdx >= 0 THEN
+            m.MenuIndex = hotKeyIdx
+            RETURN ExecuteMenuItem(m)
+        ENDIF
+    ENDIF
+
     RETURN m, NIL
+END FUNCTION
+
+' Get menu item index for a hotkey character, returns -1 if not found
+FUNCTION GetMenuHotkeyIndex(menu AS INTEGER, key AS STRING) AS INTEGER
+    DIM upperKey AS STRING = UCase(key)
+
+    IF menu = MENU_FILE THEN
+        IF upperKey = "N" THEN
+            RETURN 0  ' New Project
+        ELSEIF upperKey = "O" THEN
+            RETURN 1  ' Open Project
+        ELSEIF upperKey = "S" THEN
+            RETURN 2  ' Save Project
+        ELSEIF upperKey = "F" THEN
+            RETURN 4  ' New Form
+        ELSEIF upperKey = "M" THEN
+            RETURN 5  ' New Module
+        ELSEIF upperKey = "X" THEN
+            RETURN 7  ' Exit
+        ENDIF
+    ELSEIF menu = MENU_EDIT THEN
+        IF upperKey = "T" THEN
+            RETURN 0  ' Cut
+        ELSEIF upperKey = "C" THEN
+            RETURN 1  ' Copy
+        ELSEIF upperKey = "P" THEN
+            RETURN 2  ' Paste
+        ELSEIF upperKey = "A" THEN
+            RETURN 4  ' Select All
+        ELSEIF upperKey = "D" THEN
+            RETURN 5  ' Delete
+        ELSEIF upperKey = "M" THEN
+            RETURN 7  ' Menu Editor
+        ENDIF
+    ELSEIF menu = MENU_VIEW THEN
+        IF upperKey = "F" THEN
+            RETURN 0  ' Form View
+        ELSEIF upperKey = "C" THEN
+            RETURN 1  ' Code View
+        ELSEIF upperKey = "G" THEN
+            RETURN 3  ' Show Grid
+        ELSEIF upperKey = "L" THEN
+            RETURN 4  ' Line Numbers
+        ENDIF
+    ELSEIF menu = MENU_RUN THEN
+        IF upperKey = "R" THEN
+            RETURN 0  ' Run
+        ELSEIF upperKey = "B" THEN
+            RETURN 1  ' Build
+        ELSEIF upperKey = "S" THEN
+            RETURN 3  ' Set Startup
+        ENDIF
+    ELSEIF menu = MENU_DEBUG THEN
+        IF upperKey = "S" THEN
+            RETURN 0  ' Step
+        ELSEIF upperKey = "B" THEN
+            RETURN 1  ' Breakpoint
+        ELSEIF upperKey = "W" THEN
+            RETURN 2  ' Watch
+        ELSEIF upperKey = "C" THEN
+            RETURN 4  ' Clear All
+        ENDIF
+    ELSEIF menu = MENU_OPTIONS THEN
+        IF upperKey = "E" THEN
+            RETURN 0  ' Environment (first match)
+        ELSEIF upperKey = "D" THEN
+            RETURN 1  ' Editor (use 'd' since 'E' is taken)
+        ELSEIF upperKey = "C" THEN
+            RETURN 3  ' Colors
+        ENDIF
+    ELSEIF menu = MENU_HELP THEN
+        IF upperKey = "H" THEN
+            RETURN 0  ' Help
+        ELSEIF upperKey = "A" THEN
+            RETURN 1  ' About
+        ENDIF
+    ENDIF
+
+    RETURN -1
 END FUNCTION
 
 FUNCTION GetMenuItemCount(menu AS INTEGER) AS INTEGER
