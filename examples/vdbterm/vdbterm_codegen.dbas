@@ -373,9 +373,9 @@ FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
     code = code & "    DIM mouseOk AS BOOLEAN" & Chr(10)
     code = code & "    mouseMsg, mouseOk = msg.(tea.MouseMsg)" & Chr(10)
     code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionPress AND mouseMsg.Button = tea.MouseButtonLeft THEN" & Chr(10)
-    code = code & "        ' Adjust for form title (1 row) and border (1 top, 1 left)" & Chr(10)
-    code = code & "        DIM mx AS INTEGER = mouseMsg.X - 1" & Chr(10)
-    code = code & "        DIM my AS INTEGER = mouseMsg.Y - 2" & Chr(10)
+    code = code & "        ' Adjust for form border (title embedded in top border)" & Chr(10)
+    code = code & "        DIM mx AS INTEGER = mouseMsg.X - 1  ' left border" & Chr(10)
+    code = code & "        DIM my AS INTEGER = mouseMsg.Y - 1  ' top border with title" & Chr(10)
     code = code & Chr(10)
 
     ' Generate click detection for each clickable control
