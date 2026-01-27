@@ -129,14 +129,16 @@ FUNCTION GetFocusableControls(form AS VDBForm) AS []STRING
     RETURN focusable
 END FUNCTION
 
-' Generate Init() method
+' Generate Init() method and InitModel() function
 FUNCTION GenerateInit(form AS VDBForm) AS STRING
     DIM code AS STRING = ""
     DIM formTypeName AS STRING = form.Name & "Model"
     DIM focusable AS []STRING = GetFocusableControls(form)
 
-    code = code & "' Initialize form and all controls" & Chr(10)
-    code = code & "FUNCTION (m AS " & formTypeName & ") Init() AS tea.Cmd" & Chr(10)
+    ' Generate InitModel function that returns an initialized model
+    code = code & "' Create and initialize the form model" & Chr(10)
+    code = code & "FUNCTION Init" & form.Name & "Model() AS " & formTypeName & Chr(10)
+    code = code & "    DIM m AS " & formTypeName & Chr(10)
     code = code & "    ' Set form dimensions" & Chr(10)
     code = code & "    m.Width = " & Str(form.Width) & Chr(10)
     code = code & "    m.Height = " & Str(form.Height) & Chr(10)
@@ -287,6 +289,12 @@ FUNCTION GenerateInit(form AS VDBForm) AS STRING
     code = code & "    ' Call user Form_Load" & Chr(10)
     code = code & "    m = " & form.Name & "_Load(m)" & Chr(10)
     code = code & Chr(10)
+    code = code & "    RETURN m" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10) & Chr(10)
+
+    ' Generate the BubbleTea Init() method - just returns the initial command
+    code = code & "' BubbleTea Init method - returns initial command" & Chr(10)
+    code = code & "FUNCTION (m AS " & formTypeName & ") Init() AS tea.Cmd" & Chr(10)
     code = code & "    RETURN " & returnCmd & Chr(10)
     code = code & "END FUNCTION" & Chr(10) & Chr(10)
 
@@ -455,116 +463,157 @@ FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
     RETURN code
 END FUNCTION
 
-' Generate View() method with layout
+' Generate View() method with proper absolute positioning
+' Builds each row by composing all controls at their X positions
 FUNCTION GenerateView(form AS VDBForm) AS STRING
     DIM code AS STRING = ""
     DIM formTypeName AS STRING = form.Name & "Model"
 
     code = code & "' Render the form" & Chr(10)
     code = code & "FUNCTION (m AS " & formTypeName & ") View() AS STRING" & Chr(10)
-    code = code & "    DIM view AS STRING = " & Chr(34) & Chr(34) & Chr(10)
     code = code & Chr(10)
 
-    ' Create form buffer
-    code = code & "    ' Create buffer for form layout" & Chr(10)
-    code = code & "    DIM lines AS []STRING" & Chr(10)
-    code = code & "    DIM i AS INTEGER" & Chr(10)
-    code = code & "    FOR i = 0 TO m.Height - 1" & Chr(10)
-    code = code & "        lines = APPEND(lines, strings.Repeat(" & Chr(34) & " " & Chr(34) & ", m.Width))" & Chr(10)
+    ' Build content row by row, composing all controls at their positions
+    code = code & "    ' Build each row by composing controls at their X positions" & Chr(10)
+    code = code & "    DIM contentRows AS []STRING" & Chr(10)
+    code = code & "    DIM y AS INTEGER" & Chr(10)
+    code = code & "    FOR y = 0 TO m.Height - 1" & Chr(10)
+    code = code & "        DIM row AS STRING = BuildRow(m, y, m.Width)" & Chr(10)
+    code = code & "        contentRows = APPEND(contentRows, row)" & Chr(10)
     code = code & "    NEXT" & Chr(10)
     code = code & Chr(10)
-
-    ' Render form border
-    code = code & "    ' Form border style" & Chr(10)
-    code = code & "    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Width(m.Width).Height(m.Height)" & Chr(10)
+    code = code & "    DIM content AS STRING = strings.Join(contentRows, " & Chr(34) & Chr(10) & Chr(34) & ")" & Chr(10)
     code = code & Chr(10)
 
-    ' Render controls - sorted by ZOrder for proper layering
-    code = code & "    ' Render controls" & Chr(10)
-    code = code & "    DIM content AS STRING = " & Chr(34) & Chr(34) & Chr(10)
+    ' Apply form border
+    code = code & "    ' Apply form border style" & Chr(10)
+    code = code & "    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & "))" & Chr(10)
     code = code & Chr(10)
-
-    ' First render Frame controls (background)
-    DIM i AS INTEGER
-    FOR i = 0 TO Len(form.Controls) - 1
-        DIM ctrl AS VDBControl = form.Controls[i]
-        IF ctrl.CtlType = CTRL_FRAME THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (Frame)" & Chr(10)
-            code = code & "    content = content & RenderFrame(m." & ctrl.CtlName & "_Caption, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ")" & Chr(10)
-            code = code & Chr(10)
-        ENDIF
-    NEXT
-
-    ' Then render other controls
-    FOR i = 0 TO Len(form.Controls) - 1
-        DIM ctrl AS VDBControl = form.Controls[i]
-
-        IF ctrl.CtlType = CTRL_LABEL THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (Label)" & Chr(10)
-            code = code & "    content = content & RenderLabel(m." & ctrl.CtlName & "_Text, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Width) & ")" & Chr(10)
-            code = code & Chr(10)
-        ELSEIF ctrl.CtlType = CTRL_TEXTBOX THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (TextBox)" & Chr(10)
-            code = code & "    content = content & RenderTextInput(m." & ctrl.CtlName & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ")" & Chr(10)
-            code = code & Chr(10)
-        ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (Button)" & Chr(10)
-            code = code & "    content = content & RenderButton(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)" & Chr(10)
-            code = code & Chr(10)
-        ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (CheckBox)" & Chr(10)
-            code = code & "    content = content & RenderCheckBox(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", m." & ctrl.CtlName & "_Checked, m." & ctrl.CtlName & "_Focused)" & Chr(10)
-            code = code & Chr(10)
-        ELSEIF ctrl.CtlType = CTRL_OPTION THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (Option)" & Chr(10)
-            code = code & "    content = content & RenderOption(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", m." & ctrl.CtlName & "_Selected, m." & ctrl.CtlName & "_Focused)" & Chr(10)
-            code = code & Chr(10)
-        ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (ListBox)" & Chr(10)
-            code = code & "    content = content & RenderListBox(m." & ctrl.CtlName & ", " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ")" & Chr(10)
-            code = code & Chr(10)
-        ELSEIF ctrl.CtlType = CTRL_HSCROLL THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (HScrollBar)" & Chr(10)
-            code = code & "    content = content & RenderHScroll(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Width) & ")" & Chr(10)
-            code = code & Chr(10)
-        ELSEIF ctrl.CtlType = CTRL_VSCROLL THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (VScrollBar)" & Chr(10)
-            code = code & "    content = content & RenderVScroll(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Height) & ")" & Chr(10)
-            code = code & Chr(10)
-        ELSEIF ctrl.CtlType = CTRL_PROGRESS THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (Progress)" & Chr(10)
-            code = code & "    content = content & RenderProgress(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Total, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ", " & Str(ctrl.Width) & ")" & Chr(10)
-            code = code & Chr(10)
-        ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
-            code = code & "    ' Render " & ctrl.CtlName & " (Spinner)" & Chr(10)
-            code = code & "    IF m." & ctrl.CtlName & "_Visible THEN" & Chr(10)
-            code = code & "        content = content & RenderSpinner(m." & ctrl.CtlName & "_Style, " & Str(ctrl.X) & ", " & Str(ctrl.Y) & ")" & Chr(10)
-            code = code & "    ENDIF" & Chr(10)
-            code = code & Chr(10)
-        ENDIF
-    NEXT
-
-    ' Apply border and return
-    code = code & "    ' Apply border and title" & Chr(10)
+    code = code & "    ' Render title and bordered content" & Chr(10)
     code = code & "    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Bold(TRUE)" & Chr(10)
     code = code & "    DIM titleRendered AS STRING = titleStyle.Render(m.Caption)" & Chr(10)
     code = code & "    DIM borderRendered AS STRING = borderStyle.Render(content)" & Chr(10)
-    code = code & "    view = lipgloss.JoinVertical(lipgloss.Left, titleRendered, borderRendered)" & Chr(10)
     code = code & Chr(10)
-    code = code & "    RETURN view" & Chr(10)
+    code = code & "    RETURN lipgloss.JoinVertical(lipgloss.Left, titleRendered, borderRendered)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10) & Chr(10)
+
+    ' Generate BuildRow function that composes all controls for a given row
+    code = code & GenerateBuildRowFunction(form)
+
+    RETURN code
+END FUNCTION
+
+' Generate the BuildRow function that composes controls for each row
+FUNCTION GenerateBuildRowFunction(form AS VDBForm) AS STRING
+    DIM code AS STRING = ""
+    DIM formTypeName AS STRING = form.Name & "Model"
+
+    code = code & "' Build a single row by placing all controls at their X positions" & Chr(10)
+    code = code & "FUNCTION BuildRow(m AS " & formTypeName & ", y AS INTEGER, rowWidth AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    ' Collect all control segments for this row with their X positions" & Chr(10)
+    code = code & "    DIM segments AS []RowSegment" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate segment collection for each control
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+
+        IF ctrl.CtlType = CTRL_FRAME THEN
+            ' Frame spans multiple rows - use separate left/right borders for middle rows to allow interior controls
+            code = code & "    ' " & ctrl.CtlName & " (Frame) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
+            code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
+            code = code & "        ' Top border" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetFrameTopRow(m." & ctrl.CtlName & "_Caption, " & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "    ELSEIF y = " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
+            code = code & "        ' Bottom border" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetFrameBottomRow(" & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "    ELSEIF y > " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
+            code = code & "        ' Middle rows - left and right borders separately (Unicode box drawing)" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: " & Chr(34) & "│" & Chr(34) & "})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X + ctrl.Width - 1) & ", Content: " & Chr(34) & "│" & Chr(34) & "})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_LABEL THEN
+            code = code & "    ' " & ctrl.CtlName & " (Label) at y=" & Str(ctrl.Y) & Chr(10)
+            code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderLabel(m." & ctrl.CtlName & "_Text, " & Str(ctrl.Width) & ", " & Str(ctrl.Justification) & ")})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_TEXTBOX THEN
+            code = code & "    ' " & ctrl.CtlName & " (TextBox) at y=" & Str(ctrl.Y) & Chr(10)
+            code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderTextInput(m." & ctrl.CtlName & ", " & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
+            IF ctrl.Border AND ctrl.Height >= 3 THEN
+                ' Bordered button spans multiple rows
+                code = code & "    ' " & ctrl.CtlName & " (Bordered Button) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
+                code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonTopRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+                code = code & "    ELSEIF y = " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonBottomRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+                code = code & "    ELSEIF y > " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonMiddleRow(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+                code = code & "    ENDIF" & Chr(10)
+            ELSE
+                ' Flat button (single row, centered text)
+                code = code & "    ' " & ctrl.CtlName & " (Flat Button) at y=" & Str(ctrl.Y) & Chr(10)
+                code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderFlatButton(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+                code = code & "    ENDIF" & Chr(10)
+            ENDIF
+        ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
+            code = code & "    ' " & ctrl.CtlName & " (CheckBox) at y=" & Str(ctrl.Y) & Chr(10)
+            code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderCheckBox(" & Chr(34) & ctrl.Caption & Chr(34) & ", m." & ctrl.CtlName & "_Checked, m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_OPTION THEN
+            code = code & "    ' " & ctrl.CtlName & " (Option) at y=" & Str(ctrl.Y) & Chr(10)
+            code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderOption(" & Chr(34) & ctrl.Caption & Chr(34) & ", m." & ctrl.CtlName & "_Selected, m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
+            code = code & "    ' " & ctrl.CtlName & " (ListBox) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
+            code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetListBoxRow(m." & ctrl.CtlName & ", " & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ", y - " & Str(ctrl.Y) & ")})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_HSCROLL THEN
+            code = code & "    ' " & ctrl.CtlName & " (HScrollBar) at y=" & Str(ctrl.Y) & Chr(10)
+            code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderHScroll(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_VSCROLL THEN
+            code = code & "    ' " & ctrl.CtlName & " (VScrollBar) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
+            code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetVScrollRow(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.Height) & ", y - " & Str(ctrl.Y) & ")})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_PROGRESS THEN
+            code = code & "    ' " & ctrl.CtlName & " (Progress) at y=" & Str(ctrl.Y) & Chr(10)
+            code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderProgress(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Total, " & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
+            code = code & "    ' " & ctrl.CtlName & " (Spinner) at y=" & Str(ctrl.Y) & Chr(10)
+            code = code & "    IF y = " & Str(ctrl.Y) & " AND m." & ctrl.CtlName & "_Visible THEN" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderSpinner(m." & ctrl.CtlName & "_Style)})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ENDIF
+    NEXT
+
+    code = code & Chr(10)
+    code = code & "    ' Compose the row from segments sorted by X position" & Chr(10)
+    code = code & "    RETURN ComposeRow(segments, rowWidth)" & Chr(10)
     code = code & "END FUNCTION" & Chr(10) & Chr(10)
 
     RETURN code
 END FUNCTION
 
-' Generate control render helper functions
+' Generate control render helper functions for row-based composition
 FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
     DIM code AS STRING = ""
 
     ' Scan all forms to determine what control types are used
     DIM hasTextBox AS BOOLEAN = FALSE
     DIM hasListBox AS BOOLEAN = FALSE
-    DIM hasLabel AS BOOLEAN = FALSE
     DIM hasButton AS BOOLEAN = FALSE
     DIM hasCheckBox AS BOOLEAN = FALSE
     DIM hasOption AS BOOLEAN = FALSE
@@ -584,8 +633,6 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
                 hasTextBox = TRUE
             ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
                 hasListBox = TRUE
-            ELSEIF ctrl.CtlType = CTRL_LABEL THEN
-                hasLabel = TRUE
             ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
                 hasButton = TRUE
             ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
@@ -607,129 +654,262 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
     NEXT
 
     code = code & "' ============================================" & Chr(10)
-    code = code & "' Render Helper Functions" & Chr(10)
+    code = code & "' Row Composition System" & Chr(10)
     code = code & "' ============================================" & Chr(10)
     code = code & Chr(10)
 
-    ' RepeatChar helper (uses fmt.Sprintf to avoid unused import error)
-    code = code & "FUNCTION RepeatChar(ch AS STRING, count AS INTEGER) AS STRING" & Chr(10)
-    code = code & "    IF count <= 0 THEN" & Chr(10)
-    code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
+    ' RowSegment type for tracking content at positions
+    code = code & "' Segment of content at a specific X position in a row" & Chr(10)
+    code = code & "TYPE RowSegment" & Chr(10)
+    code = code & "    DIM X AS INTEGER       ' X position in the row" & Chr(10)
+    code = code & "    DIM Content AS STRING  ' The content (may contain ANSI codes)" & Chr(10)
+    code = code & "END TYPE" & Chr(10)
+    code = code & Chr(10)
+
+    ' ComposeRow - builds a row from segments sorted by X position
+    code = code & "' Compose a row from segments, filling gaps with spaces" & Chr(10)
+    code = code & "FUNCTION ComposeRow(segments AS []RowSegment, rowWidth AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    IF Len(segments) = 0 THEN" & Chr(10)
+    code = code & "        RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", rowWidth)" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
-    code = code & "    RETURN fmt.Sprintf(" & Chr(34) & "%s" & Chr(34) & ", strings.Repeat(ch, count))" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Sort segments by X position (simple bubble sort)" & Chr(10)
+    code = code & "    DIM i AS INTEGER" & Chr(10)
+    code = code & "    DIM j AS INTEGER" & Chr(10)
+    code = code & "    FOR i = 0 TO Len(segments) - 2" & Chr(10)
+    code = code & "        FOR j = 0 TO Len(segments) - 2 - i" & Chr(10)
+    code = code & "            IF segments[j].X > segments[j + 1].X THEN" & Chr(10)
+    code = code & "                DIM temp AS RowSegment = segments[j]" & Chr(10)
+    code = code & "                segments[j] = segments[j + 1]" & Chr(10)
+    code = code & "                segments[j + 1] = temp" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        NEXT" & Chr(10)
+    code = code & "    NEXT" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Build the row by placing segments at their positions" & Chr(10)
+    code = code & "    DIM row AS STRING = " & Chr(34) & Chr(34) & Chr(10)
+    code = code & "    DIM currentX AS INTEGER = 0" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    FOR i = 0 TO Len(segments) - 1" & Chr(10)
+    code = code & "        DIM seg AS RowSegment = segments[i]" & Chr(10)
+    code = code & "        ' Add spaces to reach segment position" & Chr(10)
+    code = code & "        IF seg.X > currentX THEN" & Chr(10)
+    code = code & "            row = row & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", seg.X - currentX)" & Chr(10)
+    code = code & "            currentX = seg.X" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "        ' Add the segment content" & Chr(10)
+    code = code & "        row = row & seg.Content" & Chr(10)
+    code = code & "        ' Update currentX using visual width (handles ANSI codes)" & Chr(10)
+    code = code & "        currentX = currentX + lipgloss.Width(seg.Content)" & Chr(10)
+    code = code & "    NEXT" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Pad to row width if needed" & Chr(10)
+    code = code & "    IF currentX < rowWidth THEN" & Chr(10)
+    code = code & "        row = row & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", rowWidth - currentX)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    RETURN row" & Chr(10)
     code = code & "END FUNCTION" & Chr(10)
     code = code & Chr(10)
 
-    ' RenderLabel
-    IF hasLabel THEN
-        code = code & "FUNCTION RenderLabel(text AS STRING, x AS INTEGER, y AS INTEGER, width AS INTEGER) AS STRING" & Chr(10)
-        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Width(width)" & Chr(10)
-        code = code & "    DIM rendered AS STRING = style.Render(text)" & Chr(10)
-        code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
-        code = code & "END FUNCTION" & Chr(10)
-        code = code & Chr(10)
-    ENDIF
+    ' TruncateToWidth helper
+    code = code & "' Truncate text to specified width" & Chr(10)
+    code = code & "FUNCTION TruncateToWidth(text AS STRING, width AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    IF Len(text) <= width THEN" & Chr(10)
+    code = code & "        RETURN text" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    RETURN Left(text, width)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' CenterText helper
+    code = code & "' Center text within specified width" & Chr(10)
+    code = code & "FUNCTION CenterText(text AS STRING, width AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM textLen AS INTEGER = Len(text)" & Chr(10)
+    code = code & "    IF textLen >= width THEN" & Chr(10)
+    code = code & "        RETURN Left(text, width)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM padding AS INTEGER = (width - textLen) / 2" & Chr(10)
+    code = code & "    DIM rightPad AS INTEGER = width - textLen - padding" & Chr(10)
+    code = code & "    RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", padding) & text & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", rightPad)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' RenderLabel - render label with justification
+    code = code & "' Render label with justification (0=left, 1=center, 2=right)" & Chr(10)
+    code = code & "FUNCTION RenderLabel(text AS STRING, width AS INTEGER, justify AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM textLen AS INTEGER = Len(text)" & Chr(10)
+    code = code & "    IF textLen > width THEN" & Chr(10)
+    code = code & "        text = Left(text, width)" & Chr(10)
+    code = code & "        textLen = width" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    IF justify = 1 THEN" & Chr(10)
+    code = code & "        ' Center" & Chr(10)
+    code = code & "        RETURN CenterText(text, width)" & Chr(10)
+    code = code & "    ELSEIF justify = 2 THEN" & Chr(10)
+    code = code & "        ' Right" & Chr(10)
+    code = code & "        RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width - textLen) & text" & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        ' Left (default)" & Chr(10)
+    code = code & "        RETURN text & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width - textLen)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' ============================================
+    ' Single-row render functions
+    ' ============================================
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Control Render Functions" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
 
     ' RenderTextInput
     IF hasTextBox THEN
-        code = code & "FUNCTION RenderTextInput(ti AS textinput.Model, x AS INTEGER, y AS INTEGER) AS STRING" & Chr(10)
-        code = code & "    DIM rendered AS STRING = ti.View()" & Chr(10)
-        code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+        code = code & "' Render text input (returns styled string)" & Chr(10)
+        code = code & "FUNCTION RenderTextInput(ti AS textinput.Model, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    DIM view AS STRING = ti.View()" & Chr(10)
+        code = code & "    DIM lines AS []STRING = strings.Split(view, " & Chr(34) & Chr(10) & Chr(34) & ")" & Chr(10)
+        code = code & "    IF Len(lines) > 0 THEN" & Chr(10)
+        code = code & "        RETURN lines[0]" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    RETURN " & Chr(34) & Chr(34) & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
-    ' RenderButton
+    ' Button rendering functions
     IF hasButton THEN
-        code = code & "FUNCTION RenderButton(caption AS STRING, x AS INTEGER, y AS INTEGER, width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+        ' Flat button (single row, centered text with background)
+        code = code & "' Render flat button with centered text" & Chr(10)
+        code = code & "FUNCTION RenderFlatButton(caption AS STRING, width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "    DIM btnText AS STRING = CenterText(caption, width)" & Chr(10)
         code = code & "    DIM style AS lipgloss.Style" & Chr(10)
         code = code & "    IF focused THEN" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "230" & Chr(34) & ")).Bold(TRUE).Padding(0, 1).Width(width)" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "230" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
         code = code & "    ELSE" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "0" & Chr(34) & ")).Padding(0, 1).Width(width)" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "0" & Chr(34) & "))" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    DIM rendered AS STRING = style.Render(" & Chr(34) & "[ " & Chr(34) & " & caption & " & Chr(34) & " ]" & Chr(34) & ")" & Chr(10)
-        code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+        code = code & "    RETURN style.Render(btnText)" & Chr(10)
+        code = code & "END FUNCTION" & Chr(10)
+        code = code & Chr(10)
+
+        ' Bordered button - top row
+        code = code & "' Get top row of bordered button" & Chr(10)
+        code = code & "FUNCTION GetButtonTopRow(width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "    DIM border AS STRING = " & Chr(34) & "┌" & Chr(34) & " & strings.Repeat(" & Chr(34) & "─" & Chr(34) & ", width - 2) & " & Chr(34) & "┐" & Chr(34) & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style" & Chr(10)
+        code = code & "    IF focused THEN" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
+        code = code & "    ELSE" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & "))" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    RETURN style.Render(border)" & Chr(10)
+        code = code & "END FUNCTION" & Chr(10)
+        code = code & Chr(10)
+
+        ' Bordered button - middle row with caption
+        code = code & "' Get middle row of bordered button with centered caption" & Chr(10)
+        code = code & "FUNCTION GetButtonMiddleRow(caption AS STRING, width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "    DIM innerWidth AS INTEGER = width - 2" & Chr(10)
+        code = code & "    DIM centeredText AS STRING = CenterText(caption, innerWidth)" & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style" & Chr(10)
+        code = code & "    DIM borderStyle AS lipgloss.Style" & Chr(10)
+        code = code & "    IF focused THEN" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "230" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
+        code = code & "        borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
+        code = code & "    ELSE" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "236" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "255" & Chr(34) & "))" & Chr(10)
+        code = code & "        borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & "))" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    RETURN borderStyle.Render(" & Chr(34) & "│" & Chr(34) & ") & style.Render(centeredText) & borderStyle.Render(" & Chr(34) & "│" & Chr(34) & ")" & Chr(10)
+        code = code & "END FUNCTION" & Chr(10)
+        code = code & Chr(10)
+
+        ' Bordered button - bottom row
+        code = code & "' Get bottom row of bordered button" & Chr(10)
+        code = code & "FUNCTION GetButtonBottomRow(width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "    DIM border AS STRING = " & Chr(34) & "└" & Chr(34) & " & strings.Repeat(" & Chr(34) & "─" & Chr(34) & ", width - 2) & " & Chr(34) & "┘" & Chr(34) & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style" & Chr(10)
+        code = code & "    IF focused THEN" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
+        code = code & "    ELSE" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & "))" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    RETURN style.Render(border)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
     ' RenderCheckBox
     IF hasCheckBox THEN
-        code = code & "FUNCTION RenderCheckBox(caption AS STRING, x AS INTEGER, y AS INTEGER, checked AS BOOLEAN, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "' Render checkbox (returns styled string)" & Chr(10)
+        code = code & "FUNCTION RenderCheckBox(caption AS STRING, checked AS BOOLEAN, focused AS BOOLEAN) AS STRING" & Chr(10)
         code = code & "    DIM checkMark AS STRING" & Chr(10)
         code = code & "    IF checked THEN" & Chr(10)
-        code = code & "        checkMark = " & Chr(34) & "[X]" & Chr(34) & Chr(10)
+        code = code & "        checkMark = " & Chr(34) & "[X] " & Chr(34) & Chr(10)
         code = code & "    ELSE" & Chr(10)
-        code = code & "        checkMark = " & Chr(34) & "[ ]" & Chr(34) & Chr(10)
+        code = code & "        checkMark = " & Chr(34) & "[ ] " & Chr(34) & Chr(10)
         code = code & "    ENDIF" & Chr(10)
+        code = code & "    DIM text AS STRING = checkMark & caption" & Chr(10)
+        code = code & Chr(10)
         code = code & "    DIM style AS lipgloss.Style" & Chr(10)
         code = code & "    IF focused THEN" & Chr(10)
         code = code & "        style = lipgloss.NewStyle().Bold(TRUE).Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & "))" & Chr(10)
         code = code & "    ELSE" & Chr(10)
         code = code & "        style = lipgloss.NewStyle()" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    DIM rendered AS STRING = style.Render(checkMark & " & Chr(34) & " " & Chr(34) & " & caption)" & Chr(10)
-        code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+        code = code & "    RETURN style.Render(text)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
     ' RenderOption
     IF hasOption THEN
-        code = code & "FUNCTION RenderOption(caption AS STRING, x AS INTEGER, y AS INTEGER, selected AS BOOLEAN, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "' Render radio option (returns styled string)" & Chr(10)
+        code = code & "FUNCTION RenderOption(caption AS STRING, selected AS BOOLEAN, focused AS BOOLEAN) AS STRING" & Chr(10)
         code = code & "    DIM indicator AS STRING" & Chr(10)
         code = code & "    IF selected THEN" & Chr(10)
-        code = code & "        indicator = " & Chr(34) & "(o)" & Chr(34) & Chr(10)
+        code = code & "        indicator = " & Chr(34) & "(o) " & Chr(34) & Chr(10)
         code = code & "    ELSE" & Chr(10)
-        code = code & "        indicator = " & Chr(34) & "( )" & Chr(34) & Chr(10)
+        code = code & "        indicator = " & Chr(34) & "( ) " & Chr(34) & Chr(10)
         code = code & "    ENDIF" & Chr(10)
+        code = code & "    DIM text AS STRING = indicator & caption" & Chr(10)
+        code = code & Chr(10)
         code = code & "    DIM style AS lipgloss.Style" & Chr(10)
         code = code & "    IF focused THEN" & Chr(10)
         code = code & "        style = lipgloss.NewStyle().Bold(TRUE).Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & "))" & Chr(10)
         code = code & "    ELSE" & Chr(10)
         code = code & "        style = lipgloss.NewStyle()" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    DIM rendered AS STRING = style.Render(indicator & " & Chr(34) & " " & Chr(34) & " & caption)" & Chr(10)
-        code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
-        code = code & "END FUNCTION" & Chr(10)
-        code = code & Chr(10)
-    ENDIF
-
-    ' RenderListBox
-    IF hasListBox THEN
-        code = code & "FUNCTION RenderListBox(lst AS list.Model, x AS INTEGER, y AS INTEGER) AS STRING" & Chr(10)
-        code = code & "    DIM rendered AS STRING = lst.View()" & Chr(10)
-        code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
-        code = code & "END FUNCTION" & Chr(10)
-        code = code & Chr(10)
-    ENDIF
-
-    ' RenderFrame
-    IF hasFrame THEN
-        code = code & "FUNCTION RenderFrame(caption AS STRING, x AS INTEGER, y AS INTEGER, width AS INTEGER, height AS INTEGER) AS STRING" & Chr(10)
-        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & ")).Width(width - 2).Height(height - 2)" & Chr(10)
-        code = code & "    DIM content AS STRING = strings.Repeat(" & Chr(34) & Chr(10) & Chr(34) & ", height - 2)" & Chr(10)
-        code = code & "    DIM rendered AS STRING = style.Render(content)" & Chr(10)
-        code = code & "    IF caption <> " & Chr(34) & Chr(34) & " THEN" & Chr(10)
-        code = code & "        rendered = " & Chr(34) & " " & Chr(34) & " & caption & " & Chr(34) & " " & Chr(34) & " & rendered" & Chr(10)
-        code = code & "    ENDIF" & Chr(10)
-        code = code & "    RETURN PositionContent(rendered, x, y)" & Chr(10)
+        code = code & "    RETURN style.Render(text)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
     ' RenderHScroll
     IF hasHScroll THEN
-        code = code & "FUNCTION RenderHScroll(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, x AS INTEGER, y AS INTEGER, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Render horizontal scrollbar" & Chr(10)
+        code = code & "FUNCTION RenderHScroll(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    IF width < 3 THEN" & Chr(10)
+        code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
         code = code & "    DIM range AS INTEGER = maxVal - minVal" & Chr(10)
         code = code & "    IF range <= 0 THEN" & Chr(10)
         code = code & "        range = 1" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    DIM pos AS INTEGER = ((value - minVal) * (width - 3)) / range" & Chr(10)
+        code = code & "    DIM trackWidth AS INTEGER = width - 2" & Chr(10)
+        code = code & "    DIM pos AS INTEGER = ((value - minVal) * trackWidth) / range" & Chr(10)
+        code = code & "    IF pos < 0 THEN" & Chr(10)
+        code = code & "        pos = 0" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    IF pos >= trackWidth THEN" & Chr(10)
+        code = code & "        pos = trackWidth - 1" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & Chr(10)
         code = code & "    DIM bar AS STRING = " & Chr(34) & "<" & Chr(34) & Chr(10)
         code = code & "    DIM i AS INTEGER" & Chr(10)
-        code = code & "    FOR i = 0 TO width - 3" & Chr(10)
+        code = code & "    FOR i = 0 TO trackWidth - 1" & Chr(10)
         code = code & "        IF i = pos THEN" & Chr(10)
         code = code & "            bar = bar & " & Chr(34) & "#" & Chr(34) & Chr(10)
         code = code & "        ELSE" & Chr(10)
@@ -737,67 +917,144 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
         code = code & "        ENDIF" & Chr(10)
         code = code & "    NEXT" & Chr(10)
         code = code & "    bar = bar & " & Chr(34) & ">" & Chr(34) & Chr(10)
-        code = code & "    RETURN PositionContent(bar, x, y)" & Chr(10)
-        code = code & "END FUNCTION" & Chr(10)
-        code = code & Chr(10)
-    ENDIF
-
-    ' RenderVScroll
-    IF hasVScroll THEN
-        code = code & "FUNCTION RenderVScroll(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, x AS INTEGER, y AS INTEGER, height AS INTEGER) AS STRING" & Chr(10)
-        code = code & "    DIM range AS INTEGER = maxVal - minVal" & Chr(10)
-        code = code & "    IF range <= 0 THEN" & Chr(10)
-        code = code & "        range = 1" & Chr(10)
-        code = code & "    ENDIF" & Chr(10)
-        code = code & "    DIM pos AS INTEGER = ((value - minVal) * (height - 2)) / range" & Chr(10)
-        code = code & "    DIM bar AS STRING = " & Chr(34) & "^" & Chr(34) & " & Chr(10)" & Chr(10)
-        code = code & "    DIM i AS INTEGER" & Chr(10)
-        code = code & "    FOR i = 0 TO height - 3" & Chr(10)
-        code = code & "        IF i = pos THEN" & Chr(10)
-        code = code & "            bar = bar & " & Chr(34) & "#" & Chr(34) & " & Chr(10)" & Chr(10)
-        code = code & "        ELSE" & Chr(10)
-        code = code & "            bar = bar & " & Chr(34) & "|" & Chr(34) & " & Chr(10)" & Chr(10)
-        code = code & "        ENDIF" & Chr(10)
-        code = code & "    NEXT" & Chr(10)
-        code = code & "    bar = bar & " & Chr(34) & "v" & Chr(34) & Chr(10)
-        code = code & "    RETURN PositionContent(bar, x, y)" & Chr(10)
+        code = code & "    RETURN bar" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
     ' RenderProgress
     IF hasProgress THEN
-        code = code & "FUNCTION RenderProgress(value AS INTEGER, total AS INTEGER, x AS INTEGER, y AS INTEGER, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Render progress bar" & Chr(10)
+        code = code & "FUNCTION RenderProgress(value AS INTEGER, total AS INTEGER, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    IF width < 3 THEN" & Chr(10)
+        code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
         code = code & "    IF total <= 0 THEN" & Chr(10)
         code = code & "        total = 100" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    DIM filled AS INTEGER = (value * (width - 2)) / total" & Chr(10)
-        code = code & "    IF filled > width - 2 THEN" & Chr(10)
-        code = code & "        filled = width - 2" & Chr(10)
+        code = code & "    DIM barWidth AS INTEGER = width - 2" & Chr(10)
+        code = code & "    DIM filled AS INTEGER = (value * barWidth) / total" & Chr(10)
+        code = code & "    IF filled > barWidth THEN" & Chr(10)
+        code = code & "        filled = barWidth" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    IF filled < 0 THEN" & Chr(10)
         code = code & "        filled = 0" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    DIM bar AS STRING = " & Chr(34) & "[" & Chr(34) & " & strings.Repeat(" & Chr(34) & "=" & Chr(34) & ", filled) & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width - 2 - filled) & " & Chr(34) & "]" & Chr(34) & Chr(10)
-        code = code & "    RETURN PositionContent(bar, x, y)" & Chr(10)
+        code = code & "    RETURN " & Chr(34) & "[" & Chr(34) & " & strings.Repeat(" & Chr(34) & "=" & Chr(34) & ", filled) & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", barWidth - filled) & " & Chr(34) & "]" & Chr(34) & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
     ' RenderSpinner
     IF hasSpinner THEN
-        code = code & "FUNCTION RenderSpinner(style AS INTEGER, x AS INTEGER, y AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Render spinner character" & Chr(10)
+        code = code & "FUNCTION RenderSpinner(spinStyle AS INTEGER) AS STRING" & Chr(10)
         code = code & "    DIM frames AS []STRING = []STRING{" & Chr(34) & "|" & Chr(34) & ", " & Chr(34) & "/" & Chr(34) & ", " & Chr(34) & "-" & Chr(34) & ", " & Chr(34) & "\\\\" & Chr(34) & "}" & Chr(10)
-        code = code & "    DIM idx AS INTEGER = style MOD 4" & Chr(10)
-        code = code & "    RETURN PositionContent(frames[idx], x, y)" & Chr(10)
+        code = code & "    DIM idx AS INTEGER = spinStyle MOD 4" & Chr(10)
+        code = code & "    IF idx < 0 THEN" & Chr(10)
+        code = code & "        idx = 0" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    RETURN frames[idx]" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
-    ' PositionContent helper
-    code = code & "FUNCTION PositionContent(content AS STRING, x AS INTEGER, y AS INTEGER) AS STRING" & Chr(10)
-    code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().MarginLeft(x).MarginTop(y)" & Chr(10)
-    code = code & "    RETURN style.Render(content)" & Chr(10)
+    ' ============================================
+    ' Multi-row render functions (return content for specific row)
+    ' ============================================
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Multi-Row Control Functions" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+
+    ' Frame border functions
+    IF hasFrame THEN
+        code = code & "' Get top border row of a frame" & Chr(10)
+        code = code & "FUNCTION GetFrameTopRow(caption AS STRING, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    IF width < 2 THEN" & Chr(10)
+        code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    DIM hLine AS STRING = " & Chr(34) & "─" & Chr(34) & Chr(10)
+        code = code & "    DIM topLine AS STRING = " & Chr(34) & "┌" & Chr(34) & Chr(10)
+        code = code & "    IF caption <> " & Chr(34) & Chr(34) & " THEN" & Chr(10)
+        code = code & "        topLine = topLine & " & Chr(34) & " " & Chr(34) & " & caption & " & Chr(34) & " " & Chr(34) & Chr(10)
+        code = code & "        DIM remaining AS INTEGER = width - 2 - Len(caption) - 2" & Chr(10)
+        code = code & "        IF remaining > 0 THEN" & Chr(10)
+        code = code & "            topLine = topLine & strings.Repeat(hLine, remaining)" & Chr(10)
+        code = code & "        ENDIF" & Chr(10)
+        code = code & "    ELSE" & Chr(10)
+        code = code & "        topLine = topLine & strings.Repeat(hLine, width - 2)" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    topLine = topLine & " & Chr(34) & "┐" & Chr(34) & Chr(10)
+        code = code & "    RETURN topLine" & Chr(10)
+        code = code & "END FUNCTION" & Chr(10)
+        code = code & Chr(10)
+        code = code & "' Get bottom border row of a frame" & Chr(10)
+        code = code & "FUNCTION GetFrameBottomRow(width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    IF width < 2 THEN" & Chr(10)
+        code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    DIM hLine AS STRING = " & Chr(34) & "─" & Chr(34) & Chr(10)
+        code = code & "    RETURN " & Chr(34) & "└" & Chr(34) & " & strings.Repeat(hLine, width - 2) & " & Chr(34) & "┘" & Chr(34) & Chr(10)
+        code = code & "END FUNCTION" & Chr(10)
+        code = code & Chr(10)
+    ENDIF
+
+    ' GetListBoxRow
+    IF hasListBox THEN
+        code = code & "' Get a specific row of a listbox view" & Chr(10)
+        code = code & "FUNCTION GetListBoxRow(lst AS list.Model, width AS INTEGER, height AS INTEGER, rowIndex AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    DIM view AS STRING = lst.View()" & Chr(10)
+        code = code & "    DIM lines AS []STRING = strings.Split(view, " & Chr(34) & Chr(10) & Chr(34) & ")" & Chr(10)
+        code = code & "    IF rowIndex >= 0 AND rowIndex < Len(lines) THEN" & Chr(10)
+        code = code & "        RETURN lines[rowIndex]" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width)" & Chr(10)
+        code = code & "END FUNCTION" & Chr(10)
+        code = code & Chr(10)
+    ENDIF
+
+    ' GetVScrollRow
+    IF hasVScroll THEN
+        code = code & "' Get a specific row of a vertical scrollbar" & Chr(10)
+        code = code & "FUNCTION GetVScrollRow(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, height AS INTEGER, rowIndex AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    IF height < 3 THEN" & Chr(10)
+        code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & Chr(10)
+        code = code & "    DIM range AS INTEGER = maxVal - minVal" & Chr(10)
+        code = code & "    IF range <= 0 THEN" & Chr(10)
+        code = code & "        range = 1" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    DIM trackHeight AS INTEGER = height - 2" & Chr(10)
+        code = code & "    DIM thumbPos AS INTEGER = ((value - minVal) * trackHeight) / range" & Chr(10)
+        code = code & "    IF thumbPos < 0 THEN" & Chr(10)
+        code = code & "        thumbPos = 0" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "    IF thumbPos >= trackHeight THEN" & Chr(10)
+        code = code & "        thumbPos = trackHeight - 1" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & Chr(10)
+        code = code & "    IF rowIndex = 0 THEN" & Chr(10)
+        code = code & "        RETURN " & Chr(34) & "^" & Chr(34) & Chr(10)
+        code = code & "    ELSEIF rowIndex = height - 1 THEN" & Chr(10)
+        code = code & "        RETURN " & Chr(34) & "v" & Chr(34) & Chr(10)
+        code = code & "    ELSE" & Chr(10)
+        code = code & "        DIM trackRow AS INTEGER = rowIndex - 1" & Chr(10)
+        code = code & "        IF trackRow = thumbPos THEN" & Chr(10)
+        code = code & "            RETURN " & Chr(34) & "#" & Chr(34) & Chr(10)
+        code = code & "        ELSE" & Chr(10)
+        code = code & "            RETURN " & Chr(34) & "|" & Chr(34) & Chr(10)
+        code = code & "        ENDIF" & Chr(10)
+        code = code & "    ENDIF" & Chr(10)
+        code = code & "END FUNCTION" & Chr(10)
+        code = code & Chr(10)
+    ENDIF
+
+    ' FormatInt helper
+    code = code & "' Helper to use fmt package (avoids unused import)" & Chr(10)
+    code = code & "FUNCTION FormatInt(n AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    RETURN fmt.Sprintf(" & Chr(34) & "%d" & Chr(34) & ", n)" & Chr(10)
     code = code & "END FUNCTION" & Chr(10)
     code = code & Chr(10)
 
@@ -1358,7 +1615,8 @@ FUNCTION GenerateMain(startupForm AS STRING) AS STRING
     code = code & "' ============================================" & Chr(10)
     code = code & Chr(10)
     code = code & "SUB Main()" & Chr(10)
-    code = code & "    DIM model AS " & startupForm & "Model" & Chr(10)
+    code = code & "    ' Initialize the model before passing to NewProgram" & Chr(10)
+    code = code & "    DIM model AS " & startupForm & "Model = Init" & startupForm & "Model()" & Chr(10)
     code = code & "    tea.NewProgram(model, tea.WithAltScreen()).Run()" & Chr(10)
     code = code & "END SUB" & Chr(10)
 

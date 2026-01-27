@@ -69,6 +69,13 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     keyMsg, ok = msg.(tea.KeyMsg)
 
     IF NOT ok THEN
+        ' Unknown message type - check if returning from ExecProcess
+        IF m.WasRunning THEN
+            m.WasRunning = FALSE
+            m.Message = "Returned from run"
+            ' Re-enable mouse tracking after returning from external process
+            RETURN m, tea.EnableMouseCellMotion
+        ENDIF
         RETURN m, NIL
     ENDIF
 
@@ -142,38 +149,34 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.ViewMode = VIEW_FORM
         ENDIF
         RETURN m, NIL
-    ELSEIF key = "tab" THEN
-        ' Cycle focus areas
-        DIM prevFocus AS INTEGER = m.FocusArea
-        m.FocusArea = m.FocusArea + 1
-        IF m.FocusArea > FOCUS_PROPERTIES THEN
-            m.FocusArea = FOCUS_PROJECT
-        ENDIF
-        ' Manage textarea focus
-        IF m.CodeEditorInited THEN
-            IF prevFocus = FOCUS_CODE AND m.FocusArea <> FOCUS_CODE THEN
-                m.CodeEditor = BlurEditor(m.CodeEditor)
-            ELSEIF prevFocus <> FOCUS_CODE AND m.FocusArea = FOCUS_CODE THEN
-                m.CodeEditor = FocusEditor(m.CodeEditor)
+    ELSEIF key = "tab" OR key = "shift+tab" THEN
+        ' In code editor, let Tab pass through to insert tab character
+        IF m.FocusArea = FOCUS_CODE THEN
+            ' Don't cycle focus - let it be handled by code editor input
+        ELSE
+            ' Cycle focus areas
+            DIM prevFocus AS INTEGER = m.FocusArea
+            IF key = "tab" THEN
+                m.FocusArea = m.FocusArea + 1
+                IF m.FocusArea > FOCUS_PROPERTIES THEN
+                    m.FocusArea = FOCUS_PROJECT
+                ENDIF
+            ELSE
+                m.FocusArea = m.FocusArea - 1
+                IF m.FocusArea < FOCUS_PROJECT THEN
+                    m.FocusArea = FOCUS_PROPERTIES
+                ENDIF
             ENDIF
-        ENDIF
-        RETURN m, NIL
-    ELSEIF key = "shift+tab" THEN
-        ' Cycle focus backwards
-        DIM prevFocus2 AS INTEGER = m.FocusArea
-        m.FocusArea = m.FocusArea - 1
-        IF m.FocusArea < FOCUS_PROJECT THEN
-            m.FocusArea = FOCUS_PROPERTIES
-        ENDIF
-        ' Manage textarea focus
-        IF m.CodeEditorInited THEN
-            IF prevFocus2 = FOCUS_CODE AND m.FocusArea <> FOCUS_CODE THEN
-                m.CodeEditor = BlurEditor(m.CodeEditor)
-            ELSEIF prevFocus2 <> FOCUS_CODE AND m.FocusArea = FOCUS_CODE THEN
-                m.CodeEditor = FocusEditor(m.CodeEditor)
+            ' Manage textarea focus
+            IF m.CodeEditorInited THEN
+                IF prevFocus = FOCUS_CODE AND m.FocusArea <> FOCUS_CODE THEN
+                    m.CodeEditor = BlurEditor(m.CodeEditor)
+                ELSEIF prevFocus <> FOCUS_CODE AND m.FocusArea = FOCUS_CODE THEN
+                    m.CodeEditor = FocusEditor(m.CodeEditor)
+                ENDIF
             ENDIF
+            RETURN m, NIL
         ENDIF
-        RETURN m, NIL
     ENDIF
 
     ' Route input based on focus area

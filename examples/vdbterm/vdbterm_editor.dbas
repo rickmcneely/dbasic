@@ -2,15 +2,42 @@
 ' Textarea component integration for code editing
 
 IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
+IMPORT "github.com/charmbracelet/bubbles/key" AS key
 IMPORT "github.com/charmbracelet/bubbletea" AS tea
 
-' Initialize the textarea component with default settings
+' Initialize the textarea component with Windows-style key bindings
 FUNCTION InitCodeEditor(width AS INTEGER, height AS INTEGER) AS textarea.Model
     DIM ta AS textarea.Model = textarea.New()
     ta.SetWidth(width)
     ta.SetHeight(height)
     ta.Placeholder = "' Enter code here..."
     ta.ShowLineNumbers = TRUE
+
+    ' Set up Windows-style key bindings (Notepad-like)
+    ta.KeyMap.WordForward = key.NewBinding(key.WithKeys("ctrl+right"))
+    ta.KeyMap.WordBackward = key.NewBinding(key.WithKeys("ctrl+left"))
+    ta.KeyMap.DeleteWordForward = key.NewBinding(key.WithKeys("ctrl+delete"))
+    ta.KeyMap.DeleteWordBackward = key.NewBinding(key.WithKeys("ctrl+backspace"))
+    ta.KeyMap.InputBegin = key.NewBinding(key.WithKeys("ctrl+home"))
+    ta.KeyMap.InputEnd = key.NewBinding(key.WithKeys("ctrl+end"))
+    ta.KeyMap.LineStart = key.NewBinding(key.WithKeys("home"))
+    ta.KeyMap.LineEnd = key.NewBinding(key.WithKeys("end"))
+    ta.KeyMap.CharacterForward = key.NewBinding(key.WithKeys("right"))
+    ta.KeyMap.CharacterBackward = key.NewBinding(key.WithKeys("left"))
+    ta.KeyMap.LineNext = key.NewBinding(key.WithKeys("down"))
+    ta.KeyMap.LinePrevious = key.NewBinding(key.WithKeys("up"))
+    ta.KeyMap.DeleteCharacterBackward = key.NewBinding(key.WithKeys("backspace"))
+    ta.KeyMap.DeleteCharacterForward = key.NewBinding(key.WithKeys("delete"))
+    ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("enter"))
+    ta.KeyMap.Paste = key.NewBinding(key.WithKeys("ctrl+v"))
+    ' Disable Emacs-style bindings we don't want
+    ta.KeyMap.DeleteAfterCursor = key.NewBinding(key.WithKeys())
+    ta.KeyMap.DeleteBeforeCursor = key.NewBinding(key.WithKeys())
+    ta.KeyMap.UppercaseWordForward = key.NewBinding(key.WithKeys())
+    ta.KeyMap.LowercaseWordForward = key.NewBinding(key.WithKeys())
+    ta.KeyMap.CapitalizeWordForward = key.NewBinding(key.WithKeys())
+    ta.KeyMap.TransposeCharacterBackward = key.NewBinding(key.WithKeys())
+
     ta.Focus()
     RETURN ta
 END FUNCTION

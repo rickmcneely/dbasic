@@ -52,6 +52,12 @@ TYPE VDBControl
     ' Timer properties
     DIM Interval AS INTEGER      ' Milliseconds
 
+    ' Label properties
+    DIM Justification AS INTEGER ' 0=Left, 1=Center, 2=Right
+
+    ' Button properties
+    DIM Border AS BOOLEAN        ' Show border around button (3-row style)
+
     ' Option (radio) properties
     DIM GroupName AS STRING      ' Groups radio buttons together
 
@@ -210,4 +216,7 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM PopupCtrlType AS INTEGER     ' Control type (for Widgets/Toolbox popups)
     DIM PopupEvents AS []STRING      ' Available events for the control
     DIM PopupIndex AS INTEGER        ' Selected event index
+
+    ' Run state - track when returning from external process
+    DIM WasRunning AS BOOLEAN
 END TYPE
