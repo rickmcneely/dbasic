@@ -1737,38 +1737,38 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
     ELSEIF m.DialogMode = DIALOG_OPEN_PROJECT THEN
         title = " Open Project "
         width = 40
-        contentLines = APPEND(contentLines, "  File Name:")
-        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "   File Name:")
+        contentLines = APPEND(contentLines, "   [" & RenderDialogTextField(m.DialogInput, m.DialogCursor, 30) & "]")
         contentLines = APPEND(contentLines, "")
-        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+        contentLines = APPEND(contentLines, "   < OK >       < Cancel >")
     ELSEIF m.DialogMode = DIALOG_NEW_PROJECT THEN
         title = " New Project "
         width = 40
-        contentLines = APPEND(contentLines, "  Project Name:")
-        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "   Project Name:")
+        contentLines = APPEND(contentLines, "   [" & RenderDialogTextField(m.DialogInput, m.DialogCursor, 30) & "]")
         contentLines = APPEND(contentLines, "")
-        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+        contentLines = APPEND(contentLines, "   < OK >       < Cancel >")
     ELSEIF m.DialogMode = DIALOG_SAVE_PROJECT THEN
         title = " Save Project "
         width = 40
-        contentLines = APPEND(contentLines, "  File Name:")
-        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "   File Name:")
+        contentLines = APPEND(contentLines, "   [" & RenderDialogTextField(m.DialogInput, m.DialogCursor, 30) & "]")
         contentLines = APPEND(contentLines, "")
-        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+        contentLines = APPEND(contentLines, "   < OK >       < Cancel >")
     ELSEIF m.DialogMode = DIALOG_NEW_FORM THEN
         title = " New Form "
         width = 40
-        contentLines = APPEND(contentLines, "  Form Name:")
-        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "   Form Name:")
+        contentLines = APPEND(contentLines, "   [" & RenderDialogTextField(m.DialogInput, m.DialogCursor, 30) & "]")
         contentLines = APPEND(contentLines, "")
-        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+        contentLines = APPEND(contentLines, "   < OK >       < Cancel >")
     ELSEIF m.DialogMode = DIALOG_NEW_MODULE THEN
         title = " New Module "
         width = 40
-        contentLines = APPEND(contentLines, "  Module Name:")
-        contentLines = APPEND(contentLines, "  [" & PadRight(m.DialogInput, 30) & "]")
+        contentLines = APPEND(contentLines, "   Module Name:")
+        contentLines = APPEND(contentLines, "   [" & RenderDialogTextField(m.DialogInput, m.DialogCursor, 30) & "]")
         contentLines = APPEND(contentLines, "")
-        contentLines = APPEND(contentLines, "  < OK >        < Cancel >")
+        contentLines = APPEND(contentLines, "   < OK >       < Cancel >")
     ELSEIF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
         title = " Exit "
         width = 36
@@ -1845,9 +1845,9 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
     borderTop = borderTop & "╗"
     lines = APPEND(lines, styleDialog.Render(borderTop))
 
-    ' Content lines
+    ' Content lines (use PadRightDisplay to handle ANSI escape codes correctly)
     FOR i = 0 TO Len(contentLines) - 1
-        DIM lineContent AS STRING = PadRight(contentLines[i], innerWidth)
+        DIM lineContent AS STRING = PadRightDisplay(contentLines[i], innerWidth)
         lines = APPEND(lines, styleDialog.Render("║" & lineContent & "║"))
     NEXT
 

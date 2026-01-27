@@ -1,6 +1,46 @@
 ' VDBTerm Input Handlers
 ' Keyboard, mouse, dialog, and menu input handling
 
+' Render a scrolling text field with cursor
+' Returns the visible portion of text with cursor indicator (inverted character)
+FUNCTION RenderDialogTextField(text AS STRING, cursor AS INTEGER, fieldWidth AS INTEGER) AS STRING
+    DIM textLen AS INTEGER = Len(text)
+    DIM visibleStart AS INTEGER = 0
+
+    ' Calculate visible window to keep cursor in view
+    IF cursor > fieldWidth - 2 THEN
+        visibleStart = cursor - fieldWidth + 2
+    ENDIF
+
+    ' ANSI escape codes for reverse video
+    DIM esc AS STRING = Chr(27)
+    DIM reverseOn AS STRING = esc & "[7m"
+    DIM reverseOff AS STRING = esc & "[27m"
+
+    ' Build the display string character by character
+    DIM result AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO fieldWidth - 1
+        DIM textIdx AS INTEGER = visibleStart + i
+        DIM ch AS STRING
+        IF textIdx < textLen THEN
+            ch = Mid(text, textIdx + 1, 1)
+        ELSE
+            ch = " "
+        ENDIF
+
+        IF textIdx = cursor THEN
+            ' Show inverted character at cursor position
+            result = result & reverseOn & ch & reverseOff
+        ELSE
+            result = result & ch
+        ENDIF
+    NEXT
+
+    RETURN result
+END FUNCTION
+
+' Handle dialog input with custom scrolling text field
 FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
     IF key = "esc" THEN
         m.DialogMode = DIALOG_NONE
@@ -33,7 +73,6 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
             m.CurrentFormIdx = 0
             m.SelectedCtrlIdx = -1
             m.TreeIndex = 0
-            ' Initialize tree expansion - all forms expanded by default
             m.TreeExpanded = []BOOLEAN{}
             m = EnsureTreeExpanded(m)
             m.Message = "New project: " & m.DialogInput
@@ -44,7 +83,7 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
             m.Project.Forms = APPEND(m.Project.Forms, addForm)
             m.CurrentFormIdx = Len(m.Project.Forms) - 1
             m.SelectedCtrlIdx = -1
-            m.TreeExpanded = APPEND(m.TreeExpanded, TRUE)  ' Expand new form in tree
+            m.TreeExpanded = APPEND(m.TreeExpanded, TRUE)
             m.Project.Modified = TRUE
             m.Message = "New form: " & m.DialogInput
             m.DialogMode = DIALOG_NONE
@@ -69,7 +108,6 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
                 m.CurrentFormIdx = 0
                 m.SelectedCtrlIdx = -1
                 m.TreeIndex = 0
-                ' Initialize tree expansion - all forms expanded by default
                 m.TreeExpanded = []BOOLEAN{}
                 m = EnsureTreeExpanded(m)
                 m.Message = "Project loaded: " & loadedProj.Name
@@ -80,29 +118,58 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
             m.DialogMode = DIALOG_NONE
         ENDIF
         RETURN m, NIL
-    ELSEIF key = "backspace" THEN
-        IF m.DialogCursor > 0 THEN
-            m.DialogInput = Left(m.DialogInput, m.DialogCursor - 1) & Mid(m.DialogInput, m.DialogCursor + 1, Len(m.DialogInput) - m.DialogCursor)
-            m.DialogCursor = m.DialogCursor - 1
-        ENDIF
-    ELSEIF key = "delete" THEN
-        IF m.DialogCursor < Len(m.DialogInput) THEN
-            m.DialogInput = Left(m.DialogInput, m.DialogCursor) & Mid(m.DialogInput, m.DialogCursor + 2, Len(m.DialogInput) - m.DialogCursor - 1)
-        ENDIF
-    ELSEIF key = "left" THEN
+    ENDIF
+
+    ' Handle text editing keys
+    DIM textLen AS INTEGER = Len(m.DialogInput)
+
+    IF key = "left" THEN
         IF m.DialogCursor > 0 THEN
             m.DialogCursor = m.DialogCursor - 1
         ENDIF
     ELSEIF key = "right" THEN
-        IF m.DialogCursor < Len(m.DialogInput) THEN
+        IF m.DialogCursor < textLen THEN
             m.DialogCursor = m.DialogCursor + 1
         ENDIF
-    ELSEIF key = "home" THEN
+    ELSEIF key = "home" OR key = "ctrl+a" THEN
         m.DialogCursor = 0
-    ELSEIF key = "end" THEN
-        m.DialogCursor = Len(m.DialogInput)
+    ELSEIF key = "end" OR key = "ctrl+e" THEN
+        m.DialogCursor = textLen
+    ELSEIF key = "ctrl+left" THEN
+        ' Move to previous word
+        DO WHILE m.DialogCursor > 0 AND Mid(m.DialogInput, m.DialogCursor, 1) = " "
+            m.DialogCursor = m.DialogCursor - 1
+        LOOP
+        DO WHILE m.DialogCursor > 0 AND Mid(m.DialogInput, m.DialogCursor, 1) <> " "
+            m.DialogCursor = m.DialogCursor - 1
+        LOOP
+    ELSEIF key = "ctrl+right" THEN
+        ' Move to next word
+        DO WHILE m.DialogCursor < textLen AND Mid(m.DialogInput, m.DialogCursor + 1, 1) <> " "
+            m.DialogCursor = m.DialogCursor + 1
+        LOOP
+        DO WHILE m.DialogCursor < textLen AND Mid(m.DialogInput, m.DialogCursor + 1, 1) = " "
+            m.DialogCursor = m.DialogCursor + 1
+        LOOP
+    ELSEIF key = "backspace" THEN
+        IF m.DialogCursor > 0 THEN
+            m.DialogInput = Left(m.DialogInput, m.DialogCursor - 1) & Mid(m.DialogInput, m.DialogCursor + 1, textLen)
+            m.DialogCursor = m.DialogCursor - 1
+        ENDIF
+    ELSEIF key = "delete" THEN
+        IF m.DialogCursor < textLen THEN
+            m.DialogInput = Left(m.DialogInput, m.DialogCursor) & Mid(m.DialogInput, m.DialogCursor + 2, textLen)
+        ENDIF
+    ELSEIF key = "ctrl+u" THEN
+        ' Delete to start of line
+        m.DialogInput = Mid(m.DialogInput, m.DialogCursor + 1, textLen)
+        m.DialogCursor = 0
+    ELSEIF key = "ctrl+k" THEN
+        ' Delete to end of line
+        m.DialogInput = Left(m.DialogInput, m.DialogCursor)
     ELSEIF Len(key) = 1 THEN
-        m.DialogInput = Left(m.DialogInput, m.DialogCursor) & key & Mid(m.DialogInput, m.DialogCursor + 1, Len(m.DialogInput) - m.DialogCursor)
+        ' Insert printable character
+        m.DialogInput = Left(m.DialogInput, m.DialogCursor) & key & Mid(m.DialogInput, m.DialogCursor + 1, textLen)
         m.DialogCursor = m.DialogCursor + 1
     ENDIF
 

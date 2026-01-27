@@ -17,6 +17,15 @@ FUNCTION PadRight(s AS STRING, width AS INTEGER) AS STRING
     RETURN s & RepeatStr(" ", width - Len(s))
 END FUNCTION
 
+' PadRight using display width (handles ANSI escape codes correctly)
+FUNCTION PadRightDisplay(s AS STRING, width AS INTEGER) AS STRING
+    DIM displayWidth AS INTEGER = lipgloss.Width(s)
+    IF displayWidth >= width THEN
+        RETURN s
+    ENDIF
+    RETURN s & RepeatStr(" ", width - displayWidth)
+END FUNCTION
+
 FUNCTION IIFStr(cond AS BOOLEAN, trueVal AS STRING, falseVal AS STRING) AS STRING
     IF cond THEN
         RETURN trueVal

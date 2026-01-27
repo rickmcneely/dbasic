@@ -2,6 +2,7 @@
 ' Data structures for controls, forms, modules, projects, and the main model
 
 IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
+IMPORT "github.com/charmbracelet/bubbles/textinput" AS textinput
 IMPORT "time" AS time
 
 ' Syntax highlighting token
@@ -194,6 +195,8 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM DialogInput2 AS STRING
     DIM DialogCursor AS INTEGER
     DIM DialogField AS INTEGER
+    DIM DialogTextInput AS textinput.Model
+    DIM DialogTextInput2 AS textinput.Model
 
     ' Status
     DIM Message AS STRING

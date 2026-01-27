@@ -34,6 +34,7 @@ DIM styleDialog AS lipgloss.Style
 DIM styleDialogTitle AS lipgloss.Style
 DIM styleDialogButton AS lipgloss.Style
 DIM styleDialogButtonSelected AS lipgloss.Style
+DIM styleReverse AS lipgloss.Style
 
 SUB InitStyles()
     ' Modern dark theme with blue accents
@@ -90,4 +91,7 @@ SUB InitStyles()
     styleDialogTitle = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255")).Padding(0, 1)
     styleDialogButton = lipgloss.NewStyle().Background(lipgloss.Color("240")).Foreground(lipgloss.Color("232")).Padding(0, 2)
     styleDialogButtonSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255")).Padding(0, 2)
+
+    ' Reverse video for cursor display
+    styleReverse = lipgloss.NewStyle().Background(lipgloss.Color("252")).Foreground(lipgloss.Color("232")).Reverse(TRUE)
 END SUB
