@@ -472,13 +472,26 @@ END FUNCTION
 
 ' Handle input for Widgets panel (visible widgets: Button, Label, TextBox, etc.)
 FUNCTION HandleWidgetsInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    DIM visibleRows AS INTEGER = m.WidgetsHeight - 1  ' Minus title row
+    IF visibleRows < 1 THEN
+        visibleRows = 1
+    ENDIF
+
     IF key = "up" THEN
         IF m.WidgetsIndex > 0 THEN
             m.WidgetsIndex = m.WidgetsIndex - 1
+            ' Scroll up if selection is above visible area
+            IF m.WidgetsIndex < m.WidgetsScroll THEN
+                m.WidgetsScroll = m.WidgetsIndex
+            ENDIF
         ENDIF
     ELSEIF key = "down" THEN
         IF m.WidgetsIndex < VISIBLE_WIDGET_COUNT - 1 THEN
             m.WidgetsIndex = m.WidgetsIndex + 1
+            ' Scroll down if selection is below visible area
+            IF m.WidgetsIndex >= m.WidgetsScroll + visibleRows THEN
+                m.WidgetsScroll = m.WidgetsIndex - visibleRows + 1
+            ENDIF
         ENDIF
     ELSEIF key = "enter" OR key = " " THEN
         ' Add visible control to form
@@ -502,13 +515,26 @@ END FUNCTION
 
 ' Handle input for Toolbox panel (non-visible widgets: Timer)
 FUNCTION HandleToolboxInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    DIM visibleRows AS INTEGER = m.ToolboxHeight - 1  ' Minus title row
+    IF visibleRows < 1 THEN
+        visibleRows = 1
+    ENDIF
+
     IF key = "up" THEN
         IF m.ToolboxIndex > 0 THEN
             m.ToolboxIndex = m.ToolboxIndex - 1
+            ' Scroll up if selection is above visible area
+            IF m.ToolboxIndex < m.ToolboxScroll THEN
+                m.ToolboxScroll = m.ToolboxIndex
+            ENDIF
         ENDIF
     ELSEIF key = "down" THEN
         IF m.ToolboxIndex < NONVISIBLE_WIDGET_COUNT - 1 THEN
             m.ToolboxIndex = m.ToolboxIndex + 1
+            ' Scroll down if selection is below visible area
+            IF m.ToolboxIndex >= m.ToolboxScroll + visibleRows THEN
+                m.ToolboxScroll = m.ToolboxIndex - visibleRows + 1
+            ENDIF
         ENDIF
     ELSEIF key = "enter" OR key = " " THEN
         ' Add non-visible control to form
@@ -1041,14 +1067,26 @@ FUNCTION HandleProjectInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea
     m = EnsureTreeExpanded(m)
 
     DIM totalItems AS INTEGER = GetTreeItemCount(m)
+    DIM visibleRows AS INTEGER = m.ProjectHeight - 1  ' Minus title row
+    IF visibleRows < 1 THEN
+        visibleRows = 1
+    ENDIF
 
     IF key = "up" THEN
         IF m.TreeIndex > 0 THEN
             m.TreeIndex = m.TreeIndex - 1
+            ' Scroll up if selection is above visible area
+            IF m.TreeIndex < m.ProjectScroll THEN
+                m.ProjectScroll = m.TreeIndex
+            ENDIF
         ENDIF
     ELSEIF key = "down" THEN
         IF m.TreeIndex < totalItems - 1 THEN
             m.TreeIndex = m.TreeIndex + 1
+            ' Scroll down if selection is below visible area
+            IF m.TreeIndex >= m.ProjectScroll + visibleRows THEN
+                m.ProjectScroll = m.TreeIndex - visibleRows + 1
+            ENDIF
         ENDIF
     ELSEIF key = "enter" OR key = " " THEN
         ' Get info about selected item

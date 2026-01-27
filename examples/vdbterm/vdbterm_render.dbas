@@ -200,7 +200,7 @@ FUNCTION RenderWidgetsRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
     ' Visible widgets: Button(1), Label(2), TextBox(3), CheckBox(4), Option(5),
     '                  ListBox(6), ComboBox(7), Frame(8), HScroll(9), VScroll(10),
     '                  TextArea(12), Progress(13), Spinner(14), Table(15)
-    DIM widgetIdx AS INTEGER = row - 1
+    DIM widgetIdx AS INTEGER = row - 1 + m.WidgetsScroll
     IF widgetIdx >= 0 AND widgetIdx < VISIBLE_WIDGET_COUNT THEN
         DIM ctlType AS INTEGER = WidgetIndexToCtrlType(widgetIdx)
         DIM icon AS STRING = GetToolboxIcon(ctlType)
@@ -233,7 +233,7 @@ FUNCTION RenderWidgetsCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
         ENDIF
         RETURN styleToolboxSelected.Render(ch)
     ELSE
-        DIM widgetIdx AS INTEGER = row - 1
+        DIM widgetIdx AS INTEGER = row - 1 + m.WidgetsScroll
         IF widgetIdx >= 0 AND widgetIdx < VISIBLE_WIDGET_COUNT THEN
             DIM ctlType AS INTEGER = WidgetIndexToCtrlType(widgetIdx)
             DIM icon AS STRING = GetToolboxIcon(ctlType)
@@ -264,7 +264,7 @@ FUNCTION RenderToolboxRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
     ENDIF
 
     ' Non-visible widgets
-    DIM toolIdx AS INTEGER = row - 1
+    DIM toolIdx AS INTEGER = row - 1 + m.ToolboxScroll
     IF toolIdx >= 0 AND toolIdx < NONVISIBLE_WIDGET_COUNT THEN
         DIM ctlType AS INTEGER = ToolboxIndexToCtrlType(toolIdx)
         DIM icon AS STRING = GetToolboxIcon(ctlType)
@@ -297,7 +297,7 @@ FUNCTION RenderToolboxCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
         ENDIF
         RETURN styleToolboxSelected.Render(ch)
     ELSE
-        DIM toolIdx AS INTEGER = row - 1
+        DIM toolIdx AS INTEGER = row - 1 + m.ToolboxScroll
         IF toolIdx >= 0 AND toolIdx < NONVISIBLE_WIDGET_COUNT THEN
             DIM ctlType AS INTEGER = ToolboxIndexToCtrlType(toolIdx)
             DIM icon AS STRING = GetToolboxIcon(ctlType)
@@ -1230,7 +1230,7 @@ FUNCTION RenderProjectRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
         RETURN content
     ENDIF
 
-    DIM itemIdx AS INTEGER = row - 1
+    DIM itemIdx AS INTEGER = row - 1 + m.ProjectScroll
     DIM totalItems AS INTEGER = GetTreeItemCount(m)
 
     IF itemIdx < totalItems AND m.ProjectLoaded THEN
@@ -1298,7 +1298,7 @@ FUNCTION RenderProjectCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
         ENDIF
         RETURN styleTreeSelected.Render(ch)
     ELSE
-        DIM itemIdx AS INTEGER = row - 1
+        DIM itemIdx AS INTEGER = row - 1 + m.ProjectScroll
         DIM totalItems AS INTEGER = GetTreeItemCount(m)
 
         IF itemIdx < totalItems AND m.ProjectLoaded THEN

@@ -133,6 +133,9 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM WidgetsIndex AS INTEGER
     DIM FormScrollX AS INTEGER
     DIM FormScrollY AS INTEGER
+    DIM WidgetsScroll AS INTEGER
+    DIM ToolboxScroll AS INTEGER
+    DIM ProjectScroll AS INTEGER
 
     ' Left panel layout (heights are user-adjustable)
     DIM ProjectHeight AS INTEGER
