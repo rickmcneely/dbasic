@@ -36,6 +36,7 @@ FUNCTION GenerateImports(form AS VDBForm) AS STRING
     ENDIF
     IF needTextarea THEN
         code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/textarea" & Chr(34) & " AS textarea" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/key" & Chr(34) & " AS key" & Chr(10)
     ENDIF
     IF needList THEN
         code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/list" & Chr(34) & " AS list" & Chr(10)
@@ -190,6 +191,12 @@ FUNCTION GenerateInit(form AS VDBForm) AS STRING
                 code = code & "    m." & ctrl.CtlName & ".SetValue(" & Chr(34) & ctrl.Value & Chr(34) & ")" & Chr(10)
             ENDIF
             code = code & "    m." & ctrl.CtlName & ".ShowLineNumbers = FALSE" & Chr(10)
+            ' Configure keybindings with Windows-style shortcuts (in addition to Emacs defaults)
+            code = code & "    ' Add Windows-style keybindings (ctrl+arrows for word nav, ctrl+home/end for doc nav)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".KeyMap.WordForward = key.NewBinding(key.WithKeys(" & Chr(34) & "alt+right" & Chr(34) & ", " & Chr(34) & "alt+f" & Chr(34) & ", " & Chr(34) & "ctrl+right" & Chr(34) & "))" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".KeyMap.WordBackward = key.NewBinding(key.WithKeys(" & Chr(34) & "alt+left" & Chr(34) & ", " & Chr(34) & "alt+b" & Chr(34) & ", " & Chr(34) & "ctrl+left" & Chr(34) & "))" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".KeyMap.InputBegin = key.NewBinding(key.WithKeys(" & Chr(34) & "ctrl+home" & Chr(34) & "))" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".KeyMap.InputEnd = key.NewBinding(key.WithKeys(" & Chr(34) & "ctrl+end" & Chr(34) & "))" & Chr(10)
             code = code & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
             code = code & "    ' Initialize " & ctrl.CtlName & " (ListBox)" & Chr(10)
