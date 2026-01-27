@@ -131,6 +131,17 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, tea.Quit
         ENDIF
         RETURN m, NIL
+    ELSEIF key = "f1" THEN
+        ' Open Help
+        m.DialogMode = DIALOG_HELP
+        RETURN m, NIL
+    ELSEIF key = "f2" THEN
+        ' Open Object Browser
+        m.DialogMode = DIALOG_OBJECT_BROWSER
+        m.ObjectBrowserScroll = 0
+        m.ObjectBrowserTab = 0
+        m.ObjectBrowserWidgetIdx = 0
+        RETURN m, NIL
     ELSEIF key = "f5" THEN
         RETURN DoRun(m)
     ELSEIF key = "f7" THEN

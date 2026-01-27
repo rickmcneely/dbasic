@@ -1572,6 +1572,8 @@ FUNCTION GetDropdownLines(m AS VDBTermModel) AS []STRING
         lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
         lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Show Grid         ", 6, m.MenuIndex = 3) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Line Numbers      ", 1, m.MenuIndex = 4) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Object Browser F2 ", 1, m.MenuIndex = 6) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
     ELSEIF m.MenuOpen = MENU_RUN THEN
         lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
@@ -1691,6 +1693,239 @@ FUNCTION GetPopupLines(m AS VDBTermModel) AS []STRING
     RETURN lines
 END FUNCTION
 
+' Get widget list for Object Browser
+FUNCTION GetObjectBrowserWidgets() AS []STRING
+    DIM widgets AS []STRING
+    widgets = APPEND(widgets, "Form")
+    widgets = APPEND(widgets, "Button")
+    widgets = APPEND(widgets, "Label")
+    widgets = APPEND(widgets, "TextBox")
+    widgets = APPEND(widgets, "CheckBox")
+    widgets = APPEND(widgets, "Option")
+    widgets = APPEND(widgets, "ListBox")
+    widgets = APPEND(widgets, "ComboBox")
+    widgets = APPEND(widgets, "HScroll")
+    widgets = APPEND(widgets, "VScroll")
+    widgets = APPEND(widgets, "Timer")
+    widgets = APPEND(widgets, "TextArea")
+    widgets = APPEND(widgets, "Progress")
+    widgets = APPEND(widgets, "Spinner")
+    widgets = APPEND(widgets, "Table")
+    RETURN widgets
+END FUNCTION
+
+' Get properties for a widget type in the Object Browser
+FUNCTION GetObjectBrowserProperties(widgetIdx AS INTEGER) AS []STRING
+    DIM props AS []STRING
+
+    ' Common properties for all controls
+    IF widgetIdx = 0 THEN
+        ' Form properties
+        props = APPEND(props, "Name      STRING   Form identifier")
+        props = APPEND(props, "Caption   STRING   Title bar text")
+        props = APPEND(props, "X         INTEGER  Left position")
+        props = APPEND(props, "Y         INTEGER  Top position")
+        props = APPEND(props, "Width     INTEGER  Form width")
+        props = APPEND(props, "Height    INTEGER  Form height")
+        props = APPEND(props, "ForeColor INTEGER  Text color")
+        props = APPEND(props, "BackColor INTEGER  Background color")
+    ELSE
+        ' Common control properties
+        props = APPEND(props, "Name      STRING   Control identifier")
+        props = APPEND(props, "X         INTEGER  Left position")
+        props = APPEND(props, "Y         INTEGER  Top position")
+        props = APPEND(props, "Width     INTEGER  Control width")
+        props = APPEND(props, "Height    INTEGER  Control height")
+        props = APPEND(props, "Enabled   BOOLEAN  Interaction state")
+        props = APPEND(props, "Visible   BOOLEAN  Visibility state")
+        props = APPEND(props, "ZOrder    INTEGER  Stacking order")
+        props = APPEND(props, "TabIndex  INTEGER  Tab order")
+        props = APPEND(props, "ForeColor INTEGER  Text color")
+        props = APPEND(props, "BackColor INTEGER  Background color")
+
+        ' Type-specific properties
+        IF widgetIdx = 1 THEN
+            ' Button
+            props = APPEND(props, "Caption   STRING   Button text")
+            props = APPEND(props, "Border    BOOLEAN  Show border")
+        ELSEIF widgetIdx = 2 THEN
+            ' Label
+            props = APPEND(props, "Caption   STRING   Label text")
+            props = APPEND(props, "Justify   ENUM     Left/Center/Right")
+        ELSEIF widgetIdx = 3 THEN
+            ' TextBox
+            props = APPEND(props, "Value     STRING   Text content")
+            props = APPEND(props, "Placeholder STRING  Empty hint")
+            props = APPEND(props, "CharLimit INTEGER  Max characters")
+            props = APPEND(props, "EchoMode  ENUM     Normal/Password/None")
+        ELSEIF widgetIdx = 4 THEN
+            ' CheckBox
+            props = APPEND(props, "Caption   STRING   Checkbox label")
+            props = APPEND(props, "Value     STRING   Checked state")
+        ELSEIF widgetIdx = 5 THEN
+            ' Option
+            props = APPEND(props, "Caption   STRING   Option label")
+            props = APPEND(props, "GroupName STRING   Radio group")
+        ELSEIF widgetIdx = 6 THEN
+            ' ListBox
+            props = APPEND(props, "Items     STRING   Semicolon-separated")
+            props = APPEND(props, "Title     STRING   List title")
+            props = APPEND(props, "ShowTitle BOOLEAN  Show title bar")
+        ELSEIF widgetIdx = 7 THEN
+            ' ComboBox
+            props = APPEND(props, "Items     STRING   Semicolon-separated")
+            props = APPEND(props, "ShowFilter BOOLEAN Filter input")
+        ELSEIF widgetIdx = 10 THEN
+            ' Timer
+            props = APPEND(props, "Interval  INTEGER  Ms between ticks")
+        ELSEIF widgetIdx = 11 THEN
+            ' TextArea
+            props = APPEND(props, "Value     STRING   Text content")
+            props = APPEND(props, "Placeholder STRING Empty hint")
+            props = APPEND(props, "ShowLineNumbers BOOLEAN Line nums")
+        ELSEIF widgetIdx = 12 THEN
+            ' Progress
+            props = APPEND(props, "Value     STRING   Current value")
+            props = APPEND(props, "Total     INTEGER  Maximum value")
+            props = APPEND(props, "ShowPct   BOOLEAN  Show percentage")
+        ELSEIF widgetIdx = 13 THEN
+            ' Spinner
+            props = APPEND(props, "Style     ENUM     Line/Dot/MiniDot/...")
+        ELSEIF widgetIdx = 14 THEN
+            ' Table
+            props = APPEND(props, "Columns   STRING   Pipe-separated")
+            props = APPEND(props, "Rows      STRING   Semicolon-separated")
+            props = APPEND(props, "ShowHeaders BOOLEAN Header row")
+        ENDIF
+    ENDIF
+    RETURN props
+END FUNCTION
+
+' Get events for a widget type in the Object Browser
+FUNCTION GetObjectBrowserEvents(widgetIdx AS INTEGER) AS []STRING
+    DIM events AS []STRING
+
+    IF widgetIdx = 0 THEN
+        ' Form events
+        events = APPEND(events, "Load      Form initialized")
+        events = APPEND(events, "Unload    Form closing")
+        events = APPEND(events, "Activate  Form gains focus")
+        events = APPEND(events, "KeyPress  Key pressed")
+    ELSEIF widgetIdx = 1 THEN
+        ' Button
+        events = APPEND(events, "Click     Button pressed")
+    ELSEIF widgetIdx = 2 THEN
+        ' Label
+        events = APPEND(events, "Click     Label clicked")
+    ELSEIF widgetIdx = 3 THEN
+        ' TextBox
+        events = APPEND(events, "Change    Text changed")
+        events = APPEND(events, "Submit    Enter pressed")
+        events = APPEND(events, "Blur      Lost focus")
+    ELSEIF widgetIdx = 4 OR widgetIdx = 5 THEN
+        ' CheckBox / Option
+        events = APPEND(events, "Change    State changed")
+    ELSEIF widgetIdx = 6 OR widgetIdx = 7 THEN
+        ' ListBox / ComboBox
+        events = APPEND(events, "Change    Selection changed")
+    ELSEIF widgetIdx = 10 THEN
+        ' Timer
+        events = APPEND(events, "Tick      Interval elapsed")
+    ELSEIF widgetIdx = 11 THEN
+        ' TextArea
+        events = APPEND(events, "Change    Text changed")
+        events = APPEND(events, "Blur      Lost focus")
+    ELSEIF widgetIdx = 14 THEN
+        ' Table
+        events = APPEND(events, "Change    Selection changed")
+    ELSE
+        events = APPEND(events, "(No events)")
+    ENDIF
+    RETURN events
+END FUNCTION
+
+' Build Object Browser dialog content
+FUNCTION GetObjectBrowserContent(m AS VDBTermModel) AS []STRING
+    DIM content AS []STRING
+    DIM widgets AS []STRING = GetObjectBrowserWidgets()
+    DIM widgetCount AS INTEGER = Len(widgets)
+
+    ' Tab bar
+    DIM tabLine AS STRING = "  "
+    IF m.ObjectBrowserTab = 0 THEN
+        tabLine = tabLine & "[Widgets]  "
+    ELSE
+        tabLine = tabLine & " Widgets   "
+    ENDIF
+    IF m.ObjectBrowserTab = 1 THEN
+        tabLine = tabLine & "[Properties]  "
+    ELSE
+        tabLine = tabLine & " Properties   "
+    ENDIF
+    IF m.ObjectBrowserTab = 2 THEN
+        tabLine = tabLine & "[Events]  "
+    ELSE
+        tabLine = tabLine & " Events   "
+    ENDIF
+    content = APPEND(content, tabLine)
+    content = APPEND(content, "  " & RepeatStr("-", 62))
+
+    ' Main content area (16 lines)
+    DIM viewHeight AS INTEGER = 16
+    DIM scrollOffset AS INTEGER = m.ObjectBrowserScroll
+    DIM i AS INTEGER
+
+    IF m.ObjectBrowserTab = 0 THEN
+        ' Widgets tab - show widget list
+        FOR i = 0 TO viewHeight - 1
+            DIM wIdx AS INTEGER = scrollOffset + i
+            IF wIdx < widgetCount THEN
+                DIM marker AS STRING = "  "
+                IF wIdx = m.ObjectBrowserWidgetIdx THEN
+                    marker = "> "
+                ENDIF
+                content = APPEND(content, "  " & marker & PadRight(widgets[wIdx], 60))
+            ELSE
+                content = APPEND(content, "  " & RepeatStr(" ", 62))
+            ENDIF
+        NEXT
+    ELSEIF m.ObjectBrowserTab = 1 THEN
+        ' Properties tab - show properties for selected widget
+        DIM props AS []STRING = GetObjectBrowserProperties(m.ObjectBrowserWidgetIdx)
+        DIM propCount AS INTEGER = Len(props)
+        content = APPEND(content, "  Properties for: " & widgets[m.ObjectBrowserWidgetIdx])
+        content = APPEND(content, "  " & RepeatStr("-", 40))
+        FOR i = 0 TO viewHeight - 3
+            DIM pIdx AS INTEGER = scrollOffset + i
+            IF pIdx < propCount THEN
+                content = APPEND(content, "  " & PadRight(props[pIdx], 62))
+            ELSE
+                content = APPEND(content, "  " & RepeatStr(" ", 62))
+            ENDIF
+        NEXT
+    ELSEIF m.ObjectBrowserTab = 2 THEN
+        ' Events tab - show events for selected widget
+        DIM events AS []STRING = GetObjectBrowserEvents(m.ObjectBrowserWidgetIdx)
+        DIM eventCount AS INTEGER = Len(events)
+        content = APPEND(content, "  Events for: " & widgets[m.ObjectBrowserWidgetIdx])
+        content = APPEND(content, "  " & RepeatStr("-", 40))
+        FOR i = 0 TO viewHeight - 3
+            DIM eIdx AS INTEGER = scrollOffset + i
+            IF eIdx < eventCount THEN
+                content = APPEND(content, "  " & PadRight(events[eIdx], 62))
+            ELSE
+                content = APPEND(content, "  " & RepeatStr(" ", 62))
+            ENDIF
+        NEXT
+    ENDIF
+
+    ' Footer
+    content = APPEND(content, "  " & RepeatStr("-", 62))
+    content = APPEND(content, "  Tab: Switch panel   Up/Down: Navigate   Esc: Close")
+
+    RETURN content
+END FUNCTION
+
 ' Dialog rendering
 FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
     DIM lines AS []STRING
@@ -1705,6 +1940,7 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         contentLines = APPEND(contentLines, "")
         contentLines = APPEND(contentLines, "  Keyboard Shortcuts:")
         contentLines = APPEND(contentLines, "    F1     - Help")
+        contentLines = APPEND(contentLines, "    F2     - Object Browser")
         contentLines = APPEND(contentLines, "    F5     - Run project")
         contentLines = APPEND(contentLines, "    F7     - Toggle Form/Code view")
         contentLines = APPEND(contentLines, "    F10    - Open menu")
@@ -1826,6 +2062,10 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         contentLines = APPEND(contentLines, "  [Insert] [Delete] [Up] [Down]")
         contentLines = APPEND(contentLines, "")
         contentLines = APPEND(contentLines, "  < OK >            < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_OBJECT_BROWSER THEN
+        title = " Object Browser "
+        width = 70
+        contentLines = GetObjectBrowserContent(m)
     ENDIF
 
     ' Build dialog box
@@ -1879,6 +2119,8 @@ FUNCTION GetDialogSize(m AS VDBTermModel) AS (INTEGER, INTEGER)
         RETURN 44, 10
     ELSEIF m.DialogMode = DIALOG_MENU_EDITOR THEN
         RETURN 50, 20
+    ELSEIF m.DialogMode = DIALOG_OBJECT_BROWSER THEN
+        RETURN 70, 22
     ENDIF
     RETURN 40, 8
 END FUNCTION

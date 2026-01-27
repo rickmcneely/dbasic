@@ -55,6 +55,68 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
         RETURN m, NIL
     ENDIF
 
+    ' Object Browser dialog
+    IF m.DialogMode = DIALOG_OBJECT_BROWSER THEN
+        IF key = "tab" THEN
+            ' Cycle through tabs: Widgets -> Properties -> Events -> Widgets
+            m.ObjectBrowserTab = (m.ObjectBrowserTab + 1) MOD 3
+            m.ObjectBrowserScroll = 0
+        ELSEIF key = "up" THEN
+            IF m.ObjectBrowserTab = 0 THEN
+                ' In Widgets tab, move selection up
+                IF m.ObjectBrowserWidgetIdx > 0 THEN
+                    m.ObjectBrowserWidgetIdx = m.ObjectBrowserWidgetIdx - 1
+                    IF m.ObjectBrowserWidgetIdx < m.ObjectBrowserScroll THEN
+                        m.ObjectBrowserScroll = m.ObjectBrowserWidgetIdx
+                    ENDIF
+                ENDIF
+            ELSE
+                ' In Properties/Events tab, scroll up
+                IF m.ObjectBrowserScroll > 0 THEN
+                    m.ObjectBrowserScroll = m.ObjectBrowserScroll - 1
+                ENDIF
+            ENDIF
+        ELSEIF key = "down" THEN
+            IF m.ObjectBrowserTab = 0 THEN
+                ' In Widgets tab, move selection down
+                IF m.ObjectBrowserWidgetIdx < 14 THEN
+                    m.ObjectBrowserWidgetIdx = m.ObjectBrowserWidgetIdx + 1
+                    IF m.ObjectBrowserWidgetIdx >= m.ObjectBrowserScroll + 16 THEN
+                        m.ObjectBrowserScroll = m.ObjectBrowserWidgetIdx - 15
+                    ENDIF
+                ENDIF
+            ELSE
+                ' In Properties/Events tab, scroll down
+                m.ObjectBrowserScroll = m.ObjectBrowserScroll + 1
+            ENDIF
+        ELSEIF key = "pgup" THEN
+            IF m.ObjectBrowserTab = 0 THEN
+                m.ObjectBrowserWidgetIdx = m.ObjectBrowserWidgetIdx - 5
+                IF m.ObjectBrowserWidgetIdx < 0 THEN
+                    m.ObjectBrowserWidgetIdx = 0
+                ENDIF
+                m.ObjectBrowserScroll = m.ObjectBrowserWidgetIdx
+            ELSE
+                m.ObjectBrowserScroll = m.ObjectBrowserScroll - 5
+                IF m.ObjectBrowserScroll < 0 THEN
+                    m.ObjectBrowserScroll = 0
+                ENDIF
+            ENDIF
+        ELSEIF key = "pgdown" THEN
+            IF m.ObjectBrowserTab = 0 THEN
+                m.ObjectBrowserWidgetIdx = m.ObjectBrowserWidgetIdx + 5
+                IF m.ObjectBrowserWidgetIdx > 14 THEN
+                    m.ObjectBrowserWidgetIdx = 14
+                ENDIF
+            ELSE
+                m.ObjectBrowserScroll = m.ObjectBrowserScroll + 5
+            ENDIF
+        ELSEIF key = "enter" OR key = " " THEN
+            m.DialogMode = DIALOG_NONE
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
     ' Confirmation dialog
     IF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
         IF key = "y" OR key = "Y" THEN
@@ -263,6 +325,8 @@ FUNCTION GetMenuHotkeyIndex(menu AS INTEGER, key AS STRING) AS INTEGER
             RETURN 3  ' Show Grid
         ELSEIF upperKey = "L" THEN
             RETURN 4  ' Line Numbers
+        ELSEIF upperKey = "O" THEN
+            RETURN 6  ' Object Browser
         ENDIF
     ELSEIF menu = MENU_RUN THEN
         IF upperKey = "R" THEN
@@ -307,7 +371,7 @@ FUNCTION GetMenuItemCount(menu AS INTEGER) AS INTEGER
     ELSEIF menu = MENU_EDIT THEN
         RETURN 8
     ELSEIF menu = MENU_VIEW THEN
-        RETURN 5
+        RETURN 7
     ELSEIF menu = MENU_RUN THEN
         RETURN 4
     ELSEIF menu = MENU_DEBUG THEN
@@ -375,6 +439,11 @@ FUNCTION ExecuteMenuItem(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
             m.ViewMode = VIEW_CODE
         ELSEIF m.MenuIndex = 3 THEN
             m.ShowGrid = NOT m.ShowGrid
+        ELSEIF m.MenuIndex = 6 THEN
+            m.DialogMode = DIALOG_OBJECT_BROWSER
+            m.ObjectBrowserScroll = 0
+            m.ObjectBrowserTab = 0
+            m.ObjectBrowserWidgetIdx = 0
         ENDIF
     ELSEIF currentMenu = MENU_RUN THEN
         IF m.MenuIndex = 0 THEN
@@ -827,11 +896,17 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Visible = (val = "True" OR val = "true" OR val = "1")
         ELSEIF adjIdx = 9 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ZOrder = ParseIntStr(val)
+        ELSEIF adjIdx = 10 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].TabIndex = ParseIntStr(val)
+        ELSEIF adjIdx = 11 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ForeColor = ParseIntStr(val)
+        ELSEIF adjIdx = 12 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].BackColor = ParseIntStr(val)
         ELSE
             ' Type-specific properties
-            DIM typeStartIdx AS INTEGER = 10
+            DIM typeStartIdx AS INTEGER = 13
             IF NOT hasCaption THEN
-                typeStartIdx = 9
+                typeStartIdx = 12
             ENDIF
             DIM typeIdx AS INTEGER = m.PropIndex - typeStartIdx
             IF ctlType = CTRL_TEXTBOX THEN
@@ -1536,9 +1611,9 @@ FUNCTION HandleDropdownClick(m AS VDBTermModel, row AS INTEGER) AS (tea.Model, t
             RETURN m, NIL ' Separator clicked
         ENDIF
     ELSEIF m.MenuOpen = MENU_VIEW THEN
-        maxItems = 5
-        ' Items: 0=Form View, 1=Code View, 2=separator, 3=Show Grid, 4=Line Numbers
-        IF itemIdx = 2 THEN
+        maxItems = 7
+        ' Items: 0=Form View, 1=Code View, 2=separator, 3=Show Grid, 4=Line Numbers, 5=separator, 6=Object Browser
+        IF itemIdx = 2 OR itemIdx = 5 THEN
             RETURN m, NIL ' Separator clicked
         ENDIF
     ELSEIF m.MenuOpen = MENU_RUN THEN
@@ -1918,7 +1993,7 @@ FUNCTION HandlePropertiesClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, t
         m.PropLastClickTime = now
         m.PropLastClickIdx = newPropIndex
 
-        ' Handle double-click on boolean property
+        ' Handle double-click on boolean or enumerable property
         IF isDoubleClick AND m.SelectedCtrlIdx >= 0 THEN
             ' Check if we have a valid control selected
             IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
@@ -1929,6 +2004,14 @@ FUNCTION HandlePropertiesClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, t
                         m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx] = ToggleBooleanProperty(ctrl, newPropIndex)
                         m.Project.Modified = TRUE
                         ' Reset click tracking to prevent triple-click toggle
+                        m.PropLastClickIdx = -1
+                        RETURN m, NIL
+                    ENDIF
+                    ' If it's an enumerable property, cycle it
+                    IF IsPropertyEnumerable(ctrl, newPropIndex) THEN
+                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx] = CycleEnumerableProperty(ctrl, newPropIndex)
+                        m.Project.Modified = TRUE
+                        ' Reset click tracking to prevent triple-click cycle
                         m.PropLastClickIdx = -1
                         RETURN m, NIL
                     ENDIF

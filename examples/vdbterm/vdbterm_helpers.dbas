@@ -710,11 +710,11 @@ END FUNCTION
 
 ' Get the total number of properties for a control (including type-specific)
 FUNCTION GetControlPropertyCount(ctrl AS VDBControl) AS INTEGER
-    ' Base properties: Name, Type, [Caption], X, Y, Width, Height, Enabled, Visible, ZOrder
+    ' Base properties: Name, Type, [Caption], X, Y, Width, Height, Enabled, Visible, ZOrder, TabIndex, ForeColor, BackColor
     ' Caption is only included for controls that use it
-    DIM baseCount AS INTEGER = 9
+    DIM baseCount AS INTEGER = 12
     IF ControlUsesCaption(ctrl.CtlType) THEN
-        baseCount = 10
+        baseCount = 13
     ENDIF
 
     ' Add type-specific property count
@@ -789,12 +789,18 @@ FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRIN
         RETURN "Visible"
     ELSEIF adjIdx = 9 THEN
         RETURN "ZOrder"
+    ELSEIF adjIdx = 10 THEN
+        RETURN "TabIndex"
+    ELSEIF adjIdx = 11 THEN
+        RETURN "ForeColor"
+    ELSEIF adjIdx = 12 THEN
+        RETURN "BackColor"
     ENDIF
 
     ' Type-specific properties
-    DIM typeStartIdx AS INTEGER = 10
+    DIM typeStartIdx AS INTEGER = 13
     IF NOT hasCaption THEN
-        typeStartIdx = 9
+        typeStartIdx = 12
     ENDIF
     DIM typeIdx AS INTEGER = propIdx - typeStartIdx
 
@@ -910,9 +916,9 @@ FUNCTION IsPropertyBoolean(ctrl AS VDBControl, propIdx AS INTEGER) AS BOOLEAN
     ENDIF
 
     ' Type-specific boolean properties
-    DIM typeStartIdx AS INTEGER = 10
+    DIM typeStartIdx AS INTEGER = 13
     IF NOT hasCaption THEN
-        typeStartIdx = 9
+        typeStartIdx = 12
     ENDIF
     DIM typeIdx AS INTEGER = propIdx - typeStartIdx
 
@@ -975,9 +981,9 @@ FUNCTION ToggleBooleanProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBCon
     ENDIF
 
     ' Type-specific boolean properties
-    DIM typeStartIdx AS INTEGER = 10
+    DIM typeStartIdx AS INTEGER = 13
     IF NOT hasCaption THEN
-        typeStartIdx = 9
+        typeStartIdx = 12
     ENDIF
     DIM typeIdx AS INTEGER = propIdx - typeStartIdx
 
@@ -1014,6 +1020,70 @@ FUNCTION ToggleBooleanProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBCon
     ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
         IF typeIdx = 0 THEN
             ctrl.Border = NOT ctrl.Border
+        ENDIF
+    ENDIF
+
+    RETURN ctrl
+END FUNCTION
+
+' Check if a property at given index is an enumerable type (can be cycled)
+FUNCTION IsPropertyEnumerable(ctrl AS VDBControl, propIdx AS INTEGER) AS BOOLEAN
+    ' Adjust index for controls without Caption
+    DIM hasCaption AS BOOLEAN = ControlUsesCaption(ctrl.CtlType)
+
+    ' Type-specific enumerable properties
+    DIM typeStartIdx AS INTEGER = 13
+    IF NOT hasCaption THEN
+        typeStartIdx = 12
+    ENDIF
+    DIM typeIdx AS INTEGER = propIdx - typeStartIdx
+
+    IF ctrl.CtlType = CTRL_LABEL THEN
+        ' Justification (typeIdx = 0): Left(0), Center(1), Right(2)
+        IF typeIdx = 0 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TEXTBOX THEN
+        ' EchoMode (typeIdx = 3): Normal(0), Password(1), None(2)
+        IF typeIdx = 3 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
+        ' SpinnerStyle (typeIdx = 0): Line(0), Dot(1), MiniDot(2), Jump(3), Pulse(4), Points(5)
+        IF typeIdx = 0 THEN
+            RETURN TRUE
+        ENDIF
+    ENDIF
+
+    RETURN FALSE
+END FUNCTION
+
+' Cycle an enumerable property to its next value and return the modified control
+FUNCTION CycleEnumerableProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBControl
+    ' Adjust index for controls without Caption
+    DIM hasCaption AS BOOLEAN = ControlUsesCaption(ctrl.CtlType)
+
+    ' Type-specific enumerable properties
+    DIM typeStartIdx AS INTEGER = 13
+    IF NOT hasCaption THEN
+        typeStartIdx = 12
+    ENDIF
+    DIM typeIdx AS INTEGER = propIdx - typeStartIdx
+
+    IF ctrl.CtlType = CTRL_LABEL THEN
+        ' Justification: Left(0) -> Center(1) -> Right(2) -> Left(0)
+        IF typeIdx = 0 THEN
+            ctrl.Justification = (ctrl.Justification + 1) MOD 3
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_TEXTBOX THEN
+        ' EchoMode: Normal(0) -> Password(1) -> None(2) -> Normal(0)
+        IF typeIdx = 3 THEN
+            ctrl.EchoMode = (ctrl.EchoMode + 1) MOD 3
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
+        ' SpinnerStyle: Line(0) -> Dot(1) -> MiniDot(2) -> Jump(3) -> Pulse(4) -> Points(5) -> Line(0)
+        IF typeIdx = 0 THEN
+            ctrl.SpinnerStyle = (ctrl.SpinnerStyle + 1) MOD 6
         ENDIF
     ENDIF
 
@@ -1058,12 +1128,18 @@ FUNCTION GetControlPropertyValue(ctrl AS VDBControl, propIdx AS INTEGER) AS STRI
         ENDIF
     ELSEIF adjIdx = 9 THEN
         RETURN Str(ctrl.ZOrder)
+    ELSEIF adjIdx = 10 THEN
+        RETURN Str(ctrl.TabIndex)
+    ELSEIF adjIdx = 11 THEN
+        RETURN Str(ctrl.ForeColor)
+    ELSEIF adjIdx = 12 THEN
+        RETURN Str(ctrl.BackColor)
     ENDIF
 
     ' Type-specific properties
-    DIM typeStartIdx AS INTEGER = 10
+    DIM typeStartIdx AS INTEGER = 13
     IF NOT hasCaption THEN
-        typeStartIdx = 9
+        typeStartIdx = 12
     ENDIF
     DIM typeIdx AS INTEGER = propIdx - typeStartIdx
 
