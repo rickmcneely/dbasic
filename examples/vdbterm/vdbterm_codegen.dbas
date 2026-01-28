@@ -1,13 +1,839 @@
 ' VDBTerm Code Generation
 ' BubbleTea application generation from VDBTerm forms
 
+' Helper function to substitute {prop:X} placeholders with property values
+FUNCTION SubstitutePluginPropPlaceholders(template AS STRING, ctrl AS VDBControl, plugin AS PluginWidgetDef) AS STRING
+    DIM result AS STRING = template
+
+    ' Replace {prop:PropName} with actual property value from ExtendedProps or default
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(plugin.Properties) - 1
+        DIM prop AS PluginProperty = plugin.Properties[i]
+        DIM placeholder AS STRING = "{prop:" & prop.Name & "}"
+        DIM value AS STRING = ""
+
+        ' Try to get value from ExtendedProps
+        IF ctrl.ExtendedProps <> "" THEN
+            value = ExtractJSONString(ctrl.ExtendedProps, prop.Name)
+        ENDIF
+
+        ' Use default if not found
+        IF value = "" THEN
+            IF prop.PropType = "string" THEN
+                value = Chr(34) & prop.DefaultStr & Chr(34)
+            ELSEIF prop.PropType = "integer" THEN
+                value = Str(prop.DefaultInt)
+            ELSEIF prop.PropType = "boolean" THEN
+                IF prop.DefaultBool THEN
+                    value = "TRUE"
+                ELSE
+                    value = "FALSE"
+                ENDIF
+            ELSE
+                value = Chr(34) & prop.DefaultStr & Chr(34)
+            ENDIF
+        ELSE
+            ' Format value based on type
+            IF prop.PropType = "string" THEN
+                value = Chr(34) & value & Chr(34)
+            ELSEIF prop.PropType = "boolean" THEN
+                IF value = "true" OR value = "1" THEN
+                    value = "TRUE"
+                ELSE
+                    value = "FALSE"
+                ENDIF
+            ENDIF
+        ENDIF
+
+        result = ReplaceAll(result, placeholder, value)
+    NEXT
+
+    ' Replace standard placeholders
+    result = ReplaceAll(result, "{width}", Str(ctrl.Width))
+    result = ReplaceAll(result, "{height}", Str(ctrl.Height))
+    result = ReplaceAll(result, "{fgColor}", Str(ctrl.ForeColor))
+    result = ReplaceAll(result, "{bgColor}", Str(ctrl.BackColor))
+
+    RETURN result
+END FUNCTION
+
+' Generate standalone DirBrowser widget TYPE and methods
+' This follows the bubbles pattern for reusable components
+FUNCTION GenerateDirBrowserWidget() AS STRING
+    DIM code AS STRING = ""
+    DIM q AS STRING = Chr(34)  ' Quote character
+
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' DirBrowser Widget" & Chr(10)
+    code = code & "' A reusable directory browser component" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate TYPE
+    code = code & "TYPE DirBrowser" & Chr(10)
+    code = code & "    DIM path AS STRING" & Chr(10)
+    code = code & "    DIM dirs AS []STRING" & Chr(10)
+    code = code & "    DIM selected AS INTEGER" & Chr(10)
+    code = code & "    DIM scroll AS INTEGER" & Chr(10)
+    code = code & "    DIM focused AS BOOLEAN" & Chr(10)
+    code = code & "    DIM pathInput AS textinput.Model" & Chr(10)
+    code = code & "    DIM width AS INTEGER" & Chr(10)
+    code = code & "    DIM height AS INTEGER" & Chr(10)
+    code = code & "    DIM fgColor AS INTEGER" & Chr(10)
+    code = code & "    DIM bgColor AS INTEGER" & Chr(10)
+    code = code & "    DIM showHidden AS BOOLEAN" & Chr(10)
+    code = code & "END TYPE" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate NewDirBrowser constructor
+    code = code & "' Create a new DirBrowser with specified dimensions" & Chr(10)
+    code = code & "FUNCTION NewDirBrowser(width AS INTEGER, height AS INTEGER) AS DirBrowser" & Chr(10)
+    code = code & "    DIM db AS DirBrowser" & Chr(10)
+    code = code & "    db.width = width" & Chr(10)
+    code = code & "    db.height = height" & Chr(10)
+    code = code & "    db.fgColor = 15" & Chr(10)
+    code = code & "    db.bgColor = 1" & Chr(10)
+    code = code & "    db.selected = 0" & Chr(10)
+    code = code & "    db.scroll = 0" & Chr(10)
+    code = code & "    db.focused = FALSE" & Chr(10)
+    code = code & "    db.showHidden = FALSE" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Initialize path to current working directory" & Chr(10)
+    code = code & "    DIM dbErr AS error" & Chr(10)
+    code = code & "    db.path, dbErr = os.Getwd()" & Chr(10)
+    code = code & "    IF dbErr <> NIL THEN" & Chr(10)
+    code = code & "        db.path = " & q & "/" & q & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    db.dirs = DirBrowserListDirs(db.path, db.showHidden)" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Initialize path input textbox" & Chr(10)
+    code = code & "    db.pathInput = textinput.New()" & Chr(10)
+    code = code & "    db.pathInput.SetValue(db.path)" & Chr(10)
+    code = code & "    db.pathInput.CursorEnd()" & Chr(10)
+    code = code & "    db.pathInput.Width = width - 5" & Chr(10)
+    code = code & "    db.pathInput.CharLimit = 256" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    RETURN db" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate helper function to list directories
+    code = code & "' List directories in a path" & Chr(10)
+    code = code & "FUNCTION DirBrowserListDirs(path AS STRING, showHidden AS BOOLEAN) AS []STRING" & Chr(10)
+    code = code & "    DIM result AS []STRING" & Chr(10)
+    code = code & "    ' Add parent directory unless at root" & Chr(10)
+    code = code & "    IF path <> " & q & "/" & q & " AND path <> " & q & q & " THEN" & Chr(10)
+    code = code & "        result = APPEND(result, " & q & ".." & q & ")" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM entries AS []os.DirEntry" & Chr(10)
+    code = code & "    DIM err AS error" & Chr(10)
+    code = code & "    entries, err = os.ReadDir(path)" & Chr(10)
+    code = code & "    IF err <> NIL THEN" & Chr(10)
+    code = code & "        RETURN result" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM i AS INTEGER" & Chr(10)
+    code = code & "    FOR i = 0 TO Len(entries) - 1" & Chr(10)
+    code = code & "        IF entries[i].IsDir() THEN" & Chr(10)
+    code = code & "            DIM name AS STRING = entries[i].Name()" & Chr(10)
+    code = code & "            IF showHidden OR Left(name, 1) <> " & q & "." & q & " THEN" & Chr(10)
+    code = code & "                result = APPEND(result, name & " & q & "/" & q & ")" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "    NEXT" & Chr(10)
+    code = code & "    RETURN result" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate Update method
+    code = code & "' Handle input messages for DirBrowser" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) Update(msg AS tea.Msg) AS (DirBrowser, tea.Cmd)" & Chr(10)
+    code = code & "    DIM cmd AS tea.Cmd" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Handle mouse messages" & Chr(10)
+    code = code & "    DIM mouseMsg AS tea.MouseMsg" & Chr(10)
+    code = code & "    DIM mouseOk AS BOOLEAN" & Chr(10)
+    code = code & "    mouseMsg, mouseOk = msg.(tea.MouseMsg)" & Chr(10)
+    code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionPress AND mouseMsg.Button = tea.MouseButtonLeft THEN" & Chr(10)
+    code = code & "        DIM my AS INTEGER = Int(mouseMsg.Y)" & Chr(10)
+    code = code & "        IF my = 1 THEN" & Chr(10)
+    code = code & "            ' Clicked on path input" & Chr(10)
+    code = code & "            db.pathInput.Focus()" & Chr(10)
+    code = code & "            RETURN db, textinput.Blink" & Chr(10)
+    code = code & "        ELSE" & Chr(10)
+    code = code & "            db.pathInput.Blur()" & Chr(10)
+    code = code & "            IF my >= 3 AND my < db.height - 1 THEN" & Chr(10)
+    code = code & "                ' Clicked on directory list" & Chr(10)
+    code = code & "                DIM targetIdx AS INTEGER = my - 3 + db.scroll" & Chr(10)
+    code = code & "                IF targetIdx >= 0 AND targetIdx < Len(db.dirs) THEN" & Chr(10)
+    code = code & "                    db.selected = targetIdx" & Chr(10)
+    code = code & "                ENDIF" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "        RETURN db, NIL" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Route to path input if focused" & Chr(10)
+    code = code & "    IF db.pathInput.Focused() THEN" & Chr(10)
+    code = code & "        ' Check for Enter to apply path" & Chr(10)
+    code = code & "        DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "        DIM keyOk AS BOOLEAN" & Chr(10)
+    code = code & "        keyMsg, keyOk = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "        IF keyOk AND keyMsg.String() = " & q & "enter" & q & " THEN" & Chr(10)
+    code = code & "            ' Apply path from input" & Chr(10)
+    code = code & "            db.path = db.pathInput.Value()" & Chr(10)
+    code = code & "            db.dirs = DirBrowserListDirs(db.path, db.showHidden)" & Chr(10)
+    code = code & "            db.selected = 0" & Chr(10)
+    code = code & "            db.scroll = 0" & Chr(10)
+    code = code & "            db.pathInput.Blur()" & Chr(10)
+    code = code & "            RETURN db, NIL" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "        db.pathInput, cmd = db.pathInput.Update(msg)" & Chr(10)
+    code = code & "        ' Reset cursor to visible on cursor movement for immediate visibility" & Chr(10)
+    code = code & "        IF keyOk THEN" & Chr(10)
+    code = code & "            DIM pKey AS STRING = keyMsg.String()" & Chr(10)
+    code = code & "            IF pKey = " & q & "left" & q & " OR pKey = " & q & "right" & q & " OR pKey = " & q & "home" & q & " OR pKey = " & q & "end" & q & " OR pKey = " & q & "ctrl+left" & q & " OR pKey = " & q & "ctrl+right" & q & " THEN" & Chr(10)
+    code = code & "                db.pathInput.Cursor.Blink = TRUE" & Chr(10)
+    code = code & "                RETURN db, cmd" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "        RETURN db, cmd" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Handle keyboard for directory list" & Chr(10)
+    code = code & "    DIM keyMsg2 AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM keyOk2 AS BOOLEAN" & Chr(10)
+    code = code & "    keyMsg2, keyOk2 = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "    IF keyOk2 AND db.focused THEN" & Chr(10)
+    code = code & "        DIM key AS STRING = keyMsg2.String()" & Chr(10)
+    code = code & "        DIM listH AS INTEGER = db.height - 4  ' Visible list rows" & Chr(10)
+    code = code & Chr(10)
+    code = code & "        IF key = " & q & "up" & q & " THEN" & Chr(10)
+    code = code & "            IF db.selected > 0 THEN" & Chr(10)
+    code = code & "                db.selected = db.selected - 1" & Chr(10)
+    code = code & "                IF db.selected < db.scroll THEN" & Chr(10)
+    code = code & "                    db.scroll = db.selected" & Chr(10)
+    code = code & "                ENDIF" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ELSEIF key = " & q & "down" & q & " THEN" & Chr(10)
+    code = code & "            IF db.selected < Len(db.dirs) - 1 THEN" & Chr(10)
+    code = code & "                db.selected = db.selected + 1" & Chr(10)
+    code = code & "                IF db.selected >= db.scroll + listH THEN" & Chr(10)
+    code = code & "                    db.scroll = db.selected - listH + 1" & Chr(10)
+    code = code & "                ENDIF" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ELSEIF key = " & q & "enter" & q & " THEN" & Chr(10)
+    code = code & "            ' Navigate into selected directory" & Chr(10)
+    code = code & "            IF db.selected >= 0 AND db.selected < Len(db.dirs) THEN" & Chr(10)
+    code = code & "                DIM dirName AS STRING = db.dirs[db.selected]" & Chr(10)
+    code = code & "                IF dirName = " & q & ".." & q & " THEN" & Chr(10)
+    code = code & "                    db.path = filepath.Dir(db.path)" & Chr(10)
+    code = code & "                ELSE" & Chr(10)
+    code = code & "                    db.path = filepath.Join(db.path, Left(dirName, Len(dirName) - 1))" & Chr(10)
+    code = code & "                ENDIF" & Chr(10)
+    code = code & "                db.dirs = DirBrowserListDirs(db.path, db.showHidden)" & Chr(10)
+    code = code & "                db.selected = 0" & Chr(10)
+    code = code & "                db.scroll = 0" & Chr(10)
+    code = code & "                db.pathInput.SetValue(db.path)" & Chr(10)
+    code = code & "                db.pathInput.CursorEnd()" & Chr(10)
+    code = code & "                db.pathInput.Blur()" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    RETURN db, NIL" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate Focus method
+    code = code & "' Focus the DirBrowser" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) Focus() AS DirBrowser" & Chr(10)
+    code = code & "    db.focused = TRUE" & Chr(10)
+    code = code & "    RETURN db" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate Blur method
+    code = code & "' Blur (unfocus) the DirBrowser" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) Blur() AS DirBrowser" & Chr(10)
+    code = code & "    db.focused = FALSE" & Chr(10)
+    code = code & "    db.pathInput.Blur()" & Chr(10)
+    code = code & "    RETURN db" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate Focused method
+    code = code & "' Check if DirBrowser is focused" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) Focused() AS BOOLEAN" & Chr(10)
+    code = code & "    RETURN db.focused" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate SetPath method
+    code = code & "' Set the current path" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) SetPath(path AS STRING) AS DirBrowser" & Chr(10)
+    code = code & "    db.path = path" & Chr(10)
+    code = code & "    db.dirs = DirBrowserListDirs(db.path, db.showHidden)" & Chr(10)
+    code = code & "    db.selected = 0" & Chr(10)
+    code = code & "    db.scroll = 0" & Chr(10)
+    code = code & "    db.pathInput.SetValue(db.path)" & Chr(10)
+    code = code & "    db.pathInput.CursorEnd()" & Chr(10)
+    code = code & "    RETURN db" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate GetPath method
+    code = code & "' Get the current path" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) GetPath() AS STRING" & Chr(10)
+    code = code & "    RETURN db.path" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate SelectedDir method
+    code = code & "' Get the currently selected directory name" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) SelectedDir() AS STRING" & Chr(10)
+    code = code & "    IF db.selected >= 0 AND db.selected < Len(db.dirs) THEN" & Chr(10)
+    code = code & "        RETURN db.dirs[db.selected]" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    RETURN " & q & q & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate SetColors method
+    code = code & "' Set foreground and background colors" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) SetColors(fg AS INTEGER, bg AS INTEGER) AS DirBrowser" & Chr(10)
+    code = code & "    db.fgColor = fg" & Chr(10)
+    code = code & "    db.bgColor = bg" & Chr(10)
+    code = code & "    RETURN db" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate SetShowHidden method
+    code = code & "' Set whether to show hidden directories" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) SetShowHidden(show AS BOOLEAN) AS DirBrowser" & Chr(10)
+    code = code & "    db.showHidden = show" & Chr(10)
+    code = code & "    db.dirs = DirBrowserListDirs(db.path, db.showHidden)" & Chr(10)
+    code = code & "    RETURN db" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate GetRow method for row-based rendering
+    code = code & "' Get a specific row of the DirBrowser for rendering" & Chr(10)
+    code = code & "FUNCTION (db AS DirBrowser) GetRow(rowIndex AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(db.fgColor))).Background(lipgloss.Color(Str(db.bgColor)))" & Chr(10)
+    code = code & "    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(db.bgColor))).Background(lipgloss.Color(Str(db.fgColor)))" & Chr(10)
+    code = code & "    DIM innerW AS INTEGER = db.width - 2" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    IF rowIndex = 0 THEN" & Chr(10)
+    code = code & "        ' Top border" & Chr(10)
+    code = code & "        RETURN style.Render(" & q & "┌" & q & " & strings.Repeat(" & q & "─" & q & ", innerW) & " & q & "┐" & q & ")" & Chr(10)
+    code = code & "    ELSEIF rowIndex = db.height - 1 THEN" & Chr(10)
+    code = code & "        ' Bottom border" & Chr(10)
+    code = code & "        RETURN style.Render(" & q & "└" & q & " & strings.Repeat(" & q & "─" & q & ", innerW) & " & q & "┘" & q & ")" & Chr(10)
+    code = code & "    ELSEIF rowIndex = 1 THEN" & Chr(10)
+    code = code & "        ' Path input line - constrain width to fit within borders" & Chr(10)
+    code = code & "        DIM pathContent AS STRING = db.pathInput.View()" & Chr(10)
+    code = code & "        DIM pathLen AS INTEGER = lipgloss.Width(pathContent)" & Chr(10)
+    code = code & "        IF pathLen < innerW THEN" & Chr(10)
+    code = code & "            pathContent = pathContent & strings.Repeat(" & q & " " & q & ", innerW - pathLen)" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "        RETURN style.Render(" & q & "│" & q & ") & pathContent & style.Render(" & q & "│" & q & ")" & Chr(10)
+    code = code & "    ELSEIF rowIndex = 2 THEN" & Chr(10)
+    code = code & "        ' Separator" & Chr(10)
+    code = code & "        RETURN style.Render(" & q & "├" & q & " & strings.Repeat(" & q & "─" & q & ", innerW) & " & q & "┤" & q & ")" & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        ' Directory list area" & Chr(10)
+    code = code & "        DIM dirIdx AS INTEGER = rowIndex - 3 + db.scroll" & Chr(10)
+    code = code & "        DIM content AS STRING = " & q & "│ " & q & Chr(10)
+    code = code & "        IF dirIdx >= 0 AND dirIdx < Len(db.dirs) THEN" & Chr(10)
+    code = code & "            DIM dirName AS STRING = db.dirs[dirIdx]" & Chr(10)
+    code = code & "            DIM isSelected AS BOOLEAN = (dirIdx = db.selected)" & Chr(10)
+    code = code & "            DIM dirEntry AS STRING = " & q & q & Chr(10)
+    code = code & "            IF dirName = " & q & ".." & q & " THEN" & Chr(10)
+    code = code & "                dirEntry = " & q & "[..] Parent Directory" & q & Chr(10)
+    code = code & "            ELSE" & Chr(10)
+    code = code & "                dirEntry = " & q & "[D] " & q & " & dirName" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "            IF Len(dirEntry) > innerW - 1 THEN" & Chr(10)
+    code = code & "                dirEntry = Left(dirEntry, innerW - 1)" & Chr(10)
+    code = code & "            ELSE" & Chr(10)
+    code = code & "                dirEntry = dirEntry & strings.Repeat(" & q & " " & q & ", innerW - 1 - Len(dirEntry))" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "            IF isSelected AND db.focused THEN" & Chr(10)
+    code = code & "                content = style.Render(" & q & "│ " & q & ") & selStyle.Render(dirEntry) & style.Render(" & q & "│" & q & ")" & Chr(10)
+    code = code & "                RETURN content" & Chr(10)
+    code = code & "            ELSE" & Chr(10)
+    code = code & "                content = content & dirEntry & " & q & "│" & q & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ELSE" & Chr(10)
+    code = code & "            content = content & strings.Repeat(" & q & " " & q & ", innerW - 1) & " & q & "│" & q & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "        RETURN style.Render(content)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Generate standalone Path widget TYPE and methods
+' This is a path textbox that can be linked to a Directories widget
+FUNCTION GeneratePathWidget() AS STRING
+    DIM code AS STRING = ""
+    DIM q AS STRING = Chr(34)  ' Quote character
+
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Path Widget" & Chr(10)
+    code = code & "' A reusable path textbox component" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate TYPE
+    code = code & "TYPE PathWidget" & Chr(10)
+    code = code & "    DIM path AS STRING" & Chr(10)
+    code = code & "    DIM textInput AS textinput.Model" & Chr(10)
+    code = code & "    DIM width AS INTEGER" & Chr(10)
+    code = code & "    DIM height AS INTEGER" & Chr(10)
+    code = code & "    DIM fgColor AS INTEGER" & Chr(10)
+    code = code & "    DIM bgColor AS INTEGER" & Chr(10)
+    code = code & "    DIM focused AS BOOLEAN" & Chr(10)
+    code = code & "END TYPE" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate NewPathWidget constructor
+    code = code & "' Create a new PathWidget with specified dimensions" & Chr(10)
+    code = code & "FUNCTION NewPathWidget(width AS INTEGER, height AS INTEGER) AS PathWidget" & Chr(10)
+    code = code & "    DIM pw AS PathWidget" & Chr(10)
+    code = code & "    pw.width = width" & Chr(10)
+    code = code & "    pw.height = height" & Chr(10)
+    code = code & "    pw.fgColor = 15" & Chr(10)
+    code = code & "    pw.bgColor = 1" & Chr(10)
+    code = code & "    pw.focused = FALSE" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Initialize path to current working directory" & Chr(10)
+    code = code & "    DIM pwErr AS error" & Chr(10)
+    code = code & "    pw.path, pwErr = os.Getwd()" & Chr(10)
+    code = code & "    IF pwErr <> NIL THEN" & Chr(10)
+    code = code & "        pw.path = " & q & "/" & q & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Initialize textinput" & Chr(10)
+    code = code & "    pw.textInput = textinput.New()" & Chr(10)
+    code = code & "    pw.textInput.SetValue(pw.path)" & Chr(10)
+    code = code & "    pw.textInput.CursorEnd()" & Chr(10)
+    code = code & "    pw.textInput.Width = width - 4" & Chr(10)
+    code = code & "    pw.textInput.CharLimit = 256" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    RETURN pw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate Update method
+    code = code & "' Handle input messages for PathWidget" & Chr(10)
+    code = code & "FUNCTION (pw AS PathWidget) Update(msg AS tea.Msg) AS (PathWidget, tea.Cmd)" & Chr(10)
+    code = code & "    DIM cmd AS tea.Cmd" & Chr(10)
+    code = code & "    IF NOT pw.focused THEN" & Chr(10)
+    code = code & "        RETURN pw, NIL" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Check for Enter key" & Chr(10)
+    code = code & "    DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM keyOk AS BOOLEAN" & Chr(10)
+    code = code & "    keyMsg, keyOk = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "    IF keyOk AND keyMsg.String() = " & q & "enter" & q & " THEN" & Chr(10)
+    code = code & "        pw.path = pw.textInput.Value()" & Chr(10)
+    code = code & "        RETURN pw, NIL" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    pw.textInput, cmd = pw.textInput.Update(msg)" & Chr(10)
+    code = code & "    RETURN pw, cmd" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate Focus/Blur/Focused methods
+    code = code & "' Focus the PathWidget" & Chr(10)
+    code = code & "FUNCTION (pw AS PathWidget) Focus() AS (PathWidget, tea.Cmd)" & Chr(10)
+    code = code & "    pw.focused = TRUE" & Chr(10)
+    code = code & "    DIM cmd AS tea.Cmd = pw.textInput.Focus()" & Chr(10)
+    code = code & "    RETURN pw, cmd" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    code = code & "' Blur (unfocus) the PathWidget" & Chr(10)
+    code = code & "FUNCTION (pw AS PathWidget) Blur() AS PathWidget" & Chr(10)
+    code = code & "    pw.focused = FALSE" & Chr(10)
+    code = code & "    pw.textInput.Blur()" & Chr(10)
+    code = code & "    RETURN pw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    code = code & "' Check if PathWidget is focused" & Chr(10)
+    code = code & "FUNCTION (pw AS PathWidget) Focused() AS BOOLEAN" & Chr(10)
+    code = code & "    RETURN pw.focused" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate SetPath/GetPath methods
+    code = code & "' Set the path value" & Chr(10)
+    code = code & "FUNCTION (pw AS PathWidget) SetPath(path AS STRING) AS PathWidget" & Chr(10)
+    code = code & "    pw.path = path" & Chr(10)
+    code = code & "    pw.textInput.SetValue(path)" & Chr(10)
+    code = code & "    pw.textInput.CursorEnd()" & Chr(10)
+    code = code & "    RETURN pw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    code = code & "' Get the current path" & Chr(10)
+    code = code & "FUNCTION (pw AS PathWidget) GetPath() AS STRING" & Chr(10)
+    code = code & "    RETURN pw.path" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    code = code & "' Get the current input value (may differ from path before Enter)" & Chr(10)
+    code = code & "FUNCTION (pw AS PathWidget) Value() AS STRING" & Chr(10)
+    code = code & "    RETURN pw.textInput.Value()" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate SetColors method
+    code = code & "' Set foreground and background colors" & Chr(10)
+    code = code & "FUNCTION (pw AS PathWidget) SetColors(fg AS INTEGER, bg AS INTEGER) AS PathWidget" & Chr(10)
+    code = code & "    pw.fgColor = fg" & Chr(10)
+    code = code & "    pw.bgColor = bg" & Chr(10)
+    code = code & "    RETURN pw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate GetRow method
+    code = code & "' Get a specific row of the PathWidget for rendering" & Chr(10)
+    code = code & "FUNCTION (pw AS PathWidget) GetRow(rowIndex AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(pw.fgColor))).Background(lipgloss.Color(Str(pw.bgColor)))" & Chr(10)
+    code = code & "    DIM innerW AS INTEGER = pw.width - 2" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    IF rowIndex = 0 THEN" & Chr(10)
+    code = code & "        RETURN style.Render(" & q & "┌" & q & " & strings.Repeat(" & q & "─" & q & ", innerW) & " & q & "┐" & q & ")" & Chr(10)
+    code = code & "    ELSEIF rowIndex = pw.height - 1 THEN" & Chr(10)
+    code = code & "        RETURN style.Render(" & q & "└" & q & " & strings.Repeat(" & q & "─" & q & ", innerW) & " & q & "┘" & q & ")" & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        DIM pathContent AS STRING = pw.textInput.View()" & Chr(10)
+    code = code & "        DIM pathLen AS INTEGER = lipgloss.Width(pathContent)" & Chr(10)
+    code = code & "        IF pathLen < innerW THEN" & Chr(10)
+    code = code & "            pathContent = pathContent & style.Render(strings.Repeat(" & q & " " & q & ", innerW - pathLen))" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "        RETURN style.Render(" & q & "│" & q & ") & pathContent & style.Render(" & q & "│" & q & ")" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Generate standalone Directories widget TYPE and methods
+' This is a directory listing that can be linked to a Path widget
+FUNCTION GenerateDirectoriesWidget() AS STRING
+    DIM code AS STRING = ""
+    DIM q AS STRING = Chr(34)  ' Quote character
+
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Directories Widget" & Chr(10)
+    code = code & "' A reusable directory listing component" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate TYPE
+    code = code & "TYPE DirectoriesWidget" & Chr(10)
+    code = code & "    DIM path AS STRING" & Chr(10)
+    code = code & "    DIM dirs AS []STRING" & Chr(10)
+    code = code & "    DIM selected AS INTEGER" & Chr(10)
+    code = code & "    DIM scroll AS INTEGER" & Chr(10)
+    code = code & "    DIM focused AS BOOLEAN" & Chr(10)
+    code = code & "    DIM width AS INTEGER" & Chr(10)
+    code = code & "    DIM height AS INTEGER" & Chr(10)
+    code = code & "    DIM fgColor AS INTEGER" & Chr(10)
+    code = code & "    DIM bgColor AS INTEGER" & Chr(10)
+    code = code & "    DIM showHidden AS BOOLEAN" & Chr(10)
+    code = code & "END TYPE" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate NewDirectoriesWidget constructor
+    code = code & "' Create a new DirectoriesWidget with specified dimensions" & Chr(10)
+    code = code & "FUNCTION NewDirectoriesWidget(width AS INTEGER, height AS INTEGER) AS DirectoriesWidget" & Chr(10)
+    code = code & "    DIM dw AS DirectoriesWidget" & Chr(10)
+    code = code & "    dw.width = width" & Chr(10)
+    code = code & "    dw.height = height" & Chr(10)
+    code = code & "    dw.fgColor = 15" & Chr(10)
+    code = code & "    dw.bgColor = 1" & Chr(10)
+    code = code & "    dw.selected = 0" & Chr(10)
+    code = code & "    dw.scroll = 0" & Chr(10)
+    code = code & "    dw.focused = FALSE" & Chr(10)
+    code = code & "    dw.showHidden = FALSE" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Initialize path to current working directory" & Chr(10)
+    code = code & "    DIM dwErr AS error" & Chr(10)
+    code = code & "    dw.path, dwErr = os.Getwd()" & Chr(10)
+    code = code & "    IF dwErr <> NIL THEN" & Chr(10)
+    code = code & "        dw.path = " & q & "/" & q & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    dw.dirs = DirectoriesListDirs(dw.path, dw.showHidden)" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    RETURN dw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate helper function to list directories
+    code = code & "' List directories in a path" & Chr(10)
+    code = code & "FUNCTION DirectoriesListDirs(path AS STRING, showHidden AS BOOLEAN) AS []STRING" & Chr(10)
+    code = code & "    DIM result AS []STRING" & Chr(10)
+    code = code & "    ' Add parent directory unless at root" & Chr(10)
+    code = code & "    IF path <> " & q & "/" & q & " AND path <> " & q & q & " THEN" & Chr(10)
+    code = code & "        result = APPEND(result, " & q & ".." & q & ")" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM entries AS []os.DirEntry" & Chr(10)
+    code = code & "    DIM err AS error" & Chr(10)
+    code = code & "    entries, err = os.ReadDir(path)" & Chr(10)
+    code = code & "    IF err <> NIL THEN" & Chr(10)
+    code = code & "        RETURN result" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM i AS INTEGER" & Chr(10)
+    code = code & "    FOR i = 0 TO Len(entries) - 1" & Chr(10)
+    code = code & "        IF entries[i].IsDir() THEN" & Chr(10)
+    code = code & "            DIM name AS STRING = entries[i].Name()" & Chr(10)
+    code = code & "            IF showHidden OR Left(name, 1) <> " & q & "." & q & " THEN" & Chr(10)
+    code = code & "                result = APPEND(result, name & " & q & "/" & q & ")" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "    NEXT" & Chr(10)
+    code = code & "    RETURN result" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate Update method
+    code = code & "' Handle input messages for DirectoriesWidget" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) Update(msg AS tea.Msg) AS (DirectoriesWidget, tea.Cmd, BOOLEAN)" & Chr(10)
+    code = code & "    DIM changed AS BOOLEAN = FALSE" & Chr(10)
+    code = code & "    IF NOT dw.focused THEN" & Chr(10)
+    code = code & "        RETURN dw, NIL, FALSE" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Handle mouse messages" & Chr(10)
+    code = code & "    DIM mouseMsg AS tea.MouseMsg" & Chr(10)
+    code = code & "    DIM mouseOk AS BOOLEAN" & Chr(10)
+    code = code & "    mouseMsg, mouseOk = msg.(tea.MouseMsg)" & Chr(10)
+    code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionPress AND mouseMsg.Button = tea.MouseButtonLeft THEN" & Chr(10)
+    code = code & "        DIM my AS INTEGER = Int(mouseMsg.Y)" & Chr(10)
+    code = code & "        IF my >= 1 AND my < dw.height - 1 THEN" & Chr(10)
+    code = code & "            DIM targetIdx AS INTEGER = my - 1 + dw.scroll" & Chr(10)
+    code = code & "            IF targetIdx >= 0 AND targetIdx < Len(dw.dirs) THEN" & Chr(10)
+    code = code & "                dw.selected = targetIdx" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "        RETURN dw, NIL, FALSE" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' Handle keyboard" & Chr(10)
+    code = code & "    DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM keyOk AS BOOLEAN" & Chr(10)
+    code = code & "    keyMsg, keyOk = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "    IF keyOk THEN" & Chr(10)
+    code = code & "        DIM key AS STRING = keyMsg.String()" & Chr(10)
+    code = code & "        DIM listH AS INTEGER = dw.height - 2" & Chr(10)
+    code = code & Chr(10)
+    code = code & "        IF key = " & q & "up" & q & " THEN" & Chr(10)
+    code = code & "            IF dw.selected > 0 THEN" & Chr(10)
+    code = code & "                dw.selected = dw.selected - 1" & Chr(10)
+    code = code & "                IF dw.selected < dw.scroll THEN" & Chr(10)
+    code = code & "                    dw.scroll = dw.selected" & Chr(10)
+    code = code & "                ENDIF" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ELSEIF key = " & q & "down" & q & " THEN" & Chr(10)
+    code = code & "            IF dw.selected < Len(dw.dirs) - 1 THEN" & Chr(10)
+    code = code & "                dw.selected = dw.selected + 1" & Chr(10)
+    code = code & "                IF dw.selected >= dw.scroll + listH THEN" & Chr(10)
+    code = code & "                    dw.scroll = dw.selected - listH + 1" & Chr(10)
+    code = code & "                ENDIF" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ELSEIF key = " & q & "enter" & q & " THEN" & Chr(10)
+    code = code & "            ' Navigate into selected directory" & Chr(10)
+    code = code & "            IF dw.selected >= 0 AND dw.selected < Len(dw.dirs) THEN" & Chr(10)
+    code = code & "                DIM dirName AS STRING = dw.dirs[dw.selected]" & Chr(10)
+    code = code & "                IF dirName = " & q & ".." & q & " THEN" & Chr(10)
+    code = code & "                    dw.path = filepath.Dir(dw.path)" & Chr(10)
+    code = code & "                ELSE" & Chr(10)
+    code = code & "                    dw.path = filepath.Join(dw.path, Left(dirName, Len(dirName) - 1))" & Chr(10)
+    code = code & "                ENDIF" & Chr(10)
+    code = code & "                dw.dirs = DirectoriesListDirs(dw.path, dw.showHidden)" & Chr(10)
+    code = code & "                dw.selected = 0" & Chr(10)
+    code = code & "                dw.scroll = 0" & Chr(10)
+    code = code & "                changed = TRUE" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    RETURN dw, NIL, changed" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate Focus/Blur/Focused methods
+    code = code & "' Focus the DirectoriesWidget" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) Focus() AS DirectoriesWidget" & Chr(10)
+    code = code & "    dw.focused = TRUE" & Chr(10)
+    code = code & "    RETURN dw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    code = code & "' Blur (unfocus) the DirectoriesWidget" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) Blur() AS DirectoriesWidget" & Chr(10)
+    code = code & "    dw.focused = FALSE" & Chr(10)
+    code = code & "    RETURN dw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    code = code & "' Check if DirectoriesWidget is focused" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) Focused() AS BOOLEAN" & Chr(10)
+    code = code & "    RETURN dw.focused" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate SetPath/GetPath methods
+    code = code & "' Set the current path and refresh directory listing" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) SetPath(path AS STRING) AS DirectoriesWidget" & Chr(10)
+    code = code & "    dw.path = path" & Chr(10)
+    code = code & "    dw.dirs = DirectoriesListDirs(dw.path, dw.showHidden)" & Chr(10)
+    code = code & "    dw.selected = 0" & Chr(10)
+    code = code & "    dw.scroll = 0" & Chr(10)
+    code = code & "    RETURN dw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    code = code & "' Get the current path" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) GetPath() AS STRING" & Chr(10)
+    code = code & "    RETURN dw.path" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    code = code & "' Get the currently selected directory name" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) SelectedDir() AS STRING" & Chr(10)
+    code = code & "    IF dw.selected >= 0 AND dw.selected < Len(dw.dirs) THEN" & Chr(10)
+    code = code & "        RETURN dw.dirs[dw.selected]" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    RETURN " & q & q & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate SetColors method
+    code = code & "' Set foreground and background colors" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) SetColors(fg AS INTEGER, bg AS INTEGER) AS DirectoriesWidget" & Chr(10)
+    code = code & "    dw.fgColor = fg" & Chr(10)
+    code = code & "    dw.bgColor = bg" & Chr(10)
+    code = code & "    RETURN dw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate SetShowHidden method
+    code = code & "' Set whether to show hidden directories" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) SetShowHidden(show AS BOOLEAN) AS DirectoriesWidget" & Chr(10)
+    code = code & "    dw.showHidden = show" & Chr(10)
+    code = code & "    dw.dirs = DirectoriesListDirs(dw.path, dw.showHidden)" & Chr(10)
+    code = code & "    RETURN dw" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' Generate GetRow method
+    code = code & "' Get a specific row of the DirectoriesWidget for rendering" & Chr(10)
+    code = code & "FUNCTION (dw AS DirectoriesWidget) GetRow(rowIndex AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(dw.fgColor))).Background(lipgloss.Color(Str(dw.bgColor)))" & Chr(10)
+    code = code & "    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(dw.bgColor))).Background(lipgloss.Color(Str(dw.fgColor)))" & Chr(10)
+    code = code & "    DIM innerW AS INTEGER = dw.width - 2" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    IF rowIndex = 0 THEN" & Chr(10)
+    code = code & "        RETURN style.Render(" & q & "┌" & q & " & strings.Repeat(" & q & "─" & q & ", innerW) & " & q & "┐" & q & ")" & Chr(10)
+    code = code & "    ELSEIF rowIndex = dw.height - 1 THEN" & Chr(10)
+    code = code & "        RETURN style.Render(" & q & "└" & q & " & strings.Repeat(" & q & "─" & q & ", innerW) & " & q & "┘" & q & ")" & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        ' Directory list area" & Chr(10)
+    code = code & "        DIM dirIdx AS INTEGER = rowIndex - 1 + dw.scroll" & Chr(10)
+    code = code & "        DIM content AS STRING = " & q & "│ " & q & Chr(10)
+    code = code & "        IF dirIdx >= 0 AND dirIdx < Len(dw.dirs) THEN" & Chr(10)
+    code = code & "            DIM dirName AS STRING = dw.dirs[dirIdx]" & Chr(10)
+    code = code & "            DIM isSelected AS BOOLEAN = (dirIdx = dw.selected)" & Chr(10)
+    code = code & "            DIM dirEntry AS STRING = " & q & q & Chr(10)
+    code = code & "            IF dirName = " & q & ".." & q & " THEN" & Chr(10)
+    code = code & "                dirEntry = " & q & "[..] Parent Directory" & q & Chr(10)
+    code = code & "            ELSE" & Chr(10)
+    code = code & "                dirEntry = " & q & "[D] " & q & " & dirName" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "            IF Len(dirEntry) > innerW - 1 THEN" & Chr(10)
+    code = code & "                dirEntry = Left(dirEntry, innerW - 1)" & Chr(10)
+    code = code & "            ELSE" & Chr(10)
+    code = code & "                dirEntry = dirEntry & strings.Repeat(" & q & " " & q & ", innerW - 1 - Len(dirEntry))" & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "            IF isSelected AND dw.focused THEN" & Chr(10)
+    code = code & "                content = style.Render(" & q & "│ " & q & ") & selStyle.Render(dirEntry) & style.Render(" & q & "│" & q & ")" & Chr(10)
+    code = code & "                RETURN content" & Chr(10)
+    code = code & "            ELSE" & Chr(10)
+    code = code & "                content = content & dirEntry & " & q & "│" & q & Chr(10)
+    code = code & "            ENDIF" & Chr(10)
+    code = code & "        ELSE" & Chr(10)
+    code = code & "            content = content & strings.Repeat(" & q & " " & q & ", innerW - 1) & " & q & "│" & q & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "        RETURN style.Render(content)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Check if project uses Path widget
+FUNCTION ProjectHasPath(proj AS VDBProject) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(proj.Forms) - 1
+        DIM j AS INTEGER
+        FOR j = 0 TO Len(proj.Forms[i].Controls) - 1
+            IF proj.Forms[i].Controls[j].CtlType = CTRL_PATH THEN
+                RETURN TRUE
+            ENDIF
+        NEXT
+    NEXT
+    RETURN FALSE
+END FUNCTION
+
+' Check if project uses Directories widget
+FUNCTION ProjectHasDirectories(proj AS VDBProject) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(proj.Forms) - 1
+        DIM j AS INTEGER
+        FOR j = 0 TO Len(proj.Forms[i].Controls) - 1
+            IF proj.Forms[i].Controls[j].CtlType = CTRL_DIRECTORIES THEN
+                RETURN TRUE
+            ENDIF
+        NEXT
+    NEXT
+    RETURN FALSE
+END FUNCTION
+
+' Check if project uses DirBrowser widget
+FUNCTION ProjectHasDirBrowser(proj AS VDBProject) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(proj.Forms) - 1
+        DIM j AS INTEGER
+        FOR j = 0 TO Len(proj.Forms[i].Controls) - 1
+            IF proj.Forms[i].Controls[j].CtlType = CTRL_DIRBROWSER THEN
+                RETURN TRUE
+            ENDIF
+        NEXT
+    NEXT
+    RETURN FALSE
+END FUNCTION
+
 ' Generate import statements based on controls used
-FUNCTION GenerateImports(form AS VDBForm) AS STRING
+FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
     DIM code AS STRING = ""
     DIM needTextInput AS BOOLEAN = FALSE
     DIM needTextarea AS BOOLEAN = FALSE
     DIM needList AS BOOLEAN = FALSE
     DIM needTimer AS BOOLEAN = FALSE
+    DIM needFilepath AS BOOLEAN = FALSE
+    DIM pluginImports AS []STRING
 
     ' Scan controls to determine needed imports
     DIM i AS INTEGER
@@ -21,6 +847,33 @@ FUNCTION GenerateImports(form AS VDBForm) AS STRING
             needList = TRUE
         ELSEIF ctrl.CtlType = CTRL_TIMER THEN
             needTimer = TRUE
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            needTextInput = TRUE
+            needFilepath = TRUE
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            needTextInput = TRUE
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            needFilepath = TRUE
+        ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
+            ' Plugin widget - collect imports from plugin definition
+            DIM plugin AS PluginWidgetDef = GetPluginByCtrlType(ctrl.CtlType, registry)
+            IF plugin.Meta.ID <> "" THEN
+                DIM j AS INTEGER
+                FOR j = 0 TO Len(plugin.Codegen.Imports) - 1
+                    DIM imp AS STRING = plugin.Codegen.Imports[j]
+                    ' Check if import already in list
+                    DIM found AS BOOLEAN = FALSE
+                    DIM k AS INTEGER
+                    FOR k = 0 TO Len(pluginImports) - 1
+                        IF pluginImports[k] = imp THEN
+                            found = TRUE
+                        ENDIF
+                    NEXT
+                    IF NOT found THEN
+                        pluginImports = APPEND(pluginImports, imp)
+                    ENDIF
+                NEXT
+            ENDIF
         ENDIF
     NEXT
 
@@ -45,13 +898,22 @@ FUNCTION GenerateImports(form AS VDBForm) AS STRING
         code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/timer" & Chr(34) & " AS timer" & Chr(10)
         code = code & "IMPORT " & Chr(34) & "time" & Chr(34) & " AS time" & Chr(10)
     ENDIF
+    IF needFilepath THEN
+        code = code & "IMPORT " & Chr(34) & "path/filepath" & Chr(34) & " AS filepath" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "os" & Chr(34) & " AS os" & Chr(10)
+    ENDIF
+
+    ' Plugin imports
+    FOR i = 0 TO Len(pluginImports) - 1
+        code = code & pluginImports[i] & Chr(10)
+    NEXT
 
     code = code & Chr(10)
     RETURN code
 END FUNCTION
 
 ' Generate form type definition
-FUNCTION GenerateFormType(form AS VDBForm) AS STRING
+FUNCTION GenerateFormType(form AS VDBForm, registry AS PluginRegistry) AS STRING
     DIM code AS STRING = ""
     DIM formTypeName AS STRING = form.Name & "Model"
 
@@ -94,6 +956,28 @@ FUNCTION GenerateFormType(form AS VDBForm) AS STRING
         ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
             code = code & "    DIM " & ctrl.CtlName & "_Visible AS BOOLEAN" & Chr(10)
             code = code & "    DIM " & ctrl.CtlName & "_Style AS INTEGER" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            ' DirBrowser now uses standalone widget type
+            code = code & "    DIM " & ctrl.CtlName & " AS DirBrowser" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            ' Path uses standalone widget type
+            code = code & "    DIM " & ctrl.CtlName & " AS PathWidget" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            ' Directories uses standalone widget type
+            code = code & "    DIM " & ctrl.CtlName & " AS DirectoriesWidget" & Chr(10)
+        ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
+            ' Plugin widget - generate state fields from plugin definition
+            DIM plugin AS PluginWidgetDef = GetPluginByCtrlType(ctrl.CtlType, registry)
+            IF plugin.Meta.ID <> "" THEN
+                code = code & "    ' " & ctrl.CtlName & " (" & plugin.Meta.Name & ") state" & Chr(10)
+                DIM j AS INTEGER
+                FOR j = 0 TO Len(plugin.Codegen.StateFields) - 1
+                    DIM field AS STRING = plugin.Codegen.StateFields[j]
+                    ' Replace {name} placeholder with control name
+                    field = ReplaceAll(field, "{name}", ctrl.CtlName)
+                    code = code & "    DIM " & field & Chr(10)
+                NEXT
+            ENDIF
         ENDIF
     NEXT
 
@@ -129,8 +1013,8 @@ FUNCTION GetFocusableControls(form AS VDBForm) AS []STRING
 
     FOR i = 0 TO Len(form.Controls) - 1
         DIM ctrl AS VDBControl = form.Controls[i]
-        ' TextBox, TextArea, Button, CheckBox, Option, ListBox, ComboBox are focusable
-        IF ctrl.CtlType = CTRL_TEXTBOX OR ctrl.CtlType = CTRL_TEXTAREA OR ctrl.CtlType = CTRL_BUTTON OR ctrl.CtlType = CTRL_CHECKBOX OR ctrl.CtlType = CTRL_OPTION OR ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
+        ' TextBox, TextArea, Button, CheckBox, Option, ListBox, ComboBox, DirBrowser, Path, Directories are focusable
+        IF ctrl.CtlType = CTRL_TEXTBOX OR ctrl.CtlType = CTRL_TEXTAREA OR ctrl.CtlType = CTRL_BUTTON OR ctrl.CtlType = CTRL_CHECKBOX OR ctrl.CtlType = CTRL_OPTION OR ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX OR ctrl.CtlType = CTRL_DIRBROWSER OR ctrl.CtlType = CTRL_PATH OR ctrl.CtlType = CTRL_DIRECTORIES THEN
             focusable = APPEND(focusable, ctrl.CtlName)
         ENDIF
     NEXT
@@ -139,7 +1023,7 @@ FUNCTION GetFocusableControls(form AS VDBForm) AS []STRING
 END FUNCTION
 
 ' Generate Init() method and InitModel() function
-FUNCTION GenerateInit(form AS VDBForm) AS STRING
+FUNCTION GenerateInit(form AS VDBForm, registry AS PluginRegistry) AS STRING
     DIM code AS STRING = ""
     DIM formTypeName AS STRING = form.Name & "Model"
     DIM focusable AS []STRING = GetFocusableControls(form)
@@ -286,6 +1170,60 @@ FUNCTION GenerateInit(form AS VDBForm) AS STRING
             code = code & "    m." & ctrl.CtlName & "_Visible = FALSE" & Chr(10)
             code = code & "    m." & ctrl.CtlName & "_Style = 0" & Chr(10)
             code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            DIM initPath AS STRING = ctrl.FilePath
+            code = code & "    ' Initialize " & ctrl.CtlName & " (DirBrowser widget)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = NewDirBrowser(" & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ")" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetColors(" & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")" & Chr(10)
+            IF initPath <> "" THEN
+                code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(" & Chr(34) & initPath & Chr(34) & ")" & Chr(10)
+            ENDIF
+            ' Set textinput styles to match DirBrowser colors
+            code = code & "    m." & ctrl.CtlName & ".pathInput.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".pathInput.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".pathInput.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & "))" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            DIM pathInitPath AS STRING = ctrl.FilePath
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Path widget)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = NewPathWidget(" & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ")" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetColors(" & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")" & Chr(10)
+            IF pathInitPath <> "" THEN
+                code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(" & Chr(34) & pathInitPath & Chr(34) & ")" & Chr(10)
+            ENDIF
+            ' Set textinput styles
+            code = code & "    m." & ctrl.CtlName & ".textInput.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".textInput.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".textInput.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & "))" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            DIM dirInitPath AS STRING = ctrl.FilePath
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Directories widget)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = NewDirectoriesWidget(" & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ")" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetColors(" & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")" & Chr(10)
+            IF dirInitPath <> "" THEN
+                code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(" & Chr(34) & dirInitPath & Chr(34) & ")" & Chr(10)
+            ENDIF
+            IF ctrl.ShowHidden THEN
+                code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetShowHidden(TRUE)" & Chr(10)
+            ENDIF
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
+            ' Plugin widget - generate init code from plugin definition
+            DIM plugin AS PluginWidgetDef = GetPluginByCtrlType(ctrl.CtlType, registry)
+            IF plugin.Meta.ID <> "" THEN
+                code = code & "    ' Initialize " & ctrl.CtlName & " (" & plugin.Meta.Name & ")" & Chr(10)
+                DIM j AS INTEGER
+                FOR j = 0 TO Len(plugin.Codegen.InitCode) - 1
+                    DIM initLine AS STRING = plugin.Codegen.InitCode[j]
+                    ' Replace {name} placeholder with control name
+                    initLine = ReplaceAll(initLine, "{name}", ctrl.CtlName)
+                    ' Replace {prop:X} placeholders with property values
+                    initLine = SubstitutePluginPropPlaceholders(initLine, ctrl, plugin)
+                    code = code & "    " & initLine & Chr(10)
+                NEXT
+                code = code & Chr(10)
+            ENDIF
         ENDIF
     NEXT
 
@@ -314,6 +1252,13 @@ FUNCTION GenerateInit(form AS VDBForm) AS STRING
             returnCmd = "textarea.Blink"
         ELSEIF ctrlType = CTRL_BUTTON OR ctrlType = CTRL_CHECKBOX OR ctrlType = CTRL_OPTION THEN
             code = code & "    m." & firstCtrl & "_Focused = TRUE" & Chr(10)
+        ELSEIF ctrlType = CTRL_PATH THEN
+            code = code & "    m." & firstCtrl & ", _ = m." & firstCtrl & ".Focus()" & Chr(10)
+            returnCmd = "textinput.Blink"
+        ELSEIF ctrlType = CTRL_DIRECTORIES THEN
+            code = code & "    m." & firstCtrl & " = m." & firstCtrl & ".Focus()" & Chr(10)
+        ELSEIF ctrlType = CTRL_DIRBROWSER THEN
+            code = code & "    m." & firstCtrl & " = m." & firstCtrl & ".Focus()" & Chr(10)
         ENDIF
     ENDIF
 
@@ -365,7 +1310,7 @@ FUNCTION GetControlType(form AS VDBForm, name AS STRING) AS INTEGER
 END FUNCTION
 
 ' Generate Update() method with event routing
-FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
+FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
     DIM code AS STRING = ""
     DIM formTypeName AS STRING = form.Name & "Model"
 
@@ -381,8 +1326,8 @@ FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
     code = code & "    mouseMsg, mouseOk = msg.(tea.MouseMsg)" & Chr(10)
     code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionPress AND mouseMsg.Button = tea.MouseButtonLeft THEN" & Chr(10)
     code = code & "        ' Adjust for form border (title embedded in top border)" & Chr(10)
-    code = code & "        DIM mx AS INTEGER = mouseMsg.X - 1  ' left border" & Chr(10)
-    code = code & "        DIM my AS INTEGER = mouseMsg.Y - 1  ' top border with title" & Chr(10)
+    code = code & "        DIM mx AS INTEGER = Int(mouseMsg.X) - 1  ' left border" & Chr(10)
+    code = code & "        DIM my AS INTEGER = Int(mouseMsg.Y) - 1  ' top border with title" & Chr(10)
     code = code & Chr(10)
 
     ' Generate click detection for each clickable control
@@ -495,6 +1440,69 @@ FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
             code = code & "            m." & ctrl.CtlName & ".Focus()" & Chr(10)
             code = code & "            m = SetFocusIndex(m, " & Chr(34) & ctrl.CtlName & Chr(34) & ")" & Chr(10)
             code = code & "            RETURN m, textarea.Blink" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            ' DirBrowser spans multiple rows - delegate to widget
+            IF first THEN
+                code = code & "        IF mx >= " & Str(ctrl.X) & " AND mx < " & Str(ctrl.X + ctrl.Width) & " AND my >= " & Str(ctrl.Y) & " AND my < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "        ELSEIF mx >= " & Str(ctrl.X) & " AND mx < " & Str(ctrl.X + ctrl.Width) & " AND my >= " & Str(ctrl.Y) & " AND my < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "            ' Click on " & ctrl.CtlName & " (DirBrowser widget)" & Chr(10)
+            code = code & "            m = ClearFocus(m)" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".Focus()" & Chr(10)
+            code = code & "            m = SetFocusIndex(m, " & Chr(34) & ctrl.CtlName & Chr(34) & ")" & Chr(10)
+            code = code & "            DIM dbClickRow AS INTEGER = my - " & Str(ctrl.Y) & Chr(10)
+            code = code & "            IF dbClickRow = 1 THEN" & Chr(10)
+            code = code & "                ' Clicked on path input" & Chr(10)
+            code = code & "                m." & ctrl.CtlName & ".pathInput.Focus()" & Chr(10)
+            code = code & "                RETURN m, textinput.Blink" & Chr(10)
+            code = code & "            ELSE" & Chr(10)
+            code = code & "                ' Clicked elsewhere (separator, list, or borders) - blur path input" & Chr(10)
+            code = code & "                m." & ctrl.CtlName & ".pathInput.Blur()" & Chr(10)
+            code = code & "                IF dbClickRow >= 3 THEN" & Chr(10)
+            code = code & "                    ' Clicked on directory list - select the item" & Chr(10)
+            code = code & "                    DIM dbTargetIdx AS INTEGER = dbClickRow - 3 + m." & ctrl.CtlName & ".scroll" & Chr(10)
+            code = code & "                    IF dbTargetIdx >= 0 AND dbTargetIdx < Len(m." & ctrl.CtlName & ".dirs) THEN" & Chr(10)
+            code = code & "                        m." & ctrl.CtlName & ".selected = dbTargetIdx" & Chr(10)
+            code = code & "                    ENDIF" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
+            code = code & "            ENDIF" & Chr(10)
+            code = code & "            RETURN m, NIL" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            ' Path widget - click focuses the text input
+            IF first THEN
+                code = code & "        IF mx >= " & Str(ctrl.X) & " AND mx < " & Str(ctrl.X + ctrl.Width) & " AND my >= " & Str(ctrl.Y) & " AND my < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "        ELSEIF mx >= " & Str(ctrl.X) & " AND mx < " & Str(ctrl.X + ctrl.Width) & " AND my >= " & Str(ctrl.Y) & " AND my < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "            ' Click on " & ctrl.CtlName & " (Path widget)" & Chr(10)
+            code = code & "            m = ClearFocus(m)" & Chr(10)
+            code = code & "            DIM " & ctrl.CtlName & "_focusCmd AS tea.Cmd" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & ", " & ctrl.CtlName & "_focusCmd = m." & ctrl.CtlName & ".Focus()" & Chr(10)
+            code = code & "            m = SetFocusIndex(m, " & Chr(34) & ctrl.CtlName & Chr(34) & ")" & Chr(10)
+            code = code & "            RETURN m, " & ctrl.CtlName & "_focusCmd" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            ' Directories widget - click focuses and selects item
+            IF first THEN
+                code = code & "        IF mx >= " & Str(ctrl.X) & " AND mx < " & Str(ctrl.X + ctrl.Width) & " AND my >= " & Str(ctrl.Y) & " AND my < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "        ELSEIF mx >= " & Str(ctrl.X) & " AND mx < " & Str(ctrl.X + ctrl.Width) & " AND my >= " & Str(ctrl.Y) & " AND my < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "            ' Click on " & ctrl.CtlName & " (Directories widget)" & Chr(10)
+            code = code & "            m = ClearFocus(m)" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".Focus()" & Chr(10)
+            code = code & "            m = SetFocusIndex(m, " & Chr(34) & ctrl.CtlName & Chr(34) & ")" & Chr(10)
+            code = code & "            DIM dwClickRow AS INTEGER = my - " & Str(ctrl.Y) & Chr(10)
+            code = code & "            IF dwClickRow >= 1 AND dwClickRow < m." & ctrl.CtlName & ".height - 1 THEN" & Chr(10)
+            code = code & "                DIM dwTargetIdx AS INTEGER = dwClickRow - 1 + m." & ctrl.CtlName & ".scroll" & Chr(10)
+            code = code & "                IF dwTargetIdx >= 0 AND dwTargetIdx < Len(m." & ctrl.CtlName & ".dirs) THEN" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".selected = dwTargetIdx" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
+            code = code & "            ENDIF" & Chr(10)
+            code = code & "            RETURN m, NIL" & Chr(10)
         ENDIF
     NEXT
 
@@ -573,6 +1581,110 @@ FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
             code = code & "            RETURN m, NIL" & Chr(10)
             code = code & "        ENDIF" & Chr(10)
             code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            DIM listH AS INTEGER = ctrl.Height - 4  ' Subtract borders (2) + path row (1) + separator (1)
+            code = code & "        ' DirBrowser " & ctrl.CtlName & " keyboard handling (widget)" & Chr(10)
+            code = code & "        DIM " & ctrl.CtlName & "_dbFocused AS BOOLEAN = m." & ctrl.CtlName & ".Focused()" & Chr(10)
+            code = code & "        DIM " & ctrl.CtlName & "_pathFocused AS BOOLEAN = m." & ctrl.CtlName & ".pathInput.Focused()" & Chr(10)
+            code = code & "        IF " & ctrl.CtlName & "_dbFocused AND (NOT " & ctrl.CtlName & "_pathFocused) THEN" & Chr(10)
+            code = code & "            ' Directory list navigation (only when path input is NOT focused)" & Chr(10)
+            code = code & "            IF key = " & Chr(34) & "up" & Chr(34) & " THEN" & Chr(10)
+            code = code & "                IF m." & ctrl.CtlName & ".selected > 0 THEN" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".selected = m." & ctrl.CtlName & ".selected - 1" & Chr(10)
+            code = code & "                    IF m." & ctrl.CtlName & ".selected < m." & ctrl.CtlName & ".scroll THEN" & Chr(10)
+            code = code & "                        m." & ctrl.CtlName & ".scroll = m." & ctrl.CtlName & ".selected" & Chr(10)
+            code = code & "                    ENDIF" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
+            code = code & "                RETURN m, NIL" & Chr(10)
+            code = code & "            ELSEIF key = " & Chr(34) & "down" & Chr(34) & " THEN" & Chr(10)
+            code = code & "                IF m." & ctrl.CtlName & ".selected < Len(m." & ctrl.CtlName & ".dirs) - 1 THEN" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".selected = m." & ctrl.CtlName & ".selected + 1" & Chr(10)
+            code = code & "                    IF m." & ctrl.CtlName & ".selected >= m." & ctrl.CtlName & ".scroll + " & Str(listH) & " THEN" & Chr(10)
+            code = code & "                        m." & ctrl.CtlName & ".scroll = m." & ctrl.CtlName & ".selected - " & Str(listH - 1) & Chr(10)
+            code = code & "                    ENDIF" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
+            code = code & "                RETURN m, NIL" & Chr(10)
+            code = code & "            ELSEIF key = " & Chr(34) & "enter" & Chr(34) & " THEN" & Chr(10)
+            code = code & "                ' Enter selected directory" & Chr(10)
+            code = code & "                IF m." & ctrl.CtlName & ".selected >= 0 AND m." & ctrl.CtlName & ".selected < Len(m." & ctrl.CtlName & ".dirs) THEN" & Chr(10)
+            code = code & "                    DIM dbSelDir AS STRING = m." & ctrl.CtlName & ".dirs[m." & ctrl.CtlName & ".selected]" & Chr(10)
+            code = code & "                    IF dbSelDir = " & Chr(34) & ".." & Chr(34) & " THEN" & Chr(10)
+            code = code & "                        m." & ctrl.CtlName & ".path = filepath.Dir(m." & ctrl.CtlName & ".path)" & Chr(10)
+            code = code & "                    ELSE" & Chr(10)
+            code = code & "                        m." & ctrl.CtlName & ".path = filepath.Join(m." & ctrl.CtlName & ".path, strings.TrimSuffix(dbSelDir, " & Chr(34) & "/" & Chr(34) & "))" & Chr(10)
+            code = code & "                    ENDIF" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".pathInput.SetValue(m." & ctrl.CtlName & ".path)" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".pathInput.CursorEnd()" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".pathInput.Blur()  ' Ensure path input stays unfocused" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".dirs = DirBrowserListDirs(m." & ctrl.CtlName & ".path, m." & ctrl.CtlName & ".showHidden)" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".selected = 0" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".scroll = 0" & Chr(10)
+            code = code & "                    m = " & ctrl.CtlName & "_DirChange(m)" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
+            code = code & "                RETURN m, NIL" & Chr(10)
+            code = code & "            ENDIF" & Chr(10)
+            code = code & "        ELSEIF " & ctrl.CtlName & "_dbFocused AND " & ctrl.CtlName & "_pathFocused AND key = " & Chr(34) & "enter" & Chr(34) & " THEN" & Chr(10)
+            code = code & "            ' Path input: Enter applies typed path" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & ".path = m." & ctrl.CtlName & ".pathInput.Value()" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & ".dirs = DirBrowserListDirs(m." & ctrl.CtlName & ".path, m." & ctrl.CtlName & ".showHidden)" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & ".selected = 0" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & ".scroll = 0" & Chr(10)
+            code = code & "            m = " & ctrl.CtlName & "_PathChange(m)" & Chr(10)
+            code = code & "            RETURN m, NIL" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
+            code = code & Chr(10)
+
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            code = code & "        ' Path " & ctrl.CtlName & " keyboard handling" & Chr(10)
+            code = code & "        IF m." & ctrl.CtlName & ".Focused() THEN" & Chr(10)
+            code = code & "            IF key = " & Chr(34) & "enter" & Chr(34) & " THEN" & Chr(10)
+            code = code & "                ' Apply the typed path" & Chr(10)
+            code = code & "                m." & ctrl.CtlName & ".path = m." & ctrl.CtlName & ".textInput.Value()" & Chr(10)
+            code = code & "                m = " & ctrl.CtlName & "_Enter(m)" & Chr(10)
+            code = code & "                RETURN m, NIL" & Chr(10)
+            code = code & "            ENDIF" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
+            code = code & Chr(10)
+
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            DIM dirListH AS INTEGER = ctrl.Height - 2  ' Subtract borders
+            code = code & "        ' Directories " & ctrl.CtlName & " keyboard handling" & Chr(10)
+            code = code & "        IF m." & ctrl.CtlName & ".Focused() THEN" & Chr(10)
+            code = code & "            IF key = " & Chr(34) & "up" & Chr(34) & " THEN" & Chr(10)
+            code = code & "                IF m." & ctrl.CtlName & ".selected > 0 THEN" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".selected = m." & ctrl.CtlName & ".selected - 1" & Chr(10)
+            code = code & "                    IF m." & ctrl.CtlName & ".selected < m." & ctrl.CtlName & ".scroll THEN" & Chr(10)
+            code = code & "                        m." & ctrl.CtlName & ".scroll = m." & ctrl.CtlName & ".selected" & Chr(10)
+            code = code & "                    ENDIF" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
+            code = code & "                RETURN m, NIL" & Chr(10)
+            code = code & "            ELSEIF key = " & Chr(34) & "down" & Chr(34) & " THEN" & Chr(10)
+            code = code & "                IF m." & ctrl.CtlName & ".selected < Len(m." & ctrl.CtlName & ".dirs) - 1 THEN" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".selected = m." & ctrl.CtlName & ".selected + 1" & Chr(10)
+            code = code & "                    IF m." & ctrl.CtlName & ".selected >= m." & ctrl.CtlName & ".scroll + " & Str(dirListH) & " THEN" & Chr(10)
+            code = code & "                        m." & ctrl.CtlName & ".scroll = m." & ctrl.CtlName & ".selected - " & Str(dirListH - 1) & Chr(10)
+            code = code & "                    ENDIF" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
+            code = code & "                RETURN m, NIL" & Chr(10)
+            code = code & "            ELSEIF key = " & Chr(34) & "enter" & Chr(34) & " THEN" & Chr(10)
+            code = code & "                ' Enter selected directory" & Chr(10)
+            code = code & "                IF m." & ctrl.CtlName & ".selected >= 0 AND m." & ctrl.CtlName & ".selected < Len(m." & ctrl.CtlName & ".dirs) THEN" & Chr(10)
+            code = code & "                    DIM dwSelDir AS STRING = m." & ctrl.CtlName & ".dirs[m." & ctrl.CtlName & ".selected]" & Chr(10)
+            code = code & "                    IF dwSelDir = " & Chr(34) & ".." & Chr(34) & " THEN" & Chr(10)
+            code = code & "                        m." & ctrl.CtlName & ".path = filepath.Dir(m." & ctrl.CtlName & ".path)" & Chr(10)
+            code = code & "                    ELSE" & Chr(10)
+            code = code & "                        m." & ctrl.CtlName & ".path = filepath.Join(m." & ctrl.CtlName & ".path, strings.TrimSuffix(dwSelDir, " & Chr(34) & "/" & Chr(34) & "))" & Chr(10)
+            code = code & "                    ENDIF" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".dirs = DirectoriesListDirs(m." & ctrl.CtlName & ".path, m." & ctrl.CtlName & ".showHidden)" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".selected = 0" & Chr(10)
+            code = code & "                    m." & ctrl.CtlName & ".scroll = 0" & Chr(10)
+            code = code & "                    m = " & ctrl.CtlName & "_Change(m)" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
+            code = code & "                RETURN m, NIL" & Chr(10)
+            code = code & "            ENDIF" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
+            code = code & Chr(10)
+
         ENDIF
     NEXT
 
@@ -611,7 +1723,7 @@ FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
     DIM hasRoutableControls AS BOOLEAN = FALSE
     FOR i = 0 TO Len(form.Controls) - 1
         DIM ctrl AS VDBControl = form.Controls[i]
-        IF ctrl.CtlType = CTRL_TEXTBOX OR ctrl.CtlType = CTRL_TEXTAREA OR ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
+        IF ctrl.CtlType = CTRL_TEXTBOX OR ctrl.CtlType = CTRL_TEXTAREA OR ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX OR ctrl.CtlType = CTRL_DIRBROWSER OR ctrl.CtlType = CTRL_PATH OR ctrl.CtlType = CTRL_DIRECTORIES THEN
             hasRoutableControls = TRUE
         ENDIF
     NEXT
@@ -635,6 +1747,17 @@ FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
                     code = code & "        ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
                 ENDIF
                 code = code & "            m." & ctrl.CtlName & ", updateCmd = m." & ctrl.CtlName & ".Update(msg)" & Chr(10)
+                code = code & "            ' Reset cursor to visible on cursor movement for immediate visibility" & Chr(10)
+                code = code & "            DIM tiKeyMsg AS tea.KeyMsg" & Chr(10)
+                code = code & "            DIM tiKeyOk AS BOOLEAN" & Chr(10)
+                code = code & "            tiKeyMsg, tiKeyOk = msg.(tea.KeyMsg)" & Chr(10)
+                code = code & "            IF tiKeyOk THEN" & Chr(10)
+                code = code & "                DIM tiKey AS STRING = tiKeyMsg.String()" & Chr(10)
+                code = code & "                IF tiKey = " & Chr(34) & "left" & Chr(34) & " OR tiKey = " & Chr(34) & "right" & Chr(34) & " OR tiKey = " & Chr(34) & "home" & Chr(34) & " OR tiKey = " & Chr(34) & "end" & Chr(34) & " OR tiKey = " & Chr(34) & "ctrl+left" & Chr(34) & " OR tiKey = " & Chr(34) & "ctrl+right" & Chr(34) & " THEN" & Chr(10)
+                code = code & "                    DIM tiFocusCmd AS tea.Cmd = m." & ctrl.CtlName & ".Focus()" & Chr(10)
+                code = code & "                    RETURN m, tiFocusCmd" & Chr(10)
+                code = code & "                ENDIF" & Chr(10)
+                code = code & "            ENDIF" & Chr(10)
                 code = code & "            RETURN m, updateCmd" & Chr(10)
             ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
                 IF first THEN
@@ -658,7 +1781,72 @@ FUNCTION GenerateUpdate(form AS VDBForm) AS STRING
                     code = code & "        ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
                 ENDIF
                 code = code & "            m." & ctrl.CtlName & ", updateCmd = m." & ctrl.CtlName & ".Update(msg)" & Chr(10)
+                code = code & "            ' Reset cursor to visible on cursor movement for immediate visibility" & Chr(10)
+                code = code & "            DIM taKeyMsg AS tea.KeyMsg" & Chr(10)
+                code = code & "            DIM taKeyOk AS BOOLEAN" & Chr(10)
+                code = code & "            taKeyMsg, taKeyOk = msg.(tea.KeyMsg)" & Chr(10)
+                code = code & "            IF taKeyOk THEN" & Chr(10)
+                code = code & "                DIM taKey AS STRING = taKeyMsg.String()" & Chr(10)
+                code = code & "                IF taKey = " & Chr(34) & "left" & Chr(34) & " OR taKey = " & Chr(34) & "right" & Chr(34) & " OR taKey = " & Chr(34) & "up" & Chr(34) & " OR taKey = " & Chr(34) & "down" & Chr(34) & " OR taKey = " & Chr(34) & "home" & Chr(34) & " OR taKey = " & Chr(34) & "end" & Chr(34) & " OR taKey = " & Chr(34) & "ctrl+left" & Chr(34) & " OR taKey = " & Chr(34) & "ctrl+right" & Chr(34) & " OR taKey = " & Chr(34) & "ctrl+up" & Chr(34) & " OR taKey = " & Chr(34) & "ctrl+down" & Chr(34) & " THEN" & Chr(10)
+                code = code & "                    DIM taFocusCmd AS tea.Cmd = m." & ctrl.CtlName & ".Focus()" & Chr(10)
+                code = code & "                    RETURN m, taFocusCmd" & Chr(10)
+                code = code & "                ENDIF" & Chr(10)
+                code = code & "            ENDIF" & Chr(10)
                 code = code & "            RETURN m, updateCmd" & Chr(10)
+            ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+                IF first THEN
+                    code = code & "        IF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                    first = FALSE
+                ELSE
+                    code = code & "        ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                ENDIF
+                code = code & "            ' Only route to path input when it is focused (widget)" & Chr(10)
+                code = code & "            IF m." & ctrl.CtlName & ".pathInput.Focused() THEN" & Chr(10)
+                code = code & "                m." & ctrl.CtlName & ".pathInput, updateCmd = m." & ctrl.CtlName & ".pathInput.Update(msg)" & Chr(10)
+                code = code & "                ' Reset cursor to visible on cursor movement for immediate visibility" & Chr(10)
+                code = code & "                DIM dbKeyMsg AS tea.KeyMsg" & Chr(10)
+                code = code & "                DIM dbKeyOk AS BOOLEAN" & Chr(10)
+                code = code & "                dbKeyMsg, dbKeyOk = msg.(tea.KeyMsg)" & Chr(10)
+                code = code & "                IF dbKeyOk THEN" & Chr(10)
+                code = code & "                    DIM dbKey AS STRING = dbKeyMsg.String()" & Chr(10)
+                code = code & "                    IF dbKey = " & Chr(34) & "left" & Chr(34) & " OR dbKey = " & Chr(34) & "right" & Chr(34) & " OR dbKey = " & Chr(34) & "home" & Chr(34) & " OR dbKey = " & Chr(34) & "end" & Chr(34) & " OR dbKey = " & Chr(34) & "ctrl+left" & Chr(34) & " OR dbKey = " & Chr(34) & "ctrl+right" & Chr(34) & " THEN" & Chr(10)
+                code = code & "                        DIM dbFocusCmd AS tea.Cmd = m." & ctrl.CtlName & ".pathInput.Focus()" & Chr(10)
+                code = code & "                        RETURN m, dbFocusCmd" & Chr(10)
+                code = code & "                    ENDIF" & Chr(10)
+                code = code & "                ENDIF" & Chr(10)
+                code = code & "                RETURN m, updateCmd" & Chr(10)
+                code = code & "            ENDIF" & Chr(10)
+                code = code & "            ' If path input not focused, just return (directory list handled by keyboard section)" & Chr(10)
+                code = code & "            RETURN m, NIL" & Chr(10)
+            ELSEIF ctrl.CtlType = CTRL_PATH THEN
+                IF first THEN
+                    code = code & "        IF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                    first = FALSE
+                ELSE
+                    code = code & "        ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                ENDIF
+                code = code & "            m." & ctrl.CtlName & ".textInput, updateCmd = m." & ctrl.CtlName & ".textInput.Update(msg)" & Chr(10)
+                code = code & "            ' Reset cursor to visible on cursor movement for immediate visibility" & Chr(10)
+                code = code & "            DIM pwKeyMsg AS tea.KeyMsg" & Chr(10)
+                code = code & "            DIM pwKeyOk AS BOOLEAN" & Chr(10)
+                code = code & "            pwKeyMsg, pwKeyOk = msg.(tea.KeyMsg)" & Chr(10)
+                code = code & "            IF pwKeyOk THEN" & Chr(10)
+                code = code & "                DIM pwKey AS STRING = pwKeyMsg.String()" & Chr(10)
+                code = code & "                IF pwKey = " & Chr(34) & "left" & Chr(34) & " OR pwKey = " & Chr(34) & "right" & Chr(34) & " OR pwKey = " & Chr(34) & "home" & Chr(34) & " OR pwKey = " & Chr(34) & "end" & Chr(34) & " OR pwKey = " & Chr(34) & "ctrl+left" & Chr(34) & " OR pwKey = " & Chr(34) & "ctrl+right" & Chr(34) & " THEN" & Chr(10)
+                code = code & "                    DIM pwFocusCmd AS tea.Cmd = m." & ctrl.CtlName & ".textInput.Focus()" & Chr(10)
+                code = code & "                    RETURN m, pwFocusCmd" & Chr(10)
+                code = code & "                ENDIF" & Chr(10)
+                code = code & "            ENDIF" & Chr(10)
+                code = code & "            RETURN m, updateCmd" & Chr(10)
+            ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+                IF first THEN
+                    code = code & "        IF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                    first = FALSE
+                ELSE
+                    code = code & "        ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                ENDIF
+                code = code & "            ' Directories list is handled by keyboard section, just return" & Chr(10)
+                code = code & "            RETURN m, NIL" & Chr(10)
             ENDIF
         NEXT
 
@@ -678,7 +1866,7 @@ END FUNCTION
 
 ' Generate View() method with proper absolute positioning
 ' Builds each row by composing all controls at their X positions
-FUNCTION GenerateView(form AS VDBForm) AS STRING
+FUNCTION GenerateView(form AS VDBForm, registry AS PluginRegistry) AS STRING
     DIM code AS STRING = ""
     DIM formTypeName AS STRING = form.Name & "Model"
 
@@ -692,18 +1880,19 @@ FUNCTION GenerateView(form AS VDBForm) AS STRING
     code = code & "    ' Interior content area (form dimensions include border)" & Chr(10)
     code = code & "    DIM interiorWidth AS INTEGER = m.Width - 2" & Chr(10)
     code = code & "    DIM interiorHeight AS INTEGER = m.Height - 2" & Chr(10)
+    code = code & "    DIM formBgColor AS INTEGER = " & Str(form.BackColor) & Chr(10)
     code = code & "    DIM contentRows AS []STRING" & Chr(10)
     code = code & "    DIM y AS INTEGER" & Chr(10)
     code = code & "    FOR y = 0 TO interiorHeight - 1" & Chr(10)
-    code = code & "        DIM row AS STRING = BuildRow(m, y, interiorWidth)" & Chr(10)
+    code = code & "        DIM row AS STRING = BuildRow(m, y, interiorWidth, formBgColor)" & Chr(10)
     code = code & "        contentRows = APPEND(contentRows, row)" & Chr(10)
     code = code & "    NEXT" & Chr(10)
     code = code & Chr(10)
 
     ' Build form border manually with title embedded in top border
     code = code & "    ' Build border with title embedded in top row" & Chr(10)
-    code = code & "    DIM borderColor AS lipgloss.TerminalColor = lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")" & Chr(10)
-    code = code & "    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(borderColor)" & Chr(10)
+    code = code & "    ' Use form colors: ForeColor=" & Str(form.ForeColor) & ", BackColor=" & Str(form.BackColor) & Chr(10)
+    code = code & "    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(form.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(form.BackColor) & Chr(34) & "))" & Chr(10)
     code = code & "    DIM formWidth AS INTEGER = m.Width  ' form dimensions include border" & Chr(10)
     code = code & Chr(10)
     code = code & "    ' Build top border with embedded title" & Chr(10)
@@ -722,7 +1911,7 @@ FUNCTION GenerateView(form AS VDBForm) AS STRING
     code = code & "    ' Build bottom border" & Chr(10)
     code = code & "    DIM bottomBorder AS STRING = " & Chr(34) & "╰" & Chr(34) & " & strings.Repeat(" & Chr(34) & "─" & Chr(34) & ", formWidth - 2) & " & Chr(34) & "╯" & Chr(34) & Chr(10)
     code = code & Chr(10)
-    code = code & "    ' Wrap content rows with side borders" & Chr(10)
+    code = code & "    ' Wrap content rows with side borders and apply background" & Chr(10)
     code = code & "    DIM wrappedRows AS []STRING" & Chr(10)
     code = code & "    wrappedRows = APPEND(wrappedRows, borderStyle.Render(topBorder))" & Chr(10)
     code = code & "    DIM i AS INTEGER" & Chr(10)
@@ -746,7 +1935,7 @@ FUNCTION GenerateBuildRowFunction(form AS VDBForm) AS STRING
     DIM formTypeName AS STRING = form.Name & "Model"
 
     code = code & "' Build a single row by placing all controls at their X positions" & Chr(10)
-    code = code & "FUNCTION BuildRow(m AS " & formTypeName & ", y AS INTEGER, rowWidth AS INTEGER) AS STRING" & Chr(10)
+    code = code & "FUNCTION BuildRow(m AS " & formTypeName & ", y AS INTEGER, rowWidth AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
     code = code & "    ' Collect all control segments for this row with their X positions" & Chr(10)
     code = code & "    DIM segments AS []RowSegment" & Chr(10)
     code = code & Chr(10)
@@ -761,89 +1950,110 @@ FUNCTION GenerateBuildRowFunction(form AS VDBForm) AS STRING
             code = code & "    ' " & ctrl.CtlName & " (Frame) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
             code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
             code = code & "        ' Top border" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetFrameTopRow(m." & ctrl.CtlName & "_Caption, " & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetFrameTopRow(m." & ctrl.CtlName & "_Caption, " & Str(ctrl.Width) & ", " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ELSEIF y = " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
             code = code & "        ' Bottom border" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetFrameBottomRow(" & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetFrameBottomRow(" & Str(ctrl.Width) & ", " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ELSEIF y > " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
-            code = code & "        ' Middle rows - left and right borders separately (Unicode box drawing)" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: " & Chr(34) & "│" & Chr(34) & "})" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X + ctrl.Width - 1) & ", Content: " & Chr(34) & "│" & Chr(34) & "})" & Chr(10)
+            code = code & "        ' Middle rows - left and right borders separately with colors" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetFrameLeftBorder(" & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X + ctrl.Width - 1) & ", Content: GetFrameRightBorder(" & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_LABEL THEN
             code = code & "    ' " & ctrl.CtlName & " (Label) at y=" & Str(ctrl.Y) & Chr(10)
             code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderLabel(m." & ctrl.CtlName & "_Text, " & Str(ctrl.Width) & ", " & Str(ctrl.Justification) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderLabel(m." & ctrl.CtlName & "_Text, " & Str(ctrl.Width) & ", " & Str(ctrl.Justification) & ", " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_TEXTBOX THEN
             code = code & "    ' " & ctrl.CtlName & " (TextBox) at y=" & Str(ctrl.Y) & Chr(10)
             code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderTextInput(m." & ctrl.CtlName & ", " & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderTextInput(m." & ctrl.CtlName & ", " & Str(ctrl.Width) & ", " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
             IF ctrl.Border AND ctrl.Height >= 3 THEN
                 ' Bordered button spans multiple rows
                 code = code & "    ' " & ctrl.CtlName & " (Bordered Button) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
                 code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonTopRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonTopRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
                 code = code & "    ELSEIF y = " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
-                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonBottomRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonBottomRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
                 code = code & "    ELSEIF y > " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
-                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonMiddleRow(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonMiddleRow(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
                 code = code & "    ENDIF" & Chr(10)
             ELSE
                 ' Flat button (single row, centered text)
                 code = code & "    ' " & ctrl.CtlName & " (Flat Button) at y=" & Str(ctrl.Y) & Chr(10)
                 code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderFlatButton(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderFlatButton(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
                 code = code & "    ENDIF" & Chr(10)
             ENDIF
         ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
             code = code & "    ' " & ctrl.CtlName & " (CheckBox) at y=" & Str(ctrl.Y) & Chr(10)
             code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderCheckBox(" & Chr(34) & ctrl.Caption & Chr(34) & ", m." & ctrl.CtlName & "_Checked, m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderCheckBox(" & Chr(34) & ctrl.Caption & Chr(34) & ", m." & ctrl.CtlName & "_Checked, m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_OPTION THEN
             code = code & "    ' " & ctrl.CtlName & " (Option) at y=" & Str(ctrl.Y) & Chr(10)
             code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderOption(" & Chr(34) & ctrl.Caption & Chr(34) & ", m." & ctrl.CtlName & "_Selected, m." & ctrl.CtlName & "_Focused)})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderOption(" & Chr(34) & ctrl.Caption & Chr(34) & ", m." & ctrl.CtlName & "_Selected, m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX THEN
             code = code & "    ' " & ctrl.CtlName & " (ListBox) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
             code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetListBoxRow(m." & ctrl.CtlName & ", " & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ", y - " & Str(ctrl.Y) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetListBoxRow(m." & ctrl.CtlName & ", " & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ", y - " & Str(ctrl.Y) & ", " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_HSCROLL THEN
             code = code & "    ' " & ctrl.CtlName & " (HScrollBar) at y=" & Str(ctrl.Y) & Chr(10)
             code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderHScroll(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderHScroll(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.Width) & ", " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_VSCROLL THEN
             code = code & "    ' " & ctrl.CtlName & " (VScrollBar) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
             code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetVScrollRow(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.Height) & ", y - " & Str(ctrl.Y) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetVScrollRow(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Min, m." & ctrl.CtlName & "_Max, " & Str(ctrl.Height) & ", y - " & Str(ctrl.Y) & ", " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_PROGRESS THEN
             code = code & "    ' " & ctrl.CtlName & " (Progress) at y=" & Str(ctrl.Y) & Chr(10)
             code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderProgress(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Total, " & Str(ctrl.Width) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderProgress(m." & ctrl.CtlName & "_Value, m." & ctrl.CtlName & "_Total, " & Str(ctrl.Width) & ", " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_SPINNER THEN
             code = code & "    ' " & ctrl.CtlName & " (Spinner) at y=" & Str(ctrl.Y) & Chr(10)
             code = code & "    IF y = " & Str(ctrl.Y) & " AND m." & ctrl.CtlName & "_Visible THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderSpinner(m." & ctrl.CtlName & "_Style)})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderSpinner(m." & ctrl.CtlName & "_Style, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_TEXTAREA THEN
             code = code & "    ' " & ctrl.CtlName & " (TextArea) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
             code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
-            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetTextAreaRow(m." & ctrl.CtlName & ", " & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ", y - " & Str(ctrl.Y) & ")})" & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetTextAreaRow(m." & ctrl.CtlName & ", " & Str(ctrl.Width) & ", " & Str(ctrl.Height) & ", y - " & Str(ctrl.Y) & ", " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            ' DirBrowser uses widget's GetRow method
+            code = code & "    ' " & ctrl.CtlName & " (DirBrowser widget) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
+            code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+            code = code & "        DIM dbLocalRow AS INTEGER = y - " & Str(ctrl.Y) & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: m." & ctrl.CtlName & ".GetRow(dbLocalRow)})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            ' Path uses widget's GetRow method
+            code = code & "    ' " & ctrl.CtlName & " (Path widget) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
+            code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+            code = code & "        DIM pathLocalRow AS INTEGER = y - " & Str(ctrl.Y) & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: m." & ctrl.CtlName & ".GetRow(pathLocalRow)})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            ' Directories uses widget's GetRow method
+            code = code & "    ' " & ctrl.CtlName & " (Directories widget) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
+            code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+            code = code & "        DIM dirLocalRow AS INTEGER = y - " & Str(ctrl.Y) & Chr(10)
+            code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: m." & ctrl.CtlName & ".GetRow(dirLocalRow)})" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ENDIF
     NEXT
 
     code = code & Chr(10)
     code = code & "    ' Compose the row from segments sorted by X position" & Chr(10)
-    code = code & "    RETURN ComposeRow(segments, rowWidth)" & Chr(10)
+    code = code & "    RETURN ComposeRow(segments, rowWidth, bgColor)" & Chr(10)
     code = code & "END FUNCTION" & Chr(10) & Chr(10)
 
     RETURN code
@@ -912,10 +2122,11 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
     code = code & Chr(10)
 
     ' ComposeRow - builds a row from segments sorted by X position
-    code = code & "' Compose a row from segments, filling gaps with spaces" & Chr(10)
-    code = code & "FUNCTION ComposeRow(segments AS []RowSegment, rowWidth AS INTEGER) AS STRING" & Chr(10)
+    code = code & "' Compose a row from segments, filling gaps with styled spaces" & Chr(10)
+    code = code & "FUNCTION ComposeRow(segments AS []RowSegment, rowWidth AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
+    code = code & "    DIM gapStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
     code = code & "    IF Len(segments) = 0 THEN" & Chr(10)
-    code = code & "        RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", rowWidth)" & Chr(10)
+    code = code & "        RETURN gapStyle.Render(strings.Repeat(" & Chr(34) & " " & Chr(34) & ", rowWidth))" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
     code = code & "    ' Sort segments by X position (simple bubble sort)" & Chr(10)
@@ -937,9 +2148,9 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
     code = code & Chr(10)
     code = code & "    FOR i = 0 TO Len(segments) - 1" & Chr(10)
     code = code & "        DIM seg AS RowSegment = segments[i]" & Chr(10)
-    code = code & "        ' Add spaces to reach segment position" & Chr(10)
+    code = code & "        ' Add styled spaces to reach segment position" & Chr(10)
     code = code & "        IF seg.X > currentX THEN" & Chr(10)
-    code = code & "            row = row & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", seg.X - currentX)" & Chr(10)
+    code = code & "            row = row & gapStyle.Render(strings.Repeat(" & Chr(34) & " " & Chr(34) & ", seg.X - currentX))" & Chr(10)
     code = code & "            currentX = seg.X" & Chr(10)
     code = code & "        ENDIF" & Chr(10)
     code = code & "        ' Add the segment content" & Chr(10)
@@ -948,9 +2159,9 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
     code = code & "        currentX = currentX + lipgloss.Width(seg.Content)" & Chr(10)
     code = code & "    NEXT" & Chr(10)
     code = code & Chr(10)
-    code = code & "    ' Pad to row width if needed" & Chr(10)
+    code = code & "    ' Pad to row width if needed with styled spaces" & Chr(10)
     code = code & "    IF currentX < rowWidth THEN" & Chr(10)
-    code = code & "        row = row & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", rowWidth - currentX)" & Chr(10)
+    code = code & "        row = row & gapStyle.Render(strings.Repeat(" & Chr(34) & " " & Chr(34) & ", rowWidth - currentX))" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
     code = code & "    RETURN row" & Chr(10)
@@ -980,24 +2191,28 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
     code = code & "END FUNCTION" & Chr(10)
     code = code & Chr(10)
 
-    ' RenderLabel - render label with justification
-    code = code & "' Render label with justification (0=left, 1=center, 2=right)" & Chr(10)
-    code = code & "FUNCTION RenderLabel(text AS STRING, width AS INTEGER, justify AS INTEGER) AS STRING" & Chr(10)
+    ' RenderLabel - render label with justification and colors
+    code = code & "' Render label with justification (0=left, 1=center, 2=right) and colors" & Chr(10)
+    code = code & "FUNCTION RenderLabel(text AS STRING, width AS INTEGER, justify AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
     code = code & "    DIM textLen AS INTEGER = Len(text)" & Chr(10)
     code = code & "    IF textLen > width THEN" & Chr(10)
     code = code & "        text = Left(text, width)" & Chr(10)
     code = code & "        textLen = width" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
+    code = code & "    DIM result AS STRING" & Chr(10)
     code = code & "    IF justify = 1 THEN" & Chr(10)
     code = code & "        ' Center" & Chr(10)
-    code = code & "        RETURN CenterText(text, width)" & Chr(10)
+    code = code & "        result = CenterText(text, width)" & Chr(10)
     code = code & "    ELSEIF justify = 2 THEN" & Chr(10)
     code = code & "        ' Right" & Chr(10)
-    code = code & "        RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width - textLen) & text" & Chr(10)
+    code = code & "        result = strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width - textLen) & text" & Chr(10)
     code = code & "    ELSE" & Chr(10)
     code = code & "        ' Left (default)" & Chr(10)
-    code = code & "        RETURN text & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width - textLen)" & Chr(10)
+    code = code & "        result = text & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width - textLen)" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
+    code = code & "    ' Apply colors" & Chr(10)
+    code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+    code = code & "    RETURN style.Render(result)" & Chr(10)
     code = code & "END FUNCTION" & Chr(10)
     code = code & Chr(10)
 
@@ -1011,17 +2226,18 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
 
     ' RenderTextInput
     IF hasTextBox THEN
-        code = code & "' Render text input (returns styled string constrained to width)" & Chr(10)
-        code = code & "FUNCTION RenderTextInput(ti AS textinput.Model, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Render text input with colors (returns styled string constrained to width)" & Chr(10)
+        code = code & "FUNCTION RenderTextInput(ti AS textinput.Model, width AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    DIM view AS STRING = ti.View()" & Chr(10)
         code = code & "    DIM lines AS []STRING = strings.Split(view, " & Chr(34) & Chr(10) & Chr(34) & ")" & Chr(10)
         code = code & "    IF Len(lines) > 0 THEN" & Chr(10)
         code = code & "        DIM line AS STRING = lines[0]" & Chr(10)
-        code = code & "        ' Constrain to width using lipgloss" & Chr(10)
-        code = code & "        DIM style AS lipgloss.Style = lipgloss.NewStyle().MaxWidth(width)" & Chr(10)
+        code = code & "        ' Constrain to width and apply colors" & Chr(10)
+        code = code & "        DIM style AS lipgloss.Style = lipgloss.NewStyle().MaxWidth(width).Width(width).Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
         code = code & "        RETURN style.Render(line)" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width)" & Chr(10)
+        code = code & "    DIM emptyStyle AS lipgloss.Style = lipgloss.NewStyle().Width(width).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    RETURN emptyStyle.Render(" & Chr(34) & Chr(34) & ")" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
@@ -1029,60 +2245,62 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
     ' Button rendering functions
     IF hasButton THEN
         ' Flat button (single row, centered text with background)
-        code = code & "' Render flat button with centered text" & Chr(10)
-        code = code & "FUNCTION RenderFlatButton(caption AS STRING, width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "' Render flat button with centered text and colors" & Chr(10)
+        code = code & "FUNCTION RenderFlatButton(caption AS STRING, width AS INTEGER, focused AS BOOLEAN, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    DIM btnText AS STRING = CenterText(caption, width)" & Chr(10)
         code = code & "    DIM style AS lipgloss.Style" & Chr(10)
         code = code & "    IF focused THEN" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "230" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
+        code = code & "        ' Invert colors when focused" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(Str(fgColor))).Foreground(lipgloss.Color(Str(bgColor))).Bold(TRUE)" & Chr(10)
         code = code & "    ELSE" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "0" & Chr(34) & "))" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(Str(bgColor))).Foreground(lipgloss.Color(Str(fgColor)))" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    RETURN style.Render(btnText)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
 
         ' Bordered button - top row
-        code = code & "' Get top row of bordered button" & Chr(10)
-        code = code & "FUNCTION GetButtonTopRow(width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "' Get top row of bordered button with colors" & Chr(10)
+        code = code & "FUNCTION GetButtonTopRow(width AS INTEGER, focused AS BOOLEAN, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    DIM border AS STRING = " & Chr(34) & "┌" & Chr(34) & " & strings.Repeat(" & Chr(34) & "─" & Chr(34) & ", width - 2) & " & Chr(34) & "┐" & Chr(34) & Chr(10)
         code = code & "    DIM style AS lipgloss.Style" & Chr(10)
         code = code & "    IF focused THEN" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(bgColor))).Background(lipgloss.Color(Str(fgColor))).Bold(TRUE)" & Chr(10)
         code = code & "    ELSE" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & "))" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    RETURN style.Render(border)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
 
         ' Bordered button - middle row with caption
-        code = code & "' Get middle row of bordered button with centered caption" & Chr(10)
-        code = code & "FUNCTION GetButtonMiddleRow(caption AS STRING, width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "' Get middle row of bordered button with centered caption and colors" & Chr(10)
+        code = code & "FUNCTION GetButtonMiddleRow(caption AS STRING, width AS INTEGER, focused AS BOOLEAN, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    DIM innerWidth AS INTEGER = width - 2" & Chr(10)
         code = code & "    DIM centeredText AS STRING = CenterText(caption, innerWidth)" & Chr(10)
         code = code & "    DIM style AS lipgloss.Style" & Chr(10)
         code = code & "    DIM borderStyle AS lipgloss.Style" & Chr(10)
         code = code & "    IF focused THEN" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "230" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
-        code = code & "        borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
+        code = code & "        ' Invert colors when focused" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(Str(fgColor))).Foreground(lipgloss.Color(Str(bgColor))).Bold(TRUE)" & Chr(10)
+        code = code & "        borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(bgColor))).Background(lipgloss.Color(Str(fgColor))).Bold(TRUE)" & Chr(10)
         code = code & "    ELSE" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(" & Chr(34) & "236" & Chr(34) & ")).Foreground(lipgloss.Color(" & Chr(34) & "255" & Chr(34) & "))" & Chr(10)
-        code = code & "        borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & "))" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Background(lipgloss.Color(Str(bgColor))).Foreground(lipgloss.Color(Str(fgColor)))" & Chr(10)
+        code = code & "        borderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    RETURN borderStyle.Render(" & Chr(34) & "│" & Chr(34) & ") & style.Render(centeredText) & borderStyle.Render(" & Chr(34) & "│" & Chr(34) & ")" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
 
         ' Bordered button - bottom row
-        code = code & "' Get bottom row of bordered button" & Chr(10)
-        code = code & "FUNCTION GetButtonBottomRow(width AS INTEGER, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "' Get bottom row of bordered button with colors" & Chr(10)
+        code = code & "FUNCTION GetButtonBottomRow(width AS INTEGER, focused AS BOOLEAN, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    DIM border AS STRING = " & Chr(34) & "└" & Chr(34) & " & strings.Repeat(" & Chr(34) & "─" & Chr(34) & ", width - 2) & " & Chr(34) & "┘" & Chr(34) & Chr(10)
         code = code & "    DIM style AS lipgloss.Style" & Chr(10)
         code = code & "    IF focused THEN" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & ")).Bold(TRUE)" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(bgColor))).Background(lipgloss.Color(Str(fgColor))).Bold(TRUE)" & Chr(10)
         code = code & "    ELSE" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & "240" & Chr(34) & "))" & Chr(10)
+        code = code & "        style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    RETURN style.Render(border)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
@@ -1091,8 +2309,8 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
 
     ' RenderCheckBox
     IF hasCheckBox THEN
-        code = code & "' Render checkbox (returns styled string)" & Chr(10)
-        code = code & "FUNCTION RenderCheckBox(caption AS STRING, checked AS BOOLEAN, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "' Render checkbox with colors (returns styled string)" & Chr(10)
+        code = code & "FUNCTION RenderCheckBox(caption AS STRING, checked AS BOOLEAN, focused AS BOOLEAN, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    DIM checkMark AS STRING" & Chr(10)
         code = code & "    IF checked THEN" & Chr(10)
         code = code & "        checkMark = " & Chr(34) & "[X] " & Chr(34) & Chr(10)
@@ -1101,11 +2319,9 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
         code = code & "    ENDIF" & Chr(10)
         code = code & "    DIM text AS STRING = checkMark & caption" & Chr(10)
         code = code & Chr(10)
-        code = code & "    DIM style AS lipgloss.Style" & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
         code = code & "    IF focused THEN" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Bold(TRUE).Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & "))" & Chr(10)
-        code = code & "    ELSE" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle()" & Chr(10)
+        code = code & "        style = style.Bold(TRUE)" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    RETURN style.Render(text)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
@@ -1114,8 +2330,8 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
 
     ' RenderOption
     IF hasOption THEN
-        code = code & "' Render radio option (returns styled string)" & Chr(10)
-        code = code & "FUNCTION RenderOption(caption AS STRING, selected AS BOOLEAN, focused AS BOOLEAN) AS STRING" & Chr(10)
+        code = code & "' Render radio option with colors (returns styled string)" & Chr(10)
+        code = code & "FUNCTION RenderOption(caption AS STRING, selected AS BOOLEAN, focused AS BOOLEAN, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    DIM indicator AS STRING" & Chr(10)
         code = code & "    IF selected THEN" & Chr(10)
         code = code & "        indicator = " & Chr(34) & "(o) " & Chr(34) & Chr(10)
@@ -1124,11 +2340,9 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
         code = code & "    ENDIF" & Chr(10)
         code = code & "    DIM text AS STRING = indicator & caption" & Chr(10)
         code = code & Chr(10)
-        code = code & "    DIM style AS lipgloss.Style" & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
         code = code & "    IF focused THEN" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle().Bold(TRUE).Foreground(lipgloss.Color(" & Chr(34) & "63" & Chr(34) & "))" & Chr(10)
-        code = code & "    ELSE" & Chr(10)
-        code = code & "        style = lipgloss.NewStyle()" & Chr(10)
+        code = code & "        style = style.Bold(TRUE)" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    RETURN style.Render(text)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
@@ -1137,8 +2351,8 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
 
     ' RenderHScroll
     IF hasHScroll THEN
-        code = code & "' Render horizontal scrollbar" & Chr(10)
-        code = code & "FUNCTION RenderHScroll(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Render horizontal scrollbar with colors" & Chr(10)
+        code = code & "FUNCTION RenderHScroll(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, width AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    IF width < 3 THEN" & Chr(10)
         code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
         code = code & "    ENDIF" & Chr(10)
@@ -1165,15 +2379,16 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
         code = code & "        ENDIF" & Chr(10)
         code = code & "    NEXT" & Chr(10)
         code = code & "    bar = bar & " & Chr(34) & ">" & Chr(34) & Chr(10)
-        code = code & "    RETURN bar" & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    RETURN style.Render(bar)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
     ' RenderProgress
     IF hasProgress THEN
-        code = code & "' Render progress bar" & Chr(10)
-        code = code & "FUNCTION RenderProgress(value AS INTEGER, total AS INTEGER, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Render progress bar with colors" & Chr(10)
+        code = code & "FUNCTION RenderProgress(value AS INTEGER, total AS INTEGER, width AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    IF width < 3 THEN" & Chr(10)
         code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
         code = code & "    ENDIF" & Chr(10)
@@ -1188,21 +2403,24 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
         code = code & "    IF filled < 0 THEN" & Chr(10)
         code = code & "        filled = 0" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    RETURN " & Chr(34) & "[" & Chr(34) & " & strings.Repeat(" & Chr(34) & "=" & Chr(34) & ", filled) & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", barWidth - filled) & " & Chr(34) & "]" & Chr(34) & Chr(10)
+        code = code & "    DIM bar AS STRING = " & Chr(34) & "[" & Chr(34) & " & strings.Repeat(" & Chr(34) & "=" & Chr(34) & ", filled) & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", barWidth - filled) & " & Chr(34) & "]" & Chr(34) & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    RETURN style.Render(bar)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
     ' RenderSpinner
     IF hasSpinner THEN
-        code = code & "' Render spinner character" & Chr(10)
-        code = code & "FUNCTION RenderSpinner(spinStyle AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Render spinner character with colors" & Chr(10)
+        code = code & "FUNCTION RenderSpinner(spinStyle AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    DIM frames AS []STRING = []STRING{" & Chr(34) & "|" & Chr(34) & ", " & Chr(34) & "/" & Chr(34) & ", " & Chr(34) & "-" & Chr(34) & ", " & Chr(34) & "\\\\" & Chr(34) & "}" & Chr(10)
         code = code & "    DIM idx AS INTEGER = spinStyle MOD 4" & Chr(10)
         code = code & "    IF idx < 0 THEN" & Chr(10)
         code = code & "        idx = 0" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    RETURN frames[idx]" & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    RETURN style.Render(frames[idx])" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
@@ -1217,8 +2435,8 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
 
     ' Frame border functions
     IF hasFrame THEN
-        code = code & "' Get top border row of a frame" & Chr(10)
-        code = code & "FUNCTION GetFrameTopRow(caption AS STRING, width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Get top border row of a frame with colors" & Chr(10)
+        code = code & "FUNCTION GetFrameTopRow(caption AS STRING, width AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    IF width < 2 THEN" & Chr(10)
         code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
         code = code & "    ENDIF" & Chr(10)
@@ -1234,24 +2452,41 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
         code = code & "        topLine = topLine & strings.Repeat(hLine, width - 2)" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    topLine = topLine & " & Chr(34) & "┐" & Chr(34) & Chr(10)
-        code = code & "    RETURN topLine" & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    RETURN style.Render(topLine)" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
-        code = code & "' Get bottom border row of a frame" & Chr(10)
-        code = code & "FUNCTION GetFrameBottomRow(width AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Get bottom border row of a frame with colors" & Chr(10)
+        code = code & "FUNCTION GetFrameBottomRow(width AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    IF width < 2 THEN" & Chr(10)
         code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    DIM hLine AS STRING = " & Chr(34) & "─" & Chr(34) & Chr(10)
-        code = code & "    RETURN " & Chr(34) & "└" & Chr(34) & " & strings.Repeat(hLine, width - 2) & " & Chr(34) & "┘" & Chr(34) & Chr(10)
+        code = code & "    DIM border AS STRING = " & Chr(34) & "└" & Chr(34) & " & strings.Repeat(hLine, width - 2) & " & Chr(34) & "┘" & Chr(34) & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    RETURN style.Render(border)" & Chr(10)
+        code = code & "END FUNCTION" & Chr(10)
+        code = code & Chr(10)
+        code = code & "' Get middle row borders of a frame (left and right separately) with colors" & Chr(10)
+        code = code & "FUNCTION GetFrameLeftBorder(fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    RETURN style.Render(" & Chr(34) & "│" & Chr(34) & ")" & Chr(10)
+        code = code & "END FUNCTION" & Chr(10)
+        code = code & Chr(10)
+        code = code & "' Get right border of a frame with colors" & Chr(10)
+        code = code & "FUNCTION GetFrameRightBorder(fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    RETURN style.Render(" & Chr(34) & "│" & Chr(34) & ")" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
     ' GetListBoxRow - render list items directly without using View()
     IF hasListBox THEN
-        code = code & "' Get a specific row of a listbox - renders items directly" & Chr(10)
-        code = code & "FUNCTION GetListBoxRow(lst AS list.Model, width AS INTEGER, height AS INTEGER, rowIndex AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Get a specific row of a listbox with colors - renders items directly" & Chr(10)
+        code = code & "FUNCTION GetListBoxRow(lst AS list.Model, width AS INTEGER, height AS INTEGER, rowIndex AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    DIM normalStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    DIM selectedStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(bgColor))).Background(lipgloss.Color(Str(fgColor))).Bold(TRUE)" & Chr(10)
         code = code & "    DIM items AS []list.Item = lst.Items()" & Chr(10)
         code = code & "    DIM selectedIdx AS INTEGER = lst.Index()" & Chr(10)
         code = code & "    IF Len(items) = 0 THEN" & Chr(10)
@@ -1261,9 +2496,9 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
         code = code & "            IF lipgloss.Width(emptyMsg) < width THEN" & Chr(10)
         code = code & "                emptyMsg = emptyMsg & strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width - lipgloss.Width(emptyMsg))" & Chr(10)
         code = code & "            ENDIF" & Chr(10)
-        code = code & "            RETURN emptyMsg" & Chr(10)
+        code = code & "            RETURN normalStyle.Render(emptyMsg)" & Chr(10)
         code = code & "        ENDIF" & Chr(10)
-        code = code & "        RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width)" & Chr(10)
+        code = code & "        RETURN normalStyle.Render(strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width))" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "    IF rowIndex >= 0 AND rowIndex < Len(items) THEN" & Chr(10)
         code = code & "        DIM item AS list.Item = items[rowIndex]" & Chr(10)
@@ -1281,9 +2516,12 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
         code = code & "        ELSEIF visWidth > width THEN" & Chr(10)
         code = code & "            title = Left(title, width)" & Chr(10)
         code = code & "        ENDIF" & Chr(10)
-        code = code & "        RETURN title" & Chr(10)
+        code = code & "        IF rowIndex = selectedIdx THEN" & Chr(10)
+        code = code & "            RETURN selectedStyle.Render(title)" & Chr(10)
+        code = code & "        ENDIF" & Chr(10)
+        code = code & "        RETURN normalStyle.Render(title)" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width)" & Chr(10)
+        code = code & "    RETURN normalStyle.Render(strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width))" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
 
@@ -1352,26 +2590,32 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
 
     ' GetTextAreaRow - render specific row of textarea
     IF hasTextArea THEN
-        code = code & "' Get a specific row of a textarea" & Chr(10)
-        code = code & "FUNCTION GetTextAreaRow(ta AS textarea.Model, width AS INTEGER, height AS INTEGER, rowIndex AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Get a specific row of a textarea with colors" & Chr(10)
+        code = code & "FUNCTION GetTextAreaRow(ta AS textarea.Model, width AS INTEGER, height AS INTEGER, rowIndex AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
         code = code & "    ' Get the full view and split by lines" & Chr(10)
         code = code & "    DIM view AS STRING = ta.View()" & Chr(10)
         code = code & "    DIM lines AS []STRING = strings.Split(view, " & Chr(34) & Chr(10) & Chr(34) & ")" & Chr(10)
         code = code & "    IF rowIndex >= 0 AND rowIndex < Len(lines) THEN" & Chr(10)
         code = code & "        DIM line AS STRING = lines[rowIndex]" & Chr(10)
-        code = code & "        ' Constrain to width using MaxWidth to handle ANSI codes" & Chr(10)
-        code = code & "        DIM style AS lipgloss.Style = lipgloss.NewStyle().MaxWidth(width).Width(width)" & Chr(10)
+        code = code & "        ' Constrain to width and apply colors" & Chr(10)
+        code = code & "        DIM style AS lipgloss.Style = lipgloss.NewStyle().MaxWidth(width).Width(width).Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
         code = code & "        RETURN style.Render(line)" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
-        code = code & "    RETURN strings.Repeat(" & Chr(34) & " " & Chr(34) & ", width)" & Chr(10)
+        code = code & "    DIM emptyStyle AS lipgloss.Style = lipgloss.NewStyle().Width(width).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
+        code = code & "    RETURN emptyStyle.Render(" & Chr(34) & Chr(34) & ")" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
         code = code & Chr(10)
     ENDIF
 
+    ' NOTE: DirBrowser helpers are now generated by GenerateDirBrowserWidget()
+    ' which creates the standalone DirBrowser TYPE with GetRow() method
+    ' and DirBrowserListDirs() function
+
     ' GetVScrollRow
     IF hasVScroll THEN
-        code = code & "' Get a specific row of a vertical scrollbar" & Chr(10)
-        code = code & "FUNCTION GetVScrollRow(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, height AS INTEGER, rowIndex AS INTEGER) AS STRING" & Chr(10)
+        code = code & "' Get a specific row of a vertical scrollbar with colors" & Chr(10)
+        code = code & "FUNCTION GetVScrollRow(value AS INTEGER, minVal AS INTEGER, maxVal AS INTEGER, height AS INTEGER, rowIndex AS INTEGER, fgColor AS INTEGER, bgColor AS INTEGER) AS STRING" & Chr(10)
+        code = code & "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(fgColor))).Background(lipgloss.Color(Str(bgColor)))" & Chr(10)
         code = code & "    IF height < 3 THEN" & Chr(10)
         code = code & "        RETURN " & Chr(34) & Chr(34) & Chr(10)
         code = code & "    ENDIF" & Chr(10)
@@ -1390,15 +2634,15 @@ FUNCTION GenerateRenderHelpers(proj AS VDBProject) AS STRING
         code = code & "    ENDIF" & Chr(10)
         code = code & Chr(10)
         code = code & "    IF rowIndex = 0 THEN" & Chr(10)
-        code = code & "        RETURN " & Chr(34) & "^" & Chr(34) & Chr(10)
+        code = code & "        RETURN style.Render(" & Chr(34) & "^" & Chr(34) & ")" & Chr(10)
         code = code & "    ELSEIF rowIndex = height - 1 THEN" & Chr(10)
-        code = code & "        RETURN " & Chr(34) & "v" & Chr(34) & Chr(10)
+        code = code & "        RETURN style.Render(" & Chr(34) & "v" & Chr(34) & ")" & Chr(10)
         code = code & "    ELSE" & Chr(10)
         code = code & "        DIM trackRow AS INTEGER = rowIndex - 1" & Chr(10)
         code = code & "        IF trackRow = thumbPos THEN" & Chr(10)
-        code = code & "            RETURN " & Chr(34) & "#" & Chr(34) & Chr(10)
+        code = code & "            RETURN style.Render(" & Chr(34) & "#" & Chr(34) & ")" & Chr(10)
         code = code & "        ELSE" & Chr(10)
-        code = code & "            RETURN " & Chr(34) & "|" & Chr(34) & Chr(10)
+        code = code & "            RETURN style.Render(" & Chr(34) & "|" & Chr(34) & ")" & Chr(10)
         code = code & "        ENDIF" & Chr(10)
         code = code & "    ENDIF" & Chr(10)
         code = code & "END FUNCTION" & Chr(10)
@@ -1460,6 +2704,15 @@ FUNCTION GenerateFocusHelpers(form AS VDBForm) AS STRING
             code = code & "    m." & ctrl.CtlName & ".Blur()" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_BUTTON OR ctrl.CtlType = CTRL_CHECKBOX OR ctrl.CtlType = CTRL_OPTION THEN
             code = code & "    m." & ctrl.CtlName & "_Focused = FALSE" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            ' DirBrowser uses widget Blur method
+            code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".Blur()" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            ' Path uses widget Blur method
+            code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".Blur()" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            ' Directories uses widget Blur method
+            code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".Blur()" & Chr(10)
         ENDIF
     NEXT
     code = code & "    RETURN m" & Chr(10)
@@ -1504,6 +2757,33 @@ FUNCTION GenerateFocusHelpers(form AS VDBForm) AS STRING
                 code = code & "    ELSEIF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
             ENDIF
             code = code & "        m." & ctrl.CtlName & "_Focused = TRUE" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            ' DirBrowser uses widget Focus method
+            IF first THEN
+                code = code & "    IF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "    ELSEIF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "        m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".Focus()" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            ' Path uses widget Focus method (returns 2 values)
+            IF first THEN
+                code = code & "    IF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "    ELSEIF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "        m." & ctrl.CtlName & ", _ = m." & ctrl.CtlName & ".Focus()" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            ' Directories uses widget Focus method
+            IF first THEN
+                code = code & "    IF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "    ELSEIF name = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "        m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".Focus()" & Chr(10)
         ENDIF
     NEXT
     IF NOT first THEN
@@ -1531,7 +2811,17 @@ FUNCTION GenerateFocusHelpers(form AS VDBForm) AS STRING
     code = code & "    IF Len(m.FocusableControls) = 0 OR m.FocusIndex < 0 OR m.FocusIndex >= Len(m.FocusableControls) THEN" & Chr(10)
     code = code & "        RETURN NIL" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
-    code = code & "    DIM focused AS STRING = m.FocusableControls[m.FocusIndex]" & Chr(10)
+    ' Check if we have any controls that need Blink command
+    DIM hasFocusable AS BOOLEAN = FALSE
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM chkCtrl AS VDBControl = form.Controls[i]
+        IF chkCtrl.CtlType = CTRL_TEXTBOX OR chkCtrl.CtlType = CTRL_TEXTAREA OR chkCtrl.CtlType = CTRL_DIRBROWSER OR chkCtrl.CtlType = CTRL_PATH THEN
+            hasFocusable = TRUE
+        ENDIF
+    NEXT
+    IF hasFocusable THEN
+        code = code & "    DIM focused AS STRING = m.FocusableControls[m.FocusIndex]" & Chr(10)
+    ENDIF
     first = TRUE
     FOR i = 0 TO Len(form.Controls) - 1
         DIM ctrl AS VDBControl = form.Controls[i]
@@ -1551,6 +2841,28 @@ FUNCTION GenerateFocusHelpers(form AS VDBForm) AS STRING
                 code = code & "    ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
             ENDIF
             code = code & "        RETURN textarea.Blink" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            ' DirBrowser uses widget's pathInput field
+            IF first THEN
+                code = code & "    IF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "    ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "        ' Return Blink if path input is focused" & Chr(10)
+            code = code & "        IF m." & ctrl.CtlName & ".pathInput.Focused() THEN" & Chr(10)
+            code = code & "            RETURN textinput.Blink" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
+            code = code & "        RETURN NIL" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            ' Path uses widget's input field
+            IF first THEN
+                code = code & "    IF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+                first = FALSE
+            ELSE
+                code = code & "    ELSEIF focused = " & Chr(34) & ctrl.CtlName & Chr(34) & " THEN" & Chr(10)
+            ENDIF
+            code = code & "        RETURN textinput.Blink" & Chr(10)
         ENDIF
     NEXT
     IF NOT first THEN
@@ -1723,6 +3035,96 @@ FUNCTION ExtractEventHandlers(form AS VDBForm) AS STRING
             code = code & "    RETURN m" & Chr(10)
             code = code & "END FUNCTION" & Chr(10)
             code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+            ' DirBrowser_DirChange handler
+            code = code & "' " & ctrl.CtlName & "_DirChange event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_DirChange(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM dirChangeCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_DirChange")
+            IF dirChangeCode <> "" THEN
+                code = code & TransformEventCode(dirChangeCode, form)
+            ELSE
+                code = code & "    ' Add DirChange handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
+
+            ' DirBrowser_PathChange handler
+            code = code & "' " & ctrl.CtlName & "_PathChange event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_PathChange(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM pathChangeCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_PathChange")
+            IF pathChangeCode <> "" THEN
+                code = code & TransformEventCode(pathChangeCode, form)
+            ELSE
+                code = code & "    ' Add PathChange handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_PATH THEN
+            ' Path_Change handler
+            code = code & "' " & ctrl.CtlName & "_Change event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_Change(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM pwChangeCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_Change")
+            IF pwChangeCode <> "" THEN
+                code = code & TransformEventCode(pwChangeCode, form)
+            ELSE
+                code = code & "    ' Add Change handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
+
+            ' Path_Enter handler
+            code = code & "' " & ctrl.CtlName & "_Enter event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_Enter(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM pwEnterCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_Enter")
+            IF pwEnterCode <> "" THEN
+                code = code & TransformEventCode(pwEnterCode, form)
+            ELSE
+                code = code & "    ' Add Enter handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            ' Directories_Change handler
+            code = code & "' " & ctrl.CtlName & "_Change event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_Change(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM dwChangeCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_Change")
+            IF dwChangeCode <> "" THEN
+                code = code & TransformEventCode(dwChangeCode, form)
+            ELSE
+                code = code & "    ' Add Change handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
+
+            ' Directories_Enter handler
+            code = code & "' " & ctrl.CtlName & "_Enter event" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_Enter(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM dwEnterCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_Enter")
+            IF dwEnterCode <> "" THEN
+                code = code & TransformEventCode(dwEnterCode, form)
+            ELSE
+                code = code & "    ' Add Enter handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
         ENDIF
     NEXT
 
@@ -1889,6 +3291,66 @@ FUNCTION TransformEventCode(code AS STRING, form AS VDBForm) AS STRING
                 line = ReplaceAll(line, ctrl.CtlName & ".SpinnerStyle", "m." & ctrl.CtlName & "_Style")
                 ' spnName.Style -> m.spnName_Style
                 line = ReplaceAll(line, ctrl.CtlName & ".Style", "m." & ctrl.CtlName & "_Style")
+            ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+                ' DirBrowser widget property transformations
+                ' Handle Path assignment: uses widget SetPath() method
+                DIM dbPathSetPattern AS STRING = ctrl.CtlName & ".Path = "
+                DIM dbPathSetPos AS INTEGER = InStrPos(1, line, dbPathSetPattern)
+                IF dbPathSetPos > 0 THEN
+                    ' This is a Path assignment - use widget SetPath method
+                    DIM beforeDbSet AS STRING = Left(line, dbPathSetPos - 1)
+                    DIM afterDbSet AS STRING = TrimStr(Mid(line, dbPathSetPos + Len(dbPathSetPattern), Len(line)))
+                    ' Transform any control references in the RHS
+                    afterDbSet = ReplaceAll(afterDbSet, ctrl.CtlName & ".Path", "m." & ctrl.CtlName & ".GetPath()")
+                    line = beforeDbSet & "m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(" & afterDbSet & ")"
+                ELSE
+                    ' Read access - use GetPath() method
+                    line = ReplaceAll(line, ctrl.CtlName & ".Path", "m." & ctrl.CtlName & ".GetPath()")
+                ENDIF
+                ' dbName.Dirs -> m.dbName.dirs
+                line = ReplaceAll(line, ctrl.CtlName & ".Dirs", "m." & ctrl.CtlName & ".dirs")
+                ' dbName.Selected -> m.dbName.selected
+                line = ReplaceAll(line, ctrl.CtlName & ".Selected", "m." & ctrl.CtlName & ".selected")
+                ' dbName.SelectedDir -> m.dbName.SelectedDir()
+                line = ReplaceAll(line, ctrl.CtlName & ".SelectedDir", "m." & ctrl.CtlName & ".SelectedDir()")
+            ELSEIF ctrl.CtlType = CTRL_PATH THEN
+                ' Path widget property transformations
+                ' Handle Path assignment: uses widget SetPath() method
+                DIM pwPathSetPattern AS STRING = ctrl.CtlName & ".Path = "
+                DIM pwPathSetPos AS INTEGER = InStrPos(1, line, pwPathSetPattern)
+                IF pwPathSetPos > 0 THEN
+                    ' This is a Path assignment - use widget SetPath method
+                    DIM beforePwSet AS STRING = Left(line, pwPathSetPos - 1)
+                    DIM afterPwSet AS STRING = TrimStr(Mid(line, pwPathSetPos + Len(pwPathSetPattern), Len(line)))
+                    ' Transform any control references in the RHS
+                    afterPwSet = ReplaceAll(afterPwSet, ctrl.CtlName & ".Path", "m." & ctrl.CtlName & ".GetPath()")
+                    line = beforePwSet & "m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(" & afterPwSet & ")"
+                ELSE
+                    ' Read access - use GetPath() method
+                    line = ReplaceAll(line, ctrl.CtlName & ".Path", "m." & ctrl.CtlName & ".GetPath()")
+                ENDIF
+            ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+                ' Directories widget property transformations
+                ' Handle Path assignment: uses widget SetPath() method
+                DIM dwPathSetPattern AS STRING = ctrl.CtlName & ".Path = "
+                DIM dwPathSetPos AS INTEGER = InStrPos(1, line, dwPathSetPattern)
+                IF dwPathSetPos > 0 THEN
+                    ' This is a Path assignment - use widget SetPath method
+                    DIM beforeDwSet AS STRING = Left(line, dwPathSetPos - 1)
+                    DIM afterDwSet AS STRING = TrimStr(Mid(line, dwPathSetPos + Len(dwPathSetPattern), Len(line)))
+                    ' Transform any control references in the RHS
+                    afterDwSet = ReplaceAll(afterDwSet, ctrl.CtlName & ".Path", "m." & ctrl.CtlName & ".GetPath()")
+                    line = beforeDwSet & "m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(" & afterDwSet & ")"
+                ELSE
+                    ' Read access - use GetPath() method
+                    line = ReplaceAll(line, ctrl.CtlName & ".Path", "m." & ctrl.CtlName & ".GetPath()")
+                ENDIF
+                ' dirName.Dirs -> m.dirName.dirs
+                line = ReplaceAll(line, ctrl.CtlName & ".Dirs", "m." & ctrl.CtlName & ".dirs")
+                ' dirName.SelectedDir -> m.dirName.SelectedDir() (must be before .Selected)
+                line = ReplaceAll(line, ctrl.CtlName & ".SelectedDir", "m." & ctrl.CtlName & ".SelectedDir()")
+                ' dirName.Selected -> m.dirName.selected
+                line = ReplaceAll(line, ctrl.CtlName & ".Selected", "m." & ctrl.CtlName & ".selected")
             ENDIF
         NEXT
 
@@ -1945,9 +3407,10 @@ FUNCTION TransformModuleVar(line AS STRING, varName AS STRING) AS STRING
                 charAfter = Mid(line, afterPos, 1)
             ENDIF
 
-            ' Check if char before/after is alphanumeric or underscore
+            ' Check if char before/after is alphanumeric, underscore, or dot
+            ' A dot after means it's part of a property access (e.g., m.xDir)
             DIM beforeIsIdent AS BOOLEAN = IsIdentChar(charBefore)
-            DIM afterIsIdent AS BOOLEAN = IsIdentChar(charAfter)
+            DIM afterIsIdent AS BOOLEAN = IsIdentChar(charAfter) OR charAfter = "."
 
             IF NOT beforeIsIdent AND NOT afterIsIdent THEN
                 ' This is a standalone occurrence, transform it
