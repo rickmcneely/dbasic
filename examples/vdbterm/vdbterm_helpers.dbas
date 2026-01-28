@@ -1,6 +1,13 @@
 ' VDBTerm Helper Functions
 ' String utilities, expression evaluation, and other helper functions
 
+IMPORT "github.com/atotto/clipboard" AS clipboard
+
+' Copy text to system clipboard
+SUB CopyToClipboard(text AS STRING)
+    clipboard.WriteAll(text)
+END SUB
+
 FUNCTION RepeatStr(ch AS STRING, count AS INTEGER) AS STRING
     DIM result AS STRING = ""
     DIM i AS INTEGER
@@ -58,12 +65,21 @@ END FUNCTION
 ' Map widget panel index to control type
 ' Visible widgets: Button(1), Label(2), TextBox(3), CheckBox(4), Option(5),
 '                  ListBox(6), ComboBox(7), Frame(8), HScroll(9), VScroll(10),
-'                  TextArea(12), Progress(13), Spinner(14), Table(15)
+'                  TextArea(12), Progress(13), Spinner(14), Table(15), DirBrowser(19), Path(20), Directories(21)
 ' Timer(11) is non-visible (in Toolbox)
 FUNCTION WidgetIndexToCtrlType(widgetIdx AS INTEGER) AS INTEGER
     IF widgetIdx < 10 THEN
         ' First 10 visible widgets map directly
         RETURN widgetIdx + 1
+    ELSEIF widgetIdx = 14 THEN
+        ' widgetIdx 14 -> CTRL_DIRBROWSER (19)
+        RETURN CTRL_DIRBROWSER
+    ELSEIF widgetIdx = 15 THEN
+        ' widgetIdx 15 -> CTRL_PATH (20)
+        RETURN CTRL_PATH
+    ELSEIF widgetIdx = 16 THEN
+        ' widgetIdx 16 -> CTRL_DIRECTORIES (21)
+        RETURN CTRL_DIRECTORIES
     ELSE
         ' New widgets skip Timer (11)
         ' widgetIdx 10 -> CTRL_TEXTAREA (12)
@@ -138,7 +154,7 @@ FUNCTION GetLine(content AS STRING, lineNum AS INTEGER) AS STRING
     RETURN result
 END FUNCTION
 
-' Get control type name
+' Get control type name (base version without plugin support)
 FUNCTION GetControlTypeName(ctlType AS INTEGER) AS STRING
     IF ctlType = CTRL_FORM THEN
         RETURN "Form"
@@ -178,7 +194,29 @@ FUNCTION GetControlTypeName(ctlType AS INTEGER) AS STRING
         RETURN "TCP/IP"
     ELSEIF ctlType = CTRL_UDPIP THEN
         RETURN "UDP/IP"
+    ELSEIF ctlType = CTRL_DIRBROWSER THEN
+        RETURN "DirBrowser"
+    ELSEIF ctlType = CTRL_PATH THEN
+        RETURN "Path"
+    ELSEIF ctlType = CTRL_DIRECTORIES THEN
+        RETURN "Directories"
     ENDIF
+    RETURN "Unknown"
+END FUNCTION
+
+' Get control type name with plugin support
+FUNCTION GetControlTypeNameWithRegistry(ctlType AS INTEGER, registry AS PluginRegistry) AS STRING
+    ' Check built-in types first
+    IF ctlType < PLUGIN_TYPE_START THEN
+        RETURN GetControlTypeName(ctlType)
+    ENDIF
+
+    ' Check plugin types
+    DIM plugin AS PluginWidgetDef = GetPluginByCtrlType(ctlType, registry)
+    IF plugin.Meta.ID <> "" THEN
+        RETURN plugin.Meta.Name
+    ENDIF
+
     RETURN "Unknown"
 END FUNCTION
 
@@ -220,6 +258,12 @@ FUNCTION GetToolboxIcon(ctlType AS INTEGER) AS STRING
         RETURN "TCP "
     ELSEIF ctlType = CTRL_UDPIP THEN
         RETURN "UDP "
+    ELSEIF ctlType = CTRL_DIRBROWSER THEN
+        RETURN "[D] "
+    ELSEIF ctlType = CTRL_PATH THEN
+        RETURN "[/] "
+    ELSEIF ctlType = CTRL_DIRECTORIES THEN
+        RETURN "[d] "
     ENDIF
     RETURN "??? "
 END FUNCTION
@@ -638,6 +682,15 @@ FUNCTION GetControlEvents(ctlType AS INTEGER) AS []STRING
     ELSEIF ctlType = CTRL_UDPIP THEN
         events = APPEND(events, "DataReceived")
         events = APPEND(events, "Error")
+    ELSEIF ctlType = CTRL_DIRBROWSER THEN
+        events = APPEND(events, "DirChange")
+        events = APPEND(events, "PathChange")
+    ELSEIF ctlType = CTRL_PATH THEN
+        events = APPEND(events, "Change")
+        events = APPEND(events, "Enter")
+    ELSEIF ctlType = CTRL_DIRECTORIES THEN
+        events = APPEND(events, "Change")
+        events = APPEND(events, "Enter")
     ENDIF
 
     RETURN events
@@ -750,6 +803,15 @@ FUNCTION GetControlPropertyCount(ctrl AS VDBControl) AS INTEGER
         RETURN baseCount + 1
     ELSEIF ctrl.CtlType = CTRL_TABLE THEN
         ' Columns, Rows, ShowHeaders
+        RETURN baseCount + 3
+    ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+        ' Path, ShowHidden
+        RETURN baseCount + 2
+    ELSEIF ctrl.CtlType = CTRL_PATH THEN
+        ' InitialPath, LinkedDirs
+        RETURN baseCount + 2
+    ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+        ' Path, ShowHidden, LinkedPath
         RETURN baseCount + 3
     ENDIF
 
@@ -896,6 +958,26 @@ FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRIN
         ELSEIF typeIdx = 2 THEN
             RETURN "ShowHeaders"
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+        IF typeIdx = 0 THEN
+            RETURN "Path"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "ShowHidden"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_PATH THEN
+        IF typeIdx = 0 THEN
+            RETURN "InitialPath"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "LinkedDirs"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+        IF typeIdx = 0 THEN
+            RETURN "Path"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "ShowHidden"
+        ELSEIF typeIdx = 2 THEN
+            RETURN "LinkedPath"
+        ENDIF
     ENDIF
 
     RETURN ""
@@ -955,6 +1037,16 @@ FUNCTION IsPropertyBoolean(ctrl AS VDBControl, propIdx AS INTEGER) AS BOOLEAN
     ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
         ' Border (0)
         IF typeIdx = 0 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+        ' ShowHidden (1)
+        IF typeIdx = 1 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+        ' ShowHidden (1)
+        IF typeIdx = 1 THEN
             RETURN TRUE
         ENDIF
     ENDIF
@@ -1020,6 +1112,14 @@ FUNCTION ToggleBooleanProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBCon
     ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
         IF typeIdx = 0 THEN
             ctrl.Border = NOT ctrl.Border
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+        IF typeIdx = 1 THEN
+            ctrl.ShowHidden = NOT ctrl.ShowHidden
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+        IF typeIdx = 1 THEN
+            ctrl.ShowHidden = NOT ctrl.ShowHidden
         ENDIF
     ENDIF
 
@@ -1088,6 +1188,25 @@ FUNCTION CycleEnumerableProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBC
     ENDIF
 
     RETURN ctrl
+END FUNCTION
+
+' Check if a property is a color property (ForeColor or BackColor)
+' Returns: 0=not color, 1=ForeColor, 2=BackColor
+FUNCTION IsPropertyColor(ctrl AS VDBControl, propIdx AS INTEGER) AS INTEGER
+    ' Adjust index for controls without Caption
+    DIM hasCaption AS BOOLEAN = ControlUsesCaption(ctrl.CtlType)
+    DIM adjIdx AS INTEGER = propIdx
+    IF NOT hasCaption AND propIdx >= 2 THEN
+        adjIdx = propIdx + 1
+    ENDIF
+
+    IF adjIdx = 11 THEN
+        RETURN 1  ' ForeColor
+    ELSEIF adjIdx = 12 THEN
+        RETURN 2  ' BackColor
+    ENDIF
+
+    RETURN 0  ' Not a color property
 END FUNCTION
 
 ' Get property value for a control at given index
@@ -1287,7 +1406,74 @@ FUNCTION GetControlPropertyValue(ctrl AS VDBControl, propIdx AS INTEGER) AS STRI
                 RETURN "False"
             ENDIF
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.FilePath
+        ELSEIF typeIdx = 1 THEN
+            IF ctrl.ShowHidden THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_PATH THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.FilePath
+        ELSEIF typeIdx = 1 THEN
+            RETURN ctrl.LinkedControl
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.FilePath
+        ELSEIF typeIdx = 1 THEN
+            IF ctrl.ShowHidden THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ELSEIF typeIdx = 2 THEN
+            RETURN ctrl.LinkedControl
+        ENDIF
     ENDIF
 
     RETURN ""
 END FUNCTION
+
+' Unescape a JSON string value
+' Handles: \\ -> \, \" -> ", \n -> newline, \r -> CR, \t -> tab
+FUNCTION UnescapeJSONString(s AS STRING) AS STRING
+    DIM result AS STRING = ""
+    DIM i AS INTEGER = 1
+    DIM bslash AS STRING = Chr(92)  ' Backslash
+
+    WHILE i <= Len(s)
+        DIM ch AS STRING = Mid(s, i, 1)
+        IF ch = bslash AND i < Len(s) THEN
+            DIM nextCh AS STRING = Mid(s, i + 1, 1)
+            IF nextCh = bslash THEN
+                result = result & bslash
+                i = i + 2
+            ELSEIF nextCh = Chr(34) THEN
+                result = result & Chr(34)
+                i = i + 2
+            ELSEIF nextCh = "n" THEN
+                result = result & Chr(10)
+                i = i + 2
+            ELSEIF nextCh = "r" THEN
+                result = result & Chr(13)
+                i = i + 2
+            ELSEIF nextCh = "t" THEN
+                result = result & Chr(9)
+                i = i + 2
+            ELSE
+                result = result & ch
+                i = i + 1
+            ENDIF
+        ELSE
+            result = result & ch
+            i = i + 1
+        ENDIF
+    WEND
+    RETURN result
+END FUNCTION
+

@@ -1,6 +1,8 @@
 ' VDBTerm Project Operations
 ' Project, form, module, and control creation, serialization, and code generation
 
+IMPORT "os" AS os
+
 FUNCTION NewProject(name AS STRING) AS VDBProject
     DIM proj AS VDBProject
     proj.Name = name
@@ -16,6 +18,7 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     form.Y = 0
     form.Width = 60
     form.Height = 20
+    form.ForeColor = 0
     form.BackColor = 7
     form.Code = "' Form1 Code - VDBTerm Demo" & Chr(10) & Chr(10)
     form.Code = form.Code & "' This form demonstrates various VDBTerm controls" & Chr(10) & Chr(10)
@@ -75,6 +78,24 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     form.Code = form.Code & "    IF lstItems.SelectedIndex >= 0 THEN" & Chr(10)
     form.Code = form.Code & "        lblTitle.Caption = " & Chr(34) & "Selected: " & Chr(34) & " & lstItems.SelectedItem" & Chr(10)
     form.Code = form.Code & "    ENDIF" & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB xPath_Change()" & Chr(10)
+    form.Code = form.Code & "    ' Sync directories widget when path changes" & Chr(10)
+    form.Code = form.Code & "    xDir.Path = xPath.Path" & Chr(10)
+    form.Code = form.Code & "    lblTitle.Caption = " & Chr(34) & "Path: " & Chr(34) & " & xPath.Path" & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB xPath_Enter()" & Chr(10)
+    form.Code = form.Code & "    ' Navigate to path when Enter pressed" & Chr(10)
+    form.Code = form.Code & "    xDir.Path = xPath.Path" & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB xDir_Change()" & Chr(10)
+    form.Code = form.Code & "    ' Update path widget when directory changes" & Chr(10)
+    form.Code = form.Code & "    xPath.Path = xDir.Path" & Chr(10)
+    form.Code = form.Code & "    lblTitle.Caption = " & Chr(34) & "Dir: " & Chr(34) & " & xDir.Path" & Chr(10)
+    form.Code = form.Code & "END SUB" & Chr(10) & Chr(10)
+    form.Code = form.Code & "SUB xDir_Enter()" & Chr(10)
+    form.Code = form.Code & "    ' Show selected directory" & Chr(10)
+    form.Code = form.Code & "    lblTitle.Caption = " & Chr(34) & "Selected: " & Chr(34) & " & xDir.SelectedDir" & Chr(10)
     form.Code = form.Code & "END SUB" & Chr(10)
     form.NextCtrlID = 1
 
@@ -151,6 +172,24 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     form.Controls = APPEND(form.Controls, ctrl)
     form.NextCtrlID = form.NextCtrlID + 1
 
+    ' Path widget for directory navigation
+    ctrl = NewControl(CTRL_PATH, "xPath", 2, 13)
+    ctrl.Width = 56
+    ctrl.Height = 1
+    ctrl.Value = "/"
+    ctrl.ZOrder = form.NextCtrlID
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
+    ' Directories widget
+    ctrl = NewControl(CTRL_DIRECTORIES, "xDir", 2, 14)
+    ctrl.Width = 56
+    ctrl.Height = 5
+    ctrl.Value = "/"
+    ctrl.ZOrder = form.NextCtrlID
+    form.Controls = APPEND(form.Controls, ctrl)
+    form.NextCtrlID = form.NextCtrlID + 1
+
     proj.Forms = APPEND(proj.Forms, form)
     RETURN proj
 END FUNCTION
@@ -163,6 +202,7 @@ FUNCTION NewForm(name AS STRING) AS VDBForm
     form.Y = 0
     form.Width = 60
     form.Height = 20
+    form.ForeColor = 0
     form.BackColor = 7
     form.Code = "' " & name & " Code" & Chr(10) & Chr(10) & "SUB Form_Load()" & Chr(10) & "    ' Initialization code here" & Chr(10) & "END SUB" & Chr(10)
     form.NextCtrlID = 1
@@ -277,50 +317,39 @@ FUNCTION NewControl(ctlType AS INTEGER, name AS STRING, x AS INTEGER, y AS INTEG
         ctrl.Columns = "Column1;Column2;Column3"
         ctrl.Rows = ""
         ctrl.ShowHeaders = TRUE
+    ELSEIF ctlType = CTRL_DIRBROWSER THEN
+        ctrl.Width = 30
+        ctrl.Height = 10
+        ctrl.FilePath = "."
+        ctrl.ShowHidden = FALSE
+    ELSEIF ctlType = CTRL_PATH THEN
+        ctrl.Width = 30
+        ctrl.Height = 3
+        ctrl.FilePath = "."
+        ctrl.LinkedControl = ""
+    ELSEIF ctlType = CTRL_DIRECTORIES THEN
+        ctrl.Width = 30
+        ctrl.Height = 10
+        ctrl.FilePath = "."
+        ctrl.ShowHidden = FALSE
+        ctrl.LinkedControl = ""
     ENDIF
 
     RETURN ctrl
 END FUNCTION
 
-' Serialize project to JSON string
+' Serialize project to JSON string (new format: form names only)
 FUNCTION SerializeProject(proj AS VDBProject) AS STRING
     DIM result AS STRING = "{" & Chr(10)
-    result = result & "  " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & proj.Name & Chr(34) & "," & Chr(10)
-    result = result & "  " & Chr(34) & "startupForm" & Chr(34) & ": " & Chr(34) & proj.StartupForm & Chr(34) & "," & Chr(10)
+    DIM q AS STRING = Chr(34)
+    result = result & "  " & q & "name" & q & ": " & q & proj.Name & q & "," & Chr(10)
+    result = result & "  " & q & "startupForm" & q & ": " & q & proj.StartupForm & q & "," & Chr(10)
 
-    ' Forms array
-    result = result & "  " & Chr(34) & "forms" & Chr(34) & ": [" & Chr(10)
+    ' Forms array - just form names (new format)
+    result = result & "  " & q & "forms" & q & ": [" & Chr(10)
     DIM i AS INTEGER
     FOR i = 0 TO Len(proj.Forms) - 1
-        DIM f AS VDBForm = proj.Forms[i]
-        result = result & "    {" & Chr(10)
-        result = result & "      " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & f.Name & Chr(34) & "," & Chr(10)
-        result = result & "      " & Chr(34) & "caption" & Chr(34) & ": " & Chr(34) & f.Caption & Chr(34) & "," & Chr(10)
-        result = result & "      " & Chr(34) & "width" & Chr(34) & ": " & Str(f.Width) & "," & Chr(10)
-        result = result & "      " & Chr(34) & "height" & Chr(34) & ": " & Str(f.Height) & "," & Chr(10)
-        result = result & "      " & Chr(34) & "controls" & Chr(34) & ": [" & Chr(10)
-
-        DIM j AS INTEGER
-        FOR j = 0 TO Len(f.Controls) - 1
-            DIM c AS VDBControl = f.Controls[j]
-            result = result & "        {" & Chr(10)
-            result = result & "          " & Chr(34) & "id" & Chr(34) & ": " & Str(c.ID) & "," & Chr(10)
-            result = result & "          " & Chr(34) & "type" & Chr(34) & ": " & Str(c.CtlType) & "," & Chr(10)
-            result = result & "          " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & c.CtlName & Chr(34) & "," & Chr(10)
-            result = result & "          " & Chr(34) & "caption" & Chr(34) & ": " & Chr(34) & c.Caption & Chr(34) & "," & Chr(10)
-            result = result & "          " & Chr(34) & "x" & Chr(34) & ": " & Str(c.X) & "," & Chr(10)
-            result = result & "          " & Chr(34) & "y" & Chr(34) & ": " & Str(c.Y) & "," & Chr(10)
-            result = result & "          " & Chr(34) & "width" & Chr(34) & ": " & Str(c.Width) & "," & Chr(10)
-            result = result & "          " & Chr(34) & "height" & Chr(34) & ": " & Str(c.Height) & Chr(10)
-            result = result & "        }"
-            IF j < Len(f.Controls) - 1 THEN
-                result = result & ","
-            ENDIF
-            result = result & Chr(10)
-        NEXT
-
-        result = result & "      ]" & Chr(10)
-        result = result & "    }"
+        result = result & "    " & q & proj.Forms[i].Name & q
         IF i < Len(proj.Forms) - 1 THEN
             result = result & ","
         ENDIF
@@ -328,13 +357,10 @@ FUNCTION SerializeProject(proj AS VDBProject) AS STRING
     NEXT
     result = result & "  ]," & Chr(10)
 
-    ' Modules array
-    result = result & "  " & Chr(34) & "modules" & Chr(34) & ": [" & Chr(10)
+    ' Modules array - just module names
+    result = result & "  " & q & "modules" & q & ": [" & Chr(10)
     FOR i = 0 TO Len(proj.Modules) - 1
-        DIM m AS VDBModule = proj.Modules[i]
-        result = result & "    {" & Chr(10)
-        result = result & "      " & Chr(34) & "name" & Chr(34) & ": " & Chr(34) & m.Name & Chr(34) & Chr(10)
-        result = result & "    }"
+        result = result & "    " & q & proj.Modules[i].Name & q
         IF i < Len(proj.Modules) - 1 THEN
             result = result & ","
         ENDIF
@@ -346,24 +372,112 @@ FUNCTION SerializeProject(proj AS VDBProject) AS STRING
     RETURN result
 END FUNCTION
 
-' Save project to file
+' Serialize a single form to JSON (full definition with controls and code)
+FUNCTION SerializeForm(f AS VDBForm) AS STRING
+    DIM result AS STRING = "{" & Chr(10)
+    DIM q AS STRING = Chr(34)
+
+    result = result & "  " & q & "name" & q & ": " & q & f.Name & q & "," & Chr(10)
+    result = result & "  " & q & "caption" & q & ": " & q & EscapeJSONString(f.Caption) & q & "," & Chr(10)
+    result = result & "  " & q & "width" & q & ": " & Str(f.Width) & "," & Chr(10)
+    result = result & "  " & q & "height" & q & ": " & Str(f.Height) & "," & Chr(10)
+    result = result & "  " & q & "foreColor" & q & ": " & Str(f.ForeColor) & "," & Chr(10)
+    result = result & "  " & q & "backColor" & q & ": " & Str(f.BackColor) & "," & Chr(10)
+    result = result & "  " & q & "controls" & q & ": [" & Chr(10)
+
+    DIM j AS INTEGER
+    FOR j = 0 TO Len(f.Controls) - 1
+        DIM c AS VDBControl = f.Controls[j]
+        result = result & "    {" & Chr(10)
+        result = result & "      " & q & "id" & q & ": " & Str(c.ID) & "," & Chr(10)
+        result = result & "      " & q & "type" & q & ": " & Str(c.CtlType) & "," & Chr(10)
+        result = result & "      " & q & "name" & q & ": " & q & c.CtlName & q & "," & Chr(10)
+        result = result & "      " & q & "caption" & q & ": " & q & EscapeJSONString(c.Caption) & q & "," & Chr(10)
+        result = result & "      " & q & "x" & q & ": " & Str(c.X) & "," & Chr(10)
+        result = result & "      " & q & "y" & q & ": " & Str(c.Y) & "," & Chr(10)
+        result = result & "      " & q & "width" & q & ": " & Str(c.Width) & "," & Chr(10)
+        result = result & "      " & q & "height" & q & ": " & Str(c.Height) & "," & Chr(10)
+        result = result & "      " & q & "foreColor" & q & ": " & Str(c.ForeColor) & "," & Chr(10)
+        result = result & "      " & q & "backColor" & q & ": " & Str(c.BackColor)
+        ' Add type-specific properties
+        IF c.CtlType = CTRL_TIMER THEN
+            result = result & "," & Chr(10)
+            result = result & "      " & q & "interval" & q & ": " & Str(c.Interval) & Chr(10)
+        ELSEIF c.CtlType = CTRL_DIRBROWSER THEN
+            result = result & "," & Chr(10)
+            result = result & "      " & q & "path" & q & ": " & q & c.FilePath & q & "," & Chr(10)
+            IF c.ShowHidden THEN
+                result = result & "      " & q & "showHidden" & q & ": true" & Chr(10)
+            ELSE
+                result = result & "      " & q & "showHidden" & q & ": false" & Chr(10)
+            ENDIF
+        ELSEIF c.CtlType = CTRL_PATH THEN
+            result = result & "," & Chr(10)
+            result = result & "      " & q & "path" & q & ": " & q & c.FilePath & q & "," & Chr(10)
+            result = result & "      " & q & "linkedControl" & q & ": " & q & c.LinkedControl & q & Chr(10)
+        ELSEIF c.CtlType = CTRL_DIRECTORIES THEN
+            result = result & "," & Chr(10)
+            result = result & "      " & q & "path" & q & ": " & q & c.FilePath & q & "," & Chr(10)
+            IF c.ShowHidden THEN
+                result = result & "      " & q & "showHidden" & q & ": true," & Chr(10)
+            ELSE
+                result = result & "      " & q & "showHidden" & q & ": false," & Chr(10)
+            ENDIF
+            result = result & "      " & q & "linkedControl" & q & ": " & q & c.LinkedControl & q & Chr(10)
+        ELSEIF c.CtlType >= PLUGIN_TYPE_START THEN
+            ' Plugin widget - save plugin type ID and extended properties
+            result = result & "," & Chr(10)
+            result = result & "      " & q & "pluginTypeID" & q & ": " & q & c.PluginTypeID & q
+            IF c.ExtendedProps <> "" THEN
+                result = result & "," & Chr(10)
+                result = result & "      " & q & "extendedProps" & q & ": " & c.ExtendedProps & Chr(10)
+            ELSE
+                result = result & Chr(10)
+            ENDIF
+        ELSE
+            result = result & Chr(10)
+        ENDIF
+        result = result & "    }"
+        IF j < Len(f.Controls) - 1 THEN
+            result = result & ","
+        ENDIF
+        result = result & Chr(10)
+    NEXT
+
+    result = result & "  ]," & Chr(10)
+
+    ' Code field - escaped for JSON
+    result = result & "  " & q & "code" & q & ": " & q & EscapeJSONString(f.Code) & q & Chr(10)
+
+    result = result & "}"
+    RETURN result
+END FUNCTION
+
+' Save project to file (new format: forms in separate .frm files with full definition)
 SUB SaveProject(proj AS POINTER TO VDBProject, path AS STRING)
-    ' Save main project file
+    ' Get directory from path
+    DIM dir AS STRING = GetDirectory(path)
+
+    ' Ensure directory exists
+    EnsureDirectory(dir)
+
+    ' Save main project file (just form names, not definitions)
     DIM projJson AS STRING = SerializeProject(^proj)
     WriteFile(path, projJson)
 
-    ' Save form code files in same directory
+    ' Save form files with full JSON definition + code
     DIM i AS INTEGER
     FOR i = 0 TO Len((^proj).Forms) - 1
         DIM f AS VDBForm = (^proj).Forms[i]
-        DIM formPath AS STRING = f.Name & ".frm"
-        WriteFile(formPath, f.Code)
+        DIM formPath AS STRING = dir & f.Name & ".frm"
+        DIM formJson AS STRING = SerializeForm(f)
+        WriteFile(formPath, formJson)
     NEXT
 
     ' Save module code files
     FOR i = 0 TO Len((^proj).Modules) - 1
         DIM modFile AS VDBModule = (^proj).Modules[i]
-        DIM modPath AS STRING = modFile.Name & ".bas"
+        DIM modPath AS STRING = dir & modFile.Name & ".bas"
         WriteFile(modPath, modFile.Code)
     NEXT
 
@@ -371,7 +485,92 @@ SUB SaveProject(proj AS POINTER TO VDBProject, path AS STRING)
     (^proj).Modified = FALSE
 END SUB
 
-' Load project from file
+' Save project as a widget plugin (new format: forms in separate .frm files)
+SUB SaveProjectAsWidget(proj AS POINTER TO VDBProject, path AS STRING)
+    ' Ensure plugins/widgets directory exists
+    EnsureDirectory("plugins")
+    EnsureDirectory("plugins/widgets")
+
+    ' Get widget directory from path
+    DIM dir AS STRING = GetDirectory(path)
+    EnsureDirectory(dir)
+
+    ' Serialize with widgetMeta section (just form names)
+    DIM projJson AS STRING = SerializeProjectAsWidget(^proj)
+    WriteFile(path, projJson)
+
+    ' Save form files with full JSON definition + code
+    DIM i AS INTEGER
+    FOR i = 0 TO Len((^proj).Forms) - 1
+        DIM f AS VDBForm = (^proj).Forms[i]
+        DIM formPath AS STRING = dir & f.Name & ".frm"
+        DIM formJson AS STRING = SerializeForm(f)
+        WriteFile(formPath, formJson)
+    NEXT
+
+    ' Save module code files
+    FOR i = 0 TO Len((^proj).Modules) - 1
+        DIM modFile AS VDBModule = (^proj).Modules[i]
+        DIM modPath AS STRING = dir & modFile.Name & ".bas"
+        WriteFile(modPath, modFile.Code)
+    NEXT
+
+    (^proj).Modified = FALSE
+END SUB
+
+' Serialize project as widget with widgetMeta section (new format: form names only)
+FUNCTION SerializeProjectAsWidget(proj AS VDBProject) AS STRING
+    DIM result AS STRING = "{" & Chr(10)
+    DIM q AS STRING = Chr(34)
+
+    ' Widget metadata section
+    result = result & "  " & q & "widgetMeta" & q & ": {" & Chr(10)
+    result = result & "    " & q & "id" & q & ": " & q & LCase(proj.Name) & q & "," & Chr(10)
+    result = result & "    " & q & "name" & q & ": " & q & proj.Name & q & "," & Chr(10)
+    result = result & "    " & q & "icon" & q & ": " & q & "[" & UCase(Left(proj.Name, 1)) & "] " & q & "," & Chr(10)
+    result = result & "    " & q & "category" & q & ": " & q & "visible" & q & "," & Chr(10)
+    result = result & "    " & q & "description" & q & ": " & q & "Custom widget: " & proj.Name & q & Chr(10)
+    result = result & "  }," & Chr(10)
+
+    ' Standard project fields
+    result = result & "  " & q & "name" & q & ": " & q & proj.Name & q & "," & Chr(10)
+    result = result & "  " & q & "startupForm" & q & ": " & q & proj.StartupForm & q & "," & Chr(10)
+
+    ' Forms array - just form names (new format)
+    result = result & "  " & q & "forms" & q & ": [" & Chr(10)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(proj.Forms) - 1
+        result = result & "    " & q & proj.Forms[i].Name & q
+        IF i < Len(proj.Forms) - 1 THEN
+            result = result & ","
+        ENDIF
+        result = result & Chr(10)
+    NEXT
+    result = result & "  ]," & Chr(10)
+
+    ' Modules array - just module names
+    result = result & "  " & q & "modules" & q & ": [" & Chr(10)
+    FOR i = 0 TO Len(proj.Modules) - 1
+        result = result & "    " & q & proj.Modules[i].Name & q
+        IF i < Len(proj.Modules) - 1 THEN
+            result = result & ","
+        ENDIF
+        result = result & Chr(10)
+    NEXT
+    result = result & "  ]" & Chr(10)
+
+    result = result & "}"
+    RETURN result
+END FUNCTION
+
+' Ensure directory exists
+SUB EnsureDirectory(path AS STRING)
+    ' Use os.MkdirAll to create directory if not exists
+    DIM _ AS error = os.MkdirAll(path, 493)
+    ' Ignore error if directory already exists
+END SUB
+
+' Load project from file (supports both old and new format)
 FUNCTION LoadProject(path AS STRING) AS (VDBProject, STRING)
     DIM proj AS VDBProject
 
@@ -381,36 +580,272 @@ FUNCTION LoadProject(path AS STRING) AS (VDBProject, STRING)
         RETURN proj, "Failed to read file: " & path
     ENDIF
 
-    ' Parse JSON - simple parser for our format
-    proj = ParseProjectJSON(content)
-    proj.Path = path
-    proj.Modified = FALSE
-
-    ' Get directory from path for loading .frm files
+    ' Get directory from path for loading files
     DIM dir AS STRING = GetDirectory(path)
 
-    ' Load form code files
-    DIM i AS INTEGER
-    FOR i = 0 TO Len(proj.Forms) - 1
-        DIM frmPath AS STRING = dir & proj.Forms[i].Name & ".frm"
-        DIM frmContent AS STRING = ReadFile(frmPath)
-        IF frmContent <> "" THEN
-            proj.Forms[i].Code = frmContent
-        ELSE
-            proj.Forms[i].Code = "' " & proj.Forms[i].Name & " Code" & Chr(10)
-        ENDIF
-    NEXT
+    ' Detect format: new format has forms as strings, old format has forms as objects
+    DIM isNewFormat AS BOOLEAN = IsNewProjectFormat(content)
 
-    ' Load module code files
-    FOR i = 0 TO Len(proj.Modules) - 1
-        DIM modPath AS STRING = dir & proj.Modules[i].Name & ".bas"
-        DIM modContent AS STRING = ReadFile(modPath)
-        IF modContent <> "" THEN
-            proj.Modules[i].Code = modContent
-        ENDIF
-    NEXT
+    IF isNewFormat THEN
+        ' New format: parse project, then load each .frm file with full definition
+        proj = ParseProjectJSONNewFormat(content)
+        proj.Path = path
+        proj.Modified = FALSE
+
+        ' Load form files (JSON with full definition + code)
+        DIM i AS INTEGER
+        FOR i = 0 TO Len(proj.Forms) - 1
+            DIM formName AS STRING = proj.Forms[i].Name
+            DIM frmPath AS STRING = dir & formName & ".frm"
+            DIM frmContent AS STRING = ReadFile(frmPath)
+            IF frmContent <> "" THEN
+                ' Parse .frm JSON file with full definition
+                proj.Forms[i] = ParseFormFile(frmContent)
+            ENDIF
+        NEXT
+
+        ' Load module code files
+        FOR i = 0 TO Len(proj.Modules) - 1
+            DIM modPath AS STRING = dir & proj.Modules[i].Name & ".bas"
+            DIM modContent AS STRING = ReadFile(modPath)
+            IF modContent <> "" THEN
+                proj.Modules[i].Code = modContent
+            ENDIF
+        NEXT
+    ELSE
+        ' Old format: parse embedded form definitions, then load .frm code files
+        proj = ParseProjectJSON(content)
+        proj.Path = path
+        proj.Modified = FALSE
+
+        ' Load form code files (old format: .frm contains just code)
+        DIM j AS INTEGER
+        FOR j = 0 TO Len(proj.Forms) - 1
+            DIM frmPath2 AS STRING = dir & proj.Forms[j].Name & ".frm"
+            DIM frmContent2 AS STRING = ReadFile(frmPath2)
+            IF frmContent2 <> "" THEN
+                proj.Forms[j].Code = frmContent2
+            ELSE
+                proj.Forms[j].Code = "' " & proj.Forms[j].Name & " Code" & Chr(10)
+            ENDIF
+        NEXT
+
+        ' Load module code files
+        FOR j = 0 TO Len(proj.Modules) - 1
+            DIM modPath2 AS STRING = dir & proj.Modules[j].Name & ".bas"
+            DIM modContent2 AS STRING = ReadFile(modPath2)
+            IF modContent2 <> "" THEN
+                proj.Modules[j].Code = modContent2
+            ENDIF
+        NEXT
+    ENDIF
 
     RETURN proj, ""
+END FUNCTION
+
+' Detect if project file uses new format (forms as strings) or old format (forms as objects)
+FUNCTION IsNewProjectFormat(js AS STRING) AS BOOLEAN
+    ' Find the forms array start
+    DIM formsStart AS INTEGER = InStrPos(1, js, Chr(34) & "forms" & Chr(34))
+    IF formsStart = 0 THEN
+        RETURN FALSE
+    ENDIF
+
+    ' Find the opening bracket
+    DIM bracketPos AS INTEGER = InStrPos(formsStart, js, "[")
+    IF bracketPos = 0 THEN
+        RETURN FALSE
+    ENDIF
+
+    ' Skip whitespace after bracket
+    DIM pos AS INTEGER = bracketPos + 1
+    WHILE pos <= Len(js) AND (Mid(js, pos, 1) = " " OR Mid(js, pos, 1) = Chr(10) OR Mid(js, pos, 1) = Chr(9))
+        pos = pos + 1
+    WEND
+
+    ' Check first non-whitespace character after [
+    ' New format: starts with " (string)
+    ' Old format: starts with { (object)
+    DIM ch AS STRING = Mid(js, pos, 1)
+    IF ch = Chr(34) THEN
+        RETURN TRUE  ' New format: form names as strings
+    ELSEIF ch = "{" THEN
+        RETURN FALSE ' Old format: forms as objects
+    ELSEIF ch = "]" THEN
+        RETURN TRUE  ' Empty array - treat as new format
+    ENDIF
+
+    RETURN FALSE
+END FUNCTION
+
+' Parse project JSON in new format (forms and modules as name strings)
+FUNCTION ParseProjectJSONNewFormat(js AS STRING) AS VDBProject
+    DIM proj AS VDBProject
+
+    ' Extract project name
+    proj.Name = ExtractJSONString(js, "name")
+    proj.StartupForm = ExtractJSONString(js, "startupForm")
+
+    ' Parse forms array (array of strings)
+    DIM formNames AS []STRING = ParseStringArray(js, "forms")
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(formNames) - 1
+        DIM form AS VDBForm
+        form.Name = formNames[i]
+        form.Caption = formNames[i]
+        form.Width = 60
+        form.Height = 20
+        form.ForeColor = 0
+        form.BackColor = 7
+        form.Code = "' " & formNames[i] & " Code" & Chr(10)
+        form.NextCtrlID = 1
+        proj.Forms = APPEND(proj.Forms, form)
+    NEXT
+
+    ' Parse modules array (array of strings)
+    DIM moduleNames AS []STRING = ParseStringArray(js, "modules")
+    FOR i = 0 TO Len(moduleNames) - 1
+        DIM newMod AS VDBModule
+        newMod.Name = moduleNames[i]
+        newMod.Code = "' " & moduleNames[i] & " Module" & Chr(10)
+        proj.Modules = APPEND(proj.Modules, newMod)
+    NEXT
+
+    RETURN proj
+END FUNCTION
+
+' Parse an array of strings from JSON
+FUNCTION ParseStringArray(js AS STRING, key AS STRING) AS []STRING
+    DIM result AS []STRING
+    DIM searchKey AS STRING = Chr(34) & key & Chr(34)
+    DIM pos AS INTEGER = InStrPos(1, js, searchKey)
+    IF pos = 0 THEN
+        RETURN result
+    ENDIF
+
+    ' Find opening bracket
+    DIM bracketPos AS INTEGER = InStrPos(pos, js, "[")
+    IF bracketPos = 0 THEN
+        RETURN result
+    ENDIF
+
+    ' Parse strings until closing bracket
+    pos = bracketPos + 1
+    DIM bslash AS STRING = Chr(92)
+    WHILE pos <= Len(js)
+        DIM ch AS STRING = Mid(js, pos, 1)
+        IF ch = "]" THEN
+            EXIT WHILE
+        ELSEIF ch = Chr(34) THEN
+            ' Found start of string, parse until closing quote
+            DIM strStart AS INTEGER = pos + 1
+            DIM strEnd AS INTEGER = strStart
+            WHILE strEnd <= Len(js)
+                DIM sch AS STRING = Mid(js, strEnd, 1)
+                IF sch = Chr(34) THEN
+                    ' Check if escaped
+                    IF strEnd > 1 AND Mid(js, strEnd - 1, 1) = bslash THEN
+                        strEnd = strEnd + 1
+                    ELSE
+                        EXIT WHILE
+                    ENDIF
+                ELSE
+                    strEnd = strEnd + 1
+                ENDIF
+            WEND
+            DIM strVal AS STRING = Mid(js, strStart, strEnd - strStart)
+            result = APPEND(result, strVal)
+            pos = strEnd + 1
+        ELSE
+            pos = pos + 1
+        ENDIF
+    WEND
+
+    RETURN result
+END FUNCTION
+
+' Parse a .frm file (JSON with full form definition and code)
+FUNCTION ParseFormFile(js AS STRING) AS VDBForm
+    DIM form AS VDBForm
+    form.Name = ExtractJSONString(js, "name")
+    form.Caption = UnescapeJSONString(ExtractJSONString(js, "caption"))
+    form.Width = ExtractJSONInt(js, "width")
+    form.Height = ExtractJSONInt(js, "height")
+    form.NextCtrlID = 1
+
+    ' Read colors from JSON, default to standard colors if not present
+    DIM hasForeColor AS BOOLEAN = InStrPos(1, js, Chr(34) & "foreColor" & Chr(34)) > 0
+    DIM hasBackColor AS BOOLEAN = InStrPos(1, js, Chr(34) & "backColor" & Chr(34)) > 0
+    IF hasForeColor THEN
+        form.ForeColor = ExtractJSONInt(js, "foreColor")
+    ELSE
+        form.ForeColor = 0  ' Default: black
+    ENDIF
+    IF hasBackColor THEN
+        form.BackColor = ExtractJSONInt(js, "backColor")
+    ELSE
+        form.BackColor = 7  ' Default: white/light gray
+    ENDIF
+
+    ' Parse controls array
+    DIM ctrlStart AS INTEGER = InStrPos(1, js, Chr(34) & "controls" & Chr(34))
+    IF ctrlStart > 0 THEN
+        DIM ctrlArrayStart AS INTEGER = InStrPos(ctrlStart, js, "[")
+        IF ctrlArrayStart > 0 THEN
+            form.Controls = ParseControlsArray(js, ctrlArrayStart)
+            form.NextCtrlID = Len(form.Controls) + 1
+        ENDIF
+    ENDIF
+
+    ' Parse code field (escaped JSON string)
+    DIM codeStr AS STRING = ExtractJSONCodeString(js)
+    form.Code = UnescapeJSONString(codeStr)
+
+    RETURN form
+END FUNCTION
+
+' Extract the code string from JSON (handles escaped characters)
+FUNCTION ExtractJSONCodeString(js AS STRING) AS STRING
+    DIM searchKey AS STRING = Chr(34) & "code" & Chr(34) & ":"
+    DIM pos AS INTEGER = InStrPos(1, js, searchKey)
+    IF pos = 0 THEN
+        RETURN ""
+    ENDIF
+
+    ' Find the opening quote of the value
+    pos = pos + Len(searchKey)
+    WHILE pos <= Len(js) AND (Mid(js, pos, 1) = " " OR Mid(js, pos, 1) = Chr(10) OR Mid(js, pos, 1) = Chr(9))
+        pos = pos + 1
+    WEND
+
+    IF Mid(js, pos, 1) <> Chr(34) THEN
+        RETURN ""
+    ENDIF
+
+    ' Parse string value with escape handling
+    DIM strStart AS INTEGER = pos + 1
+    DIM strEnd AS INTEGER = strStart
+    DIM bslash AS STRING = Chr(92)
+
+    WHILE strEnd <= Len(js)
+        DIM ch AS STRING = Mid(js, strEnd, 1)
+        IF ch = Chr(34) THEN
+            ' Check if escaped (preceded by odd number of backslashes)
+            DIM bsCount AS INTEGER = 0
+            DIM checkPos AS INTEGER = strEnd - 1
+            WHILE checkPos >= strStart AND Mid(js, checkPos, 1) = bslash
+                bsCount = bsCount + 1
+                checkPos = checkPos - 1
+            WEND
+            IF bsCount MOD 2 = 0 THEN
+                ' Even number of backslashes means quote is not escaped
+                EXIT WHILE
+            ENDIF
+        ENDIF
+        strEnd = strEnd + 1
+    WEND
+
+    RETURN Mid(js, strStart, strEnd - strStart)
 END FUNCTION
 
 ' Get directory from path
@@ -449,28 +884,48 @@ FUNCTION ParseProjectJSON(js AS STRING) AS VDBProject
     RETURN proj
 END FUNCTION
 
-' Extract a string value from JSON
+' Extract a string value from JSON (handles escaped quotes)
 FUNCTION ExtractJSONString(js AS STRING, key AS STRING) AS STRING
     DIM searchKey AS STRING = Chr(34) & key & Chr(34) & ":"
-    DIM pos AS INTEGER = InStrPos(1,js, searchKey)
+    DIM pos AS INTEGER = InStrPos(1, js, searchKey)
     IF pos = 0 THEN
         RETURN ""
     ENDIF
 
     ' Find the opening quote of the value
-    DIM valueStart AS INTEGER = InStrPos(1,Mid(js, pos + Len(searchKey), Len(js)), Chr(34))
-    IF valueStart = 0 THEN
-        RETURN ""
-    ENDIF
-    valueStart = pos + Len(searchKey) + valueStart
+    DIM valueStart AS INTEGER = pos + Len(searchKey)
+    WHILE valueStart <= Len(js) AND (Mid(js, valueStart, 1) = " " OR Mid(js, valueStart, 1) = Chr(10) OR Mid(js, valueStart, 1) = Chr(9))
+        valueStart = valueStart + 1
+    WEND
 
-    ' Find the closing quote
-    DIM valueEnd AS INTEGER = InStrPos(1,Mid(js, valueStart, Len(js)), Chr(34))
-    IF valueEnd = 0 THEN
+    IF Mid(js, valueStart, 1) <> Chr(34) THEN
         RETURN ""
     ENDIF
 
-    RETURN Mid(js, valueStart, valueEnd - 1)
+    ' Find the closing quote (handle escaped quotes)
+    DIM strStart AS INTEGER = valueStart + 1
+    DIM strEnd AS INTEGER = strStart
+    DIM bslash AS STRING = Chr(92)
+
+    WHILE strEnd <= Len(js)
+        DIM ch AS STRING = Mid(js, strEnd, 1)
+        IF ch = Chr(34) THEN
+            ' Check if escaped (preceded by odd number of backslashes)
+            DIM bsCount AS INTEGER = 0
+            DIM checkPos AS INTEGER = strEnd - 1
+            WHILE checkPos >= strStart AND Mid(js, checkPos, 1) = bslash
+                bsCount = bsCount + 1
+                checkPos = checkPos - 1
+            WEND
+            IF bsCount MOD 2 = 0 THEN
+                ' Even number of backslashes means quote is not escaped
+                EXIT WHILE
+            ENDIF
+        ENDIF
+        strEnd = strEnd + 1
+    WEND
+
+    RETURN Mid(js, strStart, strEnd - strStart)
 END FUNCTION
 
 ' Extract an integer value from JSON
@@ -504,6 +959,27 @@ FUNCTION ExtractJSONInt(js AS STRING, key AS STRING) AS INTEGER
     WEND
 
     RETURN ParseIntStr(numStr)
+END FUNCTION
+
+' Extract a boolean value from JSON
+FUNCTION ExtractJSONBool(js AS STRING, key AS STRING) AS BOOLEAN
+    DIM searchKey AS STRING = Chr(34) & key & Chr(34) & ":"
+    DIM pos AS INTEGER = InStrPos(1, js, searchKey)
+    IF pos = 0 THEN
+        RETURN FALSE
+    ENDIF
+
+    ' Skip whitespace and get the value
+    DIM valStart AS INTEGER = pos + Len(searchKey)
+    WHILE valStart <= Len(js) AND (Mid(js, valStart, 1) = " " OR Mid(js, valStart, 1) = Chr(10))
+        valStart = valStart + 1
+    WEND
+
+    ' Check for true/false
+    IF Mid(js, valStart, 4) = "true" THEN
+        RETURN TRUE
+    ENDIF
+    RETURN FALSE
 END FUNCTION
 
 ' Parse forms array from JSON
@@ -544,8 +1020,21 @@ FUNCTION ParseFormObject(js AS STRING) AS VDBForm
     form.Caption = ExtractJSONString(js, "caption")
     form.Width = ExtractJSONInt(js, "width")
     form.Height = ExtractJSONInt(js, "height")
-    form.BackColor = 7
     form.NextCtrlID = 1
+
+    ' Read colors from JSON, default to standard colors if not present
+    DIM hasForeColor AS BOOLEAN = InStrPos(1, js, "\"foreColor\"") > 0
+    DIM hasBackColor AS BOOLEAN = InStrPos(1, js, "\"backColor\"") > 0
+    IF hasForeColor THEN
+        form.ForeColor = ExtractJSONInt(js, "foreColor")
+    ELSE
+        form.ForeColor = 0  ' Default: black
+    ENDIF
+    IF hasBackColor THEN
+        form.BackColor = ExtractJSONInt(js, "backColor")
+    ELSE
+        form.BackColor = 7  ' Default: white/light gray
+    ENDIF
 
     ' Parse controls array
     DIM ctrlStart AS INTEGER = InStrPos(1,js, "\"controls\"")
@@ -606,8 +1095,20 @@ FUNCTION ParseControlObject(js AS STRING) AS VDBControl
     ctrl.ZOrder = ctrl.ID
     ctrl.Enabled = TRUE
     ctrl.Visible = TRUE
-    ctrl.ForeColor = 0
-    ctrl.BackColor = 7
+
+    ' Read colors from JSON, default to standard colors if not present
+    DIM hasForeColor AS BOOLEAN = InStrPos(1, js, "\"foreColor\"") > 0
+    DIM hasBackColor AS BOOLEAN = InStrPos(1, js, "\"backColor\"") > 0
+    IF hasForeColor THEN
+        ctrl.ForeColor = ExtractJSONInt(js, "foreColor")
+    ELSE
+        ctrl.ForeColor = 0  ' Default: black
+    ENDIF
+    IF hasBackColor THEN
+        ctrl.BackColor = ExtractJSONInt(js, "backColor")
+    ELSE
+        ctrl.BackColor = 7  ' Default: white/light gray
+    ENDIF
 
     ' Set type-specific defaults
     IF ctrl.CtlType = CTRL_LABEL THEN
@@ -631,13 +1132,36 @@ FUNCTION ParseControlObject(js AS STRING) AS VDBControl
         IF ctrl.Interval <= 0 THEN
             ctrl.Interval = 1000
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+        ctrl.FilePath = ExtractJSONString(js, "path")
+        IF ctrl.FilePath = "" THEN
+            ctrl.FilePath = "."
+        ENDIF
+        ctrl.ShowHidden = ExtractJSONBool(js, "showHidden")
+    ELSEIF ctrl.CtlType = CTRL_PATH THEN
+        ctrl.FilePath = ExtractJSONString(js, "path")
+        IF ctrl.FilePath = "" THEN
+            ctrl.FilePath = "."
+        ENDIF
+        ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+    ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+        ctrl.FilePath = ExtractJSONString(js, "path")
+        IF ctrl.FilePath = "" THEN
+            ctrl.FilePath = "."
+        ENDIF
+        ctrl.ShowHidden = ExtractJSONBool(js, "showHidden")
+        ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+    ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
+        ' Plugin widget - load plugin type ID and extended properties
+        ctrl.PluginTypeID = ExtractJSONString(js, "pluginTypeID")
+        ctrl.ExtendedProps = ExtractJSONObject(js, "extendedProps")
     ENDIF
 
     RETURN ctrl
 END FUNCTION
 
 ' Generate DBasic code from project - BubbleTea application
-FUNCTION GenerateCode(proj AS VDBProject) AS STRING
+FUNCTION GenerateCode(proj AS VDBProject, registry AS PluginRegistry) AS STRING
     DIM code AS STRING = ""
 
     ' Header
@@ -658,20 +1182,35 @@ FUNCTION GenerateCode(proj AS VDBProject) AS STRING
 
         ' Generate imports (only for first form to avoid duplicates)
         IF i = 0 THEN
-            code = code & GenerateImports(form)
+            code = code & GenerateImports(form, registry)
+
+            ' Generate DirBrowser widget type and methods if needed
+            IF ProjectHasDirBrowser(proj) THEN
+                code = code & GenerateDirBrowserWidget()
+            ENDIF
+
+            ' Generate Path widget type and methods if needed
+            IF ProjectHasPath(proj) THEN
+                code = code & GeneratePathWidget()
+            ENDIF
+
+            ' Generate Directories widget type and methods if needed
+            IF ProjectHasDirectories(proj) THEN
+                code = code & GenerateDirectoriesWidget()
+            ENDIF
         ENDIF
 
         ' Generate form type definition
-        code = code & GenerateFormType(form)
+        code = code & GenerateFormType(form, registry)
 
         ' Generate Init() method
-        code = code & GenerateInit(form)
+        code = code & GenerateInit(form, registry)
 
         ' Generate Update() method with event routing
-        code = code & GenerateUpdate(form)
+        code = code & GenerateUpdate(form, registry)
 
         ' Generate View() method with layout
-        code = code & GenerateView(form)
+        code = code & GenerateView(form, registry)
 
         ' Generate focus management helpers (form-specific)
         code = code & GenerateFocusHelpers(form)
