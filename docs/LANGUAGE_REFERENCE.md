@@ -22,7 +22,8 @@ DBasic is a modern BASIC dialect that compiles to Go. It combines familiar BASIC
 12. [Concurrency](#concurrency)
 13. [Go Package Integration](#go-package-integration)
 14. [Built-in Functions](#built-in-functions)
-15. [Keywords Reference](#keywords-reference)
+15. [HTTP Functions](#http-functions)
+16. [Keywords Reference](#keywords-reference)
 
 ---
 
@@ -889,6 +890,95 @@ ENDIF
 | `INPUT var` | Read line from console |
 | `Printf(fmt, args...)` | Formatted print |
 | `Sprintf(fmt, args...)` | Formatted string |
+
+---
+
+## HTTP Functions
+
+DBasic provides built-in HTTP helper functions for making web requests. These are automatically generated when using the Curl widget in VDBTerm projects, or can be manually implemented.
+
+### CurlFetch
+
+Performs an HTTP request and returns the response body, status code, and any error.
+
+```basic
+FUNCTION CurlFetch(url AS STRING, method AS STRING, body AS STRING) AS (STRING, INTEGER, STRING)
+```
+
+**Parameters:**
+- `url` - The URL to request
+- `method` - HTTP method (GET, POST, PUT, DELETE, etc.)
+- `body` - Request body (use "" for empty)
+
+**Returns:**
+- Response body as STRING
+- HTTP status code as INTEGER
+- Error message as STRING (empty if successful)
+
+**Example:**
+```basic
+DIM response AS STRING
+DIM statusCode AS INTEGER
+DIM errStr AS STRING
+
+response, statusCode, errStr = CurlFetch("https://api.example.com/data", "POST", "{\"key\":\"value\"}")
+
+IF errStr <> "" THEN
+    PRINT "Error: " & errStr
+ELSEIF statusCode = 200 THEN
+    PRINT "Success: " & response
+ENDIF
+```
+
+### CurlGet
+
+Convenience function for GET requests.
+
+```basic
+FUNCTION CurlGet(url AS STRING) AS (STRING, INTEGER, STRING)
+```
+
+**Example:**
+```basic
+DIM data AS STRING
+DIM code AS INTEGER
+DIM err AS STRING
+
+data, code, err = CurlGet("https://httpbin.org/get")
+IF err = "" THEN
+    PRINT "Response: " & data
+ENDIF
+```
+
+### CurlPost
+
+Convenience function for POST requests.
+
+```basic
+FUNCTION CurlPost(url AS STRING, body AS STRING) AS (STRING, INTEGER, STRING)
+```
+
+**Example:**
+```basic
+DIM result AS STRING
+DIM status AS INTEGER
+DIM errMsg AS STRING
+
+result, status, errMsg = CurlPost("https://httpbin.org/post", "{\"name\":\"test\"}")
+```
+
+### Required Imports for HTTP
+
+When implementing HTTP functionality manually, include these imports:
+
+```basic
+IMPORT "net/http" AS http
+IMPORT "io" AS io
+IMPORT "bytes" AS bytebuf
+IMPORT "fmt" AS fmt
+```
+
+**Note:** The `bytes` package must be aliased (e.g., `bytebuf`) since `bytes` is a reserved word in DBasic.
 
 ---
 
