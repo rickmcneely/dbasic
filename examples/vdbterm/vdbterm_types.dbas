@@ -410,4 +410,18 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM ThemeColorPickerX AS INTEGER      ' Color picker X position (0-15 for 16x16 grid)
     DIM ThemeColorPickerY AS INTEGER      ' Color picker Y position (0-15 for 16x16 grid)
     DIM ThemeColorPickerOpen AS BOOLEAN   ' Whether 256-color picker is open
+
+    ' File Browser state
+    DIM FileBrowserPath AS STRING         ' Current directory path
+    DIM FileBrowserDirs AS []STRING       ' List of directories in current path
+    DIM FileBrowserFiles AS []STRING      ' List of files in current path
+    DIM FileBrowserDirIdx AS INTEGER      ' Selected directory index
+    DIM FileBrowserFileIdx AS INTEGER     ' Selected file index
+    DIM FileBrowserDirScroll AS INTEGER   ' Scroll offset for directory list
+    DIM FileBrowserFileScroll AS INTEGER  ' Scroll offset for file list
+    DIM FileBrowserFocus AS INTEGER       ' Current focus: path, dirs, files, or buttons
+    DIM FileBrowserPattern AS STRING      ' File filter pattern (e.g., "*.vdbp")
+    DIM FileBrowserBtnIdx AS INTEGER      ' Selected button (0=Open, 1=Cancel)
+    DIM FileBrowserMode AS INTEGER        ' 0=Open, 1=Save (for future use)
+    DIM FileBrowserTitle AS STRING        ' Dialog title
 END TYPE

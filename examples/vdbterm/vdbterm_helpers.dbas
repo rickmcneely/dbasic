@@ -2234,3 +2234,158 @@ FUNCTION SetThemeColor(theme AS VDBTheme, propIdx AS INTEGER, colIdx AS INTEGER,
     RETURN theme
 END FUNCTION
 
+' ============================================
+' File Browser Helper Functions
+' ============================================
+
+' Get current working directory
+FUNCTION GetCurrentDir() AS STRING
+    DIM dir AS STRING
+    DIM err AS error
+    dir, err = os.Getwd()
+    IF err <> NIL THEN
+        RETURN "/"
+    ENDIF
+    RETURN dir
+END FUNCTION
+
+' List directories in a path
+FUNCTION ListDirectories(path AS STRING) AS []STRING
+    DIM result AS []STRING
+
+    ' Always add parent directory unless at root
+    IF path <> "/" AND path <> "" THEN
+        result = APPEND(result, "..")
+    ENDIF
+
+    DIM entries AS []os.DirEntry
+    DIM err AS error
+    entries, err = os.ReadDir(path)
+    IF err <> NIL THEN
+        RETURN result
+    ENDIF
+
+    ' Collect directory names
+    DIM dirNames AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(entries) - 1
+        IF entries[i].IsDir() THEN
+            DIM name AS STRING = entries[i].Name()
+            ' Skip hidden directories (starting with .)
+            IF Left(name, 1) <> "." THEN
+                dirNames = APPEND(dirNames, name)
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' Sort directories alphabetically
+    sort.Strings(dirNames)
+
+    ' Add sorted directories to result
+    FOR i = 0 TO Len(dirNames) - 1
+        result = APPEND(result, dirNames[i])
+    NEXT
+
+    RETURN result
+END FUNCTION
+
+' List files in a path matching a pattern
+FUNCTION ListFiles(path AS STRING, pattern AS STRING) AS []STRING
+    DIM result AS []STRING
+
+    DIM entries AS []os.DirEntry
+    DIM err AS error
+    entries, err = os.ReadDir(path)
+    IF err <> NIL THEN
+        RETURN result
+    ENDIF
+
+    ' Collect matching file names
+    DIM fileNames AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(entries) - 1
+        IF entries[i].IsDir() = FALSE THEN
+            DIM name AS STRING = entries[i].Name()
+            ' Skip hidden files
+            IF Left(name, 1) <> "." THEN
+                ' Check pattern match
+                IF pattern = "" OR pattern = "*" OR pattern = "*.*" THEN
+                    fileNames = APPEND(fileNames, name)
+                ELSE
+                    DIM matched AS BOOLEAN
+                    DIM matchErr AS error
+                    matched, matchErr = filepath.Match(pattern, name)
+                    IF matchErr = NIL AND matched THEN
+                        fileNames = APPEND(fileNames, name)
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' Sort files alphabetically
+    sort.Strings(fileNames)
+
+    RETURN fileNames
+END FUNCTION
+
+' Initialize file browser state
+SUB InitFileBrowser(m AS POINTER TO VDBTermModel, title AS STRING, pattern AS STRING)
+    (^m).FileBrowserTitle = title
+    (^m).FileBrowserPattern = pattern
+    (^m).FileBrowserPath = GetCurrentDir()
+    (^m).FileBrowserDirs = ListDirectories((^m).FileBrowserPath)
+    (^m).FileBrowserFiles = ListFiles((^m).FileBrowserPath, pattern)
+    (^m).FileBrowserDirIdx = 0
+    (^m).FileBrowserFileIdx = 0
+    (^m).FileBrowserDirScroll = 0
+    (^m).FileBrowserFileScroll = 0
+    (^m).FileBrowserFocus = FILEBROWSER_FOCUS_FILES
+    (^m).FileBrowserBtnIdx = 0
+    (^m).FileBrowserMode = 0
+    (^m).DialogMode = DIALOG_FILE_BROWSER
+END SUB
+
+' Navigate to a directory in file browser
+SUB FileBrowserNavigate(m AS POINTER TO VDBTermModel, dirname AS STRING)
+    DIM newPath AS STRING
+
+    IF dirname = ".." THEN
+        ' Go to parent directory
+        newPath = filepath.Dir((^m).FileBrowserPath)
+    ELSE
+        ' Go into subdirectory
+        newPath = filepath.Join((^m).FileBrowserPath, dirname)
+    ENDIF
+
+    ' Verify the directory exists and is accessible
+    DIM statInfo AS os.FileInfo
+    DIM err AS error
+    statInfo, err = os.Stat(newPath)
+    ' Use statInfo to check it's a directory
+    IF err <> NIL OR statInfo.IsDir() = FALSE THEN
+        (^m).Message = "Cannot access: " & newPath
+        RETURN
+    ENDIF
+
+    ' Update path and refresh lists
+    (^m).FileBrowserPath = newPath
+    (^m).FileBrowserDirs = ListDirectories(newPath)
+    (^m).FileBrowserFiles = ListFiles(newPath, (^m).FileBrowserPattern)
+    (^m).FileBrowserDirIdx = 0
+    (^m).FileBrowserFileIdx = 0
+    (^m).FileBrowserDirScroll = 0
+    (^m).FileBrowserFileScroll = 0
+END SUB
+
+' Get the full path of the selected file
+FUNCTION FileBrowserGetSelectedPath(m AS VDBTermModel) AS STRING
+    IF Len(m.FileBrowserFiles) = 0 THEN
+        RETURN ""
+    ENDIF
+    IF m.FileBrowserFileIdx < 0 OR m.FileBrowserFileIdx >= Len(m.FileBrowserFiles) THEN
+        RETURN ""
+    ENDIF
+    RETURN filepath.Join(m.FileBrowserPath, m.FileBrowserFiles[m.FileBrowserFileIdx])
+END FUNCTION
+

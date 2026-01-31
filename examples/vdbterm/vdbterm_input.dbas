@@ -411,6 +411,154 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
         RETURN m, NIL
     ENDIF
 
+    ' File Browser dialog
+    IF m.DialogMode = DIALOG_FILE_BROWSER THEN
+        DIM dirListHeight AS INTEGER = 10
+        DIM fileListHeight AS INTEGER = 10
+
+        IF key = "esc" THEN
+            m.DialogMode = DIALOG_NONE
+            RETURN m, NIL
+        ENDIF
+
+        IF key = "tab" THEN
+            ' Cycle focus: Dirs -> Files -> Buttons -> Dirs
+            IF m.FileBrowserFocus = FILEBROWSER_FOCUS_DIRS THEN
+                m.FileBrowserFocus = FILEBROWSER_FOCUS_FILES
+            ELSEIF m.FileBrowserFocus = FILEBROWSER_FOCUS_FILES THEN
+                m.FileBrowserFocus = FILEBROWSER_FOCUS_BUTTONS
+            ELSE
+                m.FileBrowserFocus = FILEBROWSER_FOCUS_DIRS
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        IF key = "shift+tab" THEN
+            ' Reverse cycle
+            IF m.FileBrowserFocus = FILEBROWSER_FOCUS_DIRS THEN
+                m.FileBrowserFocus = FILEBROWSER_FOCUS_BUTTONS
+            ELSEIF m.FileBrowserFocus = FILEBROWSER_FOCUS_FILES THEN
+                m.FileBrowserFocus = FILEBROWSER_FOCUS_DIRS
+            ELSE
+                m.FileBrowserFocus = FILEBROWSER_FOCUS_FILES
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        ' Handle directory list navigation
+        IF m.FileBrowserFocus = FILEBROWSER_FOCUS_DIRS THEN
+            IF key = "up" THEN
+                IF m.FileBrowserDirIdx > 0 THEN
+                    m.FileBrowserDirIdx = m.FileBrowserDirIdx - 1
+                    IF m.FileBrowserDirIdx < m.FileBrowserDirScroll THEN
+                        m.FileBrowserDirScroll = m.FileBrowserDirIdx
+                    ENDIF
+                ENDIF
+            ELSEIF key = "down" THEN
+                IF m.FileBrowserDirIdx < Len(m.FileBrowserDirs) - 1 THEN
+                    m.FileBrowserDirIdx = m.FileBrowserDirIdx + 1
+                    IF m.FileBrowserDirIdx >= m.FileBrowserDirScroll + dirListHeight THEN
+                        m.FileBrowserDirScroll = m.FileBrowserDirIdx - dirListHeight + 1
+                    ENDIF
+                ENDIF
+            ELSEIF key = "enter" THEN
+                ' Navigate into selected directory
+                IF Len(m.FileBrowserDirs) > 0 AND m.FileBrowserDirIdx < Len(m.FileBrowserDirs) THEN
+                    FileBrowserNavigate(@m, m.FileBrowserDirs[m.FileBrowserDirIdx])
+                ENDIF
+            ELSEIF key = "right" THEN
+                ' Move focus to files
+                m.FileBrowserFocus = FILEBROWSER_FOCUS_FILES
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        ' Handle file list navigation
+        IF m.FileBrowserFocus = FILEBROWSER_FOCUS_FILES THEN
+            IF key = "up" THEN
+                IF m.FileBrowserFileIdx > 0 THEN
+                    m.FileBrowserFileIdx = m.FileBrowserFileIdx - 1
+                    IF m.FileBrowserFileIdx < m.FileBrowserFileScroll THEN
+                        m.FileBrowserFileScroll = m.FileBrowserFileIdx
+                    ENDIF
+                ENDIF
+            ELSEIF key = "down" THEN
+                IF m.FileBrowserFileIdx < Len(m.FileBrowserFiles) - 1 THEN
+                    m.FileBrowserFileIdx = m.FileBrowserFileIdx + 1
+                    IF m.FileBrowserFileIdx >= m.FileBrowserFileScroll + fileListHeight THEN
+                        m.FileBrowserFileScroll = m.FileBrowserFileIdx - fileListHeight + 1
+                    ENDIF
+                ENDIF
+            ELSEIF key = "enter" THEN
+                ' Select the file and open it
+                DIM selectedPath AS STRING = FileBrowserGetSelectedPath(m)
+                IF selectedPath <> "" THEN
+                    m.DialogMode = DIALOG_NONE
+                    ' Load the project
+                    DIM proj AS VDBProject
+                    DIM loadErr AS STRING
+                    proj, loadErr = LoadProject(selectedPath)
+                    IF loadErr <> "" THEN
+                        m.Message = "Error: " & loadErr
+                    ELSE
+                        m.Project = proj
+                        m.ProjectLoaded = TRUE
+                        m.CurrentFormIdx = 0
+                        m.SelectedCtrlIdx = -1
+                        m.TreeIndex = 0
+                        m.TreeExpanded = []BOOLEAN{}
+                        m = EnsureTreeExpanded(m)
+                        m.Message = "Loaded: " & selectedPath
+                    ENDIF
+                ENDIF
+            ELSEIF key = "left" THEN
+                ' Move focus to directories
+                m.FileBrowserFocus = FILEBROWSER_FOCUS_DIRS
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        ' Handle button navigation
+        IF m.FileBrowserFocus = FILEBROWSER_FOCUS_BUTTONS THEN
+            IF key = "left" THEN
+                m.FileBrowserBtnIdx = 0
+            ELSEIF key = "right" THEN
+                m.FileBrowserBtnIdx = 1
+            ELSEIF key = "enter" THEN
+                IF m.FileBrowserBtnIdx = 0 THEN
+                    ' Open button - same as pressing Enter on file
+                    DIM btnSelectedPath AS STRING = FileBrowserGetSelectedPath(m)
+                    IF btnSelectedPath <> "" THEN
+                        m.DialogMode = DIALOG_NONE
+                        DIM btnProj AS VDBProject
+                        DIM btnLoadErr AS STRING
+                        btnProj, btnLoadErr = LoadProject(btnSelectedPath)
+                        IF btnLoadErr <> "" THEN
+                            m.Message = "Error: " & btnLoadErr
+                        ELSE
+                            m.Project = btnProj
+                            m.ProjectLoaded = TRUE
+                            m.CurrentFormIdx = 0
+                            m.SelectedCtrlIdx = -1
+                            m.TreeIndex = 0
+                            m.TreeExpanded = []BOOLEAN{}
+                            m = EnsureTreeExpanded(m)
+                            m.Message = "Loaded: " & btnSelectedPath
+                        ENDIF
+                    ELSE
+                        m.Message = "No file selected"
+                    ENDIF
+                ELSE
+                    ' Cancel button
+                    m.DialogMode = DIALOG_NONE
+                ENDIF
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        RETURN m, NIL
+    ENDIF
+
     ' Confirmation dialog
     IF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
         IF key = "y" OR key = "Y" THEN
@@ -459,20 +607,21 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
             m.Message = "Project saved: " & m.DialogInput
             m.DialogMode = DIALOG_NONE
         ELSEIF m.DialogMode = DIALOG_OPEN_PROJECT THEN
-            DIM loadedProj AS VDBProject
-            DIM loadErr AS STRING
-            loadedProj, loadErr = LoadProject(m.DialogInput)
-            IF loadErr = "" THEN
-                m.Project = loadedProj
+            ' Legacy text input handler (now using file browser instead)
+            DIM legacyProj AS VDBProject
+            DIM legacyErr AS STRING
+            legacyProj, legacyErr = LoadProject(m.DialogInput)
+            IF legacyErr = "" THEN
+                m.Project = legacyProj
                 m.ProjectLoaded = TRUE
                 m.CurrentFormIdx = 0
                 m.SelectedCtrlIdx = -1
                 m.TreeIndex = 0
                 m.TreeExpanded = []BOOLEAN{}
                 m = EnsureTreeExpanded(m)
-                m.Message = "Project loaded: " & loadedProj.Name
+                m.Message = "Project loaded: " & legacyProj.Name
             ELSE
-                m.ErrorMsg = loadErr
+                m.ErrorMsg = legacyErr
                 m.Message = "Failed to load project"
             ENDIF
             m.DialogMode = DIALOG_NONE
@@ -724,10 +873,8 @@ FUNCTION ExecuteMenuItem(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
             m.DialogInput = "Project1"
             m.DialogCursor = Len(m.DialogInput)
         ELSEIF m.MenuIndex = 1 THEN
-            ' Open Project
-            m.DialogMode = DIALOG_OPEN_PROJECT
-            m.DialogInput = ""
-            m.DialogCursor = 0
+            ' Open Project - use file browser
+            InitFileBrowser(@m, "Open Project", "*.vdbp")
         ELSEIF m.MenuIndex = 2 THEN
             ' Save Project
             ' First sync code editor content to form if in code view

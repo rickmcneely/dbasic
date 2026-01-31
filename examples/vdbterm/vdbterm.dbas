@@ -7,6 +7,9 @@ IMPORT "github.com/charmbracelet/lipgloss" AS lipgloss
 IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
 IMPORT "fmt" AS fmt
 IMPORT "os" AS os
+IMPORT "path/filepath" AS filepath
+IMPORT "sort" AS sort
+IMPORT "strings" AS strings
 
 ' Include all modules
 INCLUDE "vdbterm_const.dbas"

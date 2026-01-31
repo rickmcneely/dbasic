@@ -2882,6 +2882,107 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         contentLines = APPEND(contentLines, "   [" & RenderDialogTextField(m.DialogInput, m.DialogCursor, 30) & "]")
         contentLines = APPEND(contentLines, "")
         contentLines = APPEND(contentLines, "   < OK >       < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_FILE_BROWSER THEN
+        title = " " & m.FileBrowserTitle & " "
+        width = 60
+
+        ' Path display
+        DIM displayPath AS STRING = m.FileBrowserPath
+        IF Len(displayPath) > 54 THEN
+            displayPath = "..." & Right(displayPath, 51)
+        ENDIF
+        contentLines = APPEND(contentLines, " Path: " & displayPath)
+        contentLines = APPEND(contentLines, " " & strings.Repeat("-", 56))
+
+        ' Side-by-side: Directories | Files
+        DIM listHeight AS INTEGER = 10
+        DIM dirWidth AS INTEGER = 25
+        DIM fileWidth AS INTEGER = 28
+
+        ' Header row
+        DIM dirHeader AS STRING = " Directories"
+        DIM fileHeader AS STRING = " Files (" & m.FileBrowserPattern & ")"
+        DIM dirPad AS INTEGER = dirWidth - Len(dirHeader)
+        DIM filePad AS INTEGER = fileWidth - Len(fileHeader)
+        IF dirPad > 0 THEN
+            dirHeader = dirHeader & strings.Repeat(" ", dirPad)
+        ENDIF
+        IF filePad > 0 THEN
+            fileHeader = fileHeader & strings.Repeat(" ", filePad)
+        ENDIF
+        contentLines = APPEND(contentLines, " " & dirHeader & " | " & fileHeader)
+
+        ' List rows
+        DIM row AS INTEGER
+        FOR row = 0 TO listHeight - 1
+            DIM dirLine AS STRING = ""
+            DIM fileLine AS STRING = ""
+
+            ' Directory entry
+            DIM dirIdx AS INTEGER = m.FileBrowserDirScroll + row
+            IF dirIdx < Len(m.FileBrowserDirs) THEN
+                DIM dirName AS STRING = m.FileBrowserDirs[dirIdx]
+                IF Len(dirName) > dirWidth - 3 THEN
+                    dirName = Left(dirName, dirWidth - 6) & "..."
+                ENDIF
+                IF dirIdx = m.FileBrowserDirIdx AND m.FileBrowserFocus = FILEBROWSER_FOCUS_DIRS THEN
+                    dirLine = ">" & dirName
+                ELSE
+                    dirLine = " " & dirName
+                ENDIF
+            ENDIF
+            DIM dirLinePad AS INTEGER = dirWidth - Len(dirLine)
+            IF dirLinePad > 0 THEN
+                dirLine = dirLine & strings.Repeat(" ", dirLinePad)
+            ENDIF
+
+            ' File entry
+            DIM fileIdx AS INTEGER = m.FileBrowserFileScroll + row
+            IF fileIdx < Len(m.FileBrowserFiles) THEN
+                DIM fileName AS STRING = m.FileBrowserFiles[fileIdx]
+                IF Len(fileName) > fileWidth - 3 THEN
+                    fileName = Left(fileName, fileWidth - 6) & "..."
+                ENDIF
+                IF fileIdx = m.FileBrowserFileIdx AND m.FileBrowserFocus = FILEBROWSER_FOCUS_FILES THEN
+                    fileLine = ">" & fileName
+                ELSE
+                    fileLine = " " & fileName
+                ENDIF
+            ENDIF
+            DIM fileLinePad AS INTEGER = fileWidth - Len(fileLine)
+            IF fileLinePad > 0 THEN
+                fileLine = fileLine & strings.Repeat(" ", fileLinePad)
+            ENDIF
+
+            contentLines = APPEND(contentLines, " " & dirLine & " | " & fileLine)
+        NEXT
+
+        contentLines = APPEND(contentLines, " " & strings.Repeat("-", 56))
+
+        ' Show selected file info
+        DIM selectedInfo AS STRING = ""
+        IF Len(m.FileBrowserFiles) > 0 AND m.FileBrowserFileIdx < Len(m.FileBrowserFiles) THEN
+            selectedInfo = "Selected: " & m.FileBrowserFiles[m.FileBrowserFileIdx]
+            IF Len(selectedInfo) > 54 THEN
+                selectedInfo = Left(selectedInfo, 51) & "..."
+            ENDIF
+        ELSE
+            selectedInfo = "No files found"
+        ENDIF
+        contentLines = APPEND(contentLines, " " & selectedInfo)
+        contentLines = APPEND(contentLines, "")
+
+        ' Buttons
+        DIM openBtn AS STRING = "< Open >"
+        DIM cancelBtn AS STRING = "< Cancel >"
+        IF m.FileBrowserFocus = FILEBROWSER_FOCUS_BUTTONS THEN
+            IF m.FileBrowserBtnIdx = 0 THEN
+                openBtn = "[  Open  ]"
+            ELSE
+                cancelBtn = "[ Cancel ]"
+            ENDIF
+        ENDIF
+        contentLines = APPEND(contentLines, "        " & openBtn & "          " & cancelBtn)
     ELSEIF m.DialogMode = DIALOG_SAVE_AS THEN
         title = " Save As "
         width = 44
@@ -3067,6 +3168,8 @@ FUNCTION GetDialogSize(m AS VDBTermModel) AS (INTEGER, INTEGER)
         RETURN 52, 25
     ELSEIF m.DialogMode = DIALOG_COLOR_PICKER_256 THEN
         RETURN 40, 26
+    ELSEIF m.DialogMode = DIALOG_FILE_BROWSER THEN
+        RETURN 60, 20
     ENDIF
     RETURN 40, 8
 END FUNCTION
