@@ -6,14 +6,17 @@ A modern BASIC-to-Go transpiler with native JSON support, goroutines, channels, 
 
 - **BASIC Syntax**: Familiar BASIC-style programming with labels instead of line numbers
 - **Go Transpilation**: Compiles to Go source code for cross-platform executables
-- **Type System**: Strong typing with INTEGER, LONG, SINGLE, DOUBLE, STRING, BOOLEAN, JSON
+- **Type System**: Strong typing with INTEGER, LONG, SINGLE, DOUBLE, STRING, BOOLEAN, JSON, BYTES
 - **Slices**: Go-style dynamic arrays with `[]TYPE` syntax, APPEND, and slice operations
 - **Structs**: User-defined types with TYPE/END TYPE and struct literal initialization
 - **Functions**: SUB and FUNCTION with multiple parameters and return values
 - **Pointers**: Go-style pointer operations with `@` (address-of) and `^` (dereference)
 - **Concurrency**: Goroutines via `SPAWN`, channels with `SEND` and `RECEIVE`
-- **JSON Support**: Native JSON type with dot notation access
+- **JSON Support**: Native JSON type with dot notation access and helper functions
+- **HTTP Client**: Built-in CurlGet, CurlPost, CurlFetch for HTTP requests
+- **Shell Execution**: Run external programs with Shell, ShellExec, ShellStart
 - **Go Integration**: Import and use Go standard library packages
+- **VS Code Extension**: Syntax highlighting and code snippets
 
 ## Installation
 
@@ -241,6 +244,65 @@ PRINT config.version
 
 ' Modify values
 config.enabled = FALSE
+
+' JSON helper functions
+DIM data AS JSON = JSONParse("{\"key\": \"value\"}")
+DIM value AS ANY = JSONGet(data, "key")
+JSONSet(data, "newKey", 123)
+PRINT JSONPretty(data)
+
+' Convert between structs and JSON
+DIM jsonData AS JSON = StructToJSON(myStruct)
+myStruct = JSONToStruct(jsonData, @myStruct)
+```
+
+### Shell Commands
+
+Execute external programs and shell commands:
+
+```basic
+' Run a shell command (via /bin/sh -c)
+DIM output AS STRING
+DIM exitCode AS INTEGER
+DIM errMsg AS STRING
+
+output, exitCode, errMsg = Shell("ls -la")
+IF exitCode = 0 THEN
+    PRINT output
+ELSE
+    PRINT "Error: " & errMsg
+ENDIF
+
+' Execute a program directly with arguments
+output, exitCode, errMsg = ShellExec("git", "status --short")
+
+' Start a background process
+DIM pid AS INTEGER
+pid, errMsg = ShellStart("python -m http.server 8080")
+PRINT "Server started with PID: " & Str(pid)
+```
+
+### HTTP Requests
+
+Built-in HTTP client functions:
+
+```basic
+DIM response AS STRING
+DIM statusCode AS INTEGER
+DIM errMsg AS STRING
+
+' Simple GET request
+response, statusCode, errMsg = CurlGet("https://api.example.com/data")
+
+' POST request with body
+response, statusCode, errMsg = CurlPost("https://api.example.com/submit", "{\"name\": \"test\"}")
+
+' Custom HTTP method
+response, statusCode, errMsg = CurlFetch("https://api.example.com/resource", "PUT", "{\"updated\": true}")
+
+IF errMsg = "" AND statusCode = 200 THEN
+    PRINT "Response: " & response
+ENDIF
 ```
 
 ### Go Package Integration
@@ -256,10 +318,30 @@ SUB Main()
 END SUB
 ```
 
+### Built-in Functions
+
+DBasic includes 60+ built-in functions:
+
+| Category | Functions |
+|----------|-----------|
+| **String** | Len, Left, Right, Mid, Instr, UCase, LCase, Trim, Replace, Space, Chr, Asc |
+| **Math** | Abs, Sqr, Sin, Cos, Tan, Log, Exp, Pow, Min, Max, Round, Floor, Ceil |
+| **Conversion** | Str, Val, Int, Lng, Sng, Dbl, Bool |
+| **Random** | Rnd, RndInt, RndRange, Randomize |
+| **Date/Time** | Now, Date, Year, Month, Day, Hour, Minute, Second, Timer, Sleep |
+| **File** | FileExists, ReadFile, WriteFile, AppendFile, DeleteFile, MkDir, RmDir |
+| **JSON** | JSONParse, JSONStringify, JSONPretty, JSONGet, JSONSet, StructToJSON, JSONToStruct |
+| **HTTP** | CurlGet, CurlPost, CurlFetch |
+| **Shell** | Shell, ShellExec, ShellStart |
+| **Bytes** | Encode, Decode, MakeBytes, LenBytes |
+| **Error** | NewError, Errorf, WrapError |
+| **Format** | Printf, Sprintf |
+
 ## Examples
 
 The `examples/` directory contains sample programs:
 
+### Basic Examples
 - `hello.dbas` - Hello World with input
 - `variables.dbas` - Variable types and operations
 - `control_flow.dbas` - IF, FOR, WHILE, SELECT CASE
@@ -271,15 +353,44 @@ The `examples/` directory contains sample programs:
 - `bytes.dbas` - Byte arrays and BSTRING
 - `goroutines.dbas` - Concurrency with SPAWN and channels
 - `new_features.dbas` - Slices, struct literals, APPEND
+
+### Application Examples
 - `edit/` - MS-DOS EDIT clone using Bubble Tea (TUI)
 - `contacts/` - Win32 GUI contacts app using Walk
 - `tictactoe/` - Web server tic-tac-toe game with cookies
+- `curl_example/` - HTTP client demo with CurlGet/CurlPost
+- `vdbterm/` - Visual Basic-style IDE for terminal UI apps
 
 Run an example:
 
 ```bash
 dbasic run examples/hello.dbas
 ```
+
+## VS Code Extension
+
+The `vscode-dbasic/` directory contains a VS Code extension with:
+
+- Syntax highlighting for `.dbas` files
+- Code snippets for common patterns
+- Language configuration for comments and brackets
+
+To install:
+
+1. Copy `vscode-dbasic/` to `~/.vscode/extensions/`
+2. Restart VS Code
+
+## Documentation
+
+See [docs/LANGUAGE_REFERENCE.md](docs/LANGUAGE_REFERENCE.md) for a comprehensive language reference covering:
+
+- All data types and operators
+- Control flow statements
+- Functions and subroutines
+- User-defined types and methods
+- Concurrency with goroutines and channels
+- 60+ built-in functions
+- Go package integration
 
 ## Project Structure
 
@@ -293,7 +404,9 @@ DBasic/
 │   ├── codegen/        # Go code generator
 │   ├── runtime/        # Runtime support library
 │   └── errors/         # Error handling
+├── docs/               # Documentation
 ├── examples/           # Example programs
+├── vscode-dbasic/      # VS Code extension
 └── README.md
 ```
 
