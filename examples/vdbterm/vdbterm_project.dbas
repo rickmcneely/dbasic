@@ -10,6 +10,10 @@ FUNCTION NewProject(name AS STRING) AS VDBProject
     proj.StartupForm = "Form1"
     proj.Modified = FALSE
 
+    ' Initialize theme with default values
+    proj.Theme = NewDefaultTheme()
+    proj.UseTheme = FALSE
+
     ' Create default form with sample controls
     DIM form AS VDBForm
     form.Name = "Form1"
@@ -227,6 +231,14 @@ FUNCTION NewControl(ctlType AS INTEGER, name AS STRING, x AS INTEGER, y AS INTEG
     ctrl.ForeColor = 0
     ctrl.BackColor = 7
 
+    ' Set TabStop based on whether control is focusable
+    ' Focusable: Button, TextBox, TextArea, CheckBox, Option, ListBox, ComboBox, DirBrowser, Path, Directories, Files
+    IF ctlType = CTRL_BUTTON OR ctlType = CTRL_TEXTBOX OR ctlType = CTRL_TEXTAREA OR ctlType = CTRL_CHECKBOX OR ctlType = CTRL_OPTION OR ctlType = CTRL_LISTBOX OR ctlType = CTRL_COMBOBOX OR ctlType = CTRL_DIRBROWSER OR ctlType = CTRL_PATH OR ctlType = CTRL_DIRECTORIES OR ctlType = CTRL_FILES THEN
+        ctrl.TabStop = TRUE
+    ELSE
+        ctrl.TabStop = FALSE
+    ENDIF
+
     ' Set default sizes and bubbles properties based on type
     IF ctlType = CTRL_BUTTON THEN
         ctrl.Width = 10
@@ -333,9 +345,70 @@ FUNCTION NewControl(ctlType AS INTEGER, name AS STRING, x AS INTEGER, y AS INTEG
         ctrl.FilePath = "."
         ctrl.ShowHidden = FALSE
         ctrl.LinkedControl = ""
+    ELSEIF ctlType = CTRL_FILES THEN
+        ctrl.Width = 30
+        ctrl.Height = 10
+        ctrl.FilePath = "."
+        ctrl.ShowHidden = FALSE
+        ctrl.Pattern = "*"
+        ctrl.LinkedControl = ""
     ENDIF
 
     RETURN ctrl
+END FUNCTION
+
+' Serialize theme to JSON
+FUNCTION SerializeTheme(theme AS VDBTheme) AS STRING
+    DIM result AS STRING = ""
+    DIM q AS STRING = Chr(34)
+    result = result & "    " & q & "name" & q & ": " & q & theme.Name & q & "," & Chr(10)
+    result = result & "    " & q & "formForeColor" & q & ": " & Str(theme.FormForeColor) & "," & Chr(10)
+    result = result & "    " & q & "formBackColor" & q & ": " & Str(theme.FormBackColor) & "," & Chr(10)
+    result = result & "    " & q & "buttonForeColor" & q & ": " & Str(theme.ButtonForeColor) & "," & Chr(10)
+    result = result & "    " & q & "buttonBackColor" & q & ": " & Str(theme.ButtonBackColor) & "," & Chr(10)
+    result = result & "    " & q & "labelForeColor" & q & ": " & Str(theme.LabelForeColor) & "," & Chr(10)
+    result = result & "    " & q & "labelBackColor" & q & ": " & Str(theme.LabelBackColor) & "," & Chr(10)
+    result = result & "    " & q & "textBoxForeColor" & q & ": " & Str(theme.TextBoxForeColor) & "," & Chr(10)
+    result = result & "    " & q & "textBoxBackColor" & q & ": " & Str(theme.TextBoxBackColor) & "," & Chr(10)
+    result = result & "    " & q & "checkBoxForeColor" & q & ": " & Str(theme.CheckBoxForeColor) & "," & Chr(10)
+    result = result & "    " & q & "checkBoxBackColor" & q & ": " & Str(theme.CheckBoxBackColor) & "," & Chr(10)
+    result = result & "    " & q & "optionForeColor" & q & ": " & Str(theme.OptionForeColor) & "," & Chr(10)
+    result = result & "    " & q & "optionBackColor" & q & ": " & Str(theme.OptionBackColor) & "," & Chr(10)
+    result = result & "    " & q & "listBoxForeColor" & q & ": " & Str(theme.ListBoxForeColor) & "," & Chr(10)
+    result = result & "    " & q & "listBoxBackColor" & q & ": " & Str(theme.ListBoxBackColor) & "," & Chr(10)
+    result = result & "    " & q & "comboBoxForeColor" & q & ": " & Str(theme.ComboBoxForeColor) & "," & Chr(10)
+    result = result & "    " & q & "comboBoxBackColor" & q & ": " & Str(theme.ComboBoxBackColor) & "," & Chr(10)
+    result = result & "    " & q & "frameForeColor" & q & ": " & Str(theme.FrameForeColor) & "," & Chr(10)
+    result = result & "    " & q & "frameBackColor" & q & ": " & Str(theme.FrameBackColor) & "," & Chr(10)
+    result = result & "    " & q & "textAreaForeColor" & q & ": " & Str(theme.TextAreaForeColor) & "," & Chr(10)
+    result = result & "    " & q & "textAreaBackColor" & q & ": " & Str(theme.TextAreaBackColor) & "," & Chr(10)
+    result = result & "    " & q & "progressForeColor" & q & ": " & Str(theme.ProgressForeColor) & "," & Chr(10)
+    result = result & "    " & q & "progressBackColor" & q & ": " & Str(theme.ProgressBackColor) & "," & Chr(10)
+    result = result & "    " & q & "spinnerForeColor" & q & ": " & Str(theme.SpinnerForeColor) & "," & Chr(10)
+    result = result & "    " & q & "spinnerBackColor" & q & ": " & Str(theme.SpinnerBackColor) & "," & Chr(10)
+    result = result & "    " & q & "pathForeColor" & q & ": " & Str(theme.PathForeColor) & "," & Chr(10)
+    result = result & "    " & q & "pathBackColor" & q & ": " & Str(theme.PathBackColor) & "," & Chr(10)
+    result = result & "    " & q & "directoriesForeColor" & q & ": " & Str(theme.DirectoriesForeColor) & "," & Chr(10)
+    result = result & "    " & q & "directoriesBackColor" & q & ": " & Str(theme.DirectoriesBackColor) & "," & Chr(10)
+    result = result & "    " & q & "filesForeColor" & q & ": " & Str(theme.FilesForeColor) & "," & Chr(10)
+    result = result & "    " & q & "filesBackColor" & q & ": " & Str(theme.FilesBackColor) & "," & Chr(10)
+    result = result & "    " & q & "dirBrowserForeColor" & q & ": " & Str(theme.DirBrowserForeColor) & "," & Chr(10)
+    result = result & "    " & q & "dirBrowserBackColor" & q & ": " & Str(theme.DirBrowserBackColor) & "," & Chr(10)
+    result = result & "    " & q & "focusedForeColor" & q & ": " & Str(theme.FocusedForeColor) & "," & Chr(10)
+    result = result & "    " & q & "focusedBackColor" & q & ": " & Str(theme.FocusedBackColor) & "," & Chr(10)
+    result = result & "    " & q & "selectedForeColor" & q & ": " & Str(theme.SelectedForeColor) & "," & Chr(10)
+    result = result & "    " & q & "selectedBackColor" & q & ": " & Str(theme.SelectedBackColor) & "," & Chr(10)
+    result = result & "    " & q & "menuForeColor" & q & ": " & Str(theme.MenuForeColor) & "," & Chr(10)
+    result = result & "    " & q & "menuBackColor" & q & ": " & Str(theme.MenuBackColor) & "," & Chr(10)
+    result = result & "    " & q & "menuSelectedForeColor" & q & ": " & Str(theme.MenuSelectedForeColor) & "," & Chr(10)
+    result = result & "    " & q & "menuSelectedBackColor" & q & ": " & Str(theme.MenuSelectedBackColor) & "," & Chr(10)
+    result = result & "    " & q & "menuShortcutForeColor" & q & ": " & Str(theme.MenuShortcutForeColor) & "," & Chr(10)
+    IF theme.Use256Colors THEN
+        result = result & "    " & q & "use256Colors" & q & ": true" & Chr(10)
+    ELSE
+        result = result & "    " & q & "use256Colors" & q & ": false" & Chr(10)
+    ENDIF
+    RETURN result
 END FUNCTION
 
 ' Serialize project to JSON string (new format: form names only)
@@ -344,6 +417,16 @@ FUNCTION SerializeProject(proj AS VDBProject) AS STRING
     DIM q AS STRING = Chr(34)
     result = result & "  " & q & "name" & q & ": " & q & proj.Name & q & "," & Chr(10)
     result = result & "  " & q & "startupForm" & q & ": " & q & proj.StartupForm & q & "," & Chr(10)
+
+    ' Theme settings
+    IF proj.UseTheme THEN
+        result = result & "  " & q & "useTheme" & q & ": true," & Chr(10)
+    ELSE
+        result = result & "  " & q & "useTheme" & q & ": false," & Chr(10)
+    ENDIF
+    result = result & "  " & q & "theme" & q & ": {" & Chr(10)
+    result = result & SerializeTheme(proj.Theme)
+    result = result & "  }," & Chr(10)
 
     ' Forms array - just form names (new format)
     result = result & "  " & q & "forms" & q & ": [" & Chr(10)
@@ -398,7 +481,23 @@ FUNCTION SerializeForm(f AS VDBForm) AS STRING
         result = result & "      " & q & "width" & q & ": " & Str(c.Width) & "," & Chr(10)
         result = result & "      " & q & "height" & q & ": " & Str(c.Height) & "," & Chr(10)
         result = result & "      " & q & "foreColor" & q & ": " & Str(c.ForeColor) & "," & Chr(10)
-        result = result & "      " & q & "backColor" & q & ": " & Str(c.BackColor)
+        result = result & "      " & q & "backColor" & q & ": " & Str(c.BackColor) & "," & Chr(10)
+        result = result & "      " & q & "tabIndex" & q & ": " & Str(c.TabIndex) & "," & Chr(10)
+        IF c.TabStop THEN
+            result = result & "      " & q & "tabStop" & q & ": true," & Chr(10)
+        ELSE
+            result = result & "      " & q & "tabStop" & q & ": false," & Chr(10)
+        ENDIF
+        IF c.Enabled THEN
+            result = result & "      " & q & "enabled" & q & ": true," & Chr(10)
+        ELSE
+            result = result & "      " & q & "enabled" & q & ": false," & Chr(10)
+        ENDIF
+        IF c.Visible THEN
+            result = result & "      " & q & "visible" & q & ": true"
+        ELSE
+            result = result & "      " & q & "visible" & q & ": false"
+        ENDIF
         ' Add type-specific properties
         IF c.CtlType = CTRL_TIMER THEN
             result = result & "," & Chr(10)
@@ -423,6 +522,16 @@ FUNCTION SerializeForm(f AS VDBForm) AS STRING
             ELSE
                 result = result & "      " & q & "showHidden" & q & ": false," & Chr(10)
             ENDIF
+            result = result & "      " & q & "linkedControl" & q & ": " & q & c.LinkedControl & q & Chr(10)
+        ELSEIF c.CtlType = CTRL_FILES THEN
+            result = result & "," & Chr(10)
+            result = result & "      " & q & "path" & q & ": " & q & c.FilePath & q & "," & Chr(10)
+            IF c.ShowHidden THEN
+                result = result & "      " & q & "showHidden" & q & ": true," & Chr(10)
+            ELSE
+                result = result & "      " & q & "showHidden" & q & ": false," & Chr(10)
+            ENDIF
+            result = result & "      " & q & "pattern" & q & ": " & q & c.Pattern & q & "," & Chr(10)
             result = result & "      " & q & "linkedControl" & q & ": " & q & c.LinkedControl & q & Chr(10)
         ELSEIF c.CtlType >= PLUGIN_TYPE_START THEN
             ' Plugin widget - save plugin type ID and extended properties
@@ -678,6 +787,58 @@ FUNCTION IsNewProjectFormat(js AS STRING) AS BOOLEAN
     RETURN FALSE
 END FUNCTION
 
+' Parse theme from JSON object string
+FUNCTION ParseTheme(js AS STRING) AS VDBTheme
+    DIM theme AS VDBTheme
+    theme.Name = ExtractJSONString(js, "name")
+    IF theme.Name = "" THEN
+        theme.Name = "Custom"
+    ENDIF
+    theme.FormForeColor = ExtractJSONInt(js, "formForeColor")
+    theme.FormBackColor = ExtractJSONInt(js, "formBackColor")
+    theme.ButtonForeColor = ExtractJSONInt(js, "buttonForeColor")
+    theme.ButtonBackColor = ExtractJSONInt(js, "buttonBackColor")
+    theme.LabelForeColor = ExtractJSONInt(js, "labelForeColor")
+    theme.LabelBackColor = ExtractJSONInt(js, "labelBackColor")
+    theme.TextBoxForeColor = ExtractJSONInt(js, "textBoxForeColor")
+    theme.TextBoxBackColor = ExtractJSONInt(js, "textBoxBackColor")
+    theme.CheckBoxForeColor = ExtractJSONInt(js, "checkBoxForeColor")
+    theme.CheckBoxBackColor = ExtractJSONInt(js, "checkBoxBackColor")
+    theme.OptionForeColor = ExtractJSONInt(js, "optionForeColor")
+    theme.OptionBackColor = ExtractJSONInt(js, "optionBackColor")
+    theme.ListBoxForeColor = ExtractJSONInt(js, "listBoxForeColor")
+    theme.ListBoxBackColor = ExtractJSONInt(js, "listBoxBackColor")
+    theme.ComboBoxForeColor = ExtractJSONInt(js, "comboBoxForeColor")
+    theme.ComboBoxBackColor = ExtractJSONInt(js, "comboBoxBackColor")
+    theme.FrameForeColor = ExtractJSONInt(js, "frameForeColor")
+    theme.FrameBackColor = ExtractJSONInt(js, "frameBackColor")
+    theme.TextAreaForeColor = ExtractJSONInt(js, "textAreaForeColor")
+    theme.TextAreaBackColor = ExtractJSONInt(js, "textAreaBackColor")
+    theme.ProgressForeColor = ExtractJSONInt(js, "progressForeColor")
+    theme.ProgressBackColor = ExtractJSONInt(js, "progressBackColor")
+    theme.SpinnerForeColor = ExtractJSONInt(js, "spinnerForeColor")
+    theme.SpinnerBackColor = ExtractJSONInt(js, "spinnerBackColor")
+    theme.PathForeColor = ExtractJSONInt(js, "pathForeColor")
+    theme.PathBackColor = ExtractJSONInt(js, "pathBackColor")
+    theme.DirectoriesForeColor = ExtractJSONInt(js, "directoriesForeColor")
+    theme.DirectoriesBackColor = ExtractJSONInt(js, "directoriesBackColor")
+    theme.FilesForeColor = ExtractJSONInt(js, "filesForeColor")
+    theme.FilesBackColor = ExtractJSONInt(js, "filesBackColor")
+    theme.DirBrowserForeColor = ExtractJSONInt(js, "dirBrowserForeColor")
+    theme.DirBrowserBackColor = ExtractJSONInt(js, "dirBrowserBackColor")
+    theme.FocusedForeColor = ExtractJSONInt(js, "focusedForeColor")
+    theme.FocusedBackColor = ExtractJSONInt(js, "focusedBackColor")
+    theme.SelectedForeColor = ExtractJSONInt(js, "selectedForeColor")
+    theme.SelectedBackColor = ExtractJSONInt(js, "selectedBackColor")
+    theme.MenuForeColor = ExtractJSONInt(js, "menuForeColor")
+    theme.MenuBackColor = ExtractJSONInt(js, "menuBackColor")
+    theme.MenuSelectedForeColor = ExtractJSONInt(js, "menuSelectedForeColor")
+    theme.MenuSelectedBackColor = ExtractJSONInt(js, "menuSelectedBackColor")
+    theme.MenuShortcutForeColor = ExtractJSONInt(js, "menuShortcutForeColor")
+    theme.Use256Colors = ExtractJSONBool(js, "use256Colors")
+    RETURN theme
+END FUNCTION
+
 ' Parse project JSON in new format (forms and modules as name strings)
 FUNCTION ParseProjectJSONNewFormat(js AS STRING) AS VDBProject
     DIM proj AS VDBProject
@@ -685,6 +846,15 @@ FUNCTION ParseProjectJSONNewFormat(js AS STRING) AS VDBProject
     ' Extract project name
     proj.Name = ExtractJSONString(js, "name")
     proj.StartupForm = ExtractJSONString(js, "startupForm")
+
+    ' Parse theme settings
+    proj.UseTheme = ExtractJSONBool(js, "useTheme")
+    DIM themeJs AS STRING = ExtractJSONObject(js, "theme")
+    IF themeJs <> "" THEN
+        proj.Theme = ParseTheme(themeJs)
+    ELSE
+        proj.Theme = NewDefaultTheme()
+    ENDIF
 
     ' Parse forms array (array of strings)
     DIM formNames AS []STRING = ParseStringArray(js, "forms")
@@ -1093,8 +1263,40 @@ FUNCTION ParseControlObject(js AS STRING) AS VDBControl
     ctrl.Width = ExtractJSONInt(js, "width")
     ctrl.Height = ExtractJSONInt(js, "height")
     ctrl.ZOrder = ctrl.ID
-    ctrl.Enabled = TRUE
-    ctrl.Visible = TRUE
+
+    ' Read TabIndex, TabStop, Enabled, Visible from JSON with defaults
+    DIM hasTabIndex AS BOOLEAN = InStrPos(1, js, "\"tabIndex\"") > 0
+    IF hasTabIndex THEN
+        ctrl.TabIndex = ExtractJSONInt(js, "tabIndex")
+    ELSE
+        ctrl.TabIndex = ctrl.ID  ' Default to control ID
+    ENDIF
+
+    DIM hasTabStop AS BOOLEAN = InStrPos(1, js, "\"tabStop\"") > 0
+    IF hasTabStop THEN
+        ctrl.TabStop = ExtractJSONBool(js, "tabStop")
+    ELSE
+        ' Default TabStop based on whether control is focusable
+        IF ctrl.CtlType = CTRL_BUTTON OR ctrl.CtlType = CTRL_TEXTBOX OR ctrl.CtlType = CTRL_TEXTAREA OR ctrl.CtlType = CTRL_CHECKBOX OR ctrl.CtlType = CTRL_OPTION OR ctrl.CtlType = CTRL_LISTBOX OR ctrl.CtlType = CTRL_COMBOBOX OR ctrl.CtlType = CTRL_DIRBROWSER OR ctrl.CtlType = CTRL_PATH OR ctrl.CtlType = CTRL_DIRECTORIES OR ctrl.CtlType = CTRL_FILES THEN
+            ctrl.TabStop = TRUE
+        ELSE
+            ctrl.TabStop = FALSE
+        ENDIF
+    ENDIF
+
+    DIM hasEnabled AS BOOLEAN = InStrPos(1, js, "\"enabled\"") > 0
+    IF hasEnabled THEN
+        ctrl.Enabled = ExtractJSONBool(js, "enabled")
+    ELSE
+        ctrl.Enabled = TRUE
+    ENDIF
+
+    DIM hasVisible AS BOOLEAN = InStrPos(1, js, "\"visible\"") > 0
+    IF hasVisible THEN
+        ctrl.Visible = ExtractJSONBool(js, "visible")
+    ELSE
+        ctrl.Visible = TRUE
+    ENDIF
 
     ' Read colors from JSON, default to standard colors if not present
     DIM hasForeColor AS BOOLEAN = InStrPos(1, js, "\"foreColor\"") > 0
@@ -1151,6 +1353,17 @@ FUNCTION ParseControlObject(js AS STRING) AS VDBControl
         ENDIF
         ctrl.ShowHidden = ExtractJSONBool(js, "showHidden")
         ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+    ELSEIF ctrl.CtlType = CTRL_FILES THEN
+        ctrl.FilePath = ExtractJSONString(js, "path")
+        IF ctrl.FilePath = "" THEN
+            ctrl.FilePath = "."
+        ENDIF
+        ctrl.ShowHidden = ExtractJSONBool(js, "showHidden")
+        ctrl.Pattern = ExtractJSONString(js, "pattern")
+        IF ctrl.Pattern = "" THEN
+            ctrl.Pattern = "*"
+        ENDIF
+        ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
     ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
         ' Plugin widget - load plugin type ID and extended properties
         ctrl.PluginTypeID = ExtractJSONString(js, "pluginTypeID")
@@ -1184,6 +1397,12 @@ FUNCTION GenerateCode(proj AS VDBProject, registry AS PluginRegistry) AS STRING
         IF i = 0 THEN
             code = code & GenerateImports(form, registry)
 
+            ' Generate theme constants for runtime access
+            code = code & GenerateThemeConstants(proj.Theme)
+
+            ' Generate MsgBox support (constants, state, rendering, functions)
+            code = code & GenerateMsgBoxSupport()
+
             ' Generate DirBrowser widget type and methods if needed
             IF ProjectHasDirBrowser(proj) THEN
                 code = code & GenerateDirBrowserWidget()
@@ -1197,6 +1416,11 @@ FUNCTION GenerateCode(proj AS VDBProject, registry AS PluginRegistry) AS STRING
             ' Generate Directories widget type and methods if needed
             IF ProjectHasDirectories(proj) THEN
                 code = code & GenerateDirectoriesWidget()
+            ENDIF
+
+            ' Generate Files widget type and methods if needed
+            IF ProjectHasFiles(proj) THEN
+                code = code & GenerateFilesWidget()
             ENDIF
         ENDIF
 
