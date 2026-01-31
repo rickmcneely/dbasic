@@ -492,5 +492,130 @@
       "END FUNCTION"
     ],
     "description": "Function returning value and error"
+  },
+  "Shell Command": {
+    "prefix": "shell",
+    "body": [
+      "DIM output AS STRING",
+      "DIM exitCode AS INTEGER",
+      "DIM errMsg AS STRING",
+      "output, exitCode, errMsg = Shell(\"${1:command}\")",
+      "IF exitCode <> 0 THEN",
+      "\tPRINT \"Error: \" & errMsg",
+      "ELSE",
+      "\t$0",
+      "ENDIF"
+    ],
+    "description": "Execute a shell command and handle result"
+  },
+  "Shell Exec": {
+    "prefix": "shellexec",
+    "body": [
+      "DIM output AS STRING",
+      "DIM exitCode AS INTEGER",
+      "DIM errMsg AS STRING",
+      "output, exitCode, errMsg = ShellExec(\"${1:program}\", \"${2:args}\")",
+      "IF exitCode <> 0 THEN",
+      "\tPRINT \"Error: \" & errMsg",
+      "ELSE",
+      "\t$0",
+      "ENDIF"
+    ],
+    "description": "Execute a program with arguments"
+  },
+  "Shell Start Background": {
+    "prefix": "shellstart",
+    "body": [
+      "DIM pid AS INTEGER",
+      "DIM errMsg AS STRING",
+      "pid, errMsg = ShellStart(\"${1:command}\")",
+      "IF errMsg <> \"\" THEN",
+      "\tPRINT \"Error starting process: \" & errMsg",
+      "ELSE",
+      "\tPRINT \"Started process with PID: \" & Str(pid)",
+      "ENDIF"
+    ],
+    "description": "Start a command in background"
+  },
+  "Curl GET Request": {
+    "prefix": "curlget",
+    "body": [
+      "DIM response AS STRING",
+      "DIM statusCode AS INTEGER",
+      "DIM errMsg AS STRING",
+      "response, statusCode, errMsg = CurlGet(\"${1:https://api.example.com}\")",
+      "IF errMsg <> \"\" THEN",
+      "\tPRINT \"Error: \" & errMsg",
+      "ELSEIF statusCode = 200 THEN",
+      "\t$0",
+      "ENDIF"
+    ],
+    "description": "Perform HTTP GET request"
+  },
+  "Curl POST Request": {
+    "prefix": "curlpost",
+    "body": [
+      "DIM response AS STRING",
+      "DIM statusCode AS INTEGER",
+      "DIM errMsg AS STRING",
+      "response, statusCode, errMsg = CurlPost(\"${1:https://api.example.com}\", \"${2:{\\\"key\\\": \\\"value\\\"}}\")",
+      "IF errMsg <> \"\" THEN",
+      "\tPRINT \"Error: \" & errMsg",
+      "ELSEIF statusCode = 200 THEN",
+      "\t$0",
+      "ENDIF"
+    ],
+    "description": "Perform HTTP POST request"
+  },
+  "Curl Fetch": {
+    "prefix": "curlfetch",
+    "body": [
+      "DIM response AS STRING",
+      "DIM statusCode AS INTEGER",
+      "DIM errMsg AS STRING",
+      "response, statusCode, errMsg = CurlFetch(\"${1:https://api.example.com}\", \"${2:GET}\", \"${3:}\")",
+      "IF errMsg <> \"\" THEN",
+      "\tPRINT \"Error: \" & errMsg",
+      "ELSE",
+      "\tPRINT \"Status: \" & Str(statusCode)",
+      "\t$0",
+      "ENDIF"
+    ],
+    "description": "Perform HTTP request with custom method"
+  },
+  "JSON Get Value": {
+    "prefix": "jsonget",
+    "body": [
+      "DIM value AS ANY = JSONGet(${1:data}, \"${2:path.to.key}\")"
+    ],
+    "description": "Get value from JSON by path"
+  },
+  "JSON Set Value": {
+    "prefix": "jsonset",
+    "body": [
+      "JSONSet(${1:data}, \"${2:path.to.key}\", ${3:value})"
+    ],
+    "description": "Set value in JSON by path"
+  },
+  "JSON Pretty Print": {
+    "prefix": "jsonpretty",
+    "body": [
+      "PRINT JSONPretty(${1:jsonData})"
+    ],
+    "description": "Pretty print JSON data"
+  },
+  "Struct to JSON": {
+    "prefix": "structtojson",
+    "body": [
+      "DIM ${1:jsonData} AS JSON = StructToJSON(${2:structVar})"
+    ],
+    "description": "Convert struct to JSON map"
+  },
+  "JSON to Struct": {
+    "prefix": "jsontostruct",
+    "body": [
+      "${1:structVar} = JSONToStruct(${2:jsonData}, @${1:structVar})"
+    ],
+    "description": "Populate struct from JSON map"
   }
 }
