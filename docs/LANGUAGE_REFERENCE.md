@@ -23,7 +23,8 @@ DBasic is a modern BASIC dialect that compiles to Go. It combines familiar BASIC
 13. [Go Package Integration](#go-package-integration)
 14. [Built-in Functions](#built-in-functions)
 15. [HTTP Functions](#http-functions)
-16. [Keywords Reference](#keywords-reference)
+16. [Shell Functions](#shell-functions)
+17. [Keywords Reference](#keywords-reference)
 
 ---
 
@@ -979,6 +980,116 @@ IMPORT "fmt" AS fmt
 ```
 
 **Note:** The `bytes` package must be aliased (e.g., `bytebuf`) since `bytes` is a reserved word in DBasic.
+
+---
+
+## Shell Functions
+
+DBasic provides built-in functions for executing external programs and shell commands, similar to Go's `os/exec` package.
+
+### Shell
+
+Executes a command via the system shell (`/bin/sh -c`) and returns the output, exit code, and any error message.
+
+```basic
+FUNCTION Shell(command AS STRING) AS (STRING, INTEGER, STRING)
+```
+
+**Parameters:**
+- `command` - The shell command to execute
+
+**Returns:**
+- Standard output as STRING
+- Exit code as INTEGER (0 for success, -1 for execution failure)
+- Error/stderr output as STRING (empty if successful)
+
+**Example:**
+```basic
+DIM output AS STRING
+DIM exitCode AS INTEGER
+DIM errMsg AS STRING
+
+' Run a simple command
+output, exitCode, errMsg = Shell("echo Hello World")
+PRINT output  ' Output: Hello World
+
+' Run multiple commands
+output, exitCode, errMsg = Shell("cd /tmp && ls -la")
+
+' Check for errors
+IF exitCode <> 0 THEN
+    PRINT "Command failed with exit code: " & Str(exitCode)
+    PRINT "Error: " & errMsg
+ENDIF
+```
+
+### ShellExec
+
+Executes a specific program with arguments (without using a shell).
+
+```basic
+FUNCTION ShellExec(program AS STRING, args AS STRING) AS (STRING, INTEGER, STRING)
+```
+
+**Parameters:**
+- `program` - The program/executable to run
+- `args` - Space-separated arguments
+
+**Returns:**
+- Standard output as STRING
+- Exit code as INTEGER
+- Error/stderr output as STRING
+
+**Example:**
+```basic
+DIM output AS STRING
+DIM code AS INTEGER
+DIM err AS STRING
+
+' Run ls with arguments
+output, code, err = ShellExec("ls", "-la /home")
+
+' Run git command
+output, code, err = ShellExec("git", "status --short")
+
+' Compile a program
+output, code, err = ShellExec("go", "build -o myapp main.go")
+IF code = 0 THEN
+    PRINT "Build successful!"
+ELSE
+    PRINT "Build failed: " & err
+ENDIF
+```
+
+### ShellStart
+
+Starts a command in the background and returns immediately with the process ID.
+
+```basic
+FUNCTION ShellStart(command AS STRING) AS (INTEGER, STRING)
+```
+
+**Parameters:**
+- `command` - The shell command to run in background
+
+**Returns:**
+- Process ID (PID) as INTEGER
+- Error message as STRING (empty if successful)
+
+**Example:**
+```basic
+DIM pid AS INTEGER
+DIM err AS STRING
+
+' Start a long-running process
+pid, err = ShellStart("sleep 60")
+IF err = "" THEN
+    PRINT "Started background process with PID: " & Str(pid)
+ENDIF
+
+' Start a server in background
+pid, err = ShellStart("python -m http.server 8080")
+```
 
 ---
 

@@ -413,6 +413,59 @@ func ReadFile(path string) string {
 func WriteFile(path, content string) {
 	os.WriteFile(path, []byte(content), 0644)
 }`,
+	"Shell": `// Shell executes a command via the system shell and returns output, exit code, and error
+func Shell(command string) (string, int, string) {
+	cmd := exec.Command("/bin/sh", "-c", command)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return "", -1, err.Error()
+		}
+	}
+	if stderr.Len() > 0 {
+		return stdout.String(), exitCode, stderr.String()
+	}
+	return stdout.String(), exitCode, ""
+}`,
+	"ShellExec": `// ShellExec executes a program with space-separated arguments and returns output, exit code, and error
+func ShellExec(program string, args string) (string, int, string) {
+	var argList []string
+	if args != "" {
+		argList = strings.Fields(args)
+	}
+	cmd := exec.Command(program, argList...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return "", -1, err.Error()
+		}
+	}
+	if stderr.Len() > 0 {
+		return stdout.String(), exitCode, stderr.String()
+	}
+	return stdout.String(), exitCode, ""
+}`,
+	"ShellStart": `// ShellStart starts a command in the background and returns pid and error
+func ShellStart(command string) (int, string) {
+	cmd := exec.Command("/bin/sh", "-c", command)
+	err := cmd.Start()
+	if err != nil {
+		return 0, err.Error()
+	}
+	return cmd.Process.Pid, ""
+}`,
 	"JSONParse": `// JSONParse parses a JSON string into a map
 func JSONParse(s string) map[string]interface{} {
 	var result map[string]interface{}
@@ -625,6 +678,9 @@ var runtimeFuncImports = map[string][]string{
 	"FileExists":     {"os"},
 	"ReadFile":       {"os"},
 	"WriteFile":      {"os"},
+	"Shell":          {"os/exec", "bytes"},
+	"ShellExec":      {"os/exec", "bytes", "strings"},
+	"ShellStart":     {"os/exec"},
 	"JSONParse":      {"encoding/json"},
 	"JSONStringify":  {"encoding/json"},
 	"JSONPretty":     {"encoding/json"},
@@ -689,6 +745,11 @@ func (g *Generator) scanStmtExprForRuntimeFuncs(stmt parser.Statement) {
 	case *parser.AssignmentStatement:
 		g.scanExprForRuntimeFuncs(s.Value)
 		g.scanExprForRuntimeFuncs(s.Left)
+	case *parser.MultiAssignmentStatement:
+		g.scanExprForRuntimeFuncs(s.Value)
+		for _, target := range s.Targets {
+			g.scanExprForRuntimeFuncs(target)
+		}
 	case *parser.DimStatement:
 		if s.Value != nil {
 			g.scanExprForRuntimeFuncs(s.Value)

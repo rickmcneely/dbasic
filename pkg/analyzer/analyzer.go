@@ -109,6 +109,11 @@ func (a *Analyzer) registerBuiltins() {
 	a.addBuiltin("MkDir", []*Type{StringType}, []*Type{})
 	a.addBuiltin("RmDir", []*Type{StringType}, []*Type{})
 
+	// Shell/exec functions
+	a.addBuiltin("Shell", []*Type{StringType}, []*Type{StringType, IntegerType, StringType})                   // Shell(cmd) -> (output, exitCode, error)
+	a.addBuiltin("ShellExec", []*Type{StringType, StringType}, []*Type{StringType, IntegerType, StringType})   // ShellExec(program, args) -> (output, exitCode, error)
+	a.addBuiltin("ShellStart", []*Type{StringType}, []*Type{IntegerType, StringType})                          // ShellStart(cmd) -> (pid, error) - run in background
+
 	// Printf functions (variadic - additional args not type-checked)
 	a.addVariadicBuiltin("Printf", []*Type{StringType}, []*Type{})            // fmt.Printf(format, args...)
 	a.addVariadicBuiltin("Sprintf", []*Type{StringType}, []*Type{StringType}) // fmt.Sprintf(format, args...)
@@ -925,6 +930,10 @@ func (a *Analyzer) analyzeExpression(expr parser.Expression) *Type {
 }
 
 func (a *Analyzer) analyzeIdentifier(ident *parser.Identifier) *Type {
+	// Special case: blank identifier "_" is always valid (discards value)
+	if ident.Value == "_" {
+		return AnyType
+	}
 	sym := a.symbols.Resolve(ident.Value)
 	if sym == nil {
 		// Check if it's an imported package
