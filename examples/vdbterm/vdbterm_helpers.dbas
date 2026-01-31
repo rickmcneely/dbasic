@@ -80,6 +80,9 @@ FUNCTION WidgetIndexToCtrlType(widgetIdx AS INTEGER) AS INTEGER
     ELSEIF widgetIdx = 16 THEN
         ' widgetIdx 16 -> CTRL_DIRECTORIES (21)
         RETURN CTRL_DIRECTORIES
+    ELSEIF widgetIdx = 17 THEN
+        ' widgetIdx 17 -> CTRL_FILES (22)
+        RETURN CTRL_FILES
     ELSE
         ' New widgets skip Timer (11)
         ' widgetIdx 10 -> CTRL_TEXTAREA (12)
@@ -101,6 +104,8 @@ FUNCTION ToolboxIndexToCtrlType(toolIdx AS INTEGER) AS INTEGER
         RETURN CTRL_TCPIP
     ELSEIF toolIdx = 3 THEN
         RETURN CTRL_UDPIP
+    ELSEIF toolIdx = 4 THEN
+        RETURN CTRL_CURL
     ENDIF
     RETURN CTRL_TIMER
 END FUNCTION
@@ -200,6 +205,10 @@ FUNCTION GetControlTypeName(ctlType AS INTEGER) AS STRING
         RETURN "Path"
     ELSEIF ctlType = CTRL_DIRECTORIES THEN
         RETURN "Directories"
+    ELSEIF ctlType = CTRL_FILES THEN
+        RETURN "Files"
+    ELSEIF ctlType = CTRL_CURL THEN
+        RETURN "Curl"
     ENDIF
     RETURN "Unknown"
 END FUNCTION
@@ -264,6 +273,10 @@ FUNCTION GetToolboxIcon(ctlType AS INTEGER) AS STRING
         RETURN "[/] "
     ELSEIF ctlType = CTRL_DIRECTORIES THEN
         RETURN "[d] "
+    ELSEIF ctlType = CTRL_FILES THEN
+        RETURN "[f] "
+    ELSEIF ctlType = CTRL_CURL THEN
+        RETURN "[~] "
     ENDIF
     RETURN "??? "
 END FUNCTION
@@ -691,6 +704,15 @@ FUNCTION GetControlEvents(ctlType AS INTEGER) AS []STRING
     ELSEIF ctlType = CTRL_DIRECTORIES THEN
         events = APPEND(events, "Change")
         events = APPEND(events, "Enter")
+    ELSEIF ctlType = CTRL_FILES THEN
+        events = APPEND(events, "Click")
+        events = APPEND(events, "DblClick")
+        events = APPEND(events, "Change")
+        events = APPEND(events, "PatternChange")
+    ELSEIF ctlType = CTRL_CURL THEN
+        events = APPEND(events, "Complete")
+        events = APPEND(events, "Error")
+        events = APPEND(events, "Progress")
     ENDIF
 
     RETURN events
@@ -761,13 +783,79 @@ FUNCTION ControlUsesCaption(ctlType AS INTEGER) AS BOOLEAN
     RETURN FALSE
 END FUNCTION
 
+' Get the next available TabIndex for a form (avoids duplicates)
+FUNCTION GetNextTabIndex(form AS VDBForm) AS INTEGER
+    DIM maxTabIndex AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        IF form.Controls[i].TabIndex > maxTabIndex THEN
+            maxTabIndex = form.Controls[i].TabIndex
+        ENDIF
+    NEXT
+    RETURN maxTabIndex + 1
+END FUNCTION
+
+' Check if a TabIndex is already used by another control on the form
+FUNCTION IsTabIndexUsed(form AS VDBForm, tabIndex AS INTEGER, excludeIdx AS INTEGER) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        IF i <> excludeIdx AND form.Controls[i].TabIndex = tabIndex THEN
+            RETURN TRUE
+        ENDIF
+    NEXT
+    RETURN FALSE
+END FUNCTION
+
+' Fix duplicate TabIndex values on a form
+SUB FixDuplicateTabIndexes(form AS VDBForm)
+    DIM used AS []INTEGER
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM tabIdx AS INTEGER = form.Controls[i].TabIndex
+        ' Check if this TabIndex is already used
+        DIM isDup AS BOOLEAN = FALSE
+        FOR j = 0 TO Len(used) - 1
+            IF used[j] = tabIdx THEN
+                isDup = TRUE
+                EXIT FOR
+            ENDIF
+        NEXT
+
+        IF isDup THEN
+            ' Find next available TabIndex
+            DIM nextIdx AS INTEGER = 0
+            DIM found AS BOOLEAN = FALSE
+            WHILE NOT found
+                DIM isUsed AS BOOLEAN = FALSE
+                FOR j = 0 TO Len(used) - 1
+                    IF used[j] = nextIdx THEN
+                        isUsed = TRUE
+                        EXIT FOR
+                    ENDIF
+                NEXT
+                IF NOT isUsed THEN
+                    found = TRUE
+                ELSE
+                    nextIdx = nextIdx + 1
+                ENDIF
+            WEND
+            form.Controls[i].TabIndex = nextIdx
+            used = APPEND(used, nextIdx)
+        ELSE
+            used = APPEND(used, tabIdx)
+        ENDIF
+    NEXT
+END SUB
+
 ' Get the total number of properties for a control (including type-specific)
 FUNCTION GetControlPropertyCount(ctrl AS VDBControl) AS INTEGER
-    ' Base properties: Name, Type, [Caption], X, Y, Width, Height, Enabled, Visible, ZOrder, TabIndex, ForeColor, BackColor
+    ' Base properties: Name, Type, [Caption], X, Y, Width, Height, Enabled, Visible, ZOrder, TabIndex, TabStop, ForeColor, BackColor
     ' Caption is only included for controls that use it
-    DIM baseCount AS INTEGER = 12
+    DIM baseCount AS INTEGER = 13
     IF ControlUsesCaption(ctrl.CtlType) THEN
-        baseCount = 13
+        baseCount = 14
     ENDIF
 
     ' Add type-specific property count
@@ -813,6 +901,12 @@ FUNCTION GetControlPropertyCount(ctrl AS VDBControl) AS INTEGER
     ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
         ' Path, ShowHidden, LinkedPath
         RETURN baseCount + 3
+    ELSEIF ctrl.CtlType = CTRL_FILES THEN
+        ' Path, ShowHidden, Pattern, LinkedPath
+        RETURN baseCount + 4
+    ELSEIF ctrl.CtlType = CTRL_CURL THEN
+        ' URL, HttpMethod
+        RETURN baseCount + 2
     ENDIF
 
     RETURN baseCount
@@ -854,15 +948,17 @@ FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRIN
     ELSEIF adjIdx = 10 THEN
         RETURN "TabIndex"
     ELSEIF adjIdx = 11 THEN
-        RETURN "ForeColor"
+        RETURN "TabStop"
     ELSEIF adjIdx = 12 THEN
+        RETURN "ForeColor"
+    ELSEIF adjIdx = 13 THEN
         RETURN "BackColor"
     ENDIF
 
     ' Type-specific properties
-    DIM typeStartIdx AS INTEGER = 13
+    DIM typeStartIdx AS INTEGER = 14
     IF NOT hasCaption THEN
-        typeStartIdx = 12
+        typeStartIdx = 13
     ENDIF
     DIM typeIdx AS INTEGER = propIdx - typeStartIdx
 
@@ -978,6 +1074,22 @@ FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRIN
         ELSEIF typeIdx = 2 THEN
             RETURN "LinkedPath"
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_FILES THEN
+        IF typeIdx = 0 THEN
+            RETURN "Path"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "ShowHidden"
+        ELSEIF typeIdx = 2 THEN
+            RETURN "Pattern"
+        ELSEIF typeIdx = 3 THEN
+            RETURN "LinkedPath"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CURL THEN
+        IF typeIdx = 0 THEN
+            RETURN "URL"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "HttpMethod"
+        ENDIF
     ENDIF
 
     RETURN ""
@@ -992,15 +1104,15 @@ FUNCTION IsPropertyBoolean(ctrl AS VDBControl, propIdx AS INTEGER) AS BOOLEAN
         adjIdx = propIdx + 1
     ENDIF
 
-    ' Base boolean properties: Enabled (7), Visible (8)
-    IF adjIdx = 7 OR adjIdx = 8 THEN
+    ' Base boolean properties: Enabled (7), Visible (8), TabStop (11)
+    IF adjIdx = 7 OR adjIdx = 8 OR adjIdx = 11 THEN
         RETURN TRUE
     ENDIF
 
     ' Type-specific boolean properties
-    DIM typeStartIdx AS INTEGER = 13
+    DIM typeStartIdx AS INTEGER = 14
     IF NOT hasCaption THEN
-        typeStartIdx = 12
+        typeStartIdx = 13
     ENDIF
     DIM typeIdx AS INTEGER = propIdx - typeStartIdx
 
@@ -1049,6 +1161,11 @@ FUNCTION IsPropertyBoolean(ctrl AS VDBControl, propIdx AS INTEGER) AS BOOLEAN
         IF typeIdx = 1 THEN
             RETURN TRUE
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_FILES THEN
+        ' ShowHidden (1)
+        IF typeIdx = 1 THEN
+            RETURN TRUE
+        ENDIF
     ENDIF
 
     RETURN FALSE
@@ -1070,12 +1187,15 @@ FUNCTION ToggleBooleanProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBCon
     ELSEIF adjIdx = 8 THEN
         ctrl.Visible = NOT ctrl.Visible
         RETURN ctrl
+    ELSEIF adjIdx = 11 THEN
+        ctrl.TabStop = NOT ctrl.TabStop
+        RETURN ctrl
     ENDIF
 
     ' Type-specific boolean properties
-    DIM typeStartIdx AS INTEGER = 13
+    DIM typeStartIdx AS INTEGER = 14
     IF NOT hasCaption THEN
-        typeStartIdx = 12
+        typeStartIdx = 13
     ENDIF
     DIM typeIdx AS INTEGER = propIdx - typeStartIdx
 
@@ -1118,6 +1238,10 @@ FUNCTION ToggleBooleanProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBCon
             ctrl.ShowHidden = NOT ctrl.ShowHidden
         ENDIF
     ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+        IF typeIdx = 1 THEN
+            ctrl.ShowHidden = NOT ctrl.ShowHidden
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_FILES THEN
         IF typeIdx = 1 THEN
             ctrl.ShowHidden = NOT ctrl.ShowHidden
         ENDIF
@@ -1250,15 +1374,21 @@ FUNCTION GetControlPropertyValue(ctrl AS VDBControl, propIdx AS INTEGER) AS STRI
     ELSEIF adjIdx = 10 THEN
         RETURN Str(ctrl.TabIndex)
     ELSEIF adjIdx = 11 THEN
-        RETURN Str(ctrl.ForeColor)
+        IF ctrl.TabStop THEN
+            RETURN "True"
+        ELSE
+            RETURN "False"
+        ENDIF
     ELSEIF adjIdx = 12 THEN
+        RETURN Str(ctrl.ForeColor)
+    ELSEIF adjIdx = 13 THEN
         RETURN Str(ctrl.BackColor)
     ENDIF
 
     ' Type-specific properties
-    DIM typeStartIdx AS INTEGER = 13
+    DIM typeStartIdx AS INTEGER = 14
     IF NOT hasCaption THEN
-        typeStartIdx = 12
+        typeStartIdx = 13
     ENDIF
     DIM typeIdx AS INTEGER = propIdx - typeStartIdx
 
@@ -1434,6 +1564,26 @@ FUNCTION GetControlPropertyValue(ctrl AS VDBControl, propIdx AS INTEGER) AS STRI
         ELSEIF typeIdx = 2 THEN
             RETURN ctrl.LinkedControl
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_FILES THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.FilePath
+        ELSEIF typeIdx = 1 THEN
+            IF ctrl.ShowHidden THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ELSEIF typeIdx = 2 THEN
+            RETURN ctrl.Pattern
+        ELSEIF typeIdx = 3 THEN
+            RETURN ctrl.LinkedControl
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CURL THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.URL
+        ELSEIF typeIdx = 1 THEN
+            RETURN ctrl.HttpMethod
+        ENDIF
     ENDIF
 
     RETURN ""
@@ -1475,5 +1625,612 @@ FUNCTION UnescapeJSONString(s AS STRING) AS STRING
         ENDIF
     WEND
     RETURN result
+END FUNCTION
+
+' ============================================
+' Theme Factory Functions
+' ============================================
+
+' Create default theme - Classic VB6 gray (black on light gray)
+FUNCTION NewDefaultTheme() AS VDBTheme
+    DIM theme AS VDBTheme
+    theme.Name = "Default"
+
+    ' Form colors
+    theme.FormForeColor = 0      ' Black
+    theme.FormBackColor = 7      ' Light gray
+
+    ' Control colors (all black on light gray for classic look)
+    theme.ButtonForeColor = 0
+    theme.ButtonBackColor = 7
+    theme.LabelForeColor = 0
+    theme.LabelBackColor = 7
+    theme.TextBoxForeColor = 0
+    theme.TextBoxBackColor = 15   ' White for text input
+    theme.CheckBoxForeColor = 0
+    theme.CheckBoxBackColor = 7
+    theme.OptionForeColor = 0
+    theme.OptionBackColor = 7
+    theme.ListBoxForeColor = 0
+    theme.ListBoxBackColor = 15
+    theme.ComboBoxForeColor = 0
+    theme.ComboBoxBackColor = 15
+    theme.FrameForeColor = 0
+    theme.FrameBackColor = 7
+    theme.TextAreaForeColor = 0
+    theme.TextAreaBackColor = 15
+    theme.ProgressForeColor = 10  ' Green
+    theme.ProgressBackColor = 8   ' Dark gray
+    theme.SpinnerForeColor = 14   ' Yellow
+    theme.SpinnerBackColor = 0
+    theme.PathForeColor = 0
+    theme.PathBackColor = 15
+    theme.DirectoriesForeColor = 0
+    theme.DirectoriesBackColor = 15
+    theme.FilesForeColor = 0
+    theme.FilesBackColor = 15
+    theme.DirBrowserForeColor = 0
+    theme.DirBrowserBackColor = 15
+
+    ' Focus/selection colors
+    theme.FocusedForeColor = 0
+    theme.FocusedBackColor = 11   ' Cyan
+    theme.SelectedForeColor = 15
+    theme.SelectedBackColor = 1   ' Blue
+
+    ' Menu colors
+    theme.MenuForeColor = 0
+    theme.MenuBackColor = 7
+    theme.MenuSelectedForeColor = 15
+    theme.MenuSelectedBackColor = 1
+    theme.MenuShortcutForeColor = 12     ' Bright red for shortcut keys
+
+    ' Extended color mode (default to 16-color)
+    theme.Use256Colors = FALSE
+
+    RETURN theme
+END FUNCTION
+
+' Create dark theme - White on dark backgrounds
+FUNCTION NewDarkTheme() AS VDBTheme
+    DIM theme AS VDBTheme
+    theme.Name = "Dark"
+
+    ' Form colors
+    theme.FormForeColor = 15     ' White
+    theme.FormBackColor = 0      ' Black
+
+    ' Control colors (white on dark)
+    theme.ButtonForeColor = 15
+    theme.ButtonBackColor = 8    ' Dark gray
+    theme.LabelForeColor = 15
+    theme.LabelBackColor = 0
+    theme.TextBoxForeColor = 15
+    theme.TextBoxBackColor = 8
+    theme.CheckBoxForeColor = 15
+    theme.CheckBoxBackColor = 0
+    theme.OptionForeColor = 15
+    theme.OptionBackColor = 0
+    theme.ListBoxForeColor = 15
+    theme.ListBoxBackColor = 8
+    theme.ComboBoxForeColor = 15
+    theme.ComboBoxBackColor = 8
+    theme.FrameForeColor = 15
+    theme.FrameBackColor = 0
+    theme.TextAreaForeColor = 15
+    theme.TextAreaBackColor = 8
+    theme.ProgressForeColor = 10  ' Green
+    theme.ProgressBackColor = 8
+    theme.SpinnerForeColor = 14   ' Yellow
+    theme.SpinnerBackColor = 0
+    theme.PathForeColor = 15
+    theme.PathBackColor = 8
+    theme.DirectoriesForeColor = 15
+    theme.DirectoriesBackColor = 8
+    theme.FilesForeColor = 15
+    theme.FilesBackColor = 8
+    theme.DirBrowserForeColor = 15
+    theme.DirBrowserBackColor = 8
+
+    ' Focus/selection colors
+    theme.FocusedForeColor = 0
+    theme.FocusedBackColor = 14   ' Yellow
+    theme.SelectedForeColor = 0
+    theme.SelectedBackColor = 11  ' Cyan
+
+    ' Menu colors
+    theme.MenuForeColor = 15
+    theme.MenuBackColor = 8
+    theme.MenuSelectedForeColor = 0
+    theme.MenuSelectedBackColor = 14
+    theme.MenuShortcutForeColor = 12     ' Bright red for shortcut keys
+
+    ' Extended color mode (default to 16-color)
+    theme.Use256Colors = FALSE
+
+    RETURN theme
+END FUNCTION
+
+' Create light theme - Black on white
+FUNCTION NewLightTheme() AS VDBTheme
+    DIM theme AS VDBTheme
+    theme.Name = "Light"
+
+    ' Form colors
+    theme.FormForeColor = 0      ' Black
+    theme.FormBackColor = 15     ' White
+
+    ' Control colors (black on white)
+    theme.ButtonForeColor = 0
+    theme.ButtonBackColor = 7    ' Light gray for button contrast
+    theme.LabelForeColor = 0
+    theme.LabelBackColor = 15
+    theme.TextBoxForeColor = 0
+    theme.TextBoxBackColor = 15
+    theme.CheckBoxForeColor = 0
+    theme.CheckBoxBackColor = 15
+    theme.OptionForeColor = 0
+    theme.OptionBackColor = 15
+    theme.ListBoxForeColor = 0
+    theme.ListBoxBackColor = 15
+    theme.ComboBoxForeColor = 0
+    theme.ComboBoxBackColor = 15
+    theme.FrameForeColor = 0
+    theme.FrameBackColor = 15
+    theme.TextAreaForeColor = 0
+    theme.TextAreaBackColor = 15
+    theme.ProgressForeColor = 2   ' Dark green
+    theme.ProgressBackColor = 7
+    theme.SpinnerForeColor = 4    ' Dark red
+    theme.SpinnerBackColor = 15
+    theme.PathForeColor = 0
+    theme.PathBackColor = 15
+    theme.DirectoriesForeColor = 0
+    theme.DirectoriesBackColor = 15
+    theme.FilesForeColor = 0
+    theme.FilesBackColor = 15
+    theme.DirBrowserForeColor = 0
+    theme.DirBrowserBackColor = 15
+
+    ' Focus/selection colors
+    theme.FocusedForeColor = 0
+    theme.FocusedBackColor = 11   ' Cyan
+    theme.SelectedForeColor = 15
+    theme.SelectedBackColor = 1   ' Blue
+
+    ' Menu colors
+    theme.MenuForeColor = 0
+    theme.MenuBackColor = 15
+    theme.MenuSelectedForeColor = 15
+    theme.MenuSelectedBackColor = 1
+    theme.MenuShortcutForeColor = 4      ' Dark red for shortcut keys on light bg
+
+    ' Extended color mode (default to 16-color)
+    theme.Use256Colors = FALSE
+
+    RETURN theme
+END FUNCTION
+
+' Create green terminal theme - Green on black (retro terminal look)
+FUNCTION NewGreenTerminalTheme() AS VDBTheme
+    DIM theme AS VDBTheme
+    theme.Name = "Green Terminal"
+
+    ' Form colors
+    theme.FormForeColor = 10     ' Bright green
+    theme.FormBackColor = 0      ' Black
+
+    ' Control colors (green on black)
+    theme.ButtonForeColor = 10
+    theme.ButtonBackColor = 0
+    theme.LabelForeColor = 10
+    theme.LabelBackColor = 0
+    theme.TextBoxForeColor = 10
+    theme.TextBoxBackColor = 0
+    theme.CheckBoxForeColor = 10
+    theme.CheckBoxBackColor = 0
+    theme.OptionForeColor = 10
+    theme.OptionBackColor = 0
+    theme.ListBoxForeColor = 10
+    theme.ListBoxBackColor = 0
+    theme.ComboBoxForeColor = 10
+    theme.ComboBoxBackColor = 0
+    theme.FrameForeColor = 2     ' Dark green for frame borders
+    theme.FrameBackColor = 0
+    theme.TextAreaForeColor = 10
+    theme.TextAreaBackColor = 0
+    theme.ProgressForeColor = 10
+    theme.ProgressBackColor = 2   ' Dark green
+    theme.SpinnerForeColor = 10
+    theme.SpinnerBackColor = 0
+    theme.PathForeColor = 10
+    theme.PathBackColor = 0
+    theme.DirectoriesForeColor = 10
+    theme.DirectoriesBackColor = 0
+    theme.FilesForeColor = 10
+    theme.FilesBackColor = 0
+    theme.DirBrowserForeColor = 10
+    theme.DirBrowserBackColor = 0
+
+    ' Focus/selection colors
+    theme.FocusedForeColor = 0
+    theme.FocusedBackColor = 10   ' Bright green
+    theme.SelectedForeColor = 0
+    theme.SelectedBackColor = 2   ' Dark green
+
+    ' Menu colors
+    theme.MenuForeColor = 10
+    theme.MenuBackColor = 0
+    theme.MenuSelectedForeColor = 0
+    theme.MenuSelectedBackColor = 10
+    theme.MenuShortcutForeColor = 14     ' Yellow for shortcut keys
+
+    ' Extended color mode (default to 16-color)
+    theme.Use256Colors = FALSE
+
+    RETURN theme
+END FUNCTION
+
+' Get theme colors for a specific control type
+' Returns ForeColor, BackColor pair
+FUNCTION GetThemeColorsForControl(theme AS VDBTheme, ctlType AS INTEGER) AS (INTEGER, INTEGER)
+    IF ctlType = CTRL_FORM THEN
+        RETURN theme.FormForeColor, theme.FormBackColor
+    ELSEIF ctlType = CTRL_BUTTON THEN
+        RETURN theme.ButtonForeColor, theme.ButtonBackColor
+    ELSEIF ctlType = CTRL_LABEL THEN
+        RETURN theme.LabelForeColor, theme.LabelBackColor
+    ELSEIF ctlType = CTRL_TEXTBOX THEN
+        RETURN theme.TextBoxForeColor, theme.TextBoxBackColor
+    ELSEIF ctlType = CTRL_CHECKBOX THEN
+        RETURN theme.CheckBoxForeColor, theme.CheckBoxBackColor
+    ELSEIF ctlType = CTRL_OPTION THEN
+        RETURN theme.OptionForeColor, theme.OptionBackColor
+    ELSEIF ctlType = CTRL_LISTBOX THEN
+        RETURN theme.ListBoxForeColor, theme.ListBoxBackColor
+    ELSEIF ctlType = CTRL_COMBOBOX THEN
+        RETURN theme.ComboBoxForeColor, theme.ComboBoxBackColor
+    ELSEIF ctlType = CTRL_FRAME THEN
+        RETURN theme.FrameForeColor, theme.FrameBackColor
+    ELSEIF ctlType = CTRL_TEXTAREA THEN
+        RETURN theme.TextAreaForeColor, theme.TextAreaBackColor
+    ELSEIF ctlType = CTRL_PROGRESS THEN
+        RETURN theme.ProgressForeColor, theme.ProgressBackColor
+    ELSEIF ctlType = CTRL_SPINNER THEN
+        RETURN theme.SpinnerForeColor, theme.SpinnerBackColor
+    ELSEIF ctlType = CTRL_PATH THEN
+        RETURN theme.PathForeColor, theme.PathBackColor
+    ELSEIF ctlType = CTRL_DIRECTORIES THEN
+        RETURN theme.DirectoriesForeColor, theme.DirectoriesBackColor
+    ELSEIF ctlType = CTRL_FILES THEN
+        RETURN theme.FilesForeColor, theme.FilesBackColor
+    ELSEIF ctlType = CTRL_DIRBROWSER THEN
+        RETURN theme.DirBrowserForeColor, theme.DirBrowserBackColor
+    ENDIF
+    ' Default fallback
+    RETURN theme.FormForeColor, theme.FormBackColor
+END FUNCTION
+
+' Apply theme to all controls on a form
+SUB ApplyThemeToForm(form AS POINTER TO VDBForm, theme AS VDBTheme)
+    ' Apply theme to form itself
+    (^form).ForeColor = theme.FormForeColor
+    (^form).BackColor = theme.FormBackColor
+
+    ' Apply theme to each control
+    DIM i AS INTEGER
+    FOR i = 0 TO Len((^form).Controls) - 1
+        DIM foreColor AS INTEGER
+        DIM backColor AS INTEGER
+        foreColor, backColor = GetThemeColorsForControl(theme, (^form).Controls[i].CtlType)
+        (^form).Controls[i].ForeColor = foreColor
+        (^form).Controls[i].BackColor = backColor
+    NEXT
+END SUB
+
+' Apply theme to all forms in a project
+SUB ApplyThemeToProject(proj AS POINTER TO VDBProject)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len((^proj).Forms) - 1
+        ApplyThemeToForm(@(^proj).Forms[i], (^proj).Theme)
+    NEXT
+    (^proj).Modified = TRUE
+END SUB
+
+' Adjust a theme color by property index, column (0=fore, 1=back), and delta (+1 or -1)
+FUNCTION AdjustThemeColor(theme AS VDBTheme, propIdx AS INTEGER, colIdx AS INTEGER, delta AS INTEGER) AS VDBTheme
+    ' Determine max color value based on Use256Colors setting
+    DIM maxColor AS INTEGER = 16
+    IF theme.Use256Colors THEN
+        maxColor = 256
+    ENDIF
+
+    IF propIdx = 0 THEN
+        IF colIdx = 0 THEN
+            theme.FormForeColor = (theme.FormForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.FormBackColor = (theme.FormBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 1 THEN
+        IF colIdx = 0 THEN
+            theme.ButtonForeColor = (theme.ButtonForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.ButtonBackColor = (theme.ButtonBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 2 THEN
+        IF colIdx = 0 THEN
+            theme.LabelForeColor = (theme.LabelForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.LabelBackColor = (theme.LabelBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 3 THEN
+        IF colIdx = 0 THEN
+            theme.TextBoxForeColor = (theme.TextBoxForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.TextBoxBackColor = (theme.TextBoxBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 4 THEN
+        IF colIdx = 0 THEN
+            theme.CheckBoxForeColor = (theme.CheckBoxForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.CheckBoxBackColor = (theme.CheckBoxBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 5 THEN
+        IF colIdx = 0 THEN
+            theme.OptionForeColor = (theme.OptionForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.OptionBackColor = (theme.OptionBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 6 THEN
+        IF colIdx = 0 THEN
+            theme.ListBoxForeColor = (theme.ListBoxForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.ListBoxBackColor = (theme.ListBoxBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 7 THEN
+        IF colIdx = 0 THEN
+            theme.ComboBoxForeColor = (theme.ComboBoxForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.ComboBoxBackColor = (theme.ComboBoxBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 8 THEN
+        IF colIdx = 0 THEN
+            theme.FrameForeColor = (theme.FrameForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.FrameBackColor = (theme.FrameBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 9 THEN
+        IF colIdx = 0 THEN
+            theme.TextAreaForeColor = (theme.TextAreaForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.TextAreaBackColor = (theme.TextAreaBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 10 THEN
+        IF colIdx = 0 THEN
+            theme.ProgressForeColor = (theme.ProgressForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.ProgressBackColor = (theme.ProgressBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 11 THEN
+        IF colIdx = 0 THEN
+            theme.SpinnerForeColor = (theme.SpinnerForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.SpinnerBackColor = (theme.SpinnerBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 12 THEN
+        IF colIdx = 0 THEN
+            theme.PathForeColor = (theme.PathForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.PathBackColor = (theme.PathBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 13 THEN
+        IF colIdx = 0 THEN
+            theme.DirectoriesForeColor = (theme.DirectoriesForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.DirectoriesBackColor = (theme.DirectoriesBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 14 THEN
+        IF colIdx = 0 THEN
+            theme.FilesForeColor = (theme.FilesForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.FilesBackColor = (theme.FilesBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 15 THEN
+        IF colIdx = 0 THEN
+            theme.DirBrowserForeColor = (theme.DirBrowserForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.DirBrowserBackColor = (theme.DirBrowserBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 16 THEN
+        IF colIdx = 0 THEN
+            theme.FocusedForeColor = (theme.FocusedForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.FocusedBackColor = (theme.FocusedBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 17 THEN
+        IF colIdx = 0 THEN
+            theme.SelectedForeColor = (theme.SelectedForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.SelectedBackColor = (theme.SelectedBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 18 THEN
+        IF colIdx = 0 THEN
+            theme.MenuForeColor = (theme.MenuForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.MenuBackColor = (theme.MenuBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 19 THEN
+        IF colIdx = 0 THEN
+            theme.MenuSelectedForeColor = (theme.MenuSelectedForeColor + delta + maxColor) MOD maxColor
+        ELSE
+            theme.MenuSelectedBackColor = (theme.MenuSelectedBackColor + delta + maxColor) MOD maxColor
+        ENDIF
+    ELSEIF propIdx = 20 THEN
+        ' MenuShortcut only has ForeColor (BackColor follows Menu)
+        IF colIdx = 0 THEN
+            theme.MenuShortcutForeColor = (theme.MenuShortcutForeColor + delta + maxColor) MOD maxColor
+        ENDIF
+        ' colIdx = 1 is ignored - no separate BackColor
+    ENDIF
+    RETURN theme
+END FUNCTION
+
+' Get theme name by index
+FUNCTION GetThemeNameByIndex(idx AS INTEGER) AS STRING
+    IF idx = 0 THEN
+        RETURN "Default"
+    ELSEIF idx = 1 THEN
+        RETURN "Dark"
+    ELSEIF idx = 2 THEN
+        RETURN "Light"
+    ELSEIF idx = 3 THEN
+        RETURN "Green Terminal"
+    ENDIF
+    RETURN "Custom"
+END FUNCTION
+
+' Get theme by index
+FUNCTION GetThemeByIndex(idx AS INTEGER) AS VDBTheme
+    IF idx = 0 THEN
+        RETURN NewDefaultTheme()
+    ELSEIF idx = 1 THEN
+        RETURN NewDarkTheme()
+    ELSEIF idx = 2 THEN
+        RETURN NewLightTheme()
+    ELSEIF idx = 3 THEN
+        RETURN NewGreenTerminalTheme()
+    ENDIF
+    RETURN NewDefaultTheme()
+END FUNCTION
+
+' Set a specific theme color by property index, column, and value
+FUNCTION SetThemeColor(theme AS VDBTheme, propIdx AS INTEGER, colIdx AS INTEGER, colorVal AS INTEGER) AS VDBTheme
+    IF propIdx = 0 THEN
+        IF colIdx = 0 THEN
+            theme.FormForeColor = colorVal
+        ELSE
+            theme.FormBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 1 THEN
+        IF colIdx = 0 THEN
+            theme.ButtonForeColor = colorVal
+        ELSE
+            theme.ButtonBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 2 THEN
+        IF colIdx = 0 THEN
+            theme.LabelForeColor = colorVal
+        ELSE
+            theme.LabelBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 3 THEN
+        IF colIdx = 0 THEN
+            theme.TextBoxForeColor = colorVal
+        ELSE
+            theme.TextBoxBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 4 THEN
+        IF colIdx = 0 THEN
+            theme.CheckBoxForeColor = colorVal
+        ELSE
+            theme.CheckBoxBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 5 THEN
+        IF colIdx = 0 THEN
+            theme.OptionForeColor = colorVal
+        ELSE
+            theme.OptionBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 6 THEN
+        IF colIdx = 0 THEN
+            theme.ListBoxForeColor = colorVal
+        ELSE
+            theme.ListBoxBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 7 THEN
+        IF colIdx = 0 THEN
+            theme.ComboBoxForeColor = colorVal
+        ELSE
+            theme.ComboBoxBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 8 THEN
+        IF colIdx = 0 THEN
+            theme.FrameForeColor = colorVal
+        ELSE
+            theme.FrameBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 9 THEN
+        IF colIdx = 0 THEN
+            theme.TextAreaForeColor = colorVal
+        ELSE
+            theme.TextAreaBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 10 THEN
+        IF colIdx = 0 THEN
+            theme.ProgressForeColor = colorVal
+        ELSE
+            theme.ProgressBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 11 THEN
+        IF colIdx = 0 THEN
+            theme.SpinnerForeColor = colorVal
+        ELSE
+            theme.SpinnerBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 12 THEN
+        IF colIdx = 0 THEN
+            theme.PathForeColor = colorVal
+        ELSE
+            theme.PathBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 13 THEN
+        IF colIdx = 0 THEN
+            theme.DirectoriesForeColor = colorVal
+        ELSE
+            theme.DirectoriesBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 14 THEN
+        IF colIdx = 0 THEN
+            theme.FilesForeColor = colorVal
+        ELSE
+            theme.FilesBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 15 THEN
+        IF colIdx = 0 THEN
+            theme.DirBrowserForeColor = colorVal
+        ELSE
+            theme.DirBrowserBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 16 THEN
+        IF colIdx = 0 THEN
+            theme.FocusedForeColor = colorVal
+        ELSE
+            theme.FocusedBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 17 THEN
+        IF colIdx = 0 THEN
+            theme.SelectedForeColor = colorVal
+        ELSE
+            theme.SelectedBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 18 THEN
+        IF colIdx = 0 THEN
+            theme.MenuForeColor = colorVal
+        ELSE
+            theme.MenuBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 19 THEN
+        IF colIdx = 0 THEN
+            theme.MenuSelectedForeColor = colorVal
+        ELSE
+            theme.MenuSelectedBackColor = colorVal
+        ENDIF
+    ELSEIF propIdx = 20 THEN
+        ' MenuShortcut only has ForeColor
+        IF colIdx = 0 THEN
+            theme.MenuShortcutForeColor = colorVal
+        ENDIF
+    ENDIF
+    RETURN theme
 END FUNCTION
 

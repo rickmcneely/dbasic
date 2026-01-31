@@ -1689,6 +1689,101 @@ FUNCTION ProjectHasFiles(proj AS VDBProject) AS BOOLEAN
     RETURN FALSE
 END FUNCTION
 
+' Check if project uses Curl widget
+FUNCTION ProjectHasCurl(proj AS VDBProject) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(proj.Forms) - 1
+        DIM j AS INTEGER
+        FOR j = 0 TO Len(proj.Forms[i].Controls) - 1
+            IF proj.Forms[i].Controls[j].CtlType = CTRL_CURL THEN
+                RETURN TRUE
+            ENDIF
+        NEXT
+    NEXT
+    RETURN FALSE
+END FUNCTION
+
+' Generate Curl helper functions
+FUNCTION GenerateCurlHelpers() AS STRING
+    DIM code AS STRING = ""
+    DIM q AS STRING = Chr(34)
+
+    code = code & "' ============================================" & Chr(10)
+    code = code & "' Curl HTTP Helper Functions" & Chr(10)
+    code = code & "' ============================================" & Chr(10)
+    code = code & Chr(10)
+
+    ' BytesToString helper
+    code = code & "' Convert bytes to string" & Chr(10)
+    code = code & "FUNCTION CurlBytesToString(b AS BYTES) AS STRING" & Chr(10)
+    code = code & "    RETURN fmt.Sprintf(" & q & "%s" & q & ", b)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' CurlFetch - perform HTTP request and return response, status code, error
+    code = code & "' Perform an HTTP request and return response body, status code, and error" & Chr(10)
+    code = code & "FUNCTION CurlFetch(urlStr AS STRING, method AS STRING, body AS STRING) AS (STRING, INTEGER, STRING)" & Chr(10)
+    code = code & "    DIM respBody AS STRING = " & q & q & Chr(10)
+    code = code & "    DIM statusCode AS INTEGER = 0" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    IF urlStr = " & q & q & " THEN" & Chr(10)
+    code = code & "        RETURN " & q & q & ", 0, " & q & "URL is empty" & q & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    DIM req AS POINTER TO http.Request" & Chr(10)
+    code = code & "    DIM reqErr AS error" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    IF body <> " & q & q & " THEN" & Chr(10)
+    code = code & "        req, reqErr = http.NewRequest(method, urlStr, bytes.NewBufferString(body))" & Chr(10)
+    code = code & "    ELSE" & Chr(10)
+    code = code & "        req, reqErr = http.NewRequest(method, urlStr, NIL)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    IF reqErr <> NIL THEN" & Chr(10)
+    code = code & "        RETURN " & q & q & ", 0, fmt.Sprintf(" & q & "%v" & q & ", reqErr)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    DIM client AS http.Client" & Chr(10)
+    code = code & "    DIM resp AS POINTER TO http.Response" & Chr(10)
+    code = code & "    DIM respErr AS error" & Chr(10)
+    code = code & "    resp, respErr = client.Do(req)" & Chr(10)
+    code = code & "    IF respErr <> NIL THEN" & Chr(10)
+    code = code & "        RETURN " & q & q & ", 0, fmt.Sprintf(" & q & "%v" & q & ", respErr)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    statusCode = (^resp).StatusCode" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    DIM bodyBytes AS BYTES" & Chr(10)
+    code = code & "    DIM readErr AS error" & Chr(10)
+    code = code & "    bodyBytes, readErr = io.ReadAll((^resp).Body)" & Chr(10)
+    code = code & "    (^resp).Body.Close()" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    IF readErr <> NIL THEN" & Chr(10)
+    code = code & "        RETURN " & q & q & ", statusCode, fmt.Sprintf(" & q & "%v" & q & ", readErr)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    respBody = CurlBytesToString(bodyBytes)" & Chr(10)
+    code = code & "    RETURN respBody, statusCode, " & q & q & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' CurlGet - simple GET request
+    code = code & "' Perform a simple GET request" & Chr(10)
+    code = code & "FUNCTION CurlGet(urlStr AS STRING) AS (STRING, INTEGER, STRING)" & Chr(10)
+    code = code & "    RETURN CurlFetch(urlStr, " & q & "GET" & q & ", " & q & q & ")" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' CurlPost - simple POST request
+    code = code & "' Perform a simple POST request" & Chr(10)
+    code = code & "FUNCTION CurlPost(urlStr AS STRING, body AS STRING) AS (STRING, INTEGER, STRING)" & Chr(10)
+    code = code & "    RETURN CurlFetch(urlStr, " & q & "POST" & q & ", body)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    RETURN code
+END FUNCTION
+
 ' Check if project uses Path widget
 FUNCTION ProjectHasPath(proj AS VDBProject) AS BOOLEAN
     DIM i AS INTEGER
@@ -1740,6 +1835,7 @@ FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
     DIM needTimer AS BOOLEAN = FALSE
     DIM needFilepath AS BOOLEAN = FALSE
     DIM needTime AS BOOLEAN = FALSE
+    DIM needHttp AS BOOLEAN = FALSE
     DIM pluginImports AS []STRING
 
     ' Scan controls to determine needed imports
@@ -1765,6 +1861,8 @@ FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
         ELSEIF ctrl.CtlType = CTRL_FILES THEN
             needFilepath = TRUE
             needTime = TRUE
+        ELSEIF ctrl.CtlType = CTRL_CURL THEN
+            needHttp = TRUE
         ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
             ' Plugin widget - collect imports from plugin definition
             DIM plugin AS PluginWidgetDef = GetPluginByCtrlType(ctrl.CtlType, registry)
@@ -1817,6 +1915,11 @@ FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
     IF needTime AND NOT needTimer THEN
         ' Import time for double-click detection (needTimer already imports time)
         code = code & "IMPORT " & Chr(34) & "time" & Chr(34) & " AS time" & Chr(10)
+    ENDIF
+    IF needHttp THEN
+        code = code & "IMPORT " & Chr(34) & "net/http" & Chr(34) & " AS http" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "io" & Chr(34) & " AS io" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "bytes" & Chr(34) & " AS bytes" & Chr(10)
     ENDIF
 
     ' Plugin imports
@@ -1888,6 +1991,15 @@ FUNCTION GenerateFormType(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "    DIM " & ctrl.CtlName & " AS FilesWidget" & Chr(10)
             code = code & "    DIM " & ctrl.CtlName & "_LastClickTime AS time.Time" & Chr(10)
             code = code & "    DIM " & ctrl.CtlName & "_LastClickIdx AS INTEGER" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_CURL THEN
+            ' Curl widget state
+            code = code & "    DIM " & ctrl.CtlName & "_URL AS STRING" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Method AS STRING" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Body AS STRING" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Response AS STRING" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_StatusCode AS INTEGER" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Error AS STRING" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_IsLoading AS BOOLEAN" & Chr(10)
         ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
             ' Plugin widget - generate state fields from plugin definition
             DIM plugin AS PluginWidgetDef = GetPluginByCtrlType(ctrl.CtlType, registry)
@@ -2168,6 +2280,21 @@ FUNCTION GenerateInit(form AS VDBForm, registry AS PluginRegistry) AS STRING
             IF ctrl.Pattern <> "" AND ctrl.Pattern <> "*" THEN
                 code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPattern(" & Chr(34) & ctrl.Pattern & Chr(34) & ")" & Chr(10)
             ENDIF
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_CURL THEN
+            DIM curlUrl AS STRING = ctrl.URL
+            DIM curlMethod AS STRING = ctrl.HttpMethod
+            IF curlMethod = "" THEN
+                curlMethod = "GET"
+            ENDIF
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Curl)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_URL = " & Chr(34) & curlUrl & Chr(34) & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Method = " & Chr(34) & curlMethod & Chr(34) & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Body = " & Chr(34) & Chr(34) & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Response = " & Chr(34) & Chr(34) & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_StatusCode = 0" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Error = " & Chr(34) & Chr(34) & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_IsLoading = FALSE" & Chr(10)
             code = code & Chr(10)
         ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
             ' Plugin widget - generate init code from plugin definition

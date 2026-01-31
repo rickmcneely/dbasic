@@ -352,6 +352,12 @@ FUNCTION NewControl(ctlType AS INTEGER, name AS STRING, x AS INTEGER, y AS INTEG
         ctrl.ShowHidden = FALSE
         ctrl.Pattern = "*"
         ctrl.LinkedControl = ""
+    ELSEIF ctlType = CTRL_CURL THEN
+        ctrl.Width = 3
+        ctrl.Height = 1
+        ctrl.URL = ""
+        ctrl.HttpMethod = "GET"
+        ctrl.Visible = FALSE
     ENDIF
 
     RETURN ctrl
@@ -533,6 +539,10 @@ FUNCTION SerializeForm(f AS VDBForm) AS STRING
             ENDIF
             result = result & "      " & q & "pattern" & q & ": " & q & c.Pattern & q & "," & Chr(10)
             result = result & "      " & q & "linkedControl" & q & ": " & q & c.LinkedControl & q & Chr(10)
+        ELSEIF c.CtlType = CTRL_CURL THEN
+            result = result & "," & Chr(10)
+            result = result & "      " & q & "url" & q & ": " & q & EscapeJSONString(c.URL) & q & "," & Chr(10)
+            result = result & "      " & q & "httpMethod" & q & ": " & q & c.HttpMethod & q & Chr(10)
         ELSEIF c.CtlType >= PLUGIN_TYPE_START THEN
             ' Plugin widget - save plugin type ID and extended properties
             result = result & "," & Chr(10)
@@ -1364,6 +1374,12 @@ FUNCTION ParseControlObject(js AS STRING) AS VDBControl
             ctrl.Pattern = "*"
         ENDIF
         ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+    ELSEIF ctrl.CtlType = CTRL_CURL THEN
+        ctrl.URL = ExtractJSONString(js, "url")
+        ctrl.HttpMethod = ExtractJSONString(js, "httpMethod")
+        IF ctrl.HttpMethod = "" THEN
+            ctrl.HttpMethod = "GET"
+        ENDIF
     ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
         ' Plugin widget - load plugin type ID and extended properties
         ctrl.PluginTypeID = ExtractJSONString(js, "pluginTypeID")
@@ -1421,6 +1437,11 @@ FUNCTION GenerateCode(proj AS VDBProject, registry AS PluginRegistry) AS STRING
             ' Generate Files widget type and methods if needed
             IF ProjectHasFiles(proj) THEN
                 code = code & GenerateFilesWidget()
+            ENDIF
+
+            ' Generate Curl helper functions if needed
+            IF ProjectHasCurl(proj) THEN
+                code = code & GenerateCurlHelpers()
             ENDIF
         ENDIF
 

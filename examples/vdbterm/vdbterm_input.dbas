@@ -1,6 +1,25 @@
 ' VDBTerm Input Handlers
 ' Keyboard, mouse, dialog, and menu input handling
 
+' Helper function to activate theme editor buttons
+FUNCTION ThemeEditorActivateButton(m AS VDBTermModel) AS VDBTermModel
+    IF m.ThemeEditorIndex = 0 THEN
+        ' Apply to All - apply theme to all existing controls
+        m.Project.Theme = m.ThemeEditingTheme
+        ApplyThemeToProject(@m.Project)
+        m.Message = "Theme applied to all controls"
+    ELSEIF m.ThemeEditorIndex = 1 THEN
+        ' OK - save theme and close
+        m.Project.Theme = m.ThemeEditingTheme
+        m.Message = "Theme saved"
+        m.DialogMode = DIALOG_NONE
+    ELSEIF m.ThemeEditorIndex = 2 THEN
+        ' Cancel - close without saving
+        m.DialogMode = DIALOG_NONE
+    ENDIF
+    RETURN m
+END FUNCTION
+
 ' Render a scrolling text field with cursor
 ' Returns the visible portion of text with cursor indicator (inverted character)
 FUNCTION RenderDialogTextField(text AS STRING, cursor AS INTEGER, fieldWidth AS INTEGER) AS STRING
@@ -55,11 +74,59 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
         RETURN m, NIL
     ENDIF
 
+    ' Compile error dialog
+    IF m.DialogMode = DIALOG_COMPILE_ERROR THEN
+        IF key = "left" OR key = "right" OR key = "tab" THEN
+            ' Toggle between OK and Copy buttons
+            m.CompileErrorBtnIdx = 1 - m.CompileErrorBtnIdx
+        ELSEIF key = "up" THEN
+            ' Scroll up
+            IF m.CompileErrorScroll > 0 THEN
+                m.CompileErrorScroll = m.CompileErrorScroll - 1
+            ENDIF
+        ELSEIF key = "down" THEN
+            ' Scroll down
+            DIM errorLines AS []STRING = SplitStr(m.CompileErrors, Chr(10))
+            DIM maxVisible AS INTEGER = 12
+            IF m.CompileErrorScroll < Len(errorLines) - maxVisible THEN
+                m.CompileErrorScroll = m.CompileErrorScroll + 1
+            ENDIF
+        ELSEIF key = "pgup" THEN
+            m.CompileErrorScroll = m.CompileErrorScroll - 10
+            IF m.CompileErrorScroll < 0 THEN
+                m.CompileErrorScroll = 0
+            ENDIF
+        ELSEIF key = "pgdown" THEN
+            DIM pgErrorLines AS []STRING = SplitStr(m.CompileErrors, Chr(10))
+            DIM pgMaxVisible AS INTEGER = 12
+            m.CompileErrorScroll = m.CompileErrorScroll + 10
+            IF m.CompileErrorScroll > Len(pgErrorLines) - pgMaxVisible THEN
+                m.CompileErrorScroll = Len(pgErrorLines) - pgMaxVisible
+            ENDIF
+            IF m.CompileErrorScroll < 0 THEN
+                m.CompileErrorScroll = 0
+            ENDIF
+        ELSEIF key = "enter" OR key = " " THEN
+            IF m.CompileErrorBtnIdx = 0 THEN
+                ' OK - close dialog
+                m.DialogMode = DIALOG_NONE
+            ELSE
+                ' Copy - copy errors to clipboard
+                CopyToClipboard(m.CompileErrors)
+                m.Message = "Errors copied to clipboard"
+                m.DialogMode = DIALOG_NONE
+            ENDIF
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
     ' Object Browser dialog
     IF m.DialogMode = DIALOG_OBJECT_BROWSER THEN
+        DIM widgetCount AS INTEGER = Len(GetObjectBrowserWidgets())
+        DIM maxWidgetIdx AS INTEGER = widgetCount - 1
         IF key = "tab" THEN
-            ' Cycle through tabs: Widgets -> Properties -> Events -> Widgets
-            m.ObjectBrowserTab = (m.ObjectBrowserTab + 1) MOD 3
+            ' Cycle through tabs: Widgets -> Props -> Events -> Functions -> Widgets
+            m.ObjectBrowserTab = (m.ObjectBrowserTab + 1) MOD 4
             m.ObjectBrowserScroll = 0
         ELSEIF key = "up" THEN
             IF m.ObjectBrowserTab = 0 THEN
@@ -79,7 +146,7 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
         ELSEIF key = "down" THEN
             IF m.ObjectBrowserTab = 0 THEN
                 ' In Widgets tab, move selection down
-                IF m.ObjectBrowserWidgetIdx < 14 THEN
+                IF m.ObjectBrowserWidgetIdx < maxWidgetIdx THEN
                     m.ObjectBrowserWidgetIdx = m.ObjectBrowserWidgetIdx + 1
                     IF m.ObjectBrowserWidgetIdx >= m.ObjectBrowserScroll + 16 THEN
                         m.ObjectBrowserScroll = m.ObjectBrowserWidgetIdx - 15
@@ -105,14 +172,241 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
         ELSEIF key = "pgdown" THEN
             IF m.ObjectBrowserTab = 0 THEN
                 m.ObjectBrowserWidgetIdx = m.ObjectBrowserWidgetIdx + 5
-                IF m.ObjectBrowserWidgetIdx > 14 THEN
-                    m.ObjectBrowserWidgetIdx = 14
+                IF m.ObjectBrowserWidgetIdx > maxWidgetIdx THEN
+                    m.ObjectBrowserWidgetIdx = maxWidgetIdx
                 ENDIF
             ELSE
                 m.ObjectBrowserScroll = m.ObjectBrowserScroll + 5
             ENDIF
         ELSEIF key = "enter" OR key = " " THEN
             m.DialogMode = DIALOG_NONE
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Theme Editor dialog
+    IF m.DialogMode = DIALOG_THEME_EDITOR THEN
+        DIM propCount AS INTEGER = 21
+        DIM viewHeight AS INTEGER = 8
+        DIM use256 AS BOOLEAN = m.ThemeEditingTheme.Use256Colors
+
+        ' Theme preset keys (always available)
+        IF key = "1" THEN
+            m.ThemeEditingTheme = NewDefaultTheme()
+            m.ThemeEditorPropIdx = 0
+            m.ThemeEditorScroll = 0
+        ELSEIF key = "2" THEN
+            m.ThemeEditingTheme = NewDarkTheme()
+            m.ThemeEditorPropIdx = 0
+            m.ThemeEditorScroll = 0
+        ELSEIF key = "3" THEN
+            m.ThemeEditingTheme = NewLightTheme()
+            m.ThemeEditorPropIdx = 0
+            m.ThemeEditorScroll = 0
+        ELSEIF key = "4" THEN
+            m.ThemeEditingTheme = NewGreenTerminalTheme()
+            m.ThemeEditorPropIdx = 0
+            m.ThemeEditorScroll = 0
+
+        ' Escape - close dialog
+        ELSEIF key = "esc" THEN
+            m.DialogMode = DIALOG_NONE
+
+        ' Tab - cycle focus areas (Props -> Buttons -> Props)
+        ELSEIF key = "tab" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditorFocus = THEME_FOCUS_BUTTONS
+            ELSE
+                m.ThemeEditorFocus = THEME_FOCUS_PROPS
+            ENDIF
+
+        ' Shift+Tab - reverse cycle
+        ELSEIF key = "shift+tab" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditorFocus = THEME_FOCUS_BUTTONS
+            ELSE
+                m.ThemeEditorFocus = THEME_FOCUS_PROPS
+            ENDIF
+
+        ' Space - toggle checkboxes (only when in props focus)
+        ELSEIF key = " " THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.Project.UseTheme = NOT m.Project.UseTheme
+            ELSEIF m.ThemeEditorFocus = THEME_FOCUS_BUTTONS THEN
+                ' Activate button with space
+                m = ThemeEditorActivateButton(m)
+            ENDIF
+
+        ' E key - toggle 256-color mode
+        ELSEIF key = "e" OR key = "E" THEN
+            m.ThemeEditingTheme.Use256Colors = NOT m.ThemeEditingTheme.Use256Colors
+            m.ThemeEditingTheme.Name = "Custom"
+
+        ' Arrow keys - depends on focus area
+        ELSEIF key = "up" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                IF m.ThemeEditorPropIdx > 0 THEN
+                    m.ThemeEditorPropIdx = m.ThemeEditorPropIdx - 1
+                    IF m.ThemeEditorPropIdx < m.ThemeEditorScroll THEN
+                        m.ThemeEditorScroll = m.ThemeEditorPropIdx
+                    ENDIF
+                ENDIF
+            ENDIF
+
+        ELSEIF key = "down" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                IF m.ThemeEditorPropIdx < propCount - 1 THEN
+                    m.ThemeEditorPropIdx = m.ThemeEditorPropIdx + 1
+                    IF m.ThemeEditorPropIdx >= m.ThemeEditorScroll + viewHeight THEN
+                        m.ThemeEditorScroll = m.ThemeEditorPropIdx - viewHeight + 1
+                    ENDIF
+                ENDIF
+            ENDIF
+
+        ELSEIF key = "left" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditorColIdx = 0
+            ELSEIF m.ThemeEditorFocus = THEME_FOCUS_BUTTONS THEN
+                IF m.ThemeEditorIndex > 0 THEN
+                    m.ThemeEditorIndex = m.ThemeEditorIndex - 1
+                ENDIF
+            ENDIF
+
+        ELSEIF key = "right" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditorColIdx = 1
+            ELSEIF m.ThemeEditorFocus = THEME_FOCUS_BUTTONS THEN
+                IF m.ThemeEditorIndex < 2 THEN
+                    m.ThemeEditorIndex = m.ThemeEditorIndex + 1
+                ENDIF
+            ENDIF
+
+        ' Page Up/Down - only for props
+        ELSEIF key = "pgup" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditorPropIdx = m.ThemeEditorPropIdx - viewHeight
+                IF m.ThemeEditorPropIdx < 0 THEN
+                    m.ThemeEditorPropIdx = 0
+                ENDIF
+                m.ThemeEditorScroll = m.ThemeEditorPropIdx
+            ENDIF
+
+        ELSEIF key = "pgdown" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditorPropIdx = m.ThemeEditorPropIdx + viewHeight
+                IF m.ThemeEditorPropIdx > propCount - 1 THEN
+                    m.ThemeEditorPropIdx = propCount - 1
+                ENDIF
+                IF m.ThemeEditorPropIdx >= m.ThemeEditorScroll + viewHeight THEN
+                    m.ThemeEditorScroll = m.ThemeEditorPropIdx - viewHeight + 1
+                ENDIF
+            ENDIF
+
+        ELSEIF key = "home" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditorPropIdx = 0
+                m.ThemeEditorScroll = 0
+            ENDIF
+
+        ELSEIF key = "end" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditorPropIdx = propCount - 1
+                m.ThemeEditorScroll = propCount - viewHeight
+                IF m.ThemeEditorScroll < 0 THEN
+                    m.ThemeEditorScroll = 0
+                ENDIF
+            ENDIF
+
+        ' +/- for 16-color mode adjustment
+        ELSEIF (key = "+" OR key = "=") AND NOT use256 THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditingTheme = AdjustThemeColor(m.ThemeEditingTheme, m.ThemeEditorPropIdx, m.ThemeEditorColIdx, 1)
+                m.ThemeEditingTheme.Name = "Custom"
+            ENDIF
+
+        ELSEIF (key = "-" OR key = "_") AND NOT use256 THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                m.ThemeEditingTheme = AdjustThemeColor(m.ThemeEditingTheme, m.ThemeEditorPropIdx, m.ThemeEditorColIdx, -1)
+                m.ThemeEditingTheme.Name = "Custom"
+            ENDIF
+
+        ' Enter - open 256-color picker popup or activate button
+        ELSEIF key = "enter" THEN
+            IF m.ThemeEditorFocus = THEME_FOCUS_PROPS THEN
+                IF use256 THEN
+                    ' Open 256-color picker popup - initialize with current color
+                    DIM foreColor AS INTEGER
+                    DIM backColor AS INTEGER
+                    foreColor, backColor = GetThemePropColors(m.ThemeEditingTheme, m.ThemeEditorPropIdx)
+                    DIM currentColor AS INTEGER
+                    IF m.ThemeEditorColIdx = 0 THEN
+                        currentColor = foreColor
+                    ELSE
+                        currentColor = backColor
+                    ENDIF
+                    m.ThemeColorPickerY = currentColor / 16
+                    m.ThemeColorPickerX = currentColor MOD 16
+                    m.ThemeEditorIndex = 0  ' Reset to OK button
+                    m.DialogMode = DIALOG_COLOR_PICKER_256
+                ENDIF
+            ELSEIF m.ThemeEditorFocus = THEME_FOCUS_BUTTONS THEN
+                m = ThemeEditorActivateButton(m)
+            ENDIF
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' 256-Color Picker popup dialog
+    IF m.DialogMode = DIALOG_COLOR_PICKER_256 THEN
+        ' Escape - cancel and return to theme editor
+        IF key = "esc" THEN
+            m.DialogMode = DIALOG_THEME_EDITOR
+            RETURN m, NIL
+        ENDIF
+
+        ' Arrow keys - navigate color grid
+        IF key = "up" THEN
+            IF m.ThemeColorPickerY > 0 THEN
+                m.ThemeColorPickerY = m.ThemeColorPickerY - 1
+            ENDIF
+        ELSEIF key = "down" THEN
+            IF m.ThemeColorPickerY < 15 THEN
+                m.ThemeColorPickerY = m.ThemeColorPickerY + 1
+            ENDIF
+        ELSEIF key = "left" THEN
+            IF m.ThemeColorPickerX > 0 THEN
+                m.ThemeColorPickerX = m.ThemeColorPickerX - 1
+            ENDIF
+        ELSEIF key = "right" THEN
+            IF m.ThemeColorPickerX < 15 THEN
+                m.ThemeColorPickerX = m.ThemeColorPickerX + 1
+            ENDIF
+        ELSEIF key = "home" THEN
+            m.ThemeColorPickerX = 0
+            m.ThemeColorPickerY = 0
+        ELSEIF key = "end" THEN
+            m.ThemeColorPickerX = 15
+            m.ThemeColorPickerY = 15
+
+        ' Tab - switch between OK and Cancel buttons
+        ELSEIF key = "tab" OR key = "shift+tab" THEN
+            IF m.ThemeEditorIndex = 0 THEN
+                m.ThemeEditorIndex = 1
+            ELSE
+                m.ThemeEditorIndex = 0
+            ENDIF
+
+        ' Enter or Space - apply selected color or cancel
+        ELSEIF key = "enter" OR key = " " THEN
+            IF m.ThemeEditorIndex = 0 THEN
+                ' OK - apply selected color
+                DIM selectedColor AS INTEGER = m.ThemeColorPickerY * 16 + m.ThemeColorPickerX
+                m.ThemeEditingTheme = SetThemeColor(m.ThemeEditingTheme, m.ThemeEditorPropIdx, m.ThemeEditorColIdx, selectedColor)
+                m.ThemeEditingTheme.Name = "Custom"
+            ENDIF
+            ' Return to theme editor (whether OK or Cancel)
+            m.DialogMode = DIALOG_THEME_EDITOR
+            m.ThemeEditorFocus = THEME_FOCUS_PROPS
         ENDIF
         RETURN m, NIL
     ENDIF
@@ -157,6 +451,10 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
             m.Message = "New module: " & m.DialogInput
             m.DialogMode = DIALOG_NONE
         ELSEIF m.DialogMode = DIALOG_SAVE_PROJECT THEN
+            ' Sync code editor content before saving
+            IF m.CodeEditorInited AND m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                m.Project.Forms[m.CurrentFormIdx].Code = GetEditorCode(m.CodeEditor)
+            ENDIF
             SaveProject(@m.Project, m.DialogInput)
             m.Message = "Project saved: " & m.DialogInput
             m.DialogMode = DIALOG_NONE
@@ -178,8 +476,39 @@ FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.
                 m.Message = "Failed to load project"
             ENDIF
             m.DialogMode = DIALOG_NONE
+        ELSEIF m.DialogMode = DIALOG_SAVE_AS THEN
+            ' Sync code editor content before saving
+            IF m.CodeEditorInited AND m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                m.Project.Forms[m.CurrentFormIdx].Code = GetEditorCode(m.CodeEditor)
+            ENDIF
+            DIM savePath AS STRING = m.DialogInput
+            IF m.SaveAsWidget THEN
+                ' Save to plugins/widgets/ directory
+                savePath = "plugins/widgets/" & m.DialogInput
+                SaveProjectAsWidget(@m.Project, savePath)
+                m.Message = "Widget saved: " & savePath
+            ELSE
+                ' Regular save
+                SaveProject(@m.Project, savePath)
+                m.Message = "Project saved: " & savePath
+            ENDIF
+            m.DialogMode = DIALOG_NONE
         ENDIF
         RETURN m, NIL
+    ENDIF
+
+    ' Save As dialog: Tab toggles checkbox, Space toggles if on checkbox
+    IF m.DialogMode = DIALOG_SAVE_AS THEN
+        IF key = "tab" THEN
+            m.DialogField = 1 - m.DialogField  ' Toggle between 0 (filename) and 1 (checkbox)
+            RETURN m, NIL
+        ELSEIF key = " " AND m.DialogField = 1 THEN
+            m.SaveAsWidget = NOT m.SaveAsWidget
+            RETURN m, NIL
+        ELSEIF m.DialogField = 1 THEN
+            ' When checkbox has focus, only allow tab and space
+            RETURN m, NIL
+        ENDIF
     ENDIF
 
     ' Handle text editing keys
@@ -367,7 +696,7 @@ END FUNCTION
 
 FUNCTION GetMenuItemCount(menu AS INTEGER) AS INTEGER
     IF menu = MENU_FILE THEN
-        RETURN 8
+        RETURN 9
     ELSEIF menu = MENU_EDIT THEN
         RETURN 8
     ELSEIF menu = MENU_VIEW THEN
@@ -377,7 +706,7 @@ FUNCTION GetMenuItemCount(menu AS INTEGER) AS INTEGER
     ELSEIF menu = MENU_DEBUG THEN
         RETURN 5
     ELSEIF menu = MENU_OPTIONS THEN
-        RETURN 4
+        RETURN 5
     ELSEIF menu = MENU_HELP THEN
         RETURN 2
     ENDIF
@@ -401,6 +730,10 @@ FUNCTION ExecuteMenuItem(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
             m.DialogCursor = 0
         ELSEIF m.MenuIndex = 2 THEN
             ' Save Project
+            ' First sync code editor content to form if in code view
+            IF m.CodeEditorInited AND m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                m.Project.Forms[m.CurrentFormIdx].Code = GetEditorCode(m.CodeEditor)
+            ENDIF
             IF Len(m.Project.Path) = 0 THEN
                 m.DialogMode = DIALOG_SAVE_PROJECT
                 m.DialogInput = m.Project.Name & ".vdb"
@@ -409,17 +742,24 @@ FUNCTION ExecuteMenuItem(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
                 SaveProject(@m.Project, m.Project.Path)
                 m.Message = "Project saved"
             ENDIF
-        ELSEIF m.MenuIndex = 4 THEN
+        ELSEIF m.MenuIndex = 3 THEN
+            ' Save As
+            m.DialogMode = DIALOG_SAVE_AS
+            m.DialogInput = m.Project.Name & ".vdbp"
+            m.DialogCursor = Len(m.DialogInput)
+            m.SaveAsWidget = FALSE
+            m.DialogField = 0
+        ELSEIF m.MenuIndex = 5 THEN
             ' New Form
             m.DialogMode = DIALOG_NEW_FORM
             m.DialogInput = "Form" & Str(Len(m.Project.Forms) + 1)
             m.DialogCursor = Len(m.DialogInput)
-        ELSEIF m.MenuIndex = 5 THEN
+        ELSEIF m.MenuIndex = 6 THEN
             ' New Module
             m.DialogMode = DIALOG_NEW_MODULE
             m.DialogInput = "Module" & Str(Len(m.Project.Modules) + 1)
             m.DialogCursor = Len(m.DialogInput)
-        ELSEIF m.MenuIndex = 7 THEN
+        ELSEIF m.MenuIndex = 8 THEN
             ' Exit
             IF m.Project.Modified THEN
                 m.DialogMode = DIALOG_CONFIRM_EXIT
@@ -456,7 +796,15 @@ FUNCTION ExecuteMenuItem(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
             m.DialogMode = DIALOG_ENVIRONMENT
         ELSEIF m.MenuIndex = 1 THEN
             m.DialogMode = DIALOG_EDITOR
-        ELSEIF m.MenuIndex = 3 THEN
+        ELSEIF m.MenuIndex = 2 THEN
+            ' Initialize theme editor
+            m.DialogMode = DIALOG_THEME_EDITOR
+            m.ThemeEditorIndex = 0
+            m.ThemeEditorPropIdx = 0
+            m.ThemeEditorScroll = 0
+            m.ThemeEditorColIdx = 0
+            m.ThemeEditingTheme = m.Project.Theme
+        ELSEIF m.MenuIndex = 4 THEN
             m.DialogMode = DIALOG_COLORS
         ENDIF
     ELSEIF currentMenu = MENU_HELP THEN
@@ -496,12 +844,22 @@ FUNCTION HandleWidgetsInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea
     ELSEIF key = "enter" OR key = " " THEN
         ' Add visible control to form
         IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
-            ' Visible widgets are types 1-10 (CTRL_BUTTON to CTRL_VSCROLL)
-            DIM ctlType AS INTEGER = m.WidgetsIndex + 1
+            ' Map widget index to control type (handles all visible widgets including DirBrowser)
+            DIM ctlType AS INTEGER = WidgetIndexToCtrlType(m.WidgetsIndex)
             DIM ctlName AS STRING = GetControlTypeName(ctlType) & Str(m.Project.Forms[m.CurrentFormIdx].NextCtrlID)
             DIM ctrl AS VDBControl = NewControl(ctlType, ctlName, 5, 5)
             ctrl.ID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
             ctrl.ZOrder = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
+
+            ' Apply theme colors if UseTheme is enabled
+            IF m.Project.UseTheme THEN
+                DIM foreColor AS INTEGER
+                DIM backColor AS INTEGER
+                foreColor, backColor = GetThemeColorsForControl(m.Project.Theme, ctlType)
+                ctrl.ForeColor = foreColor
+                ctrl.BackColor = backColor
+            ENDIF
+
             m.Project.Forms[m.CurrentFormIdx].NextCtrlID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID + 1
             m.Project.Forms[m.CurrentFormIdx].Controls = APPEND(m.Project.Forms[m.CurrentFormIdx].Controls, ctrl)
             m.SelectedCtrlIdx = Len(m.Project.Forms[m.CurrentFormIdx].Controls) - 1
@@ -547,6 +905,16 @@ FUNCTION HandleToolboxInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea
             ctrl.ZOrder = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
             ctrl.Width = 3
             ctrl.Height = 1
+
+            ' Apply theme colors if UseTheme is enabled
+            IF m.Project.UseTheme THEN
+                DIM foreColor AS INTEGER
+                DIM backColor AS INTEGER
+                foreColor, backColor = GetThemeColorsForControl(m.Project.Theme, ctlType)
+                ctrl.ForeColor = foreColor
+                ctrl.BackColor = backColor
+            ENDIF
+
             m.Project.Forms[m.CurrentFormIdx].NextCtrlID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID + 1
             m.Project.Forms[m.CurrentFormIdx].Controls = APPEND(m.Project.Forms[m.CurrentFormIdx].Controls, ctrl)
             m.SelectedCtrlIdx = Len(m.Project.Forms[m.CurrentFormIdx].Controls) - 1
@@ -734,14 +1102,15 @@ FUNCTION HandleCodeInputMsg(m AS VDBTermModel, msg AS tea.Msg) AS (tea.Model, te
         RETURN m, NIL
     ENDIF
 
-    ' Check for Tab key - insert spaces manually since textarea doesn't handle it
-    DIM tabKeyMsg AS tea.KeyMsg
-    DIM tabKeyOk AS BOOLEAN
-    tabKeyMsg, tabKeyOk = msg.(tea.KeyMsg)
-    IF tabKeyOk THEN
-        DIM tabKey AS STRING = tabKeyMsg.String()
-        IF tabKey = "tab" THEN
-            ' Insert spaces based on TabSize setting
+    ' Check for special keys before passing to textarea
+    DIM specialKeyMsg AS tea.KeyMsg
+    DIM specialKeyOk AS BOOLEAN
+    specialKeyMsg, specialKeyOk = msg.(tea.KeyMsg)
+    IF specialKeyOk THEN
+        DIM specialKey AS STRING = specialKeyMsg.String()
+
+        ' Tab - insert spaces manually since textarea doesn't handle it
+        IF specialKey = "tab" THEN
             DIM spaces AS STRING = RepeatStr(" ", m.TabSize)
             m.CodeEditor.InsertString(spaces)
             ' Sync to form
@@ -750,6 +1119,26 @@ FUNCTION HandleCodeInputMsg(m AS VDBTermModel, msg AS tea.Msg) AS (tea.Model, te
             ' Update cursor position
             m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
             m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+C - copy current line to clipboard
+        IF specialKey = "ctrl+c" THEN
+            DIM allCode AS STRING = GetEditorCode(m.CodeEditor)
+            DIM codeLines AS []STRING = SplitStr(allCode, Chr(10))
+            DIM currentLine AS INTEGER = GetEditorCursorLine(m.CodeEditor)
+            IF currentLine >= 0 AND currentLine < Len(codeLines) THEN
+                CopyToClipboard(codeLines[currentLine])
+                m.Message = "Line copied to clipboard"
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+Shift+C - copy all code to clipboard
+        IF specialKey = "ctrl+shift+c" THEN
+            DIM allCodeToCopy AS STRING = GetEditorCode(m.CodeEditor)
+            CopyToClipboard(allCodeToCopy)
+            m.Message = "All code copied to clipboard"
             RETURN m, NIL
         ENDIF
     ENDIF
@@ -923,16 +1312,23 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
         ELSEIF adjIdx = 9 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ZOrder = ParseIntStr(val)
         ELSEIF adjIdx = 10 THEN
-            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].TabIndex = ParseIntStr(val)
+            DIM newTabIndex AS INTEGER = ParseIntStr(val)
+            IF IsTabIndexUsed(m.Project.Forms[m.CurrentFormIdx], newTabIndex, m.SelectedCtrlIdx) THEN
+                m.ErrorMsg = "TabIndex " & Str(newTabIndex) & " is already used by another control"
+            ELSE
+                m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].TabIndex = newTabIndex
+            ENDIF
         ELSEIF adjIdx = 11 THEN
-            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ForeColor = ParseIntStr(val)
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].TabStop = (val = "True" OR val = "true" OR val = "1")
         ELSEIF adjIdx = 12 THEN
+            m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ForeColor = ParseIntStr(val)
+        ELSEIF adjIdx = 13 THEN
             m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].BackColor = ParseIntStr(val)
         ELSE
             ' Type-specific properties
-            DIM typeStartIdx AS INTEGER = 13
+            DIM typeStartIdx AS INTEGER = 14
             IF NOT hasCaption THEN
-                typeStartIdx = 12
+                typeStartIdx = 13
             ENDIF
             DIM typeIdx AS INTEGER = m.PropIndex - typeStartIdx
             IF ctlType = CTRL_TEXTBOX THEN
@@ -1039,6 +1435,42 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
                 ELSEIF typeIdx = 2 THEN
                     m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowHeaders = (val = "True" OR val = "true" OR val = "1")
                 ENDIF
+            ELSEIF ctlType = CTRL_DIRBROWSER THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].FilePath = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowHidden = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
+            ELSEIF ctlType = CTRL_PATH THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].FilePath = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].LinkedControl = val
+                ENDIF
+            ELSEIF ctlType = CTRL_DIRECTORIES THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].FilePath = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowHidden = (val = "True" OR val = "true" OR val = "1")
+                ELSEIF typeIdx = 2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].LinkedControl = val
+                ENDIF
+            ELSEIF ctlType = CTRL_FILES THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].FilePath = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowHidden = (val = "True" OR val = "true" OR val = "1")
+                ELSEIF typeIdx = 2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Pattern = val
+                ELSEIF typeIdx = 3 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].LinkedControl = val
+                ENDIF
+            ELSEIF ctlType = CTRL_CURL THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].URL = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].HttpMethod = val
+                ENDIF
             ENDIF
         ENDIF
         m.Project.Modified = TRUE
@@ -1055,6 +1487,10 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
             m.Project.Forms[m.CurrentFormIdx].Width = ParseIntStr(val)
         ELSEIF m.PropIndex = 5 THEN
             m.Project.Forms[m.CurrentFormIdx].Height = ParseIntStr(val)
+        ELSEIF m.PropIndex = 6 THEN
+            m.Project.Forms[m.CurrentFormIdx].ForeColor = ParseIntStr(val)
+        ELSEIF m.PropIndex = 7 THEN
+            m.Project.Forms[m.CurrentFormIdx].BackColor = ParseIntStr(val)
         ENDIF
         m.Project.Modified = TRUE
     ENDIF
@@ -1577,6 +2013,7 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
                 DIM newCtrl AS VDBControl = NewControl(ctlType, ctlName, m.DragOutlineX, m.DragOutlineY)
                 newCtrl.ID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
                 newCtrl.ZOrder = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
+                newCtrl.TabIndex = GetNextTabIndex(m.Project.Forms[m.CurrentFormIdx])
                 m.Project.Forms[m.CurrentFormIdx].NextCtrlID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID + 1
                 m.Project.Forms[m.CurrentFormIdx].Controls = APPEND(m.Project.Forms[m.CurrentFormIdx].Controls, newCtrl)
                 m.SelectedCtrlIdx = Len(m.Project.Forms[m.CurrentFormIdx].Controls) - 1
@@ -1693,8 +2130,10 @@ FUNCTION HandleWidgetsClick(m AS VDBTermModel, y AS INTEGER, startDrag AS BOOLEA
     m.FocusArea = FOCUS_WIDGETS
 
     ' Row 0 is the title (handled in HandleMouseInput for dragging), items start at row 1
-    DIM itemIdx AS INTEGER = y - 1
-    IF itemIdx >= 0 AND itemIdx < VISIBLE_WIDGET_COUNT THEN
+    ' Account for scroll offset to get the actual widget index
+    DIM visibleRow AS INTEGER = y - 1
+    DIM itemIdx AS INTEGER = visibleRow + m.WidgetsScroll
+    IF visibleRow >= 0 AND itemIdx < VISIBLE_WIDGET_COUNT THEN
         m.WidgetsIndex = itemIdx
 
         ' Start drag operation if requested
@@ -1719,8 +2158,10 @@ FUNCTION HandleToolboxClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.
     m.FocusArea = FOCUS_TOOLBOX
 
     ' Row 0 is the title (handled in HandleMouseInput for dragging), items start at row 1
-    DIM itemIdx AS INTEGER = y - 1
-    IF itemIdx >= 0 AND itemIdx < NONVISIBLE_WIDGET_COUNT THEN
+    ' Account for scroll offset to get the actual tool index
+    DIM visibleRow AS INTEGER = y - 1
+    DIM itemIdx AS INTEGER = visibleRow + m.ToolboxScroll
+    IF visibleRow >= 0 AND itemIdx < NONVISIBLE_WIDGET_COUNT THEN
         m.ToolboxIndex = itemIdx
     ENDIF
 
@@ -2031,11 +2472,25 @@ FUNCTION HandlePropertiesClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, t
         m.PropLastClickTime = now
         m.PropLastClickIdx = newPropIndex
 
-        ' Handle double-click on boolean or enumerable property
-        IF isDoubleClick AND m.SelectedCtrlIdx >= 0 THEN
-            ' Check if we have a valid control selected
+        ' Handle double-click on boolean, enumerable, or color property
+        IF isDoubleClick THEN
             IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
-                IF m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+                ' Check for Form color properties first (SelectedCtrlIdx = -1)
+                IF m.SelectedCtrlIdx = -1 THEN
+                    ' Form properties: Name(0), Caption(1), X(2), Y(3), W(4), H(5), ForeColor(6), BackColor(7)
+                    IF newPropIndex = 6 OR newPropIndex = 7 THEN
+                        DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
+                        m.PopupMode = POPUP_COLOR_PICKER
+                        m.ColorPickerFocus = newPropIndex - 6  ' 0=ForeColor, 1=BackColor
+                        m.ColorPickerFore = form.ForeColor
+                        m.ColorPickerBack = form.BackColor
+                        m.PopupX = (m.Width - 22) / 2
+                        m.PopupY = (m.Height - 12) / 2
+                        m.PropLastClickIdx = -1
+                        RETURN m, NIL
+                    ENDIF
+                ELSEIF m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+                    ' Control properties
                     DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx]
                     ' If it's a boolean property, toggle it
                     IF IsPropertyBoolean(ctrl, newPropIndex) THEN
@@ -2050,6 +2505,19 @@ FUNCTION HandlePropertiesClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, t
                         m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx] = CycleEnumerableProperty(ctrl, newPropIndex)
                         m.Project.Modified = TRUE
                         ' Reset click tracking to prevent triple-click cycle
+                        m.PropLastClickIdx = -1
+                        RETURN m, NIL
+                    ENDIF
+                    ' If it's a color property, open color picker
+                    DIM colorType AS INTEGER = IsPropertyColor(ctrl, newPropIndex)
+                    IF colorType > 0 THEN
+                        m.PopupMode = POPUP_COLOR_PICKER
+                        m.ColorPickerFocus = colorType - 1  ' 0=ForeColor, 1=BackColor
+                        m.ColorPickerFore = ctrl.ForeColor
+                        m.ColorPickerBack = ctrl.BackColor
+                        ' Position popup near center of screen
+                        m.PopupX = (m.Width - 22) / 2
+                        m.PopupY = (m.Height - 12) / 2
                         m.PropLastClickIdx = -1
                         RETURN m, NIL
                     ENDIF
@@ -2238,7 +2706,12 @@ END FUNCTION
 FUNCTION HandlePopupClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, contentHeight AS INTEGER) AS (tea.Model, tea.Cmd)
     ' Calculate popup position and size
     DIM popupWidth AS INTEGER = GetPopupWidth(m)
-    DIM popupHeight AS INTEGER = Len(m.PopupEvents) + 4  ' +4 for title bar and borders
+    DIM popupHeight AS INTEGER
+    IF m.PopupMode = POPUP_COLOR_PICKER THEN
+        popupHeight = 11  ' Top + title + sep + 2 ForeColor rows + sep + 2 BackColor rows + sep + help + bottom
+    ELSE
+        popupHeight = Len(m.PopupEvents) + 4  ' +4 for title bar and borders
+    ENDIF
 
     DIM popupStartRow AS INTEGER = m.PopupY
     DIM popupStartCol AS INTEGER = m.PopupX
@@ -2267,6 +2740,10 @@ FUNCTION HandlePopupClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, content
         RETURN m, NIL
     ENDIF
 
+    IF m.PopupMode = POPUP_COLOR_PICKER THEN
+        RETURN HandleColorPickerClick(m, relX, relY)
+    ENDIF
+
     ' Check if clicking on an event item (rows 3+ are event items, 0-indexed: row 3 = first event)
     DIM eventRow AS INTEGER = relY - 3
     IF eventRow >= 0 AND eventRow < Len(m.PopupEvents) THEN
@@ -2278,7 +2755,46 @@ FUNCTION HandlePopupClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, content
     RETURN m, NIL
 END FUNCTION
 
+FUNCTION HandleColorPickerClick(m AS VDBTermModel, relX AS INTEGER, relY AS INTEGER) AS (tea.Model, tea.Cmd)
+    ' relY: 0=top border, 1=title, 2=separator, 3=ForeColor row 1, 4=ForeColor row 2
+    '       5=separator, 6=BackColor row 1, 7=BackColor row 2, 8=separator, 9=help, 10=bottom border
+
+    ' Color blocks start at column 13 (after "│" + "►ForeColor: " = 1 + 12)
+    ' Each color block is 1 char wide
+
+    IF relY = 3 OR relY = 4 THEN
+        ' ForeColor rows
+        m.ColorPickerFocus = 0
+        IF relX >= 13 AND relX < 21 THEN
+            ' Colors 0-7 or 8-15, each color is 1 cell
+            DIM colorIdx AS INTEGER = relX - 13
+            IF relY = 3 THEN
+                m.ColorPickerFore = colorIdx
+            ELSE
+                m.ColorPickerFore = colorIdx + 8
+            ENDIF
+        ENDIF
+    ELSEIF relY = 6 OR relY = 7 THEN
+        ' BackColor rows
+        m.ColorPickerFocus = 1
+        IF relX >= 13 AND relX < 21 THEN
+            DIM bColorIdx AS INTEGER = relX - 13
+            IF relY = 6 THEN
+                m.ColorPickerBack = bColorIdx
+            ELSE
+                m.ColorPickerBack = bColorIdx + 8
+            ENDIF
+        ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
 FUNCTION HandlePopupInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF m.PopupMode = POPUP_COLOR_PICKER THEN
+        RETURN HandleColorPickerInput(m, key)
+    ENDIF
+
     IF key = "esc" THEN
         m.PopupMode = POPUP_NONE
         RETURN m, NIL
@@ -2298,6 +2814,90 @@ FUNCTION HandlePopupInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.C
         ENDIF
         m.PopupMode = POPUP_NONE
     ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleColorPickerInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    IF key = "esc" THEN
+        m.PopupMode = POPUP_NONE
+        RETURN m, NIL
+    ELSEIF key = "tab" THEN
+        ' Switch between ForeColor and BackColor
+        IF m.ColorPickerFocus = 0 THEN
+            m.ColorPickerFocus = 1
+        ELSE
+            m.ColorPickerFocus = 0
+        ENDIF
+    ELSEIF key = "left" THEN
+        IF m.ColorPickerFocus = 0 THEN
+            IF m.ColorPickerFore > 0 THEN
+                m.ColorPickerFore = m.ColorPickerFore - 1
+            ENDIF
+        ELSE
+            IF m.ColorPickerBack > 0 THEN
+                m.ColorPickerBack = m.ColorPickerBack - 1
+            ENDIF
+        ENDIF
+    ELSEIF key = "right" THEN
+        IF m.ColorPickerFocus = 0 THEN
+            IF m.ColorPickerFore < 15 THEN
+                m.ColorPickerFore = m.ColorPickerFore + 1
+            ENDIF
+        ELSE
+            IF m.ColorPickerBack < 15 THEN
+                m.ColorPickerBack = m.ColorPickerBack + 1
+            ENDIF
+        ENDIF
+    ELSEIF key = "up" THEN
+        ' Move up one row (subtract 8)
+        IF m.ColorPickerFocus = 0 THEN
+            IF m.ColorPickerFore >= 8 THEN
+                m.ColorPickerFore = m.ColorPickerFore - 8
+            ENDIF
+        ELSE
+            IF m.ColorPickerBack >= 8 THEN
+                m.ColorPickerBack = m.ColorPickerBack - 8
+            ENDIF
+        ENDIF
+    ELSEIF key = "down" THEN
+        ' Move down one row (add 8)
+        IF m.ColorPickerFocus = 0 THEN
+            IF m.ColorPickerFore < 8 THEN
+                m.ColorPickerFore = m.ColorPickerFore + 8
+            ENDIF
+        ELSE
+            IF m.ColorPickerBack < 8 THEN
+                m.ColorPickerBack = m.ColorPickerBack + 8
+            ENDIF
+        ENDIF
+    ELSEIF key = "enter" THEN
+        ' Apply the selected colors and close
+        RETURN ApplyColorPickerSelection(m)
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION ApplyColorPickerSelection(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
+    IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
+        m.PopupMode = POPUP_NONE
+        RETURN m, NIL
+    ENDIF
+
+    IF m.SelectedCtrlIdx = -1 THEN
+        ' Form colors
+        m.Project.Forms[m.CurrentFormIdx].ForeColor = m.ColorPickerFore
+        m.Project.Forms[m.CurrentFormIdx].BackColor = m.ColorPickerBack
+    ELSEIF m.SelectedCtrlIdx >= 0 AND m.SelectedCtrlIdx < Len(m.Project.Forms[m.CurrentFormIdx].Controls) THEN
+        ' Control colors
+        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ForeColor = m.ColorPickerFore
+        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].BackColor = m.ColorPickerBack
+    ENDIF
+
+    m.Project.Modified = TRUE
+    m.PopupMode = POPUP_NONE
+    m.Message = "Colors applied"
 
     RETURN m, NIL
 END FUNCTION
@@ -2376,7 +2976,7 @@ FUNCTION HandleDialogClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, conten
     DIM dialogHeight AS INTEGER
     dialogWidth, dialogHeight = GetDialogSize(m)
 
-    DIM dialogStartRow AS INTEGER = (contentHeight - dialogHeight) / 2 + 1  ' +1 for menu bar
+    DIM dialogStartRow AS INTEGER = (contentHeight - dialogHeight) / 2
     DIM dialogStartCol AS INTEGER = (m.Width - dialogWidth) / 2
 
     IF dialogStartRow < 1 THEN
@@ -2387,8 +2987,10 @@ FUNCTION HandleDialogClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, conten
     ENDIF
 
     ' Check if click is inside dialog
+    ' y is screen coordinate (menu bar at row 0), dialogStartRow is relative to content area
+    ' So we subtract 1 from y to convert to content coordinate
     DIM relX AS INTEGER = x - dialogStartCol
-    DIM relY AS INTEGER = y - dialogStartRow
+    DIM relY AS INTEGER = (y - 1) - dialogStartRow
 
     IF relX < 0 OR relX >= dialogWidth OR relY < 0 OR relY >= dialogHeight THEN
         ' Click outside dialog - close it for simple dialogs
@@ -2436,6 +3038,27 @@ FUNCTION HandleDialogClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, conten
         RETURN m, NIL
     ENDIF
 
+    ' Save As dialog with checkbox
+    IF m.DialogMode = DIALOG_SAVE_AS THEN
+        ' Row 4: Checkbox row "[X] Save as Widget..."
+        ' Row 6: Buttons "< OK >         < Cancel >"
+        IF relY = 4 THEN
+            ' Checkbox click - toggle SaveAsWidget
+            IF relX >= 3 AND relX < 40 THEN
+                m.SaveAsWidget = NOT m.SaveAsWidget
+            ENDIF
+        ELSEIF relY = 6 THEN
+            IF relX >= 3 AND relX < 11 THEN
+                ' OK button clicked
+                RETURN HandleDialogInput(m, "enter")
+            ELSEIF relX >= 18 AND relX < 30 THEN
+                ' Cancel button clicked
+                m.DialogMode = DIALOG_NONE
+            ENDIF
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
     ' For options dialogs
     IF m.DialogMode = DIALOG_ENVIRONMENT OR m.DialogMode = DIALOG_EDITOR OR m.DialogMode = DIALOG_COLORS THEN
         ' Check for OK/Cancel button clicks on the last content row
@@ -2449,6 +3072,169 @@ FUNCTION HandleDialogClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER, conten
                 m.DialogMode = DIALOG_NONE
             ENDIF
         ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Theme Editor dialog
+    IF m.DialogMode = DIALOG_THEME_EDITOR THEN
+        DIM use256 AS BOOLEAN = m.ThemeEditingTheme.Use256Colors
+
+        ' Dialog layout:
+        ' Row 1: empty
+        ' Row 2: Theme selector
+        ' Row 3: empty
+        ' Row 4: UseTheme checkbox
+        ' Row 5: Use256Colors checkbox
+        ' Row 6: empty
+        ' Row 7: Column headers
+        ' Row 8: Separator
+        ' Row 9-16: Property list (8 rows)
+        ' Row 17: Scroll info
+        ' Row 18: empty
+        ' Row 19: Help text line 1
+        ' Row 20: Help text line 2
+        ' Row 21: empty
+        ' Row 22: Buttons (row 20 in content, +2 for border)
+
+        ' UseTheme checkbox (row 4, col 2-4 for checkbox)
+        IF relY = 4 AND relX >= 2 AND relX < 35 THEN
+            m.Project.UseTheme = NOT m.Project.UseTheme
+            RETURN m, NIL
+        ENDIF
+
+        ' Use256Colors checkbox (row 5, col 2-4 for checkbox)
+        IF relY = 5 AND relX >= 2 AND relX < 30 THEN
+            m.ThemeEditingTheme.Use256Colors = NOT m.ThemeEditingTheme.Use256Colors
+            m.ThemeEditingTheme.Name = "Custom"
+            RETURN m, NIL
+        ENDIF
+
+        ' Property list (rows 9-16)
+        IF relY >= 9 AND relY < 17 THEN
+            DIM propRow AS INTEGER = relY - 9
+            DIM clickedPropIdx AS INTEGER = m.ThemeEditorScroll + propRow
+            IF clickedPropIdx < 21 THEN
+                m.ThemeEditorPropIdx = clickedPropIdx
+                m.ThemeEditorFocus = THEME_FOCUS_PROPS
+
+                ' Check if clicking on Fore or Back column
+                ' Property starts at col 4, Fore at col 22, Back at col 28
+                IF relX >= 22 AND relX < 28 THEN
+                    ' Clicked on Fore column
+                    m.ThemeEditorColIdx = 0
+                    IF use256 THEN
+                        ' Open 256-color picker popup
+                        DIM clickFore AS INTEGER
+                        DIM clickBack AS INTEGER
+                        clickFore, clickBack = GetThemePropColors(m.ThemeEditingTheme, m.ThemeEditorPropIdx)
+                        m.ThemeColorPickerY = clickFore / 16
+                        m.ThemeColorPickerX = clickFore MOD 16
+                        m.ThemeEditorIndex = 0  ' Reset to OK button
+                        m.DialogMode = DIALOG_COLOR_PICKER_256
+                        ' Use clickBack to suppress warning
+                        IF clickBack < 0 THEN
+                            clickBack = 0
+                        ENDIF
+                    ENDIF
+                ELSEIF relX >= 28 AND relX < 34 THEN
+                    ' Clicked on Back column (not for MenuShortcut)
+                    IF clickedPropIdx <> 20 THEN
+                        m.ThemeEditorColIdx = 1
+                        IF use256 THEN
+                            ' Open 256-color picker popup
+                            DIM clickFore2 AS INTEGER
+                            DIM clickBack2 AS INTEGER
+                            clickFore2, clickBack2 = GetThemePropColors(m.ThemeEditingTheme, m.ThemeEditorPropIdx)
+                            m.ThemeColorPickerY = clickBack2 / 16
+                            m.ThemeColorPickerX = clickBack2 MOD 16
+                            m.ThemeEditorIndex = 0  ' Reset to OK button
+                            m.DialogMode = DIALOG_COLOR_PICKER_256
+                            ' Use clickFore2 to suppress warning
+                            IF clickFore2 < 0 THEN
+                                clickFore2 = 0
+                            ENDIF
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        ' Buttons row (content[21], relY = 22)
+        IF relY = 22 THEN
+            m.ThemeEditorFocus = THEME_FOCUS_BUTTONS
+            ' "   [Apply to All]  [ OK ]  [Cancel]"
+            IF relX >= 3 AND relX < 19 THEN
+                m.ThemeEditorIndex = 0
+                m = ThemeEditorActivateButton(m)
+            ELSEIF relX >= 21 AND relX < 29 THEN
+                m.ThemeEditorIndex = 1
+                m = ThemeEditorActivateButton(m)
+            ELSEIF relX >= 31 AND relX < 41 THEN
+                m.ThemeEditorIndex = 2
+                m = ThemeEditorActivateButton(m)
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        RETURN m, NIL
+    ENDIF
+
+    ' 256-Color Picker popup dialog
+    IF m.DialogMode = DIALOG_COLOR_PICKER_256 THEN
+        ' Dialog layout (40 wide, 26 tall):
+        ' Row 1: empty
+        ' Row 2: instructions
+        ' Row 3: empty
+        ' Row 4-19: 16 rows of color grid
+        ' Row 20: empty
+        ' Row 21: selected color info
+        ' Row 22: empty
+        ' Row 23: buttons
+        ' Row 24: empty
+
+        ' Color grid (rows 4-19, cols 2-33 for 16x2=32 chars)
+        IF relY >= 4 AND relY < 20 THEN
+            DIM gridRow AS INTEGER = relY - 4
+            IF relX >= 2 AND relX < 34 THEN
+                DIM gridCol AS INTEGER = (relX - 2) / 2
+                IF gridCol >= 0 AND gridCol < 16 THEN
+                    ' Check if clicking on already-selected color (double-click effect)
+                    IF m.ThemeColorPickerY = gridRow AND m.ThemeColorPickerX = gridCol THEN
+                        ' Apply immediately (same as OK button)
+                        DIM selectedColor AS INTEGER = gridRow * 16 + gridCol
+                        m.ThemeEditingTheme = SetThemeColor(m.ThemeEditingTheme, m.ThemeEditorPropIdx, m.ThemeEditorColIdx, selectedColor)
+                        m.ThemeEditingTheme.Name = "Custom"
+                        m.DialogMode = DIALOG_THEME_EDITOR
+                        m.ThemeEditorFocus = THEME_FOCUS_PROPS
+                    ELSE
+                        ' First click - just select the color
+                        m.ThemeColorPickerY = gridRow
+                        m.ThemeColorPickerX = gridCol
+                    ENDIF
+                ENDIF
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        ' Buttons row (row 23)
+        IF relY = 23 THEN
+            ' "        [ OK ]    [Cancel]"
+            IF relX >= 8 AND relX < 16 THEN
+                ' OK - apply selected color
+                DIM btnSelectedColor AS INTEGER = m.ThemeColorPickerY * 16 + m.ThemeColorPickerX
+                m.ThemeEditingTheme = SetThemeColor(m.ThemeEditingTheme, m.ThemeEditorPropIdx, m.ThemeEditorColIdx, btnSelectedColor)
+                m.ThemeEditingTheme.Name = "Custom"
+                m.DialogMode = DIALOG_THEME_EDITOR
+                m.ThemeEditorFocus = THEME_FOCUS_PROPS
+            ELSEIF relX >= 20 AND relX < 30 THEN
+                ' Cancel - return without applying
+                m.DialogMode = DIALOG_THEME_EDITOR
+                m.ThemeEditorFocus = THEME_FOCUS_PROPS
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
         RETURN m, NIL
     ENDIF
 

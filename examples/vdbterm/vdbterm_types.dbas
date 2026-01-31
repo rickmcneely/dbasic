@@ -30,6 +30,7 @@ TYPE VDBControl
     DIM Enabled AS BOOLEAN
     DIM Visible AS BOOLEAN
     DIM TabIndex AS INTEGER
+    DIM TabStop AS BOOLEAN
     DIM ZOrder AS INTEGER
     DIM Value AS STRING
     DIM ForeColor AS INTEGER
@@ -80,6 +81,24 @@ TYPE VDBControl
     DIM Columns AS STRING        ' Semicolon-separated column headers
     DIM Rows AS STRING           ' Pipe-separated rows, semicolon-separated cells
     DIM ShowHeaders AS BOOLEAN
+
+    ' DirBrowser properties
+    DIM FilePath AS STRING       ' Current directory path
+    DIM ShowHidden AS BOOLEAN    ' Show hidden files/directories
+
+    ' Files widget properties
+    DIM Pattern AS STRING        ' File pattern filter (e.g., "*.txt", "*.go")
+
+    ' Path/Directories linking
+    DIM LinkedControl AS STRING  ' Name of linked control (Path<->Directories)
+
+    ' Curl widget properties
+    DIM URL AS STRING            ' URL for HTTP request
+    DIM HttpMethod AS STRING     ' GET, POST, PUT, DELETE, etc.
+
+    ' Plugin widget properties
+    DIM PluginTypeID AS STRING   ' Plugin ID (e.g., "gauge") for plugin widgets
+    DIM ExtendedProps AS STRING  ' JSON map for plugin-specific properties
 END TYPE
 
 ' Form definition
@@ -90,6 +109,7 @@ TYPE VDBForm
     DIM Y AS INTEGER
     DIM Width AS INTEGER
     DIM Height AS INTEGER
+    DIM ForeColor AS INTEGER
     DIM BackColor AS INTEGER
     DIM Controls AS []VDBControl
     DIM Code AS STRING
@@ -102,6 +122,63 @@ TYPE VDBModule
     DIM Code AS STRING
 END TYPE
 
+' Theme definition for consistent styling across forms and controls
+TYPE VDBTheme
+    DIM Name AS STRING               ' Theme name (e.g., "Dark", "Light", "Classic")
+
+    ' Form defaults
+    DIM FormForeColor AS INTEGER
+    DIM FormBackColor AS INTEGER
+
+    ' Control type defaults (ForeColor/BackColor pairs)
+    DIM ButtonForeColor AS INTEGER
+    DIM ButtonBackColor AS INTEGER
+    DIM LabelForeColor AS INTEGER
+    DIM LabelBackColor AS INTEGER
+    DIM TextBoxForeColor AS INTEGER
+    DIM TextBoxBackColor AS INTEGER
+    DIM CheckBoxForeColor AS INTEGER
+    DIM CheckBoxBackColor AS INTEGER
+    DIM OptionForeColor AS INTEGER
+    DIM OptionBackColor AS INTEGER
+    DIM ListBoxForeColor AS INTEGER
+    DIM ListBoxBackColor AS INTEGER
+    DIM ComboBoxForeColor AS INTEGER
+    DIM ComboBoxBackColor AS INTEGER
+    DIM FrameForeColor AS INTEGER
+    DIM FrameBackColor AS INTEGER
+    DIM TextAreaForeColor AS INTEGER
+    DIM TextAreaBackColor AS INTEGER
+    DIM ProgressForeColor AS INTEGER
+    DIM ProgressBackColor AS INTEGER
+    DIM SpinnerForeColor AS INTEGER
+    DIM SpinnerBackColor AS INTEGER
+    DIM PathForeColor AS INTEGER
+    DIM PathBackColor AS INTEGER
+    DIM DirectoriesForeColor AS INTEGER
+    DIM DirectoriesBackColor AS INTEGER
+    DIM FilesForeColor AS INTEGER
+    DIM FilesBackColor AS INTEGER
+    DIM DirBrowserForeColor AS INTEGER
+    DIM DirBrowserBackColor AS INTEGER
+
+    ' Focus/selection state colors
+    DIM FocusedForeColor AS INTEGER
+    DIM FocusedBackColor AS INTEGER
+    DIM SelectedForeColor AS INTEGER
+    DIM SelectedBackColor AS INTEGER
+
+    ' Menu colors
+    DIM MenuForeColor AS INTEGER
+    DIM MenuBackColor AS INTEGER
+    DIM MenuSelectedForeColor AS INTEGER
+    DIM MenuSelectedBackColor AS INTEGER
+    DIM MenuShortcutForeColor AS INTEGER     ' Shortcut key fore color (back matches menu)
+
+    ' Extended color mode
+    DIM Use256Colors AS BOOLEAN              ' When TRUE, colors range 0-255; when FALSE, 0-15
+END TYPE
+
 ' Project definition
 TYPE VDBProject
     DIM Name AS STRING
@@ -110,6 +187,69 @@ TYPE VDBProject
     DIM Forms AS []VDBForm
     DIM Modules AS []VDBModule
     DIM Modified AS BOOLEAN
+
+    ' Theme settings
+    DIM Theme AS VDBTheme
+    DIM UseTheme AS BOOLEAN          ' When TRUE, new controls use theme colors
+END TYPE
+
+' Plugin type definitions
+' Widget metadata stored in .vdbp file
+TYPE WidgetMeta
+    DIM ID AS STRING            ' Unique widget identifier
+    DIM Name AS STRING          ' Display name
+    DIM Icon AS STRING          ' Toolbox icon (e.g., "[G] ")
+    DIM Description AS STRING   ' Widget description
+    DIM Category AS STRING      ' "visible" or "nonvisible"
+    DIM Author AS STRING        ' Widget author
+    DIM Version AS STRING       ' Version string
+END TYPE
+
+' Plugin property definition
+TYPE PluginProperty
+    DIM Name AS STRING
+    DIM PropType AS STRING      ' "string", "boolean", "integer", "enum", "color"
+    DIM DefaultStr AS STRING
+    DIM DefaultInt AS INTEGER
+    DIM DefaultBool AS BOOLEAN
+    DIM EnumValues AS []STRING
+    DIM Description AS STRING
+    DIM MinValue AS INTEGER
+    DIM MaxValue AS INTEGER
+END TYPE
+
+' Plugin event definition
+TYPE PluginEvent
+    DIM Name AS STRING
+    DIM Description AS STRING
+END TYPE
+
+' Code generation templates
+TYPE PluginCodegen
+    DIM Imports AS []STRING
+    DIM StateFields AS []STRING
+    DIM InitCode AS []STRING
+    DIM ClickHandler AS []STRING
+    DIM RenderFunction AS STRING
+END TYPE
+
+' Complete plugin widget definition
+TYPE PluginWidgetDef
+    DIM Meta AS WidgetMeta
+    DIM Properties AS []PluginProperty
+    DIM Events AS []PluginEvent
+    DIM Codegen AS PluginCodegen
+    DIM TemplateForm AS VDBForm
+    DIM CtrlTypeID AS INTEGER
+    DIM FilePath AS STRING
+    DIM Modified AS BOOLEAN
+END TYPE
+
+' Plugin registry
+TYPE PluginRegistry
+    DIM Widgets AS []PluginWidgetDef
+    DIM NextCtrlTypeID AS INTEGER
+    DIM PluginDir AS STRING
 END TYPE
 
 ' Main application model
@@ -205,6 +345,11 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM Message AS STRING
     DIM ErrorMsg AS STRING
 
+    ' Compile error dialog state
+    DIM CompileErrors AS STRING          ' Full error output from compiler
+    DIM CompileErrorScroll AS INTEGER    ' Scroll position for viewing errors
+    DIM CompileErrorBtnIdx AS INTEGER    ' 0=OK, 1=Copy
+
     ' Options
     DIM ShowGrid AS BOOLEAN
     DIM GridSize AS INTEGER
@@ -223,6 +368,11 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM PopupEvents AS []STRING      ' Available events for the control
     DIM PopupIndex AS INTEGER        ' Selected event index
 
+    ' Color picker state
+    DIM ColorPickerFocus AS INTEGER  ' 0=ForeColor, 1=BackColor
+    DIM ColorPickerFore AS INTEGER   ' Current ForeColor value (0-15)
+    DIM ColorPickerBack AS INTEGER   ' Current BackColor value (0-15)
+
     ' Run state - track when returning from external process
     DIM WasRunning AS BOOLEAN
 
@@ -230,4 +380,34 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM ObjectBrowserScroll AS INTEGER    ' Current scroll position
     DIM ObjectBrowserTab AS INTEGER       ' 0=Widgets, 1=Properties, 2=Events, 3=Functions
     DIM ObjectBrowserWidgetIdx AS INTEGER ' Currently selected widget in browser
+
+    ' Plugin system
+    DIM PluginRegistry AS PluginRegistry
+
+    ' Plugin Designer state
+    DIM ShowPluginDesigner AS BOOLEAN
+    DIM PluginDesignerMode AS INTEGER     ' 0=list, 1=metadata, 2=properties, 3=events, 4=rendering, 5=codegen
+    DIM EditingPlugin AS PluginWidgetDef
+    DIM EditingPluginIdx AS INTEGER       ' Index in registry (-1 for new plugin)
+    DIM PluginListIndex AS INTEGER        ' Selected plugin in list
+    DIM PluginPropertyIndex AS INTEGER    ' Selected property index
+    DIM PluginEventIndex AS INTEGER       ' Selected event index
+    DIM PluginRenderIndex AS INTEGER      ' Selected render row index
+    DIM PluginFieldFocus AS INTEGER       ' Which field has focus in editor
+    DIM PluginEditBuffer AS STRING        ' Current edit buffer
+    DIM PluginEditCursor AS INTEGER       ' Cursor position in edit buffer
+
+    ' Save As dialog state
+    DIM SaveAsWidget AS BOOLEAN           ' Checkbox: "Save as Widget" in Save As dialog
+
+    ' Theme Editor state
+    DIM ThemeEditorIndex AS INTEGER       ' Currently selected button (0=Apply, 1=OK, 2=Cancel)
+    DIM ThemeEditorPropIdx AS INTEGER     ' Currently selected property in editor
+    DIM ThemeEditorScroll AS INTEGER      ' Scroll position in property list
+    DIM ThemeEditorColIdx AS INTEGER      ' Currently selected column (0=Fore, 1=Back)
+    DIM ThemeEditingTheme AS VDBTheme     ' Theme being edited
+    DIM ThemeEditorFocus AS INTEGER       ' Focus area: THEME_FOCUS_PROPS, THEME_FOCUS_BUTTONS, THEME_FOCUS_PICKER
+    DIM ThemeColorPickerX AS INTEGER      ' Color picker X position (0-15 for 16x16 grid)
+    DIM ThemeColorPickerY AS INTEGER      ' Color picker Y position (0-15 for 16x16 grid)
+    DIM ThemeColorPickerOpen AS BOOLEAN   ' Whether 256-color picker is open
 END TYPE
