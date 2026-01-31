@@ -235,6 +235,9 @@ func compile(filename string) (*CompileResult, error) {
 }
 
 func printErrors(result *CompileResult) {
+	if result == nil {
+		return
+	}
 	for _, e := range result.Errors {
 		// If the message already contains formatting (newlines), print as-is
 		if strings.Contains(e.Message, "\n") {
@@ -336,14 +339,20 @@ func build(filename, outputName string) {
 		os.Exit(1)
 	}
 
-	// Get the current working directory for output
-	cwd, err := os.Getwd()
-	if err != nil {
-		errorf("getting current directory: %v", err)
-		os.Exit(1)
+	// Determine output path
+	var outputPath string
+	if filepath.IsAbs(outputName) {
+		// Absolute path - use as-is
+		outputPath = outputName
+	} else {
+		// Relative path - join with current working directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			errorf("getting current directory: %v", err)
+			os.Exit(1)
+		}
+		outputPath = filepath.Join(cwd, outputName)
 	}
-
-	outputPath := filepath.Join(cwd, outputName)
 
 	// Build executable
 	infof("building %s", outputPath)
