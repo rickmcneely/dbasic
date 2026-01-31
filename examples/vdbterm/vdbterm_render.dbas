@@ -193,7 +193,7 @@ FUNCTION RenderWidgetsRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
 
     IF row = 0 THEN
         ' Title - draggable caption (highlighted blue)
-        content = styleToolboxSelected.Render(PadCenter("= Widgets", width))
+        content = stylePanelTitle.Render(PadCenter("= Widgets", width))
         RETURN content
     ENDIF
 
@@ -231,7 +231,7 @@ FUNCTION RenderWidgetsCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
         IF col < Len(title) THEN
             ch = Mid(title, col + 1, 1)
         ENDIF
-        RETURN styleToolboxSelected.Render(ch)
+        RETURN stylePanelTitle.Render(ch)
     ELSE
         DIM widgetIdx AS INTEGER = row - 1 + m.WidgetsScroll
         IF widgetIdx >= 0 AND widgetIdx < VISIBLE_WIDGET_COUNT THEN
@@ -259,7 +259,7 @@ FUNCTION RenderToolboxRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
 
     IF row = 0 THEN
         ' Title - draggable caption (highlighted blue)
-        content = styleToolboxSelected.Render(PadCenter("= Toolbox", width))
+        content = stylePanelTitle.Render(PadCenter("= Toolbox", width))
         RETURN content
     ENDIF
 
@@ -295,7 +295,7 @@ FUNCTION RenderToolboxCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
         IF col < Len(title) THEN
             ch = Mid(title, col + 1, 1)
         ENDIF
-        RETURN styleToolboxSelected.Render(ch)
+        RETURN stylePanelTitle.Render(ch)
     ELSE
         DIM toolIdx AS INTEGER = row - 1 + m.ToolboxScroll
         IF toolIdx >= 0 AND toolIdx < NONVISIBLE_WIDGET_COUNT THEN
@@ -329,6 +329,10 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
 
     DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
     DIM formSelected AS BOOLEAN = (m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM)
+
+    ' Create dynamic styles using the form's actual colors
+    DIM formBorderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(form.ForeColor))).Background(lipgloss.Color(Str(form.BackColor)))
+    DIM formCanvasStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(Str(form.BackColor)))
 
     ' Form position and dimensions
     ' Use drag position/dimensions during form drag/resize for live preview
@@ -392,7 +396,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             ELSEIF formSelected THEN
                 content = content & styleControlSelected.Render(titleCh)
             ELSE
-                content = content & styleMenuBar.Render(titleCh)
+                content = content & formBorderStyle.Render(titleCh)
             ENDIF
         NEXT
         ' Fill rest of row with canvas (after form)
@@ -427,7 +431,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             ELSEIF formSelected THEN
                 content = content & styleControlSelected.Render(bottomCh)
             ELSE
-                content = content & styleMenuBar.Render(bottomCh)
+                content = content & formBorderStyle.Render(bottomCh)
             ENDIF
         NEXT
         ' Fill rest of row with canvas (after form)
@@ -448,7 +452,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
     ELSEIF formSelected THEN
         content = content & styleControlSelected.Render("│")
     ELSE
-        content = content & styleMenuBar.Render("│")
+        content = content & formBorderStyle.Render("│")
     ENDIF
 
     ' Pre-filter: collect only controls that intersect this content row
@@ -503,11 +507,11 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             IF onTopBottom OR onLeftRight THEN
                 ' Flush pending chunks
                 IF Len(canvasChunk) > 0 THEN
-                    content = content & styleFormCanvas.Render(canvasChunk)
+                    content = content & formCanvasStyle.Render(canvasChunk)
                     canvasChunk = ""
                 ENDIF
                 IF Len(gridChunk) > 0 THEN
-                    content = content & styleFormGrid.Render(gridChunk)
+                    content = content & formCanvasStyle.Render(gridChunk)
                     gridChunk = ""
                 ENDIF
                 ' Draw outline character
@@ -535,11 +539,11 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
                     IF formCol >= ctrl.X AND formCol < ctrl.X + ctrl.Width THEN
                         ' Flush any pending canvas/grid content
                         IF Len(canvasChunk) > 0 THEN
-                            content = content & styleFormCanvas.Render(canvasChunk)
+                            content = content & formCanvasStyle.Render(canvasChunk)
                             canvasChunk = ""
                         ENDIF
                         IF Len(gridChunk) > 0 THEN
-                            content = content & styleFormGrid.Render(gridChunk)
+                            content = content & formCanvasStyle.Render(gridChunk)
                             gridChunk = ""
                         ENDIF
 
@@ -568,7 +572,9 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
                         IF isSelected THEN
                             content = content & styleControlSelected.Render(formCh)
                         ELSE
-                            content = content & styleControl.Render(formCh)
+                            ' Use the control's actual ForeColor and BackColor
+                            DIM ctrlStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(ctrl.ForeColor))).Background(lipgloss.Color(Str(ctrl.BackColor)))
+                            content = content & ctrlStyle.Render(formCh)
                         ENDIF
                         foundCtrl = TRUE
                         EXIT FOR
@@ -580,13 +586,13 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
                 ' Batch similar characters together
                 IF m.ShowGrid AND formCh = "." THEN
                     IF Len(canvasChunk) > 0 THEN
-                        content = content & styleFormCanvas.Render(canvasChunk)
+                        content = content & formCanvasStyle.Render(canvasChunk)
                         canvasChunk = ""
                     ENDIF
                     gridChunk = gridChunk & formCh
                 ELSE
                     IF Len(gridChunk) > 0 THEN
-                        content = content & styleFormGrid.Render(gridChunk)
+                        content = content & formCanvasStyle.Render(gridChunk)
                         gridChunk = ""
                     ENDIF
                     canvasChunk = canvasChunk & formCh
@@ -597,10 +603,10 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
 
     ' Flush remaining chunks
     IF Len(canvasChunk) > 0 THEN
-        content = content & styleFormCanvas.Render(canvasChunk)
+        content = content & formCanvasStyle.Render(canvasChunk)
     ENDIF
     IF Len(gridChunk) > 0 THEN
-        content = content & styleFormGrid.Render(gridChunk)
+        content = content & formCanvasStyle.Render(gridChunk)
     ENDIF
 
     ' Right border (with handle at center row if selected)
@@ -610,7 +616,7 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
     ELSEIF formSelected THEN
         content = content & styleControlSelected.Render("│")
     ELSE
-        content = content & styleMenuBar.Render("│")
+        content = content & formBorderStyle.Render("│")
     ENDIF
 
     ' Fill rest of row with canvas (after form)
@@ -629,6 +635,10 @@ FUNCTION RenderFormCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
 
     DIM form AS VDBForm = m.Project.Forms[m.CurrentFormIdx]
     DIM formSelected AS BOOLEAN = (m.SelectedCtrlIdx < 0 AND m.FocusArea = FOCUS_FORM)
+
+    ' Create dynamic styles using the form's actual colors
+    DIM formBorderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(form.ForeColor))).Background(lipgloss.Color(Str(form.BackColor)))
+    DIM formCanvasStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(Str(form.BackColor)))
 
     ' Form position and dimensions (with drag/resize preview)
     DIM formX AS INTEGER = form.X
@@ -676,7 +686,7 @@ FUNCTION RenderFormCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
         ELSEIF formSelected THEN
             RETURN styleControlSelected.Render(titleCh)
         ELSE
-            RETURN styleMenuBar.Render(titleCh)
+            RETURN formBorderStyle.Render(titleCh)
         ENDIF
     ENDIF
 
@@ -698,7 +708,7 @@ FUNCTION RenderFormCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
         ELSEIF formSelected THEN
             RETURN styleControlSelected.Render(bottomCh)
         ELSE
-            RETURN styleMenuBar.Render(bottomCh)
+            RETURN formBorderStyle.Render(bottomCh)
         ENDIF
     ENDIF
 
@@ -710,7 +720,7 @@ FUNCTION RenderFormCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
         ELSEIF formSelected THEN
             RETURN styleControlSelected.Render("│")
         ELSE
-            RETURN styleMenuBar.Render("│")
+            RETURN formBorderStyle.Render("│")
         ENDIF
     ENDIF
 
@@ -750,15 +760,17 @@ FUNCTION RenderFormCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
             IF isSelected THEN
                 RETURN styleControlSelected.Render(ch)
             ELSE
-                RETURN styleControl.Render(ch)
+                ' Use the control's actual ForeColor and BackColor
+                DIM ctrlStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(Str(ctrl.ForeColor))).Background(lipgloss.Color(Str(ctrl.BackColor)))
+                RETURN ctrlStyle.Render(ch)
             ENDIF
         ENDIF
     NEXT
 
     IF m.ShowGrid AND ch = "." THEN
-        RETURN styleFormGrid.Render(ch)
+        RETURN formCanvasStyle.Render(ch)
     ENDIF
-    RETURN styleFormCanvas.Render(ch)
+    RETURN formCanvasStyle.Render(ch)
 END FUNCTION
 
 ' Render a single character of a control
@@ -1000,6 +1012,252 @@ FUNCTION RenderControlChar(ctrl AS VDBControl, localRow AS INTEGER, localCol AS 
                 RETURN " "
             ENDIF
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRBROWSER THEN
+        ' DirBrowser layout:
+        ' Row 0: ┌─────────────────────────────┐
+        ' Row 1: │ /current/path               │  <- Path text input
+        ' Row 2: ├─────────────────────────────┤
+        ' Row 3: │ > ..                        │  <- Parent dir
+        ' Row 4: │   subdirectory/             │
+        ' Row 5: │   another_dir/              │
+        ' ...
+        ' Row H-1: └─────────────────────────────┘
+
+        DIM dbW AS INTEGER = ctrl.Width
+        DIM dbH AS INTEGER = ctrl.Height
+
+        IF localRow = 0 THEN
+            ' Top border
+            IF localCol = 0 THEN
+                RETURN "┌"
+            ELSEIF localCol = dbW - 1 THEN
+                RETURN "┐"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = 1 THEN
+            ' Path text area
+            IF localCol = 0 OR localCol = dbW - 1 THEN
+                RETURN "│"
+            ELSE
+                DIM dbPathText AS STRING = ctrl.FilePath
+                IF localCol - 1 < Len(dbPathText) THEN
+                    RETURN Mid(dbPathText, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ENDIF
+        ELSEIF localRow = 2 THEN
+            ' Separator
+            IF localCol = 0 THEN
+                RETURN "├"
+            ELSEIF localCol = dbW - 1 THEN
+                RETURN "┤"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = dbH - 1 THEN
+            ' Bottom border
+            IF localCol = 0 THEN
+                RETURN "└"
+            ELSEIF localCol = dbW - 1 THEN
+                RETURN "┘"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSE
+            ' Directory list area
+            IF localCol = 0 OR localCol = dbW - 1 THEN
+                RETURN "│"
+            ELSEIF localRow = 3 THEN
+                ' Parent dir entry
+                DIM dbParentLine AS STRING = " > .."
+                IF localCol - 1 < Len(dbParentLine) THEN
+                    RETURN Mid(dbParentLine, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ELSEIF localRow = 4 THEN
+                ' Sample dir entry
+                DIM dbDirLine AS STRING = "   subdir/"
+                IF localCol - 1 < Len(dbDirLine) THEN
+                    RETURN Mid(dbDirLine, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ELSEIF localRow = 5 THEN
+                ' Sample dir entry
+                DIM dbDir2Line AS STRING = "   another/"
+                IF localCol - 1 < Len(dbDir2Line) THEN
+                    RETURN Mid(dbDir2Line, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ELSE
+                RETURN " "
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_PATH THEN
+        ' Path widget: single-row text input with border
+        ' ┌──────────────┐
+        ' │ /path/here   │
+        ' └──────────────┘
+        DIM pathW AS INTEGER = ctrl.Width
+
+        IF localRow = 0 THEN
+            ' Top border
+            IF localCol = 0 THEN
+                RETURN "┌"
+            ELSEIF localCol = pathW - 1 THEN
+                RETURN "┐"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = 1 THEN
+            ' Path text
+            IF localCol = 0 OR localCol = pathW - 1 THEN
+                RETURN "│"
+            ELSE
+                DIM pathText AS STRING = ctrl.FilePath
+                IF pathText = "" THEN
+                    pathText = "/home/user"
+                ENDIF
+                IF localCol - 1 < Len(pathText) THEN
+                    RETURN Mid(pathText, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ENDIF
+        ELSEIF localRow = 2 THEN
+            ' Bottom border
+            IF localCol = 0 THEN
+                RETURN "└"
+            ELSEIF localCol = pathW - 1 THEN
+                RETURN "┘"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+        ' Directories widget: bordered list of directories
+        ' ┌──────────────┐
+        ' │ > ..         │
+        ' │   subdir/    │
+        ' │   another/   │
+        ' └──────────────┘
+        DIM dirW AS INTEGER = ctrl.Width
+        DIM dirH AS INTEGER = ctrl.Height
+
+        IF localRow = 0 THEN
+            ' Top border
+            IF localCol = 0 THEN
+                RETURN "┌"
+            ELSEIF localCol = dirW - 1 THEN
+                RETURN "┐"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = dirH - 1 THEN
+            ' Bottom border
+            IF localCol = 0 THEN
+                RETURN "└"
+            ELSEIF localCol = dirW - 1 THEN
+                RETURN "┘"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSE
+            ' Directory list area
+            IF localCol = 0 OR localCol = dirW - 1 THEN
+                RETURN "│"
+            ELSEIF localRow = 1 THEN
+                ' Parent dir entry
+                DIM parentLine AS STRING = " > .."
+                IF localCol - 1 < Len(parentLine) THEN
+                    RETURN Mid(parentLine, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ELSEIF localRow = 2 THEN
+                ' Sample dir entry
+                DIM dirLine AS STRING = "   subdir/"
+                IF localCol - 1 < Len(dirLine) THEN
+                    RETURN Mid(dirLine, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ELSEIF localRow = 3 THEN
+                ' Another sample
+                DIM dir2Line AS STRING = "   another/"
+                IF localCol - 1 < Len(dir2Line) THEN
+                    RETURN Mid(dir2Line, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ELSE
+                RETURN " "
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_FILES THEN
+        ' Files widget: bordered list of files
+        ' ┌──────────────┐
+        ' │ > file1.txt  │
+        ' │   file2.go   │
+        ' │   image.png  │
+        ' └──────────────┘
+        DIM fileW AS INTEGER = ctrl.Width
+        DIM fileH AS INTEGER = ctrl.Height
+
+        IF localRow = 0 THEN
+            ' Top border
+            IF localCol = 0 THEN
+                RETURN "┌"
+            ELSEIF localCol = fileW - 1 THEN
+                RETURN "┐"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSEIF localRow = fileH - 1 THEN
+            ' Bottom border
+            IF localCol = 0 THEN
+                RETURN "└"
+            ELSEIF localCol = fileW - 1 THEN
+                RETURN "┘"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSE
+            ' File list area
+            IF localCol = 0 OR localCol = fileW - 1 THEN
+                RETURN "│"
+            ELSEIF localRow = 1 THEN
+                ' First file entry
+                DIM file1Line AS STRING = " > file1.txt"
+                IF localCol - 1 < Len(file1Line) THEN
+                    RETURN Mid(file1Line, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ELSEIF localRow = 2 THEN
+                ' Second file entry
+                DIM file2Line AS STRING = "   file2.go"
+                IF localCol - 1 < Len(file2Line) THEN
+                    RETURN Mid(file2Line, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ELSEIF localRow = 3 THEN
+                ' Third file entry
+                DIM file3Line AS STRING = "   image.png"
+                IF localCol - 1 < Len(file3Line) THEN
+                    RETURN Mid(file3Line, localCol, 1)
+                ELSE
+                    RETURN " "
+                ENDIF
+            ELSE
+                RETURN " "
+            ENDIF
+        ENDIF
     ENDIF
 
     RETURN " "
@@ -1226,7 +1484,7 @@ FUNCTION RenderProjectRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
 
     IF row = 0 THEN
         ' Title - always highlighted blue
-        content = styleTreeSelected.Render(PadRight(" Project", width))
+        content = stylePanelTitle.Render(PadRight(" Project", width))
         RETURN content
     ENDIF
 
@@ -1296,7 +1554,7 @@ FUNCTION RenderProjectCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
         IF col < Len(title) THEN
             ch = Mid(title, col + 1, 1)
         ENDIF
-        RETURN styleTreeSelected.Render(ch)
+        RETURN stylePanelTitle.Render(ch)
     ELSE
         DIM itemIdx AS INTEGER = row - 1 + m.ProjectScroll
         DIM totalItems AS INTEGER = GetTreeItemCount(m)
@@ -1398,6 +1656,12 @@ FUNCTION RenderPropertiesRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER
         ELSEIF propIdx = 5 THEN
             propName = "Height"
             propValue = Str(form.Height)
+        ELSEIF propIdx = 6 THEN
+            propName = "ForeColor"
+            propValue = Str(form.ForeColor)
+        ELSEIF propIdx = 7 THEN
+            propName = "BackColor"
+            propValue = Str(form.BackColor)
         ENDIF
     ENDIF
 
@@ -1475,6 +1739,12 @@ FUNCTION RenderPropertiesCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER,
         ELSEIF propIdx = 5 THEN
             propName = "Height"
             propValue = Str(form.Height)
+        ELSEIF propIdx = 6 THEN
+            propName = "ForeColor"
+            propValue = Str(form.ForeColor)
+        ELSEIF propIdx = 7 THEN
+            propName = "BackColor"
+            propValue = Str(form.BackColor)
         ENDIF
     ENDIF
 
@@ -1556,11 +1826,12 @@ FUNCTION GetDropdownLines(m AS VDBTermModel) AS []STRING
         lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("New Project       ", 1, m.MenuIndex = 0) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Open Project      ", 1, m.MenuIndex = 1) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Save Project      ", 1, m.MenuIndex = 2) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Save As...        ", 6, m.MenuIndex = 3) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
-        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("New Form          ", 5, m.MenuIndex = 4) & styleDropdown.Render("│"))
-        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("New Module        ", 5, m.MenuIndex = 5) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("New Form          ", 5, m.MenuIndex = 5) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("New Module        ", 5, m.MenuIndex = 6) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
-        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Exit        Alt+X ", 2, m.MenuIndex = 7) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Exit        Alt+X ", 2, m.MenuIndex = 8) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
     ELSEIF m.MenuOpen = MENU_EDIT THEN
         lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
@@ -1602,8 +1873,9 @@ FUNCTION GetDropdownLines(m AS VDBTermModel) AS []STRING
         lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
         lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Environment       ", 1, m.MenuIndex = 0) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Editor            ", 2, m.MenuIndex = 1) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Theme Editor      ", 1, m.MenuIndex = 2) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("├──────────────────┤"))
-        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Colors            ", 1, m.MenuIndex = 3) & styleDropdown.Render("│"))
+        lines = APPEND(lines, styleDropdown.Render("│") & RenderDropdownItemHL("Colors            ", 1, m.MenuIndex = 4) & styleDropdown.Render("│"))
         lines = APPEND(lines, styleDropdown.Render("└──────────────────┘"))
     ELSEIF m.MenuOpen = MENU_HELP THEN
         lines = APPEND(lines, styleDropdown.Render("┌──────────────────┐"))
@@ -1667,15 +1939,23 @@ FUNCTION RenderStatusBar(m AS VDBTermModel) AS STRING
     RETURN styleStatusBar.Render(PadRight(status, m.Width))
 END FUNCTION
 
-' Popup rendering (events context menu)
+' Popup rendering (events context menu and color picker)
 FUNCTION GetPopupWidth(m AS VDBTermModel) AS INTEGER
-    ' Fixed width for consistent appearance
+    IF m.PopupMode = POPUP_COLOR_PICKER THEN
+        ' Color picker: 2 columns x 8 colors each = 16 cells, plus borders and labels
+        RETURN 22
+    ENDIF
+    ' Fixed width for events popup
     RETURN 16
 END FUNCTION
 
 FUNCTION GetPopupLines(m AS VDBTermModel) AS []STRING
     DIM lines AS []STRING
     DIM width AS INTEGER = GetPopupWidth(m)
+
+    IF m.PopupMode = POPUP_COLOR_PICKER THEN
+        RETURN GetColorPickerLines(m, width)
+    ENDIF
 
     ' Title bar (using Unicode box-drawing characters like dropdown menus)
     DIM titlePadded AS STRING = PadCenter(" Events ", width - 2)
@@ -1701,6 +1981,108 @@ FUNCTION GetPopupLines(m AS VDBTermModel) AS []STRING
     RETURN lines
 END FUNCTION
 
+FUNCTION GetColorPickerLines(m AS VDBTermModel, width AS INTEGER) AS []STRING
+    DIM lines AS []STRING
+    DIM i AS INTEGER
+
+    ' Title bar
+    DIM titlePadded AS STRING = PadCenter(" Color Picker ", width - 2)
+    lines = APPEND(lines, styleDropdown.Render("┌" & RepeatStr("─", width - 2) & "┐"))
+    lines = APPEND(lines, styleDropdownSelected.Render("│" & titlePadded & "│"))
+    lines = APPEND(lines, styleDropdown.Render("├" & RepeatStr("─", width - 2) & "┤"))
+
+    ' ForeColor row with label
+    DIM foreLabel AS STRING
+    IF m.ColorPickerFocus = 0 THEN
+        foreLabel = "►ForeColor: "
+    ELSE
+        foreLabel = " ForeColor: "
+    ENDIF
+    DIM foreLine AS STRING = styleDropdown.Render("│" & foreLabel)
+    FOR i = 0 TO 7
+        IF i = m.ColorPickerFore THEN
+            foreLine = foreLine & GetColorBlock(i, TRUE)
+        ELSE
+            foreLine = foreLine & GetColorBlock(i, FALSE)
+        ENDIF
+    NEXT
+    foreLine = foreLine & styleDropdown.Render("│")
+    lines = APPEND(lines, foreLine)
+
+    ' Second row of ForeColor (colors 8-15)
+    DIM foreLine2 AS STRING = styleDropdown.Render("│" & "            ")
+    FOR i = 8 TO 15
+        IF i = m.ColorPickerFore THEN
+            foreLine2 = foreLine2 & GetColorBlock(i, TRUE)
+        ELSE
+            foreLine2 = foreLine2 & GetColorBlock(i, FALSE)
+        ENDIF
+    NEXT
+    foreLine2 = foreLine2 & styleDropdown.Render("│")
+    lines = APPEND(lines, foreLine2)
+
+    ' Separator
+    lines = APPEND(lines, styleDropdown.Render("├" & RepeatStr("─", width - 2) & "┤"))
+
+    ' BackColor row with label
+    DIM backLabel AS STRING
+    IF m.ColorPickerFocus = 1 THEN
+        backLabel = "►BackColor: "
+    ELSE
+        backLabel = " BackColor: "
+    ENDIF
+    DIM backLine AS STRING = styleDropdown.Render("│" & backLabel)
+    FOR i = 0 TO 7
+        IF i = m.ColorPickerBack THEN
+            backLine = backLine & GetColorBlock(i, TRUE)
+        ELSE
+            backLine = backLine & GetColorBlock(i, FALSE)
+        ENDIF
+    NEXT
+    backLine = backLine & styleDropdown.Render("│")
+    lines = APPEND(lines, backLine)
+
+    ' Second row of BackColor (colors 8-15)
+    DIM backLine2 AS STRING = styleDropdown.Render("│" & "            ")
+    FOR i = 8 TO 15
+        IF i = m.ColorPickerBack THEN
+            backLine2 = backLine2 & GetColorBlock(i, TRUE)
+        ELSE
+            backLine2 = backLine2 & GetColorBlock(i, FALSE)
+        ENDIF
+    NEXT
+    backLine2 = backLine2 & styleDropdown.Render("│")
+    lines = APPEND(lines, backLine2)
+
+    ' Help text
+    lines = APPEND(lines, styleDropdown.Render("├" & RepeatStr("─", width - 2) & "┤"))
+    lines = APPEND(lines, styleDropdown.Render("│" & PadCenter("Tab:Switch Enter:OK", width - 2) & "│"))
+
+    ' Bottom border
+    lines = APPEND(lines, styleDropdown.Render("└" & RepeatStr("─", width - 2) & "┘"))
+
+    RETURN lines
+END FUNCTION
+
+FUNCTION GetColorBlock(colorNum AS INTEGER, selected AS BOOLEAN) AS STRING
+    ' Create a colored block representing the color
+    ' Each block is 1 character wide, selection shown via contrasting marker
+    DIM style AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(Str(colorNum)))
+    IF selected THEN
+        ' Show selection marker on the color - use contrasting foreground
+        DIM fgColor AS INTEGER
+        IF colorNum < 8 THEN
+            fgColor = 15  ' White on dark colors
+        ELSE
+            fgColor = 0   ' Black on light colors
+        ENDIF
+        DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(Str(colorNum))).Foreground(lipgloss.Color(Str(fgColor)))
+        RETURN selStyle.Render("●")
+    ELSE
+        RETURN style.Render(" ")
+    ENDIF
+END FUNCTION
+
 ' Get widget list for Object Browser
 FUNCTION GetObjectBrowserWidgets() AS []STRING
     DIM widgets AS []STRING
@@ -1719,6 +2101,10 @@ FUNCTION GetObjectBrowserWidgets() AS []STRING
     widgets = APPEND(widgets, "Progress")
     widgets = APPEND(widgets, "Spinner")
     widgets = APPEND(widgets, "Table")
+    widgets = APPEND(widgets, "Path")
+    widgets = APPEND(widgets, "Directories")
+    widgets = APPEND(widgets, "Files")
+    widgets = APPEND(widgets, "DirBrowser")
     RETURN widgets
 END FUNCTION
 
@@ -1804,6 +2190,15 @@ FUNCTION GetObjectBrowserProperties(widgetIdx AS INTEGER) AS []STRING
             props = APPEND(props, "Columns   STRING   Pipe-separated")
             props = APPEND(props, "Rows      STRING   Semicolon-separated")
             props = APPEND(props, "ShowHeaders BOOLEAN Header row")
+        ELSEIF widgetIdx = 15 THEN
+            ' Path
+            props = APPEND(props, "Path      STRING   Current path value")
+            props = APPEND(props, "CharLimit INTEGER  Max characters")
+        ELSEIF widgetIdx = 16 THEN
+            ' Directories
+            props = APPEND(props, "Path      STRING   Current directory")
+            props = APPEND(props, "ShowFiles BOOLEAN  Show files too")
+            props = APPEND(props, "Filter    STRING   File filter pattern")
         ENDIF
     ENDIF
     RETURN props
@@ -1846,10 +2241,172 @@ FUNCTION GetObjectBrowserEvents(widgetIdx AS INTEGER) AS []STRING
     ELSEIF widgetIdx = 14 THEN
         ' Table
         events = APPEND(events, "Change    Selection changed")
+    ELSEIF widgetIdx = 15 THEN
+        ' Path
+        events = APPEND(events, "Change    Path text changed")
+        events = APPEND(events, "Enter     Enter key pressed")
+    ELSEIF widgetIdx = 16 THEN
+        ' Directories
+        events = APPEND(events, "Change    Directory changed")
+        events = APPEND(events, "Enter     Directory selected")
+        events = APPEND(events, "DblClick  Double-click (navigates)")
+    ELSEIF widgetIdx = 17 THEN
+        ' Files
+        events = APPEND(events, "Change    Selection changed")
+        events = APPEND(events, "Enter     File selected")
+        events = APPEND(events, "DblClick  File double-clicked")
+    ELSEIF widgetIdx = 18 THEN
+        ' DirBrowser
+        events = APPEND(events, "DirChange   Dir list selection")
+        events = APPEND(events, "PathChange  Path input changed")
     ELSE
         events = APPEND(events, "(No events)")
     ENDIF
     RETURN events
+END FUNCTION
+
+' Get functions/methods for a widget type in the Object Browser
+FUNCTION GetObjectBrowserFunctions(widgetIdx AS INTEGER) AS []STRING
+    DIM funcs AS []STRING
+
+    IF widgetIdx = 0 THEN
+        ' Form functions
+        funcs = APPEND(funcs, "Show()              Display the form")
+        funcs = APPEND(funcs, "Hide()              Hide the form")
+        funcs = APPEND(funcs, "Close()             Close the form")
+        funcs = APPEND(funcs, "Refresh()           Redraw the form")
+    ELSEIF widgetIdx = 1 THEN
+        ' Button
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "SetCaption(s)       Change button text")
+        funcs = APPEND(funcs, "Enable()            Enable the button")
+        funcs = APPEND(funcs, "Disable()           Disable the button")
+    ELSEIF widgetIdx = 2 THEN
+        ' Label
+        funcs = APPEND(funcs, "SetCaption(s)       Change label text")
+        funcs = APPEND(funcs, "SetJustify(j)       Set alignment (0/1/2)")
+    ELSEIF widgetIdx = 3 THEN
+        ' TextBox
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "Blur()              Remove input focus")
+        funcs = APPEND(funcs, "Value()             Get current text")
+        funcs = APPEND(funcs, "SetValue(s)         Set text content")
+        funcs = APPEND(funcs, "SetPlaceholder(s)   Set hint text")
+        funcs = APPEND(funcs, "SetCharLimit(n)     Set max characters")
+    ELSEIF widgetIdx = 4 THEN
+        ' CheckBox
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "IsChecked()         Get checked state")
+        funcs = APPEND(funcs, "SetChecked(b)       Set checked state")
+    ELSEIF widgetIdx = 5 THEN
+        ' Option
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "IsSelected()        Get selected state")
+        funcs = APPEND(funcs, "SetSelected(b)      Set selected state")
+    ELSEIF widgetIdx = 6 THEN
+        ' ListBox
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "SelectedIndex()     Get selected index")
+        funcs = APPEND(funcs, "SelectedItem()      Get selected item text")
+        funcs = APPEND(funcs, "SetItems(items)     Set list items")
+        funcs = APPEND(funcs, "AddItem(s)          Add an item")
+        funcs = APPEND(funcs, "RemoveItem(idx)     Remove item at index")
+        funcs = APPEND(funcs, "ClearItems()        Remove all items")
+    ELSEIF widgetIdx = 7 THEN
+        ' ComboBox
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "SelectedIndex()     Get selected index")
+        funcs = APPEND(funcs, "SelectedItem()      Get selected item text")
+        funcs = APPEND(funcs, "SetItems(items)     Set list items")
+        funcs = APPEND(funcs, "AddItem(s)          Add an item")
+        funcs = APPEND(funcs, "ClearItems()        Remove all items")
+    ELSEIF widgetIdx = 8 OR widgetIdx = 9 THEN
+        ' HScroll / VScroll
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "Value()             Get current value")
+        funcs = APPEND(funcs, "SetValue(n)         Set current value")
+        funcs = APPEND(funcs, "SetMin(n)           Set minimum value")
+        funcs = APPEND(funcs, "SetMax(n)           Set maximum value")
+    ELSEIF widgetIdx = 10 THEN
+        ' Timer
+        funcs = APPEND(funcs, "Start()             Start the timer")
+        funcs = APPEND(funcs, "Stop()              Stop the timer")
+        funcs = APPEND(funcs, "SetInterval(ms)     Set tick interval")
+        funcs = APPEND(funcs, "IsRunning()         Check if active")
+    ELSEIF widgetIdx = 11 THEN
+        ' TextArea
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "Blur()              Remove input focus")
+        funcs = APPEND(funcs, "Value()             Get all text")
+        funcs = APPEND(funcs, "SetValue(s)         Set text content")
+        funcs = APPEND(funcs, "Line(n)             Get line at index")
+        funcs = APPEND(funcs, "LineCount()         Get number of lines")
+        funcs = APPEND(funcs, "CursorLine()        Get cursor line")
+        funcs = APPEND(funcs, "CursorCol()         Get cursor column")
+    ELSEIF widgetIdx = 12 THEN
+        ' Progress
+        funcs = APPEND(funcs, "Value()             Get current value")
+        funcs = APPEND(funcs, "SetValue(n)         Set current value")
+        funcs = APPEND(funcs, "SetTotal(n)         Set maximum value")
+        funcs = APPEND(funcs, "Percent()           Get percentage done")
+    ELSEIF widgetIdx = 13 THEN
+        ' Spinner
+        funcs = APPEND(funcs, "View()              Render spinner frame")
+        funcs = APPEND(funcs, "Tick()              Advance to next frame")
+    ELSEIF widgetIdx = 14 THEN
+        ' Table
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "SelectedRow()       Get selected row index")
+        funcs = APPEND(funcs, "SetRows(rows)       Set table data")
+        funcs = APPEND(funcs, "SetColumns(cols)    Set column headers")
+        funcs = APPEND(funcs, "AddRow(row)         Add a data row")
+        funcs = APPEND(funcs, "ClearRows()         Remove all rows")
+    ELSEIF widgetIdx = 15 THEN
+        ' Path
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "Blur()              Remove input focus")
+        funcs = APPEND(funcs, "GetPath()           Get current path")
+        funcs = APPEND(funcs, "SetPath(s)          Set path value")
+        funcs = APPEND(funcs, "View()              Refresh display")
+        funcs = APPEND(funcs, "Update(msg)         Handle input message")
+    ELSEIF widgetIdx = 16 THEN
+        ' Directories
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "Blur()              Remove input focus")
+        funcs = APPEND(funcs, "GetPath()           Get current path")
+        funcs = APPEND(funcs, "SelectedDir()       Get selected directory")
+        funcs = APPEND(funcs, "SetPath(s)          Set root path")
+        funcs = APPEND(funcs, "View()              Refresh directory list")
+        funcs = APPEND(funcs, "Update(msg)         Handle input message")
+    ELSEIF widgetIdx = 17 THEN
+        ' Files
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "Blur()              Remove input focus")
+        funcs = APPEND(funcs, "GetPath()           Get current path")
+        funcs = APPEND(funcs, "SelectedFile()      Get selected filename")
+        funcs = APPEND(funcs, "SelectedFilePath()  Get full selected path")
+        funcs = APPEND(funcs, "SetPath(s)          Set directory path")
+        funcs = APPEND(funcs, "SetPattern(p)       Set file pattern filter")
+        funcs = APPEND(funcs, "GetPattern()        Get current pattern")
+        funcs = APPEND(funcs, "SetShowHidden(b)    Show/hide hidden files")
+        funcs = APPEND(funcs, "View()              Refresh file list")
+        funcs = APPEND(funcs, "Update(msg)         Handle input message")
+    ELSEIF widgetIdx = 18 THEN
+        ' DirBrowser
+        funcs = APPEND(funcs, "Focus()             Set input focus")
+        funcs = APPEND(funcs, "Blur()              Remove input focus")
+        funcs = APPEND(funcs, "Focused()           Check if focused")
+        funcs = APPEND(funcs, "GetPath()           Get current path")
+        funcs = APPEND(funcs, "SelectedDir()       Get selected directory")
+        funcs = APPEND(funcs, "SetPath(s)          Set root path")
+        funcs = APPEND(funcs, "SetColors(fg,bg)    Set colors")
+        funcs = APPEND(funcs, "SetShowHidden(b)    Show/hide hidden dirs")
+        funcs = APPEND(funcs, "View()              Refresh directory list")
+        funcs = APPEND(funcs, "Update(msg)         Handle input message")
+    ELSE
+        funcs = APPEND(funcs, "(No functions)")
+    ENDIF
+    RETURN funcs
 END FUNCTION
 
 ' Build Object Browser dialog content
@@ -1861,19 +2418,24 @@ FUNCTION GetObjectBrowserContent(m AS VDBTermModel) AS []STRING
     ' Tab bar
     DIM tabLine AS STRING = "  "
     IF m.ObjectBrowserTab = 0 THEN
-        tabLine = tabLine & "[Widgets]  "
+        tabLine = tabLine & "[Widgets] "
     ELSE
-        tabLine = tabLine & " Widgets   "
+        tabLine = tabLine & " Widgets  "
     ENDIF
     IF m.ObjectBrowserTab = 1 THEN
-        tabLine = tabLine & "[Properties]  "
+        tabLine = tabLine & "[Props] "
     ELSE
-        tabLine = tabLine & " Properties   "
+        tabLine = tabLine & " Props  "
     ENDIF
     IF m.ObjectBrowserTab = 2 THEN
-        tabLine = tabLine & "[Events]  "
+        tabLine = tabLine & "[Events] "
     ELSE
-        tabLine = tabLine & " Events   "
+        tabLine = tabLine & " Events  "
+    ENDIF
+    IF m.ObjectBrowserTab = 3 THEN
+        tabLine = tabLine & "[Functions]"
+    ELSE
+        tabLine = tabLine & " Functions "
     ENDIF
     content = APPEND(content, tabLine)
     content = APPEND(content, "  " & RepeatStr("-", 62))
@@ -1925,11 +2487,282 @@ FUNCTION GetObjectBrowserContent(m AS VDBTermModel) AS []STRING
                 content = APPEND(content, "  " & RepeatStr(" ", 62))
             ENDIF
         NEXT
+    ELSEIF m.ObjectBrowserTab = 3 THEN
+        ' Functions tab - show functions for selected widget
+        DIM funcs AS []STRING = GetObjectBrowserFunctions(m.ObjectBrowserWidgetIdx)
+        DIM funcCount AS INTEGER = Len(funcs)
+        content = APPEND(content, "  Functions for: " & widgets[m.ObjectBrowserWidgetIdx])
+        content = APPEND(content, "  " & RepeatStr("-", 40))
+        FOR i = 0 TO viewHeight - 3
+            DIM fIdx AS INTEGER = scrollOffset + i
+            IF fIdx < funcCount THEN
+                content = APPEND(content, "  " & PadRight(funcs[fIdx], 62))
+            ELSE
+                content = APPEND(content, "  " & RepeatStr(" ", 62))
+            ENDIF
+        NEXT
     ENDIF
 
     ' Footer
     content = APPEND(content, "  " & RepeatStr("-", 62))
     content = APPEND(content, "  Tab: Switch panel   Up/Down: Navigate   Esc: Close")
+
+    RETURN content
+END FUNCTION
+
+' Get the fore/back colors for a theme property by index
+FUNCTION GetThemePropColors(theme AS VDBTheme, pIdx AS INTEGER) AS (INTEGER, INTEGER)
+    IF pIdx = 0 THEN
+        RETURN theme.FormForeColor, theme.FormBackColor
+    ELSEIF pIdx = 1 THEN
+        RETURN theme.ButtonForeColor, theme.ButtonBackColor
+    ELSEIF pIdx = 2 THEN
+        RETURN theme.LabelForeColor, theme.LabelBackColor
+    ELSEIF pIdx = 3 THEN
+        RETURN theme.TextBoxForeColor, theme.TextBoxBackColor
+    ELSEIF pIdx = 4 THEN
+        RETURN theme.CheckBoxForeColor, theme.CheckBoxBackColor
+    ELSEIF pIdx = 5 THEN
+        RETURN theme.OptionForeColor, theme.OptionBackColor
+    ELSEIF pIdx = 6 THEN
+        RETURN theme.ListBoxForeColor, theme.ListBoxBackColor
+    ELSEIF pIdx = 7 THEN
+        RETURN theme.ComboBoxForeColor, theme.ComboBoxBackColor
+    ELSEIF pIdx = 8 THEN
+        RETURN theme.FrameForeColor, theme.FrameBackColor
+    ELSEIF pIdx = 9 THEN
+        RETURN theme.TextAreaForeColor, theme.TextAreaBackColor
+    ELSEIF pIdx = 10 THEN
+        RETURN theme.ProgressForeColor, theme.ProgressBackColor
+    ELSEIF pIdx = 11 THEN
+        RETURN theme.SpinnerForeColor, theme.SpinnerBackColor
+    ELSEIF pIdx = 12 THEN
+        RETURN theme.PathForeColor, theme.PathBackColor
+    ELSEIF pIdx = 13 THEN
+        RETURN theme.DirectoriesForeColor, theme.DirectoriesBackColor
+    ELSEIF pIdx = 14 THEN
+        RETURN theme.FilesForeColor, theme.FilesBackColor
+    ELSEIF pIdx = 15 THEN
+        RETURN theme.DirBrowserForeColor, theme.DirBrowserBackColor
+    ELSEIF pIdx = 16 THEN
+        RETURN theme.FocusedForeColor, theme.FocusedBackColor
+    ELSEIF pIdx = 17 THEN
+        RETURN theme.SelectedForeColor, theme.SelectedBackColor
+    ELSEIF pIdx = 18 THEN
+        RETURN theme.MenuForeColor, theme.MenuBackColor
+    ELSEIF pIdx = 19 THEN
+        RETURN theme.MenuSelectedForeColor, theme.MenuSelectedBackColor
+    ELSEIF pIdx = 20 THEN
+        ' MenuShortcut uses MenuBackColor as background (not editable)
+        RETURN theme.MenuShortcutForeColor, theme.MenuBackColor
+    ENDIF
+    RETURN 0, 0
+END FUNCTION
+
+' Render ANSI colored text for preview
+' restoreDialog: if TRUE, restore dialog colors (fg 252, bg 237) instead of using generic reset
+FUNCTION RenderColorPreview(text AS STRING, fg AS INTEGER, bg AS INTEGER, use256 AS BOOLEAN) AS STRING
+    RETURN RenderColorPreviewEx(text, fg, bg, use256, FALSE)
+END FUNCTION
+
+FUNCTION RenderColorPreviewEx(text AS STRING, fg AS INTEGER, bg AS INTEGER, use256 AS BOOLEAN, restoreDialog AS BOOLEAN) AS STRING
+    DIM resetCode AS STRING = Chr(27) & "[0m"
+    IF restoreDialog THEN
+        ' Restore dialog colors instead of generic reset
+        resetCode = Chr(27) & "[38;5;252;48;5;237m"
+    ENDIF
+
+    IF use256 THEN
+        ' Use 256-color ANSI escape codes (38;5;N for fg, 48;5;N for bg)
+        RETURN Chr(27) & "[38;5;" & Str(fg) & ";48;5;" & Str(bg) & "m" & text & resetCode
+    ENDIF
+
+    ' Map 16-color index to ANSI codes (0-7 -> 30-37, 8-15 -> 90-97 for bright)
+    DIM fgCode AS INTEGER
+    DIM bgCode AS INTEGER
+    IF fg < 8 THEN
+        fgCode = 30 + fg
+    ELSE
+        fgCode = 90 + (fg - 8)
+    ENDIF
+    IF bg < 8 THEN
+        bgCode = 40 + bg
+    ELSE
+        bgCode = 100 + (bg - 8)
+    ENDIF
+    RETURN Chr(27) & "[" & Str(fgCode) & ";" & Str(bgCode) & "m" & text & resetCode
+END FUNCTION
+
+' Theme editor content
+FUNCTION GetThemeEditorContent(m AS VDBTermModel) AS []STRING
+    DIM content AS []STRING
+    DIM use256 AS BOOLEAN = m.ThemeEditingTheme.Use256Colors
+
+    ' Theme preset selector
+    DIM themeName AS STRING = m.ThemeEditingTheme.Name
+    IF themeName = "" THEN
+        themeName = "Custom"
+    ENDIF
+
+    content = APPEND(content, "")
+    content = APPEND(content, "  Theme: [" & PadRight(themeName, 12) & "]  1-4: Presets")
+    content = APPEND(content, "")
+
+    ' UseTheme checkbox
+    DIM checkMark AS STRING = " "
+    IF m.Project.UseTheme THEN
+        checkMark = "x"
+    ENDIF
+    content = APPEND(content, "  [" & checkMark & "] Apply theme to new controls")
+
+    ' Use256Colors checkbox
+    DIM colorCheck AS STRING = " "
+    IF use256 THEN
+        colorCheck = "x"
+    ENDIF
+    content = APPEND(content, "  [" & colorCheck & "] Use 256-color palette")
+    content = APPEND(content, "")
+
+    ' Column headers with focus and selection indicators
+    DIM propFocus AS BOOLEAN = (m.ThemeEditorFocus = THEME_FOCUS_PROPS)
+    DIM foreHdr AS STRING = "Fore"
+    DIM backHdr AS STRING = "Back"
+    IF propFocus AND m.ThemeEditorColIdx = 0 THEN
+        foreHdr = "[Fore]"
+    ELSEIF propFocus AND m.ThemeEditorColIdx = 1 THEN
+        backHdr = "[Back]"
+    ENDIF
+
+    content = APPEND(content, "  Property            " & PadRight(foreHdr, 6) & PadRight(backHdr, 6) & "Preview")
+    content = APPEND(content, "  " & RepeatStr("-", 44))
+
+    ' Property list with scrolling
+    DIM props AS []STRING = []STRING{"Form", "Button", "Label", "TextBox", "CheckBox", "Option", "ListBox", "ComboBox", "Frame", "TextArea", "Progress", "Spinner", "Path", "Directories", "Files", "DirBrowser", "Focus", "Selection", "Menu", "MenuSelected", "MenuShortcut"}
+    DIM propCount AS INTEGER = Len(props)
+    DIM viewHeight AS INTEGER = 8
+    DIM scrollOffset AS INTEGER = m.ThemeEditorScroll
+
+    DIM i AS INTEGER
+    FOR i = 0 TO viewHeight - 1
+        DIM pIdx AS INTEGER = scrollOffset + i
+        DIM propLine AS STRING = ""
+
+        IF pIdx < propCount THEN
+            DIM marker AS STRING = "  "
+            IF pIdx = m.ThemeEditorPropIdx AND propFocus THEN
+                marker = "> "
+            ENDIF
+
+            DIM propName AS STRING = props[pIdx]
+            DIM foreColor AS INTEGER
+            DIM backColor AS INTEGER
+            foreColor, backColor = GetThemePropColors(m.ThemeEditingTheme, pIdx)
+
+            ' Format the color values - clickable areas
+            DIM foreStr AS STRING = PadRight(Str(foreColor), 6)
+            DIM backStr AS STRING = PadRight(Str(backColor), 6)
+
+            ' MenuShortcut has no editable Back (uses Menu's back)
+            IF pIdx = 20 THEN
+                backStr = "-     "
+            ENDIF
+
+            ' Show color preview (use Ex version to restore dialog colors)
+            DIM preview AS STRING = RenderColorPreviewEx(" Abc ", foreColor, backColor, use256, TRUE)
+
+            propLine = marker & PadRight(propName, 18) & foreStr & backStr & preview
+        ELSE
+            propLine = RepeatStr(" ", 44)
+        ENDIF
+
+        content = APPEND(content, "  " & propLine)
+    NEXT
+
+    ' Scroll indicator
+    DIM infoLine AS STRING = ""
+    IF propCount > viewHeight THEN
+        infoLine = "  [" & Str(scrollOffset + 1) & "-" & Str(scrollOffset + viewHeight) & " of " & Str(propCount) & "]"
+    ELSE
+        infoLine = "  "
+    ENDIF
+    content = APPEND(content, infoLine)
+
+    content = APPEND(content, "")
+
+    ' Help text
+    content = APPEND(content, "  Tab: Cycle focus  Arrows: Navigate")
+    IF use256 THEN
+        content = APPEND(content, "  Enter: Open color picker")
+    ELSE
+        content = APPEND(content, "  +/-: Adjust color")
+    ENDIF
+    content = APPEND(content, "")
+
+    ' Buttons with focus indicator
+    DIM btnFocus AS BOOLEAN = (m.ThemeEditorFocus = THEME_FOCUS_BUTTONS)
+    DIM applyBtn AS STRING = "< Apply to All >"
+    DIM okBtn AS STRING = "< OK >"
+    DIM cancelBtn AS STRING = "< Cancel >"
+
+    IF btnFocus THEN
+        IF m.ThemeEditorIndex = 0 THEN
+            applyBtn = "[Apply to All]"
+        ELSEIF m.ThemeEditorIndex = 1 THEN
+            okBtn = "[ OK ]"
+        ELSEIF m.ThemeEditorIndex = 2 THEN
+            cancelBtn = "[Cancel]"
+        ENDIF
+    ENDIF
+
+    content = APPEND(content, "   " & applyBtn & "  " & okBtn & "  " & cancelBtn)
+    content = APPEND(content, "")
+
+    RETURN content
+END FUNCTION
+
+' 256-color picker popup dialog content
+FUNCTION GetColorPicker256Content(m AS VDBTermModel) AS []STRING
+    DIM content AS []STRING
+
+    content = APPEND(content, "")
+    content = APPEND(content, "  Click on a color to select, or double-click to apply.")
+    content = APPEND(content, "")
+
+    ' Render 16x16 color grid (256 colors)
+    DIM row AS INTEGER
+    FOR row = 0 TO 15
+        DIM rowStr AS STRING = "  "
+        DIM col AS INTEGER
+        FOR col = 0 TO 15
+            DIM colorIdx AS INTEGER = row * 16 + col
+            DIM cellChar AS STRING = "  "
+            IF row = m.ThemeColorPickerY AND col = m.ThemeColorPickerX THEN
+                cellChar = "XX"
+            ENDIF
+            ' Use 256-color background
+            rowStr = rowStr & Chr(27) & "[48;5;" & Str(colorIdx) & "m" & cellChar & Chr(27) & "[0m"
+        NEXT
+        content = APPEND(content, rowStr)
+    NEXT
+
+    content = APPEND(content, "")
+
+    ' Show selected color info
+    DIM selectedColor AS INTEGER = m.ThemeColorPickerY * 16 + m.ThemeColorPickerX
+    DIM colorPreview AS STRING = Chr(27) & "[48;5;" & Str(selectedColor) & "m    " & Chr(27) & "[0m"
+    content = APPEND(content, "  Selected: " & PadRight(Str(selectedColor), 3) & " " & colorPreview)
+    content = APPEND(content, "")
+
+    ' Buttons
+    DIM okBtn AS STRING = "< OK >"
+    DIM cancelBtn AS STRING = "< Cancel >"
+    IF m.ThemeEditorIndex = 0 THEN
+        okBtn = "[ OK ]"
+    ELSE
+        cancelBtn = "[Cancel]"
+    ENDIF
+    content = APPEND(content, "        " & okBtn & "    " & cancelBtn)
+    content = APPEND(content, "")
 
     RETURN content
 END FUNCTION
@@ -1949,6 +2782,7 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         contentLines = APPEND(contentLines, "  Keyboard Shortcuts:")
         contentLines = APPEND(contentLines, "    F1     - Help")
         contentLines = APPEND(contentLines, "    F2     - Object Browser")
+        contentLines = APPEND(contentLines, "    F3     - Theme Editor")
         contentLines = APPEND(contentLines, "    F5     - Run project")
         contentLines = APPEND(contentLines, "    F7     - Toggle Form/Code view")
         contentLines = APPEND(contentLines, "    F10    - Open menu")
@@ -1978,6 +2812,55 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         contentLines = APPEND(contentLines, "   with forms, controls, and events.")
         contentLines = APPEND(contentLines, "")
         contentLines = APPEND(contentLines, "  Press Enter or Esc to close")
+    ELSEIF m.DialogMode = DIALOG_COMPILE_ERROR THEN
+        title = " Compile Errors "
+        width = 60
+
+        ' Split errors into lines and display with scrolling
+        DIM errorLines AS []STRING = SplitStr(m.CompileErrors, Chr(10))
+        DIM maxVisible AS INTEGER = 12
+        DIM startLine AS INTEGER = m.CompileErrorScroll
+        DIM endLine AS INTEGER = startLine + maxVisible
+        IF endLine > Len(errorLines) THEN
+            endLine = Len(errorLines)
+        ENDIF
+
+        contentLines = APPEND(contentLines, "")
+
+        DIM ei AS INTEGER
+        FOR ei = startLine TO endLine - 1
+            DIM errLine AS STRING = errorLines[ei]
+            ' Truncate long lines
+            IF Len(errLine) > width - 4 THEN
+                errLine = Left(errLine, width - 7) & "..."
+            ENDIF
+            contentLines = APPEND(contentLines, "  " & errLine)
+        NEXT
+
+        ' Pad remaining lines
+        FOR ei = endLine - startLine TO maxVisible - 1
+            contentLines = APPEND(contentLines, "")
+        NEXT
+
+        ' Show scroll indicator if needed
+        IF Len(errorLines) > maxVisible THEN
+            DIM scrollInfo AS STRING = "  [" & Str(startLine + 1) & "-" & Str(endLine) & " of " & Str(Len(errorLines)) & " lines - use Up/Down to scroll]"
+            contentLines = APPEND(contentLines, scrollInfo)
+        ELSE
+            contentLines = APPEND(contentLines, "")
+        ENDIF
+
+        contentLines = APPEND(contentLines, "")
+
+        ' Render buttons with selection highlight
+        DIM okBtn AS STRING = "< OK >"
+        DIM copyBtn AS STRING = "< Copy >"
+        IF m.CompileErrorBtnIdx = 0 THEN
+            okBtn = "[  OK  ]"
+        ELSE
+            copyBtn = "[  Copy  ]"
+        ENDIF
+        contentLines = APPEND(contentLines, "          " & okBtn & "       " & copyBtn)
     ELSEIF m.DialogMode = DIALOG_OPEN_PROJECT THEN
         title = " Open Project "
         width = 40
@@ -1999,6 +2882,19 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         contentLines = APPEND(contentLines, "   [" & RenderDialogTextField(m.DialogInput, m.DialogCursor, 30) & "]")
         contentLines = APPEND(contentLines, "")
         contentLines = APPEND(contentLines, "   < OK >       < Cancel >")
+    ELSEIF m.DialogMode = DIALOG_SAVE_AS THEN
+        title = " Save As "
+        width = 44
+        contentLines = APPEND(contentLines, "   File Name:")
+        contentLines = APPEND(contentLines, "   [" & RenderDialogTextField(m.DialogInput, m.DialogCursor, 34) & "]")
+        contentLines = APPEND(contentLines, "")
+        DIM checkMark AS STRING = " "
+        IF m.SaveAsWidget THEN
+            checkMark = "X"
+        ENDIF
+        contentLines = APPEND(contentLines, "   [" & checkMark & "] Save as Widget (to plugins/widgets/)")
+        contentLines = APPEND(contentLines, "")
+        contentLines = APPEND(contentLines, "   < OK >         < Cancel >")
     ELSEIF m.DialogMode = DIALOG_NEW_FORM THEN
         title = " New Form "
         width = 40
@@ -2074,11 +2970,24 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         title = " Object Browser "
         width = 70
         contentLines = GetObjectBrowserContent(m)
+    ELSEIF m.DialogMode = DIALOG_THEME_EDITOR THEN
+        title = " Theme Editor "
+        width = 52
+        contentLines = GetThemeEditorContent(m)
+    ELSEIF m.DialogMode = DIALOG_COLOR_PICKER_256 THEN
+        title = " 256-Color Picker "
+        width = 40
+        contentLines = GetColorPicker256Content(m)
     ENDIF
 
     ' Build dialog box
     DIM innerWidth AS INTEGER = width - 2
     DIM i AS INTEGER
+
+    ' Raw ANSI codes for theme editor (avoids lipgloss interference with color previews)
+    DIM dialogColorStart AS STRING = Chr(27) & "[38;5;252;48;5;237m"
+    DIM dialogColorReset AS STRING = Chr(27) & "[0m"
+    DIM useRawAnsi AS BOOLEAN = (m.DialogMode = DIALOG_THEME_EDITOR OR m.DialogMode = DIALOG_COLOR_PICKER_256)
 
     ' Top border with title
     DIM titleStart AS INTEGER = (innerWidth - Len(title)) / 2
@@ -2091,12 +3000,29 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         ENDIF
     NEXT
     borderTop = borderTop & "╗"
-    lines = APPEND(lines, styleDialog.Render(borderTop))
+    IF useRawAnsi THEN
+        lines = APPEND(lines, dialogColorStart & borderTop & dialogColorReset)
+    ELSE
+        lines = APPEND(lines, styleDialog.Render(borderTop))
+    ENDIF
 
     ' Content lines (use PadRightDisplay to handle ANSI escape codes correctly)
     FOR i = 0 TO Len(contentLines) - 1
-        DIM lineContent AS STRING = PadRightDisplay(contentLines[i], innerWidth)
-        lines = APPEND(lines, styleDialog.Render("║" & lineContent & "║"))
+        DIM lineContent AS STRING
+        IF useRawAnsi THEN
+            ' For theme editor: manually add padding with explicit color codes
+            DIM contentWidth AS INTEGER = lipgloss.Width(contentLines[i])
+            DIM paddingNeeded AS INTEGER = innerWidth - contentWidth
+            IF paddingNeeded < 0 THEN
+                paddingNeeded = 0
+            ENDIF
+            ' Add dialog colors before padding to ensure correct background
+            lineContent = contentLines[i] & dialogColorStart & RepeatStr(" ", paddingNeeded)
+            lines = APPEND(lines, dialogColorStart & "║" & lineContent & "║" & dialogColorReset)
+        ELSE
+            lineContent = PadRightDisplay(contentLines[i], innerWidth)
+            lines = APPEND(lines, styleDialog.Render("║" & lineContent & "║"))
+        ENDIF
     NEXT
 
     ' Bottom border
@@ -2105,7 +3031,11 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         borderBottom = borderBottom & "═"
     NEXT
     borderBottom = borderBottom & "╝"
-    lines = APPEND(lines, styleDialog.Render(borderBottom))
+    IF useRawAnsi THEN
+        lines = APPEND(lines, dialogColorStart & borderBottom & dialogColorReset)
+    ELSE
+        lines = APPEND(lines, styleDialog.Render(borderBottom))
+    ENDIF
 
     RETURN lines
 END FUNCTION
@@ -2119,6 +3049,8 @@ FUNCTION GetDialogSize(m AS VDBTermModel) AS (INTEGER, INTEGER)
         RETURN 36, 7
     ELSEIF m.DialogMode = DIALOG_NEW_PROJECT OR m.DialogMode = DIALOG_SAVE_PROJECT OR m.DialogMode = DIALOG_NEW_FORM OR m.DialogMode = DIALOG_NEW_MODULE OR m.DialogMode = DIALOG_OPEN_PROJECT THEN
         RETURN 40, 6
+    ELSEIF m.DialogMode = DIALOG_SAVE_AS THEN
+        RETURN 44, 8
     ELSEIF m.DialogMode = DIALOG_ENVIRONMENT THEN
         RETURN 44, 8
     ELSEIF m.DialogMode = DIALOG_EDITOR THEN
@@ -2129,6 +3061,12 @@ FUNCTION GetDialogSize(m AS VDBTermModel) AS (INTEGER, INTEGER)
         RETURN 50, 20
     ELSEIF m.DialogMode = DIALOG_OBJECT_BROWSER THEN
         RETURN 70, 22
+    ELSEIF m.DialogMode = DIALOG_COMPILE_ERROR THEN
+        RETURN 60, 20
+    ELSEIF m.DialogMode = DIALOG_THEME_EDITOR THEN
+        RETURN 52, 25
+    ELSEIF m.DialogMode = DIALOG_COLOR_PICKER_256 THEN
+        RETURN 40, 26
     ENDIF
     RETURN 40, 8
 END FUNCTION

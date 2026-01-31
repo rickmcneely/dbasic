@@ -11,6 +11,7 @@ DIM styleDropdownHotkey AS lipgloss.Style
 DIM styleDropdownHotkeySelected AS lipgloss.Style
 DIM styleToolbox AS lipgloss.Style
 DIM styleToolboxSelected AS lipgloss.Style
+DIM stylePanelTitle AS lipgloss.Style
 DIM styleFormCanvas AS lipgloss.Style
 DIM styleFormGrid AS lipgloss.Style
 DIM styleControl AS lipgloss.Style
@@ -53,7 +54,8 @@ SUB InitStyles()
 
     ' Toolbox panel
     styleToolbox = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("250"))
-    styleToolboxSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255"))
+    styleToolboxSelected = lipgloss.NewStyle().Background(lipgloss.Color("250")).Foreground(lipgloss.Color("232")).Bold(TRUE)
+    stylePanelTitle = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255"))
 
     ' Form canvas
     styleFormCanvas = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("252"))
@@ -76,12 +78,12 @@ SUB InitStyles()
     styleProperties = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252"))
     stylePropName = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("250"))
     stylePropValue = lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("252"))
-    stylePropSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255"))
+    stylePropSelected = lipgloss.NewStyle().Background(lipgloss.Color("250")).Foreground(lipgloss.Color("232")).Bold(TRUE)
 
     ' Project tree
     styleProjectTree = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252"))
     styleTreeItem = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("250"))
-    styleTreeSelected = lipgloss.NewStyle().Background(lipgloss.Color("33")).Foreground(lipgloss.Color("255"))
+    styleTreeSelected = lipgloss.NewStyle().Background(lipgloss.Color("250")).Foreground(lipgloss.Color("232")).Bold(TRUE)
 
     ' Status bar
     styleStatusBar = lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("255"))

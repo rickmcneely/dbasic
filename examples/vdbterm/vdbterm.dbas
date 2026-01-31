@@ -11,6 +11,7 @@ IMPORT "os" AS os
 ' Include all modules
 INCLUDE "vdbterm_const.dbas"
 INCLUDE "vdbterm_types.dbas"
+INCLUDE "vdbterm_plugins.dbas"
 INCLUDE "vdbterm_styles.dbas"
 INCLUDE "vdbterm_helpers.dbas"
 INCLUDE "vdbterm_codegen.dbas"
@@ -142,6 +143,15 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.ObjectBrowserTab = 0
         m.ObjectBrowserWidgetIdx = 0
         RETURN m, NIL
+    ELSEIF key = "f3" THEN
+        ' Open Theme Editor
+        m.DialogMode = DIALOG_THEME_EDITOR
+        m.ThemeEditorIndex = 0
+        m.ThemeEditorPropIdx = 0
+        m.ThemeEditorScroll = 0
+        m.ThemeEditorColIdx = 0
+        m.ThemeEditingTheme = m.Project.Theme
+        RETURN m, NIL
     ELSEIF key = "f5" THEN
         RETURN DoRun(m)
     ELSEIF key = "f7" THEN
@@ -249,15 +259,26 @@ SUB Main()
 
     ' Check command line args
     DIM args AS []STRING = os.Args
+    DIM projectToLoad AS STRING = ""
+
     IF Len(args) > 1 THEN
+        projectToLoad = args[1]
+    ELSE
+        ' No file specified - check for Default.vdbp in current directory
+        IF FileExists("Default.vdbp") THEN
+            projectToLoad = "Default.vdbp"
+        ENDIF
+    ENDIF
+
+    IF projectToLoad <> "" THEN
         ' Load project file
         DIM loadedProj AS VDBProject
         DIM loadErr AS STRING
-        loadedProj, loadErr = LoadProject(args[1])
+        loadedProj, loadErr = LoadProject(projectToLoad)
         IF loadErr = "" THEN
             model.Project = loadedProj
             model.ProjectLoaded = TRUE
-            model.Message = "Loaded: " & args[1]
+            model.Message = "Loaded: " & projectToLoad
             ' Sync initial code to editor
             IF Len(model.Project.Forms) > 0 THEN
                 model.CodeEditor = SyncCodeToEditor(model.CodeEditor, model.Project.Forms[0].Code)

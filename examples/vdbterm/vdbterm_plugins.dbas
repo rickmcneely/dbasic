@@ -1,0 +1,680 @@
+' VDBTerm Plugin System
+' Widget plugins using .vdbp project files
+' Widgets are loaded from plugins/widgets/*.vdbp
+' Type definitions are in vdbterm_types.dbas
+
+IMPORT "os" AS os
+IMPORT "strings" AS strings
+
+' Initialize an empty plugin registry
+' Note: PLUGIN_TYPE_START is defined in vdbterm_const.dbas
+FUNCTION NewPluginRegistry() AS PluginRegistry
+    DIM registry AS PluginRegistry
+    registry.NextCtrlTypeID = PLUGIN_TYPE_START
+    registry.PluginDir = GetPluginDirectory()
+    RETURN registry
+END FUNCTION
+
+' Get the plugin directory path
+FUNCTION GetPluginDirectory() AS STRING
+    ' Check current directory first
+    DIM info AS os.FileInfo
+    DIM err AS error
+    info, err = os.Stat("plugins/widgets")
+    IF err = NIL THEN
+        IF info.IsDir() THEN
+            RETURN "plugins/"
+        ENDIF
+    ENDIF
+
+    ' Check user home directory
+    DIM homeDir AS STRING = os.Getenv("HOME")
+    IF homeDir <> "" THEN
+        DIM userDir AS STRING = homeDir & "/.vdbterm/plugins/"
+        info, err = os.Stat(userDir & "widgets")
+        IF err = NIL THEN
+            IF info.IsDir() THEN
+                RETURN userDir
+            ENDIF
+        ENDIF
+    ENDIF
+
+    ' Default: use current directory
+    RETURN "plugins/"
+END FUNCTION
+
+' Ensure plugin directories exist
+SUB EnsurePluginDirectories(pluginDir AS STRING)
+    DIM _ AS error = os.MkdirAll(pluginDir & "widgets", 493)
+    ' Ignore errors - directory may already exist
+END SUB
+
+' Load all plugin widgets from the plugins directory
+FUNCTION LoadPluginWidgets(pluginDir AS STRING) AS PluginRegistry
+    DIM registry AS PluginRegistry
+    registry.NextCtrlTypeID = PLUGIN_TYPE_START
+    registry.PluginDir = pluginDir
+
+    ' Ensure plugin directories exist
+    EnsurePluginDirectories(pluginDir)
+
+    ' Scan for .vdbp files in widgets directory
+    DIM widgetsDir AS STRING = pluginDir & "widgets/"
+    DIM entries AS []os.DirEntry
+    DIM err AS error
+    entries, err = os.ReadDir(widgetsDir)
+    IF err <> NIL THEN
+        ' Directory doesn't exist or can't be read
+        RETURN registry
+    ENDIF
+
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(entries) - 1
+        DIM entry AS os.DirEntry = entries[i]
+        DIM fileName AS STRING = entry.Name()
+
+        ' Check if it's a .vdbp file
+        IF strings.HasSuffix(fileName, ".vdbp") THEN
+            DIM filePath AS STRING = widgetsDir & fileName
+            DIM content AS STRING = ReadFile(filePath)
+            IF content <> "" THEN
+                DIM widget AS PluginWidgetDef = ParseWidgetVDBP(content, filePath)
+                IF widget.Meta.ID <> "" THEN
+                    widget.CtrlTypeID = registry.NextCtrlTypeID
+                    widget.FilePath = filePath
+                    registry.NextCtrlTypeID = registry.NextCtrlTypeID + 1
+                    registry.Widgets = APPEND(registry.Widgets, widget)
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+
+    RETURN registry
+END FUNCTION
+
+' Parse a widget .vdbp file
+FUNCTION ParseWidgetVDBP(content AS STRING, filePath AS STRING) AS PluginWidgetDef
+    DIM widget AS PluginWidgetDef
+
+    ' Extract widgetMeta section
+    DIM metaJson AS STRING = ExtractJSONObject(content, "widgetMeta")
+    IF metaJson = "" THEN
+        ' Not a widget file, return empty
+        RETURN widget
+    ENDIF
+
+    ' Parse metadata
+    widget.Meta.ID = ExtractJSONString(metaJson, "id")
+    widget.Meta.Name = ExtractJSONString(metaJson, "name")
+    widget.Meta.Icon = ExtractJSONString(metaJson, "icon")
+    widget.Meta.Description = ExtractJSONString(metaJson, "description")
+    widget.Meta.Category = ExtractJSONString(metaJson, "category")
+    widget.Meta.Author = ExtractJSONString(metaJson, "author")
+    widget.Meta.Version = ExtractJSONString(metaJson, "version")
+
+    ' Set defaults
+    IF widget.Meta.Category = "" THEN
+        widget.Meta.Category = "visible"
+    ENDIF
+    IF widget.Meta.Icon = "" THEN
+        widget.Meta.Icon = "[?] "
+    ENDIF
+    IF widget.Meta.Version = "" THEN
+        widget.Meta.Version = "1.0"
+    ENDIF
+
+    ' Parse properties
+    widget.Properties = ParseWidgetProperties(content)
+
+    ' Parse events
+    widget.Events = ParseWidgetEvents(content)
+
+    ' Parse codegen
+    DIM codegenJson AS STRING = ExtractJSONObject(content, "widgetCodegen")
+    IF codegenJson <> "" THEN
+        widget.Codegen.Imports = ExtractJSONStringArray(codegenJson, "imports")
+        widget.Codegen.StateFields = ExtractJSONStringArray(codegenJson, "stateFields")
+        widget.Codegen.InitCode = ExtractJSONStringArray(codegenJson, "initCode")
+        widget.Codegen.ClickHandler = ExtractJSONStringArray(codegenJson, "clickHandler")
+        widget.Codegen.RenderFunction = ExtractJSONString(codegenJson, "renderFunction")
+    ENDIF
+
+    ' Parse the first form as the template
+    ' Note: We'll use LoadProject to get the full form structure
+    ' For now, extract basic form info for rendering
+    DIM formsArray AS STRING = ExtractJSONArray(content, "forms")
+    IF formsArray <> "" THEN
+        ' Parse first form
+        DIM formObj AS STRING = ExtractFirstObject(formsArray)
+        IF formObj <> "" THEN
+            widget.TemplateForm = ParseFormFromJSON(formObj)
+        ENDIF
+    ENDIF
+
+    widget.FilePath = filePath
+    RETURN widget
+END FUNCTION
+
+' Parse widget properties from JSON
+FUNCTION ParseWidgetProperties(content AS STRING) AS []PluginProperty
+    DIM props AS []PluginProperty
+    DIM propsArray AS STRING = ExtractJSONArray(content, "widgetProperties")
+    IF propsArray = "" THEN
+        RETURN props
+    ENDIF
+
+    ' Parse each property object in the array
+    DIM i AS INTEGER = 1
+    DIM depth AS INTEGER = 0
+    DIM objStart AS INTEGER = 0
+
+    WHILE i <= Len(propsArray)
+        DIM ch AS STRING = Mid(propsArray, i, 1)
+        IF ch = "{" THEN
+            IF depth = 0 THEN
+                objStart = i
+            ENDIF
+            depth = depth + 1
+        ELSEIF ch = "}" THEN
+            depth = depth - 1
+            IF depth = 0 AND objStart > 0 THEN
+                DIM objStr AS STRING = Mid(propsArray, objStart, i - objStart + 1)
+                DIM prop AS PluginProperty
+                prop.Name = ExtractJSONString(objStr, "name")
+                prop.PropType = ExtractJSONString(objStr, "type")
+                prop.DefaultStr = ExtractJSONString(objStr, "default")
+                prop.DefaultInt = ExtractJSONInt(objStr, "default")
+                prop.DefaultBool = ExtractJSONBool(objStr, "default")
+                prop.Description = ExtractJSONString(objStr, "description")
+                prop.MinValue = ExtractJSONInt(objStr, "min")
+                prop.MaxValue = ExtractJSONInt(objStr, "max")
+                prop.EnumValues = ExtractJSONStringArray(objStr, "values")
+                IF prop.Name <> "" THEN
+                    props = APPEND(props, prop)
+                ENDIF
+                objStart = 0
+            ENDIF
+        ENDIF
+        i = i + 1
+    WEND
+
+    RETURN props
+END FUNCTION
+
+' Parse widget events from JSON
+FUNCTION ParseWidgetEvents(content AS STRING) AS []PluginEvent
+    DIM events AS []PluginEvent
+    DIM eventsArray AS STRING = ExtractJSONArray(content, "widgetEvents")
+    IF eventsArray = "" THEN
+        RETURN events
+    ENDIF
+
+    ' Parse each event object
+    DIM i AS INTEGER = 1
+    DIM depth AS INTEGER = 0
+    DIM objStart AS INTEGER = 0
+
+    WHILE i <= Len(eventsArray)
+        DIM ch AS STRING = Mid(eventsArray, i, 1)
+        IF ch = "{" THEN
+            IF depth = 0 THEN
+                objStart = i
+            ENDIF
+            depth = depth + 1
+        ELSEIF ch = "}" THEN
+            depth = depth - 1
+            IF depth = 0 AND objStart > 0 THEN
+                DIM objStr AS STRING = Mid(eventsArray, objStart, i - objStart + 1)
+                DIM evt AS PluginEvent
+                evt.Name = ExtractJSONString(objStr, "name")
+                evt.Description = ExtractJSONString(objStr, "description")
+                IF evt.Name <> "" THEN
+                    events = APPEND(events, evt)
+                ENDIF
+                objStart = 0
+            ENDIF
+        ENDIF
+        i = i + 1
+    WEND
+
+    RETURN events
+END FUNCTION
+
+' Parse a form from JSON (simplified version for widget templates)
+FUNCTION ParseFormFromJSON(formJson AS STRING) AS VDBForm
+    DIM form AS VDBForm
+    form.Name = ExtractJSONString(formJson, "name")
+    form.Caption = ExtractJSONString(formJson, "caption")
+    form.Width = ExtractJSONInt(formJson, "width")
+    form.Height = ExtractJSONInt(formJson, "height")
+    form.ForeColor = ExtractJSONInt(formJson, "foreColor")
+    form.BackColor = ExtractJSONInt(formJson, "backColor")
+
+    ' Set defaults
+    IF form.Width <= 0 THEN
+        form.Width = 10
+    ENDIF
+    IF form.Height <= 0 THEN
+        form.Height = 3
+    ENDIF
+
+    ' Parse controls
+    DIM controlsArray AS STRING = ExtractJSONArray(formJson, "controls")
+    IF controlsArray <> "" THEN
+        form.Controls = ParseControlsFromJSON(controlsArray)
+    ENDIF
+
+    RETURN form
+END FUNCTION
+
+' Parse controls array from JSON
+FUNCTION ParseControlsFromJSON(controlsJson AS STRING) AS []VDBControl
+    DIM controls AS []VDBControl
+
+    DIM i AS INTEGER = 1
+    DIM depth AS INTEGER = 0
+    DIM objStart AS INTEGER = 0
+
+    WHILE i <= Len(controlsJson)
+        DIM ch AS STRING = Mid(controlsJson, i, 1)
+        IF ch = "{" THEN
+            IF depth = 0 THEN
+                objStart = i
+            ENDIF
+            depth = depth + 1
+        ELSEIF ch = "}" THEN
+            depth = depth - 1
+            IF depth = 0 AND objStart > 0 THEN
+                DIM objStr AS STRING = Mid(controlsJson, objStart, i - objStart + 1)
+                DIM ctrl AS VDBControl
+                ctrl.ID = ExtractJSONInt(objStr, "id")
+                ctrl.CtlType = ExtractJSONInt(objStr, "type")
+                ctrl.CtlName = ExtractJSONString(objStr, "name")
+                ctrl.Caption = ExtractJSONString(objStr, "caption")
+                ctrl.X = ExtractJSONInt(objStr, "x")
+                ctrl.Y = ExtractJSONInt(objStr, "y")
+                ctrl.Width = ExtractJSONInt(objStr, "width")
+                ctrl.Height = ExtractJSONInt(objStr, "height")
+                ctrl.ForeColor = ExtractJSONInt(objStr, "foreColor")
+                ctrl.BackColor = ExtractJSONInt(objStr, "backColor")
+                ctrl.Enabled = TRUE
+                ctrl.Visible = TRUE
+                controls = APPEND(controls, ctrl)
+                objStart = 0
+            ENDIF
+        ENDIF
+        i = i + 1
+    WEND
+
+    RETURN controls
+END FUNCTION
+
+' Extract first object from a JSON array
+FUNCTION ExtractFirstObject(arrayJson AS STRING) AS STRING
+    DIM i AS INTEGER = 1
+    DIM depth AS INTEGER = 0
+    DIM objStart AS INTEGER = 0
+
+    WHILE i <= Len(arrayJson)
+        DIM ch AS STRING = Mid(arrayJson, i, 1)
+        IF ch = "{" THEN
+            IF depth = 0 THEN
+                objStart = i
+            ENDIF
+            depth = depth + 1
+        ELSEIF ch = "}" THEN
+            depth = depth - 1
+            IF depth = 0 AND objStart > 0 THEN
+                RETURN Mid(arrayJson, objStart, i - objStart + 1)
+            ENDIF
+        ENDIF
+        i = i + 1
+    WEND
+
+    RETURN ""
+END FUNCTION
+
+' JSON extraction helpers (ExtractJSONObject and ExtractJSONArray extend the base functions in vdbterm_project.dbas)
+FUNCTION ExtractJSONObject(js AS STRING, key AS STRING) AS STRING
+    DIM searchKey AS STRING = Chr(34) & key & Chr(34) & ":"
+    DIM pos AS INTEGER = InStrPos(1, js, searchKey)
+    IF pos = 0 THEN
+        RETURN ""
+    ENDIF
+
+    DIM valueStart AS INTEGER = pos + Len(searchKey)
+    WHILE valueStart <= Len(js) AND (Mid(js, valueStart, 1) = " " OR Mid(js, valueStart, 1) = Chr(9) OR Mid(js, valueStart, 1) = Chr(10))
+        valueStart = valueStart + 1
+    WEND
+
+    IF Mid(js, valueStart, 1) <> "{" THEN
+        RETURN ""
+    ENDIF
+
+    DIM depth AS INTEGER = 0
+    DIM i AS INTEGER = valueStart
+    WHILE i <= Len(js)
+        DIM ch AS STRING = Mid(js, i, 1)
+        IF ch = "{" THEN
+            depth = depth + 1
+        ELSEIF ch = "}" THEN
+            depth = depth - 1
+            IF depth = 0 THEN
+                RETURN Mid(js, valueStart, i - valueStart + 1)
+            ENDIF
+        ENDIF
+        i = i + 1
+    WEND
+    RETURN ""
+END FUNCTION
+
+FUNCTION ExtractJSONArray(js AS STRING, key AS STRING) AS STRING
+    DIM searchKey AS STRING = Chr(34) & key & Chr(34) & ":"
+    DIM pos AS INTEGER = InStrPos(1, js, searchKey)
+    IF pos = 0 THEN
+        RETURN ""
+    ENDIF
+
+    DIM valueStart AS INTEGER = pos + Len(searchKey)
+    WHILE valueStart <= Len(js) AND (Mid(js, valueStart, 1) = " " OR Mid(js, valueStart, 1) = Chr(9) OR Mid(js, valueStart, 1) = Chr(10))
+        valueStart = valueStart + 1
+    WEND
+
+    IF Mid(js, valueStart, 1) <> "[" THEN
+        RETURN ""
+    ENDIF
+
+    DIM depth AS INTEGER = 0
+    DIM i AS INTEGER = valueStart
+    WHILE i <= Len(js)
+        DIM ch AS STRING = Mid(js, i, 1)
+        IF ch = "[" THEN
+            depth = depth + 1
+        ELSEIF ch = "]" THEN
+            depth = depth - 1
+            IF depth = 0 THEN
+                RETURN Mid(js, valueStart, i - valueStart + 1)
+            ENDIF
+        ENDIF
+        i = i + 1
+    WEND
+    RETURN ""
+END FUNCTION
+
+FUNCTION ExtractJSONStringArray(js AS STRING, key AS STRING) AS []STRING
+    DIM result AS []STRING
+    DIM arrayStr AS STRING = ExtractJSONArray(js, key)
+    IF arrayStr = "" THEN
+        RETURN result
+    ENDIF
+
+    DIM i AS INTEGER = 2
+    DIM bslash AS STRING = Chr(92)
+    WHILE i < Len(arrayStr)
+        DIM ch AS STRING = Mid(arrayStr, i, 1)
+        IF ch = " " OR ch = Chr(9) OR ch = Chr(10) OR ch = "," THEN
+            ' Skip whitespace and commas
+            i = i + 1
+        ELSEIF ch = Chr(34) THEN
+            ' Parse string value
+            DIM strStart AS INTEGER = i + 1
+            DIM strEnd AS INTEGER = strStart
+            WHILE strEnd < Len(arrayStr)
+                IF Mid(arrayStr, strEnd, 1) = Chr(34) THEN
+                    IF Mid(arrayStr, strEnd - 1, 1) <> bslash THEN
+                        EXIT WHILE
+                    ENDIF
+                ENDIF
+                strEnd = strEnd + 1
+            WEND
+            DIM str AS STRING = Mid(arrayStr, strStart, strEnd - strStart)
+            str = ReplaceAll(str, bslash & Chr(34), Chr(34))
+            str = ReplaceAll(str, bslash & "n", Chr(10))
+            result = APPEND(result, str)
+            i = strEnd + 1
+        ELSE
+            i = i + 1
+        ENDIF
+    WEND
+    RETURN result
+END FUNCTION
+
+' Plugin registry functions
+FUNCTION GetPluginByCtrlType(ctrlType AS INTEGER, registry AS PluginRegistry) AS PluginWidgetDef
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(registry.Widgets) - 1
+        IF registry.Widgets[i].CtrlTypeID = ctrlType THEN
+            RETURN registry.Widgets[i]
+        ENDIF
+    NEXT
+    DIM empty AS PluginWidgetDef
+    RETURN empty
+END FUNCTION
+
+FUNCTION GetPluginByID(pluginID AS STRING, registry AS PluginRegistry) AS PluginWidgetDef
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(registry.Widgets) - 1
+        IF registry.Widgets[i].Meta.ID = pluginID THEN
+            RETURN registry.Widgets[i]
+        ENDIF
+    NEXT
+    DIM empty AS PluginWidgetDef
+    RETURN empty
+END FUNCTION
+
+FUNCTION GetCtrlTypeByPluginID(pluginID AS STRING, registry AS PluginRegistry) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(registry.Widgets) - 1
+        IF registry.Widgets[i].Meta.ID = pluginID THEN
+            RETURN registry.Widgets[i].CtrlTypeID
+        ENDIF
+    NEXT
+    RETURN 0
+END FUNCTION
+
+FUNCTION IsPluginCtrlType(ctrlType AS INTEGER) AS BOOLEAN
+    RETURN ctrlType >= PLUGIN_TYPE_START
+END FUNCTION
+
+FUNCTION GetVisiblePluginCount(registry AS PluginRegistry) AS INTEGER
+    DIM count AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(registry.Widgets) - 1
+        IF registry.Widgets[i].Meta.Category = "visible" THEN
+            count = count + 1
+        ENDIF
+    NEXT
+    RETURN count
+END FUNCTION
+
+FUNCTION GetNonvisiblePluginCount(registry AS PluginRegistry) AS INTEGER
+    DIM count AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(registry.Widgets) - 1
+        IF registry.Widgets[i].Meta.Category = "nonvisible" THEN
+            count = count + 1
+        ENDIF
+    NEXT
+    RETURN count
+END FUNCTION
+
+FUNCTION GetVisiblePluginAtIndex(registry AS PluginRegistry, idx AS INTEGER) AS PluginWidgetDef
+    DIM count AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(registry.Widgets) - 1
+        IF registry.Widgets[i].Meta.Category = "visible" THEN
+            IF count = idx THEN
+                RETURN registry.Widgets[i]
+            ENDIF
+            count = count + 1
+        ENDIF
+    NEXT
+    DIM empty AS PluginWidgetDef
+    RETURN empty
+END FUNCTION
+
+FUNCTION GetNonvisiblePluginAtIndex(registry AS PluginRegistry, idx AS INTEGER) AS PluginWidgetDef
+    DIM count AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(registry.Widgets) - 1
+        IF registry.Widgets[i].Meta.Category = "nonvisible" THEN
+            IF count = idx THEN
+                RETURN registry.Widgets[i]
+            ENDIF
+            count = count + 1
+        ENDIF
+    NEXT
+    DIM empty AS PluginWidgetDef
+    RETURN empty
+END FUNCTION
+
+' Get plugin property value from extended props JSON
+FUNCTION GetPluginProp(extendedProps AS STRING, propName AS STRING) AS STRING
+    IF extendedProps = "" THEN
+        RETURN ""
+    ENDIF
+    RETURN ExtractJSONString(extendedProps, propName)
+END FUNCTION
+
+FUNCTION GetPluginPropInt(extendedProps AS STRING, propName AS STRING) AS INTEGER
+    IF extendedProps = "" THEN
+        RETURN 0
+    ENDIF
+    RETURN ExtractJSONInt(extendedProps, propName)
+END FUNCTION
+
+FUNCTION GetPluginPropBool(extendedProps AS STRING, propName AS STRING) AS BOOLEAN
+    IF extendedProps = "" THEN
+        RETURN FALSE
+    ENDIF
+    RETURN ExtractJSONBool(extendedProps, propName)
+END FUNCTION
+
+' Escape a string for JSON
+FUNCTION EscapeJSONString(s AS STRING) AS STRING
+    DIM result AS STRING = s
+    DIM bslash AS STRING = Chr(92)
+    result = ReplaceAll(result, bslash, bslash & bslash)
+    result = ReplaceAll(result, Chr(34), bslash & Chr(34))
+    result = ReplaceAll(result, Chr(10), bslash & "n")
+    result = ReplaceAll(result, Chr(9), bslash & "t")
+    result = ReplaceAll(result, Chr(13), bslash & "r")
+    RETURN result
+END FUNCTION
+
+' Generate widget metadata JSON section
+FUNCTION GenerateWidgetMetaJSON(meta AS WidgetMeta) AS STRING
+    DIM q AS STRING = Chr(34)
+    DIM output AS STRING = "  " & q & "widgetMeta" & q & ": {" & Chr(10)
+    output = output & "    " & q & "id" & q & ": " & q & meta.ID & q & "," & Chr(10)
+    output = output & "    " & q & "name" & q & ": " & q & meta.Name & q & "," & Chr(10)
+    output = output & "    " & q & "icon" & q & ": " & q & EscapeJSONString(meta.Icon) & q & "," & Chr(10)
+    output = output & "    " & q & "description" & q & ": " & q & EscapeJSONString(meta.Description) & q & "," & Chr(10)
+    output = output & "    " & q & "category" & q & ": " & q & meta.Category & q & "," & Chr(10)
+    output = output & "    " & q & "author" & q & ": " & q & meta.Author & q & "," & Chr(10)
+    output = output & "    " & q & "version" & q & ": " & q & meta.Version & q & Chr(10)
+    output = output & "  }"
+    RETURN output
+END FUNCTION
+
+' Generate widget properties JSON section
+FUNCTION GenerateWidgetPropertiesJSON(props AS []PluginProperty) AS STRING
+    IF Len(props) = 0 THEN
+        RETURN "  " & Chr(34) & "widgetProperties" & Chr(34) & ": []"
+    ENDIF
+
+    DIM q AS STRING = Chr(34)
+    DIM output AS STRING = "  " & q & "widgetProperties" & q & ": [" & Chr(10)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(props) - 1
+        DIM prop AS PluginProperty = props[i]
+        output = output & "    {" & Chr(10)
+        output = output & "      " & q & "name" & q & ": " & q & prop.Name & q & "," & Chr(10)
+        output = output & "      " & q & "type" & q & ": " & q & prop.PropType & q & "," & Chr(10)
+        IF prop.PropType = "string" THEN
+            output = output & "      " & q & "default" & q & ": " & q & EscapeJSONString(prop.DefaultStr) & q & "," & Chr(10)
+        ELSEIF prop.PropType = "boolean" THEN
+            IF prop.DefaultBool THEN
+                output = output & "      " & q & "default" & q & ": true," & Chr(10)
+            ELSE
+                output = output & "      " & q & "default" & q & ": false," & Chr(10)
+            ENDIF
+        ELSE
+            output = output & "      " & q & "default" & q & ": " & Str(prop.DefaultInt) & "," & Chr(10)
+        ENDIF
+        output = output & "      " & q & "description" & q & ": " & q & EscapeJSONString(prop.Description) & q & Chr(10)
+        output = output & "    }"
+        IF i < Len(props) - 1 THEN
+            output = output & ","
+        ENDIF
+        output = output & Chr(10)
+    NEXT
+    output = output & "  ]"
+    RETURN output
+END FUNCTION
+
+' Generate widget events JSON section
+FUNCTION GenerateWidgetEventsJSON(events AS []PluginEvent) AS STRING
+    IF Len(events) = 0 THEN
+        RETURN "  " & Chr(34) & "widgetEvents" & Chr(34) & ": []"
+    ENDIF
+
+    DIM q AS STRING = Chr(34)
+    DIM output AS STRING = "  " & q & "widgetEvents" & q & ": [" & Chr(10)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(events) - 1
+        DIM evt AS PluginEvent = events[i]
+        output = output & "    { " & q & "name" & q & ": " & q & evt.Name & q & ", "
+        output = output & q & "description" & q & ": " & q & EscapeJSONString(evt.Description) & q & " }"
+        IF i < Len(events) - 1 THEN
+            output = output & ","
+        ENDIF
+        output = output & Chr(10)
+    NEXT
+    output = output & "  ]"
+    RETURN output
+END FUNCTION
+
+' Get total visible widget count (built-in + plugins)
+FUNCTION GetTotalVisibleWidgetCount(registry AS PluginRegistry) AS INTEGER
+    RETURN VISIBLE_WIDGET_COUNT + GetVisiblePluginCount(registry)
+END FUNCTION
+
+' Get total nonvisible widget count (built-in + plugins)
+FUNCTION GetTotalNonvisibleWidgetCount(registry AS PluginRegistry) AS INTEGER
+    RETURN NONVISIBLE_WIDGET_COUNT + GetNonvisiblePluginCount(registry)
+END FUNCTION
+
+' Map widget index to control type (handles both built-in and plugins)
+FUNCTION WidgetIndexToCtrlTypeWithRegistry(widgetIdx AS INTEGER, registry AS PluginRegistry) AS INTEGER
+    ' First 15 are built-in visible widgets
+    IF widgetIdx < VISIBLE_WIDGET_COUNT THEN
+        RETURN WidgetIndexToCtrlType(widgetIdx)
+    ENDIF
+
+    ' Plugin visible widgets
+    DIM pluginIdx AS INTEGER = widgetIdx - VISIBLE_WIDGET_COUNT
+    DIM plugin AS PluginWidgetDef = GetVisiblePluginAtIndex(registry, pluginIdx)
+    IF plugin.Meta.ID <> "" THEN
+        RETURN plugin.CtrlTypeID
+    ENDIF
+
+    RETURN 0
+END FUNCTION
+
+' Map toolbox index to control type (handles both built-in and plugins)
+FUNCTION ToolboxIndexToCtrlTypeWithRegistry(toolIdx AS INTEGER, registry AS PluginRegistry) AS INTEGER
+    ' First 4 are built-in nonvisible widgets
+    IF toolIdx < NONVISIBLE_WIDGET_COUNT THEN
+        RETURN ToolboxIndexToCtrlType(toolIdx)
+    ENDIF
+
+    ' Plugin nonvisible widgets
+    DIM pluginIdx AS INTEGER = toolIdx - NONVISIBLE_WIDGET_COUNT
+    DIM plugin AS PluginWidgetDef = GetNonvisiblePluginAtIndex(registry, pluginIdx)
+    IF plugin.Meta.ID <> "" THEN
+        RETURN plugin.CtrlTypeID
+    ENDIF
+
+    RETURN 0
+END FUNCTION

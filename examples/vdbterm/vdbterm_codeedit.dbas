@@ -158,14 +158,52 @@ FUNCTION DoRun(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
     ENDIF
 
     ' Generate code and save to temp file
-    DIM code AS STRING = GenerateCode(m.Project)
+    DIM code AS STRING = GenerateCode(m.Project, m.PluginRegistry)
     DIM tempPath AS STRING = "/tmp/" & m.Project.Name & "_run.dbas"
     WriteFile(tempPath, code)
 
-    ' Create command to run dbasic
-    ' Use tea.ExecProcess to run the command
-    ' This temporarily exits alt screen, runs the process, then returns
-    DIM execCmd AS tea.Cmd = tea.ExecProcess(exec.Command("dbasic", "run", tempPath), NIL)
+    ' First check for transpiler errors using dbasic emit
+    ' Use shell redirection to capture output to a file
+    DIM errFile AS STRING = "/tmp/" & m.Project.Name & "_errors.txt"
+    DIM checkCmd AS POINTER TO exec.Cmd = exec.Command("sh", "-c", "dbasic emit " & tempPath & " > " & errFile & " 2>&1; echo $? > " & errFile & ".rc")
+    checkCmd.Run()
+
+    DIM rcContent AS STRING = ReadFile(errFile & ".rc")
+    DIM output AS STRING = ReadFile(errFile)
+
+    ' Check if the return code indicates an error (non-zero)
+    IF Trim(rcContent) <> "0" THEN
+        ' Transpiler error occurred - show error dialog
+        m.CompileErrors = output
+        m.CompileErrorScroll = 0
+        m.CompileErrorBtnIdx = 0
+        m.DialogMode = DIALOG_COMPILE_ERROR
+        m.Message = "Transpiler errors found"
+        RETURN m, NIL
+    ENDIF
+
+    ' Now check for Go compilation errors using dbasic build
+    DIM buildFile AS STRING = "/tmp/" & m.Project.Name & "_build_errors.txt"
+    DIM builtBinary AS STRING = "/tmp/" & m.Project.Name & "_run"
+    DIM buildCmd AS POINTER TO exec.Cmd = exec.Command("sh", "-c", "dbasic build " & tempPath & " -o " & builtBinary & " > " & buildFile & " 2>&1; echo $? > " & buildFile & ".rc")
+    buildCmd.Run()
+
+    DIM buildRc AS STRING = ReadFile(buildFile & ".rc")
+    DIM buildOutput AS STRING = ReadFile(buildFile)
+
+    ' Check if Go compilation failed
+    IF Trim(buildRc) <> "0" THEN
+        ' Go compilation error - show error dialog
+        m.CompileErrors = buildOutput
+        m.CompileErrorScroll = 0
+        m.CompileErrorBtnIdx = 0
+        m.DialogMode = DIALOG_COMPILE_ERROR
+        m.Message = "Build errors found"
+        RETURN m, NIL
+    ENDIF
+
+    ' No errors - run the built program directly
+    DIM execCmd AS tea.Cmd = tea.ExecProcess(exec.Command(builtBinary), NIL)
 
     m.Message = "Running: " & tempPath
     m.WasRunning = TRUE
@@ -178,7 +216,7 @@ FUNCTION DoBuild(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     ENDIF
 
-    DIM code AS STRING = GenerateCode(m.Project)
+    DIM code AS STRING = GenerateCode(m.Project, m.PluginRegistry)
     DIM outPath AS STRING = m.Project.Name & ".dbas"
     WriteFile(outPath, code)
     m.Message = "Built: " & outPath
