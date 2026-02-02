@@ -1,14 +1,19 @@
 # VDBTerm - Visual DBasic Terminal IDE
 
-## Project Goals
+## Project Goals - THESE ARE ABSOLUTES!!!
 
-<!-- TODO: Edit this section -->
+1. DBasic is a Cross-Platform BASIC language transpiler, written in entirely in golang.
+2. DBasic maintains the simplicity of BASIC with the versatility and speed of GOLANG.
+3. DBasic is able to use ALL Go Packages.
+4. VDBTerm is a clone of Visual Basic DOS Pro. 
+5. VDBTerm is written entirely in DBasic using github.com/charmbracelet packages for the TUI implementation. 
+6. VDBTerm will be able to write Cross-Platform TUI programs that are programmed in DBasic and have all of the benefits of DBasic.
 
 ---
 
 ## Overview
 
-VDBTerm is a Visual Basic DOS Pro clone for terminal environments. It's an IDE that allows creating TUI (Terminal User Interface) programs written in DBasic.
+VDBTerm is a Visual Basic DOS Pro clone for terminal environments. It's an IDE that allows creating Cross-Platform TUI (Terminal User Interface) programs written in DBasic.
 
 ## Compilation Chain
 
