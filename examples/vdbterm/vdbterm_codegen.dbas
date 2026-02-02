@@ -4442,6 +4442,13 @@ FUNCTION TransformEventCode(code AS STRING, form AS VDBForm) AS STRING
             DIM ctrl AS VDBControl = form.Controls[j]
 
             IF ctrl.CtlType = CTRL_TEXTBOX THEN
+                ' Handle SetValue method call: txtName.SetValue(x) -> m.txtName.SetValue(x)
+                DIM setValuePattern AS STRING = ctrl.CtlName & ".SetValue("
+                DIM setValuePos AS INTEGER = InStrPos(1, line, setValuePattern)
+                IF setValuePos > 0 THEN
+                    ' Transform txtName.SetValue(...) -> m.txtName.SetValue(...)
+                    line = ReplaceAll(line, ctrl.CtlName & ".SetValue(", "m." & ctrl.CtlName & ".SetValue(")
+                ENDIF
                 ' Handle assignment: txtName.Value = "x" -> m.txtName.SetValue("x")
                 DIM setPattern1 AS STRING = ctrl.CtlName & ".Value = "
                 DIM setPattern2 AS STRING = ctrl.CtlName & ".Text = "
@@ -4734,8 +4741,13 @@ FUNCTION TransformEventCode(code AS STRING, form AS VDBForm) AS STRING
                 line = ReplaceAll(line, ctrl.CtlName & ".SelectedFile", "m." & ctrl.CtlName & ".SelectedFile()")
                 ' fileName.SelectedFilePath -> m.fileName.SelectedFilePath()
                 line = ReplaceAll(line, ctrl.CtlName & ".SelectedFilePath", "m." & ctrl.CtlName & ".SelectedFilePath()")
-                ' fileName.Selected -> m.fileName.selected
-                line = ReplaceAll(line, ctrl.CtlName & ".Selected", "m." & ctrl.CtlName & ".selected")
+                ' fileName.Text -> m.fileName.SelectedFile() (alias for SelectedFile)
+                line = ReplaceAll(line, ctrl.CtlName & ".Text", "m." & ctrl.CtlName & ".SelectedFile()")
+                ' fileName.Selected -> m.fileName.selected (but not SelectedFile or SelectedFilePath)
+                ' Check that we're not matching SelectedFile or SelectedFilePath (with or without m. prefix)
+                IF InStrPos(1, line, ".SelectedFile") = 0 AND InStrPos(1, line, ".SelectedFilePath") = 0 THEN
+                    line = ReplaceAll(line, ctrl.CtlName & ".Selected", "m." & ctrl.CtlName & ".selected")
+                ENDIF
                 ' fileName.Pattern -> m.fileName.pattern or GetPattern()
                 DIM fwPatternSetPattern AS STRING = ctrl.CtlName & ".Pattern = "
                 DIM fwPatternSetPos AS INTEGER = InStrPos(1, line, fwPatternSetPattern)
