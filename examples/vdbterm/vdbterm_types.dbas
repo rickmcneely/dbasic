@@ -327,6 +327,8 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     ' Project tree state
     DIM TreeIndex AS INTEGER
     DIM TreeExpanded AS []BOOLEAN
+    DIM TreeLastClickTime AS time.Time
+    DIM TreeLastClickIdx AS INTEGER
 
     ' Menu state
     DIM MenuOpen AS INTEGER

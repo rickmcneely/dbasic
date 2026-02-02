@@ -2427,9 +2427,31 @@ FUNCTION HandleFormClick(m AS VDBTermModel, x AS INTEGER, y AS INTEGER) AS (tea.
 
     DIM ctrlCount AS INTEGER = Len(form.Controls)
 
-    ' Check if click is on a control (iterate forward - first in array is topmost visually)
+    ' Build list of control indices sorted by TabIndex descending (highest z-order first)
+    DIM sortedIndices AS []INTEGER
     DIM i AS INTEGER
     FOR i = 0 TO ctrlCount - 1
+        sortedIndices = APPEND(sortedIndices, i)
+    NEXT
+    ' Sort by TabIndex descending (bubble sort - control count is typically small)
+    DIM sortI AS INTEGER
+    DIM sortJ AS INTEGER
+    FOR sortI = 0 TO Len(sortedIndices) - 2
+        FOR sortJ = sortI + 1 TO Len(sortedIndices) - 1
+            DIM tabI AS INTEGER = form.Controls[sortedIndices[sortI]].TabIndex
+            DIM tabJ AS INTEGER = form.Controls[sortedIndices[sortJ]].TabIndex
+            IF tabJ > tabI THEN
+                DIM tmp AS INTEGER = sortedIndices[sortI]
+                sortedIndices[sortI] = sortedIndices[sortJ]
+                sortedIndices[sortJ] = tmp
+            ENDIF
+        NEXT
+    NEXT
+
+    ' Check if click is on a control (highest TabIndex/z-order first)
+    DIM si AS INTEGER
+    FOR si = 0 TO Len(sortedIndices) - 1
+        i = sortedIndices[si]
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[i]
         IF contentX >= ctrl.X AND contentX < ctrl.X + ctrl.Width AND contentY >= ctrl.Y AND contentY < ctrl.Y + ctrl.Height THEN
             DIM localX AS INTEGER = contentX - ctrl.X
@@ -2689,7 +2711,14 @@ FUNCTION HandleProjectClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.
     IF itemIdx >= 0 THEN
         DIM totalItems AS INTEGER = GetTreeItemCount(m)
         IF itemIdx < totalItems THEN
+            ' Check for double-click
+            DIM now AS time.Time = time.Now()
+            DIM elapsed AS time.Duration = now.Sub(m.TreeLastClickTime)
+            DIM isDoubleClick AS BOOLEAN = (itemIdx = m.TreeLastClickIdx AND elapsed < 500 * time.Millisecond)
+
             m.TreeIndex = itemIdx
+            m.TreeLastClickTime = now
+            m.TreeLastClickIdx = itemIdx
 
             ' Get info about clicked item
             DIM itemType AS INTEGER
@@ -2708,7 +2737,11 @@ FUNCTION HandleProjectClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.
                 ' Clicked on a control - select it in the form editor
                 m.CurrentFormIdx = formIdx
                 m.SelectedCtrlIdx = ctrlIdx
-                m.FocusArea = FOCUS_FORM
+                ' Only give focus to form editor on double-click
+                IF isDoubleClick THEN
+                    m.FocusArea = FOCUS_FORM
+                ENDIF
+                ' Single click keeps focus on project tree (already set above)
             ENDIF
         ENDIF
     ENDIF
@@ -2820,8 +2853,30 @@ FUNCTION HandleFormRightClick(m AS VDBTermModel, localX AS INTEGER, localY AS IN
     DIM ctrlCount AS INTEGER = Len(form.Controls)
     DIM i AS INTEGER
 
-    ' Iterate forward to get topmost control (first in array is on top)
+    ' Build list of control indices sorted by TabIndex descending (highest z-order first)
+    DIM sortedIndices AS []INTEGER
     FOR i = 0 TO ctrlCount - 1
+        sortedIndices = APPEND(sortedIndices, i)
+    NEXT
+    ' Sort by TabIndex descending (bubble sort - control count is typically small)
+    DIM sortI AS INTEGER
+    DIM sortJ AS INTEGER
+    FOR sortI = 0 TO Len(sortedIndices) - 2
+        FOR sortJ = sortI + 1 TO Len(sortedIndices) - 1
+            DIM tabI AS INTEGER = form.Controls[sortedIndices[sortI]].TabIndex
+            DIM tabJ AS INTEGER = form.Controls[sortedIndices[sortJ]].TabIndex
+            IF tabJ > tabI THEN
+                DIM tmp AS INTEGER = sortedIndices[sortI]
+                sortedIndices[sortI] = sortedIndices[sortJ]
+                sortedIndices[sortJ] = tmp
+            ENDIF
+        NEXT
+    NEXT
+
+    ' Iterate through controls by z-order (highest TabIndex first)
+    DIM si AS INTEGER
+    FOR si = 0 TO Len(sortedIndices) - 1
+        i = sortedIndices[si]
         DIM ctrl AS VDBControl = m.Project.Forms[m.CurrentFormIdx].Controls[i]
         IF contentX >= ctrl.X AND contentX < ctrl.X + ctrl.Width AND contentY >= ctrl.Y AND contentY < ctrl.Y + ctrl.Height THEN
             ' Found a control

@@ -464,6 +464,22 @@ FUNCTION RenderFormRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
             rowCtrlIndices = APPEND(rowCtrlIndices, i)
         ENDIF
     NEXT
+    ' Sort by TabIndex descending so higher z-order controls are checked first
+    ' (Simple bubble sort - control count per row is typically small)
+    DIM sortI AS INTEGER
+    DIM sortJ AS INTEGER
+    FOR sortI = 0 TO Len(rowCtrlIndices) - 2
+        FOR sortJ = sortI + 1 TO Len(rowCtrlIndices) - 1
+            DIM tabI AS INTEGER = form.Controls[rowCtrlIndices[sortI]].TabIndex
+            DIM tabJ AS INTEGER = form.Controls[rowCtrlIndices[sortJ]].TabIndex
+            IF tabJ > tabI THEN
+                ' Swap - higher TabIndex should come first
+                DIM tmp AS INTEGER = rowCtrlIndices[sortI]
+                rowCtrlIndices[sortI] = rowCtrlIndices[sortJ]
+                rowCtrlIndices[sortJ] = tmp
+            ENDIF
+        NEXT
+    NEXT
     DIM numRowCtrls AS INTEGER = Len(rowCtrlIndices)
 
     ' Check if drag/resize outline intersects this row
@@ -1483,8 +1499,8 @@ FUNCTION RenderProjectRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
     DIM content AS STRING = ""
 
     IF row = 0 THEN
-        ' Title - always highlighted blue
-        content = stylePanelTitle.Render(PadRight(" Project", width))
+        ' Title - always highlighted blue, centered with symbol
+        content = stylePanelTitle.Render(PadCenter("= Project", width))
         RETURN content
     ENDIF
 
@@ -1549,8 +1565,8 @@ FUNCTION RenderProjectCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
     DIM isTreeItem AS BOOLEAN = FALSE
 
     IF row = 0 THEN
-        ' Title row - always highlighted blue
-        DIM title AS STRING = PadRight(" Project", width)
+        ' Title row - always highlighted blue, centered with symbol
+        DIM title AS STRING = PadCenter("= Project", width)
         IF col < Len(title) THEN
             ch = Mid(title, col + 1, 1)
         ENDIF
@@ -1616,8 +1632,8 @@ FUNCTION RenderPropertiesRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER
     DIM content AS STRING = ""
 
     IF row = 0 THEN
-        ' Title - always highlighted blue
-        content = stylePropSelected.Render(PadCenter("Properties", width))
+        ' Title - always highlighted blue, centered with symbol
+        content = stylePanelTitle.Render(PadCenter("= Properties", width))
         RETURN content
     ENDIF
 
@@ -1697,12 +1713,12 @@ FUNCTION RenderPropertiesCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER,
     DIM ch AS STRING = " "
 
     IF row = 0 THEN
-        ' Title row - always highlighted blue
-        DIM title AS STRING = PadCenter("Properties", width)
+        ' Title row - always highlighted blue, centered with symbol
+        DIM title AS STRING = PadCenter("= Properties", width)
         IF col < Len(title) THEN
             ch = Mid(title, col + 1, 1)
         ENDIF
-        RETURN stylePropSelected.Render(ch)
+        RETURN stylePanelTitle.Render(ch)
     ENDIF
 
     IF NOT m.ProjectLoaded OR m.CurrentFormIdx >= Len(m.Project.Forms) THEN
@@ -2196,9 +2212,20 @@ FUNCTION GetObjectBrowserProperties(widgetIdx AS INTEGER) AS []STRING
             props = APPEND(props, "CharLimit INTEGER  Max characters")
         ELSEIF widgetIdx = 16 THEN
             ' Directories
-            props = APPEND(props, "Path      STRING   Current directory")
-            props = APPEND(props, "ShowFiles BOOLEAN  Show files too")
-            props = APPEND(props, "Filter    STRING   File filter pattern")
+            props = APPEND(props, "Path        STRING   Current directory")
+            props = APPEND(props, "SelectedDir STRING   Currently selected dir")
+            props = APPEND(props, "ShowFiles   BOOLEAN  Show files too")
+            props = APPEND(props, "Filter      STRING   File filter pattern")
+        ELSEIF widgetIdx = 17 THEN
+            ' Files
+            props = APPEND(props, "Path             STRING   Current directory")
+            props = APPEND(props, "SelectedFile     STRING   Selected filename")
+            props = APPEND(props, "SelectedFilePath STRING   Full selected path")
+            props = APPEND(props, "Pattern          STRING   File filter pattern")
+        ELSEIF widgetIdx = 18 THEN
+            ' DirBrowser
+            props = APPEND(props, "Path        STRING   Current directory")
+            props = APPEND(props, "SelectedDir STRING   Currently selected dir")
         ENDIF
     ENDIF
     RETURN props
@@ -2372,7 +2399,6 @@ FUNCTION GetObjectBrowserFunctions(widgetIdx AS INTEGER) AS []STRING
         funcs = APPEND(funcs, "Focus()             Set input focus")
         funcs = APPEND(funcs, "Blur()              Remove input focus")
         funcs = APPEND(funcs, "GetPath()           Get current path")
-        funcs = APPEND(funcs, "SelectedDir()       Get selected directory")
         funcs = APPEND(funcs, "SetPath(s)          Set root path")
         funcs = APPEND(funcs, "View()              Refresh directory list")
         funcs = APPEND(funcs, "Update(msg)         Handle input message")
@@ -2381,8 +2407,6 @@ FUNCTION GetObjectBrowserFunctions(widgetIdx AS INTEGER) AS []STRING
         funcs = APPEND(funcs, "Focus()             Set input focus")
         funcs = APPEND(funcs, "Blur()              Remove input focus")
         funcs = APPEND(funcs, "GetPath()           Get current path")
-        funcs = APPEND(funcs, "SelectedFile()      Get selected filename")
-        funcs = APPEND(funcs, "SelectedFilePath()  Get full selected path")
         funcs = APPEND(funcs, "SetPath(s)          Set directory path")
         funcs = APPEND(funcs, "SetPattern(p)       Set file pattern filter")
         funcs = APPEND(funcs, "GetPattern()        Get current pattern")
@@ -2395,7 +2419,6 @@ FUNCTION GetObjectBrowserFunctions(widgetIdx AS INTEGER) AS []STRING
         funcs = APPEND(funcs, "Blur()              Remove input focus")
         funcs = APPEND(funcs, "Focused()           Check if focused")
         funcs = APPEND(funcs, "GetPath()           Get current path")
-        funcs = APPEND(funcs, "SelectedDir()       Get selected directory")
         funcs = APPEND(funcs, "SetPath(s)          Set root path")
         funcs = APPEND(funcs, "SetColors(fg,bg)    Set colors")
         funcs = APPEND(funcs, "SetShowHidden(b)    Show/hide hidden dirs")
