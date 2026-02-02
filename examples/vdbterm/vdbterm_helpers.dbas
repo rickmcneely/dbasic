@@ -964,7 +964,7 @@ FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRIN
 
     IF ctrl.CtlType = CTRL_TEXTBOX THEN
         IF typeIdx = 0 THEN
-            RETURN "Value"
+            RETURN "Text"
         ELSEIF typeIdx = 1 THEN
             RETURN "Placeholder"
         ELSEIF typeIdx = 2 THEN
@@ -1064,7 +1064,7 @@ FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRIN
         IF typeIdx = 0 THEN
             RETURN "InitialPath"
         ELSEIF typeIdx = 1 THEN
-            RETURN "LinkedDirs"
+            RETURN "LinkedPath"
         ENDIF
     ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
         IF typeIdx = 0 THEN

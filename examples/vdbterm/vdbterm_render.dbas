@@ -2174,7 +2174,7 @@ FUNCTION GetObjectBrowserProperties(widgetIdx AS INTEGER) AS []STRING
             props = APPEND(props, "Interval  INTEGER  Ms between ticks")
         ELSEIF widgetIdx = 11 THEN
             ' TextArea
-            props = APPEND(props, "Value     STRING   Text content")
+            props = APPEND(props, "Text      STRING   Text content")
             props = APPEND(props, "Placeholder STRING Empty hint")
             props = APPEND(props, "ShowLineNumbers BOOLEAN Line nums")
         ELSEIF widgetIdx = 12 THEN
@@ -2289,8 +2289,7 @@ FUNCTION GetObjectBrowserFunctions(widgetIdx AS INTEGER) AS []STRING
         ' TextBox
         funcs = APPEND(funcs, "Focus()             Set input focus")
         funcs = APPEND(funcs, "Blur()              Remove input focus")
-        funcs = APPEND(funcs, "Value()             Get current text")
-        funcs = APPEND(funcs, "SetValue(s)         Set text content")
+        funcs = APPEND(funcs, "SetText(s)          Set text content")
         funcs = APPEND(funcs, "SetPlaceholder(s)   Set hint text")
         funcs = APPEND(funcs, "SetCharLimit(n)     Set max characters")
     ELSEIF widgetIdx = 4 THEN
@@ -2337,8 +2336,7 @@ FUNCTION GetObjectBrowserFunctions(widgetIdx AS INTEGER) AS []STRING
         ' TextArea
         funcs = APPEND(funcs, "Focus()             Set input focus")
         funcs = APPEND(funcs, "Blur()              Remove input focus")
-        funcs = APPEND(funcs, "Value()             Get all text")
-        funcs = APPEND(funcs, "SetValue(s)         Set text content")
+        funcs = APPEND(funcs, "SetText(s)          Set text content")
         funcs = APPEND(funcs, "Line(n)             Get line at index")
         funcs = APPEND(funcs, "LineCount()         Get number of lines")
         funcs = APPEND(funcs, "CursorLine()        Get cursor line")

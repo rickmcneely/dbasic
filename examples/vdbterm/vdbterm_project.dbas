@@ -519,7 +519,7 @@ FUNCTION SerializeForm(f AS VDBForm) AS STRING
         ELSEIF c.CtlType = CTRL_PATH THEN
             result = result & "," & Chr(10)
             result = result & "      " & q & "path" & q & ": " & q & c.FilePath & q & "," & Chr(10)
-            result = result & "      " & q & "linkedControl" & q & ": " & q & c.LinkedControl & q & Chr(10)
+            result = result & "      " & q & "linkedPath" & q & ": " & q & c.LinkedControl & q & Chr(10)
         ELSEIF c.CtlType = CTRL_DIRECTORIES THEN
             result = result & "," & Chr(10)
             result = result & "      " & q & "path" & q & ": " & q & c.FilePath & q & "," & Chr(10)
@@ -528,7 +528,7 @@ FUNCTION SerializeForm(f AS VDBForm) AS STRING
             ELSE
                 result = result & "      " & q & "showHidden" & q & ": false," & Chr(10)
             ENDIF
-            result = result & "      " & q & "linkedControl" & q & ": " & q & c.LinkedControl & q & Chr(10)
+            result = result & "      " & q & "linkedPath" & q & ": " & q & c.LinkedControl & q & Chr(10)
         ELSEIF c.CtlType = CTRL_FILES THEN
             result = result & "," & Chr(10)
             result = result & "      " & q & "path" & q & ": " & q & c.FilePath & q & "," & Chr(10)
@@ -538,7 +538,7 @@ FUNCTION SerializeForm(f AS VDBForm) AS STRING
                 result = result & "      " & q & "showHidden" & q & ": false," & Chr(10)
             ENDIF
             result = result & "      " & q & "pattern" & q & ": " & q & c.Pattern & q & "," & Chr(10)
-            result = result & "      " & q & "linkedControl" & q & ": " & q & c.LinkedControl & q & Chr(10)
+            result = result & "      " & q & "linkedPath" & q & ": " & q & c.LinkedControl & q & Chr(10)
         ELSEIF c.CtlType = CTRL_CURL THEN
             result = result & "," & Chr(10)
             result = result & "      " & q & "url" & q & ": " & q & EscapeJSONString(c.URL) & q & "," & Chr(10)
@@ -1355,14 +1355,22 @@ FUNCTION ParseControlObject(js AS STRING) AS VDBControl
         IF ctrl.FilePath = "" THEN
             ctrl.FilePath = "."
         ENDIF
-        ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+        ' Support both linkedPath (new) and linkedControl (backward compat)
+        ctrl.LinkedControl = ExtractJSONString(js, "linkedPath")
+        IF ctrl.LinkedControl = "" THEN
+            ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+        ENDIF
     ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
         ctrl.FilePath = ExtractJSONString(js, "path")
         IF ctrl.FilePath = "" THEN
             ctrl.FilePath = "."
         ENDIF
         ctrl.ShowHidden = ExtractJSONBool(js, "showHidden")
-        ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+        ' Support both linkedPath (new) and linkedControl (backward compat)
+        ctrl.LinkedControl = ExtractJSONString(js, "linkedPath")
+        IF ctrl.LinkedControl = "" THEN
+            ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+        ENDIF
     ELSEIF ctrl.CtlType = CTRL_FILES THEN
         ctrl.FilePath = ExtractJSONString(js, "path")
         IF ctrl.FilePath = "" THEN
@@ -1373,7 +1381,11 @@ FUNCTION ParseControlObject(js AS STRING) AS VDBControl
         IF ctrl.Pattern = "" THEN
             ctrl.Pattern = "*"
         ENDIF
-        ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+        ' Support both linkedPath (new) and linkedControl (backward compat)
+        ctrl.LinkedControl = ExtractJSONString(js, "linkedPath")
+        IF ctrl.LinkedControl = "" THEN
+            ctrl.LinkedControl = ExtractJSONString(js, "linkedControl")
+        ENDIF
     ELSEIF ctrl.CtlType = CTRL_CURL THEN
         ctrl.URL = ExtractJSONString(js, "url")
         ctrl.HttpMethod = ExtractJSONString(js, "httpMethod")

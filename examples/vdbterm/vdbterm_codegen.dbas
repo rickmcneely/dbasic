@@ -995,6 +995,7 @@ FUNCTION GeneratePathWidget() AS STRING
     code = code & "    DIM fgColor AS INTEGER" & Chr(10)
     code = code & "    DIM bgColor AS INTEGER" & Chr(10)
     code = code & "    DIM focused AS BOOLEAN" & Chr(10)
+    code = code & "    DIM LinkedPath AS STRING" & Chr(10)
     code = code & "END TYPE" & Chr(10)
     code = code & Chr(10)
 
@@ -1159,6 +1160,7 @@ FUNCTION GenerateDirectoriesWidget() AS STRING
     code = code & "    DIM fgColor AS INTEGER" & Chr(10)
     code = code & "    DIM bgColor AS INTEGER" & Chr(10)
     code = code & "    DIM showHidden AS BOOLEAN" & Chr(10)
+    code = code & "    DIM LinkedPath AS STRING" & Chr(10)
     code = code & "END TYPE" & Chr(10)
     code = code & Chr(10)
 
@@ -1423,6 +1425,7 @@ FUNCTION GenerateFilesWidget() AS STRING
     code = code & "    DIM bgColor AS INTEGER" & Chr(10)
     code = code & "    DIM showHidden AS BOOLEAN" & Chr(10)
     code = code & "    DIM pattern AS STRING" & Chr(10)
+    code = code & "    DIM LinkedPath AS STRING" & Chr(10)
     code = code & "END TYPE" & Chr(10)
     code = code & Chr(10)
 
@@ -1826,6 +1829,45 @@ FUNCTION ProjectHasDirBrowser(proj AS VDBProject) AS BOOLEAN
     RETURN FALSE
 END FUNCTION
 
+' Check if form uses any widgets with LinkedPath property
+FUNCTION FormHasLinkedPath(form AS VDBForm) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_PATH OR ctrl.CtlType = CTRL_DIRECTORIES OR ctrl.CtlType = CTRL_FILES THEN
+            IF ctrl.LinkedControl <> "" THEN
+                RETURN TRUE
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN FALSE
+END FUNCTION
+
+' Get all unique LinkedPath names from a form
+FUNCTION GetLinkedPathNames(form AS VDBForm) AS []STRING
+    DIM result AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_PATH OR ctrl.CtlType = CTRL_DIRECTORIES OR ctrl.CtlType = CTRL_FILES THEN
+            IF ctrl.LinkedControl <> "" THEN
+                ' Check if already in result
+                DIM found AS BOOLEAN = FALSE
+                DIM j AS INTEGER
+                FOR j = 0 TO Len(result) - 1
+                    IF result[j] = ctrl.LinkedControl THEN
+                        found = TRUE
+                    ENDIF
+                NEXT
+                IF NOT found THEN
+                    result = APPEND(result, ctrl.LinkedControl)
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN result
+END FUNCTION
+
 ' Generate import statements based on controls used
 FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
     DIM code AS STRING = ""
@@ -1855,6 +1897,7 @@ FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
             needFilepath = TRUE
         ELSEIF ctrl.CtlType = CTRL_PATH THEN
             needTextInput = TRUE
+            needTime = TRUE
         ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
             needFilepath = TRUE
             needTime = TRUE
@@ -1955,6 +1998,7 @@ FUNCTION GenerateFormType(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "    DIM " & ctrl.CtlName & "_Running AS BOOLEAN" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
             code = code & "    DIM " & ctrl.CtlName & "_Focused AS BOOLEAN" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_Pressed AS BOOLEAN" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_LABEL THEN
             code = code & "    DIM " & ctrl.CtlName & "_Text AS STRING" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
@@ -1981,6 +2025,7 @@ FUNCTION GenerateFormType(form AS VDBForm, registry AS PluginRegistry) AS STRING
         ELSEIF ctrl.CtlType = CTRL_PATH THEN
             ' Path uses standalone widget type
             code = code & "    DIM " & ctrl.CtlName & " AS PathWidget" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_LastClickTime AS time.Time" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
             ' Directories uses standalone widget type
             code = code & "    DIM " & ctrl.CtlName & " AS DirectoriesWidget" & Chr(10)
@@ -2036,6 +2081,10 @@ FUNCTION GenerateFormType(form AS VDBForm, registry AS PluginRegistry) AS STRING
     code = code & "    DIM Width AS INTEGER" & Chr(10)
     code = code & "    DIM Height AS INTEGER" & Chr(10)
     code = code & "    DIM Caption AS STRING" & Chr(10)
+    code = code & Chr(10)
+    code = code & "    ' LinkedPath support for Path/Directories/Files widget synchronization" & Chr(10)
+    code = code & "    DIM LinkedPathNames AS []STRING" & Chr(10)
+    code = code & "    DIM LinkedPathValues AS []STRING" & Chr(10)
     code = code & "END TYPE" & Chr(10) & Chr(10)
 
     RETURN code
@@ -2437,10 +2486,10 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
             ELSE
                 code = code & "        ELSEIF mx >= " & Str(ctrl.X) & " AND mx < " & Str(ctrl.X + ctrl.Width) & " AND my >= " & Str(ctrl.Y) & " AND my < " & Str(ctrl.Y + ctrlH) & " THEN" & Chr(10)
             ENDIF
-            code = code & "            ' Click on " & ctrl.CtlName & " (Button)" & Chr(10)
+            code = code & "            ' Press on " & ctrl.CtlName & " (Button) - set pressed state, click on release" & Chr(10)
             code = code & "            m = ClearFocus(m)" & Chr(10)
             code = code & "            m." & ctrl.CtlName & "_Focused = TRUE" & Chr(10)
-            code = code & "            m = " & ctrl.CtlName & "_Click(m)" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & "_Pressed = TRUE" & Chr(10)
             code = code & "            RETURN m, _checkMsgBoxRepaint()" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
             IF first THEN
@@ -2560,7 +2609,7 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "            ENDIF" & Chr(10)
             code = code & "            RETURN m, _checkMsgBoxRepaint()" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_PATH THEN
-            ' Path widget - click focuses the text input
+            ' Path widget - click focuses the text input, double-click triggers Change/Enter/DblClick
             IF first THEN
                 code = code & "        IF mx >= " & Str(ctrl.X) & " AND mx < " & Str(ctrl.X + ctrl.Width) & " AND my >= " & Str(ctrl.Y) & " AND my < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
                 first = FALSE
@@ -2572,6 +2621,21 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "            DIM " & ctrl.CtlName & "_focusCmd AS tea.Cmd" & Chr(10)
             code = code & "            m." & ctrl.CtlName & ", " & ctrl.CtlName & "_focusCmd = m." & ctrl.CtlName & ".Focus()" & Chr(10)
             code = code & "            m = SetFocusIndex(m, " & Chr(34) & ctrl.CtlName & Chr(34) & ")" & Chr(10)
+            code = code & "            ' Check for double-click" & Chr(10)
+            code = code & "            DIM pwNow AS time.Time = time.Now()" & Chr(10)
+            code = code & "            DIM pwElapsed AS time.Duration = pwNow.Sub(m." & ctrl.CtlName & "_LastClickTime)" & Chr(10)
+            code = code & "            IF pwElapsed < 500 * time.Millisecond THEN" & Chr(10)
+            code = code & "                ' Double-click - apply path and trigger events" & Chr(10)
+            code = code & "                m." & ctrl.CtlName & ".path = m." & ctrl.CtlName & ".textInput.Value()" & Chr(10)
+            code = code & "                ' Auto-sync widgets with same LinkedPath (if set)" & Chr(10)
+            code = code & "                IF m." & ctrl.CtlName & ".LinkedPath <> " & Chr(34) & Chr(34) & " THEN" & Chr(10)
+            code = code & "                    m = _syncLinkedPath(m, m." & ctrl.CtlName & ".LinkedPath, m." & ctrl.CtlName & ".path)" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
+            code = code & "                m = " & ctrl.CtlName & "_Change(m)" & Chr(10)
+            code = code & "                m = " & ctrl.CtlName & "_Enter(m)" & Chr(10)
+            code = code & "                m = " & ctrl.CtlName & "_DblClick(m)" & Chr(10)
+            code = code & "            ENDIF" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & "_LastClickTime = pwNow" & Chr(10)
             code = code & "            RETURN m, " & ctrl.CtlName & "_focusCmd" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
             ' Directories widget - click focuses and selects item, double-click changes directory
@@ -2603,6 +2667,10 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "                        ENDIF" & Chr(10)
             code = code & "                        m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(dwNewPath)" & Chr(10)
             code = code & "                        m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".View()" & Chr(10)
+            ' Auto-sync linked widgets if this control has a LinkedPath (checked at runtime)
+            code = code & "                        IF m." & ctrl.CtlName & ".LinkedPath <> " & Chr(34) & Chr(34) & " THEN" & Chr(10)
+            code = code & "                            m = _syncLinkedPath(m, m." & ctrl.CtlName & ".LinkedPath, dwNewPath)" & Chr(10)
+            code = code & "                        ENDIF" & Chr(10)
             code = code & "                        m = " & ctrl.CtlName & "_Change(m)" & Chr(10)
             code = code & "                        m = " & ctrl.CtlName & "_Enter(m)" & Chr(10)
             code = code & "                        m = " & ctrl.CtlName & "_DblClick(m)" & Chr(10)
@@ -2652,6 +2720,32 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
         code = code & "        ENDIF" & Chr(10)
     ENDIF
 
+    code = code & "    ENDIF" & Chr(10)
+    code = code & Chr(10)
+
+    ' Handle mouse release for buttons (trigger click on release)
+    code = code & "    ' Handle mouse release for button clicks" & Chr(10)
+    code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionRelease THEN" & Chr(10)
+    code = code & "        DIM rmx AS INTEGER = Int(mouseMsg.X) - 1" & Chr(10)
+    code = code & "        DIM rmy AS INTEGER = Int(mouseMsg.Y) - 1" & Chr(10)
+    ' Generate release handling for each button
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_BUTTON THEN
+            DIM ctrlH AS INTEGER = 1
+            IF ctrl.Border AND ctrl.Height >= 3 THEN
+                ctrlH = ctrl.Height
+            ENDIF
+            code = code & "        IF m." & ctrl.CtlName & "_Pressed THEN" & Chr(10)
+            code = code & "            m." & ctrl.CtlName & "_Pressed = FALSE" & Chr(10)
+            code = code & "            ' Check if release is within button bounds" & Chr(10)
+            code = code & "            IF rmx >= " & Str(ctrl.X) & " AND rmx < " & Str(ctrl.X + ctrl.Width) & " AND rmy >= " & Str(ctrl.Y) & " AND rmy < " & Str(ctrl.Y + ctrlH) & " THEN" & Chr(10)
+            code = code & "                m = " & ctrl.CtlName & "_Click(m)" & Chr(10)
+            code = code & "            ENDIF" & Chr(10)
+            code = code & "            RETURN m, _checkMsgBoxRepaint()" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
+        ENDIF
+    NEXT
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
 
@@ -2780,10 +2874,15 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "        ' Path " & ctrl.CtlName & " keyboard handling" & Chr(10)
             code = code & "        IF m." & ctrl.CtlName & ".Focused() THEN" & Chr(10)
             code = code & "            IF key = " & Chr(34) & "enter" & Chr(34) & " THEN" & Chr(10)
-            code = code & "                ' Apply the typed path" & Chr(10)
+            code = code & "                ' Apply the typed path and trigger Change, Enter, DblClick events" & Chr(10)
             code = code & "                m." & ctrl.CtlName & ".path = m." & ctrl.CtlName & ".textInput.Value()" & Chr(10)
+            ' Auto-sync linked widgets if this control has a LinkedPath (checked at runtime)
+            code = code & "                IF m." & ctrl.CtlName & ".LinkedPath <> " & Chr(34) & Chr(34) & " THEN" & Chr(10)
+            code = code & "                    m = _syncLinkedPath(m, m." & ctrl.CtlName & ".LinkedPath, m." & ctrl.CtlName & ".path)" & Chr(10)
+            code = code & "                ENDIF" & Chr(10)
             code = code & "                m = " & ctrl.CtlName & "_Change(m)" & Chr(10)
             code = code & "                m = " & ctrl.CtlName & "_Enter(m)" & Chr(10)
+            code = code & "                m = " & ctrl.CtlName & "_DblClick(m)" & Chr(10)
             code = code & "                RETURN m, _checkMsgBoxRepaint()" & Chr(10)
             code = code & "            ENDIF" & Chr(10)
             code = code & "        ENDIF" & Chr(10)
@@ -2810,7 +2909,7 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "                ENDIF" & Chr(10)
             code = code & "                RETURN m, _checkMsgBoxRepaint()" & Chr(10)
             code = code & "            ELSEIF key = " & Chr(34) & "enter" & Chr(34) & " THEN" & Chr(10)
-            code = code & "                ' Enter selected directory" & Chr(10)
+            code = code & "                ' Enter selected directory - trigger Change, Enter, DblClick events" & Chr(10)
             code = code & "                IF m." & ctrl.CtlName & ".selected >= 0 AND m." & ctrl.CtlName & ".selected < Len(m." & ctrl.CtlName & ".dirs) THEN" & Chr(10)
             code = code & "                    DIM dwSelDir AS STRING = m." & ctrl.CtlName & ".dirs[m." & ctrl.CtlName & ".selected]" & Chr(10)
             code = code & "                    IF dwSelDir = " & Chr(34) & ".." & Chr(34) & " THEN" & Chr(10)
@@ -2821,8 +2920,13 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "                    m." & ctrl.CtlName & ".dirs = DirectoriesListDirs(m." & ctrl.CtlName & ".path, m." & ctrl.CtlName & ".showHidden)" & Chr(10)
             code = code & "                    m." & ctrl.CtlName & ".selected = 0" & Chr(10)
             code = code & "                    m." & ctrl.CtlName & ".scroll = 0" & Chr(10)
+            ' Auto-sync linked widgets if this control has a LinkedPath (checked at runtime)
+            code = code & "                    IF m." & ctrl.CtlName & ".LinkedPath <> " & Chr(34) & Chr(34) & " THEN" & Chr(10)
+            code = code & "                        m = _syncLinkedPath(m, m." & ctrl.CtlName & ".LinkedPath, m." & ctrl.CtlName & ".path)" & Chr(10)
+            code = code & "                    ENDIF" & Chr(10)
             code = code & "                    m = " & ctrl.CtlName & "_Change(m)" & Chr(10)
             code = code & "                    m = " & ctrl.CtlName & "_Enter(m)" & Chr(10)
+            code = code & "                    m = " & ctrl.CtlName & "_DblClick(m)" & Chr(10)
             code = code & "                ENDIF" & Chr(10)
             code = code & "                RETURN m, _checkMsgBoxRepaint()" & Chr(10)
             code = code & "            ENDIF" & Chr(10)
@@ -2852,9 +2956,11 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "                ENDIF" & Chr(10)
             code = code & "                RETURN m, _checkMsgBoxRepaint()" & Chr(10)
             code = code & "            ELSEIF key = " & Chr(34) & "enter" & Chr(34) & " THEN" & Chr(10)
-            code = code & "                ' Select the file" & Chr(10)
+            code = code & "                ' Select the file - trigger Change, Enter, DblClick events" & Chr(10)
             code = code & "                IF m." & ctrl.CtlName & ".selected >= 0 AND m." & ctrl.CtlName & ".selected < Len(m." & ctrl.CtlName & ".files) THEN" & Chr(10)
+            code = code & "                    m = " & ctrl.CtlName & "_Change(m)" & Chr(10)
             code = code & "                    m = " & ctrl.CtlName & "_Enter(m)" & Chr(10)
+            code = code & "                    m = " & ctrl.CtlName & "_DblClick(m)" & Chr(10)
             code = code & "                ENDIF" & Chr(10)
             code = code & "                RETURN m, _checkMsgBoxRepaint()" & Chr(10)
             code = code & "            ENDIF" & Chr(10)
@@ -3156,20 +3262,20 @@ FUNCTION GenerateBuildRowFunction(form AS VDBForm) AS STRING
             code = code & "    ENDIF" & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_BUTTON THEN
             IF ctrl.Border AND ctrl.Height >= 3 THEN
-                ' Bordered button spans multiple rows
+                ' Bordered button spans multiple rows - use _Pressed for color inversion
                 code = code & "    ' " & ctrl.CtlName & " (Bordered Button) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
                 code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonTopRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonTopRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Pressed, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
                 code = code & "    ELSEIF y = " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
-                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonBottomRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonBottomRow(" & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Pressed, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
                 code = code & "    ELSEIF y > " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height - 1) & " THEN" & Chr(10)
-                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonMiddleRow(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: GetButtonMiddleRow(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Pressed, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
                 code = code & "    ENDIF" & Chr(10)
             ELSE
-                ' Flat button (single row, centered text)
+                ' Flat button (single row, centered text) - use _Pressed for color inversion
                 code = code & "    ' " & ctrl.CtlName & " (Flat Button) at y=" & Str(ctrl.Y) & Chr(10)
                 code = code & "    IF y = " & Str(ctrl.Y) & " THEN" & Chr(10)
-                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderFlatButton(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Focused, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
+                code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: RenderFlatButton(" & Chr(34) & ctrl.Caption & Chr(34) & ", " & Str(ctrl.Width) & ", m." & ctrl.CtlName & "_Pressed, " & Str(ctrl.ForeColor) & ", " & Str(ctrl.BackColor) & ")})" & Chr(10)
                 code = code & "    ENDIF" & Chr(10)
             ENDIF
         ELSEIF ctrl.CtlType = CTRL_CHECKBOX THEN
@@ -4127,6 +4233,54 @@ FUNCTION GenerateFocusHelpers(form AS VDBForm) AS STRING
     code = code & "END FUNCTION" & Chr(10)
     code = code & Chr(10)
 
+    ' linkedPath - set path for all widgets with a specific LinkedPath name
+    code = code & "' linkedPath sets path for all widgets with the specified LinkedPath name" & Chr(10)
+    code = code & "FUNCTION linkedPath(m AS " & formTypeName & ", name AS STRING, path AS STRING) AS " & formTypeName & Chr(10)
+    code = code & "    ' Store in LinkedPaths arrays (find or add)" & Chr(10)
+    code = code & "    DIM lpFound AS BOOLEAN = FALSE" & Chr(10)
+    code = code & "    DIM lpIdx AS INTEGER" & Chr(10)
+    code = code & "    FOR lpIdx = 0 TO Len(m.LinkedPathNames) - 1" & Chr(10)
+    code = code & "        IF m.LinkedPathNames[lpIdx] = name THEN" & Chr(10)
+    code = code & "            m.LinkedPathValues[lpIdx] = path" & Chr(10)
+    code = code & "            lpFound = TRUE" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "    NEXT" & Chr(10)
+    code = code & "    IF NOT lpFound THEN" & Chr(10)
+    code = code & "        m.LinkedPathNames = APPEND(m.LinkedPathNames, name)" & Chr(10)
+    code = code & "        m.LinkedPathValues = APPEND(m.LinkedPathValues, path)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    ' Sync all widgets with this LinkedPath" & Chr(10)
+    code = code & "    m = _syncLinkedPath(m, name, path)" & Chr(10)
+    code = code & "    RETURN m" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    ' _syncLinkedPath - internal helper to update all widgets with a LinkedPath
+    code = code & "' _syncLinkedPath updates all widgets with matching LinkedPath (checked at runtime)" & Chr(10)
+    code = code & "FUNCTION _syncLinkedPath(m AS " & formTypeName & ", name AS STRING, path AS STRING) AS " & formTypeName & Chr(10)
+    ' Generate code to check each Path/Directories/Files widget's LinkedPath at runtime
+    FOR i = 0 TO Len(form.Controls) - 1
+        DIM ctrl AS VDBControl = form.Controls[i]
+        IF ctrl.CtlType = CTRL_PATH THEN
+            code = code & "    IF m." & ctrl.CtlName & ".LinkedPath = name THEN" & Chr(10)
+            code = code & "        m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(path)" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
+            code = code & "    IF m." & ctrl.CtlName & ".LinkedPath = name THEN" & Chr(10)
+            code = code & "        m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(path)" & Chr(10)
+            code = code & "        m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".View()" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_FILES THEN
+            code = code & "    IF m." & ctrl.CtlName & ".LinkedPath = name THEN" & Chr(10)
+            code = code & "        m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(path)" & Chr(10)
+            code = code & "        m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".View()" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ENDIF
+    NEXT
+    code = code & "    RETURN m" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
     RETURN code
 END FUNCTION
 
@@ -4145,7 +4299,11 @@ FUNCTION ExtractEventHandlers(form AS VDBForm) AS STRING
     code = code & "FUNCTION " & form.Name & "_Load(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
 
     ' Extract Form_Load content from form.Code
-    DIM loadCode AS STRING = ExtractSubContent(form.Code, "Form_Load")
+    ' Try formName_Load first (e.g., frmFileDialog_Load), then fall back to Form_Load
+    DIM loadCode AS STRING = ExtractSubContent(form.Code, form.Name & "_Load")
+    IF loadCode = "" THEN
+        loadCode = ExtractSubContent(form.Code, "Form_Load")
+    ENDIF
     IF loadCode <> "" THEN
         code = code & TransformEventCode(loadCode, form)
     ELSE
@@ -4299,6 +4457,21 @@ FUNCTION ExtractEventHandlers(form AS VDBForm) AS STRING
             code = code & "    RETURN m" & Chr(10)
             code = code & "END FUNCTION" & Chr(10)
             code = code & Chr(10)
+
+            ' Path_DblClick handler
+            code = code & "' " & ctrl.CtlName & "_DblClick event (fired when path is double-clicked or Enter pressed)" & Chr(10)
+            code = code & "FUNCTION " & ctrl.CtlName & "_DblClick(m AS " & formTypeName & ") AS " & formTypeName & Chr(10)
+
+            DIM pwDblClickCode AS STRING = ExtractSubContent(form.Code, ctrl.CtlName & "_DblClick")
+            IF pwDblClickCode <> "" THEN
+                code = code & TransformEventCode(pwDblClickCode, form)
+            ELSE
+                code = code & "    ' Add DblClick handler code here" & Chr(10)
+            ENDIF
+
+            code = code & "    RETURN m" & Chr(10)
+            code = code & "END FUNCTION" & Chr(10)
+            code = code & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
             ' Directories_Change handler
             code = code & "' " & ctrl.CtlName & "_Change event" & Chr(10)
@@ -4442,29 +4615,41 @@ FUNCTION TransformEventCode(code AS STRING, form AS VDBForm) AS STRING
             DIM ctrl AS VDBControl = form.Controls[j]
 
             IF ctrl.CtlType = CTRL_TEXTBOX THEN
-                ' Handle SetValue method call: txtName.SetValue(x) -> m.txtName.SetValue(x)
-                DIM setValuePattern AS STRING = ctrl.CtlName & ".SetValue("
-                DIM setValuePos AS INTEGER = InStrPos(1, line, setValuePattern)
-                IF setValuePos > 0 THEN
-                    ' Transform txtName.SetValue(...) -> m.txtName.SetValue(...)
-                    line = ReplaceAll(line, ctrl.CtlName & ".SetValue(", "m." & ctrl.CtlName & ".SetValue(")
+                ' Handle SetText method call: txtName.SetText(x) -> m.txtName.SetValue(x)
+                DIM setTextPattern AS STRING = ctrl.CtlName & ".SetText("
+                DIM setTextPos AS INTEGER = InStrPos(1, line, setTextPattern)
+                IF setTextPos > 0 THEN
+                    ' Transform txtName.SetText(...) -> m.txtName.SetValue(...)
+                    line = ReplaceAll(line, ctrl.CtlName & ".SetText(", "m." & ctrl.CtlName & ".SetValue(")
                 ENDIF
-                ' Handle assignment: txtName.Value = "x" -> m.txtName.SetValue("x")
-                DIM setPattern1 AS STRING = ctrl.CtlName & ".Value = "
+                ' Handle Text property assignment: txtName.Text = "x" -> m.txtName.SetValue("x")
                 DIM setPattern2 AS STRING = ctrl.CtlName & ".Text = "
-                DIM pos1 AS INTEGER = InStrPos(1, line, setPattern1)
                 DIM pos2 AS INTEGER = InStrPos(1, line, setPattern2)
-                IF pos1 > 0 THEN
-                    DIM beforeSet AS STRING = Left(line, pos1 - 1)
-                    DIM afterSet AS STRING = Mid(line, pos1 + Len(setPattern1), Len(line))
-                    line = beforeSet & "m." & ctrl.CtlName & ".SetValue(" & afterSet & ")"
-                ELSEIF pos2 > 0 THEN
+                IF pos2 > 0 THEN
                     DIM beforeSet2 AS STRING = Left(line, pos2 - 1)
                     DIM afterSet2 AS STRING = Mid(line, pos2 + Len(setPattern2), Len(line))
                     line = beforeSet2 & "m." & ctrl.CtlName & ".SetValue(" & afterSet2 & ")"
                 ELSE
-                    ' Read access: txtName.Value -> m.txtName.Value()
-                    line = ReplaceAll(line, ctrl.CtlName & ".Value", "m." & ctrl.CtlName & ".Value()")
+                    ' Read access: txtName.Text -> m.txtName.Value()
+                    line = ReplaceAll(line, ctrl.CtlName & ".Text", "m." & ctrl.CtlName & ".Value()")
+                ENDIF
+            ELSEIF ctrl.CtlType = CTRL_TEXTAREA THEN
+                ' Handle SetText method call: txtName.SetText(x) -> m.txtName.SetValue(x)
+                DIM taSetTextPattern AS STRING = ctrl.CtlName & ".SetText("
+                DIM taSetTextPos AS INTEGER = InStrPos(1, line, taSetTextPattern)
+                IF taSetTextPos > 0 THEN
+                    ' Transform txtName.SetText(...) -> m.txtName.SetValue(...)
+                    line = ReplaceAll(line, ctrl.CtlName & ".SetText(", "m." & ctrl.CtlName & ".SetValue(")
+                ENDIF
+                ' Handle Text property assignment: txtName.Text = "x" -> m.txtName.SetValue("x")
+                DIM taSetPattern AS STRING = ctrl.CtlName & ".Text = "
+                DIM taSetPos AS INTEGER = InStrPos(1, line, taSetPattern)
+                IF taSetPos > 0 THEN
+                    DIM beforeTaSet AS STRING = Left(line, taSetPos - 1)
+                    DIM afterTaSet AS STRING = Mid(line, taSetPos + Len(taSetPattern), Len(line))
+                    line = beforeTaSet & "m." & ctrl.CtlName & ".SetValue(" & afterTaSet & ")"
+                ELSE
+                    ' Read access: txtName.Text -> m.txtName.Value()
                     line = ReplaceAll(line, ctrl.CtlName & ".Text", "m." & ctrl.CtlName & ".Value()")
                 ENDIF
             ELSEIF ctrl.CtlType = CTRL_LABEL THEN
@@ -4607,6 +4792,17 @@ FUNCTION TransformEventCode(code AS STRING, form AS VDBForm) AS STRING
                 ENDIF
             ELSEIF ctrl.CtlType = CTRL_PATH THEN
                 ' Path widget property and method transformations
+                ' Handle LinkedPath assignment: xPath.LinkedPath = "name" -> m.xPath.LinkedPath = "name"
+                DIM pwLPSetPattern AS STRING = ctrl.CtlName & ".LinkedPath = "
+                DIM pwLPSetPos AS INTEGER = InStrPos(1, line, pwLPSetPattern)
+                IF pwLPSetPos > 0 THEN
+                    DIM beforePwLP AS STRING = Left(line, pwLPSetPos - 1)
+                    DIM afterPwLP AS STRING = Mid(line, pwLPSetPos + Len(pwLPSetPattern), Len(line))
+                    line = beforePwLP & "m." & ctrl.CtlName & ".LinkedPath = " & afterPwLP
+                ELSE
+                    ' Read access
+                    line = ReplaceAll(line, ctrl.CtlName & ".LinkedPath", "m." & ctrl.CtlName & ".LinkedPath")
+                ENDIF
                 ' Handle SetPath method call: xPath.SetPath(...) -> m.xPath = m.xPath.SetPath(...)
                 DIM pwSetPathPattern AS STRING = ctrl.CtlName & ".SetPath("
                 DIM pwSetPathPos AS INTEGER = InStrPos(1, line, pwSetPathPattern)
@@ -4645,6 +4841,17 @@ FUNCTION TransformEventCode(code AS STRING, form AS VDBForm) AS STRING
                 ENDIF
             ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
                 ' Directories widget property and method transformations
+                ' Handle LinkedPath assignment: xDir.LinkedPath = "name" -> m.xDir.LinkedPath = "name"
+                DIM dwLPSetPattern AS STRING = ctrl.CtlName & ".LinkedPath = "
+                DIM dwLPSetPos AS INTEGER = InStrPos(1, line, dwLPSetPattern)
+                IF dwLPSetPos > 0 THEN
+                    DIM beforeDwLP AS STRING = Left(line, dwLPSetPos - 1)
+                    DIM afterDwLP AS STRING = Mid(line, dwLPSetPos + Len(dwLPSetPattern), Len(line))
+                    line = beforeDwLP & "m." & ctrl.CtlName & ".LinkedPath = " & afterDwLP
+                ELSE
+                    ' Read access
+                    line = ReplaceAll(line, ctrl.CtlName & ".LinkedPath", "m." & ctrl.CtlName & ".LinkedPath")
+                ENDIF
                 ' Handle SetPath method call: xDir.SetPath(...) -> m.xDir = m.xDir.SetPath(...)
                 DIM dwSetPathPattern AS STRING = ctrl.CtlName & ".SetPath("
                 DIM dwSetPathPos AS INTEGER = InStrPos(1, line, dwSetPathPattern)
@@ -4689,6 +4896,17 @@ FUNCTION TransformEventCode(code AS STRING, form AS VDBForm) AS STRING
                 line = ReplaceAll(line, ctrl.CtlName & ".Selected", "m." & ctrl.CtlName & ".selected")
             ELSEIF ctrl.CtlType = CTRL_FILES THEN
                 ' Files widget property and method transformations
+                ' Handle LinkedPath assignment: xFiles.LinkedPath = "name" -> m.xFiles.LinkedPath = "name"
+                DIM fwLPSetPattern AS STRING = ctrl.CtlName & ".LinkedPath = "
+                DIM fwLPSetPos AS INTEGER = InStrPos(1, line, fwLPSetPattern)
+                IF fwLPSetPos > 0 THEN
+                    DIM beforeFwLP AS STRING = Left(line, fwLPSetPos - 1)
+                    DIM afterFwLP AS STRING = Mid(line, fwLPSetPos + Len(fwLPSetPattern), Len(line))
+                    line = beforeFwLP & "m." & ctrl.CtlName & ".LinkedPath = " & afterFwLP
+                ELSE
+                    ' Read access
+                    line = ReplaceAll(line, ctrl.CtlName & ".LinkedPath", "m." & ctrl.CtlName & ".LinkedPath")
+                ENDIF
                 ' Handle SetPath method call: xFiles.SetPath(...) -> m.xFiles = m.xFiles.SetPath(...)
                 DIM fwSetPathPattern AS STRING = ctrl.CtlName & ".SetPath("
                 DIM fwSetPathPos AS INTEGER = InStrPos(1, line, fwSetPathPattern)
@@ -4759,11 +4977,39 @@ FUNCTION TransformEventCode(code AS STRING, form AS VDBForm) AS STRING
                     line = ReplaceAll(line, ctrl.CtlName & ".Pattern", "m." & ctrl.CtlName & ".GetPattern()")
                 ENDIF
             ENDIF
+
+            ' CATCH-ALL: Transform any remaining controlName.property to m.controlName.property
+            ' This catches properties/methods that weren't explicitly handled above
+            DIM ctrlDotPattern AS STRING = ctrl.CtlName & "."
+            DIM ctrlDotPos AS INTEGER = InStrPos(1, line, ctrlDotPattern)
+            IF ctrlDotPos > 0 THEN
+                ' Check if already prefixed with "m."
+                DIM alreadyPrefixed AS BOOLEAN = FALSE
+                IF ctrlDotPos >= 3 THEN
+                    DIM beforeCtrl AS STRING = Mid(line, ctrlDotPos - 2, 2)
+                    IF beforeCtrl = "m." THEN
+                        alreadyPrefixed = TRUE
+                    ENDIF
+                ENDIF
+                IF NOT alreadyPrefixed THEN
+                    ' Also check the character before isn't alphanumeric (part of another identifier)
+                    DIM charBeforeCtrl AS STRING = ""
+                    IF ctrlDotPos > 1 THEN
+                        charBeforeCtrl = Mid(line, ctrlDotPos - 1, 1)
+                    ENDIF
+                    IF NOT IsIdentChar(charBeforeCtrl) THEN
+                        line = ReplaceAll(line, ctrl.CtlName & ".", "m." & ctrl.CtlName & ".")
+                    ENDIF
+                ENDIF
+            ENDIF
         NEXT
 
         ' Transform MsgBox calls to include m.View() as the background parameter
         ' MsgBox("msg", btns, "title") -> MsgBox("msg", btns, "title", m.View())
         line = TransformMsgBoxCall(line)
+
+        ' linkedPath("name", "/path") -> m = linkedPath(m, "name", "/path")
+        line = TransformLinkedPathCall(line)
 
         ' Transform module-level variables to model fields
         DIM v AS INTEGER
@@ -4930,6 +5176,68 @@ FUNCTION TransformMsgBoxCall(line AS STRING) AS STRING
     ENDIF
 
     RETURN line
+END FUNCTION
+
+' Transform linkedPath("name", "/path") to m = linkedPath(m, "name", "/path")
+FUNCTION TransformLinkedPathCall(line AS STRING) AS STRING
+    DIM lpPos AS INTEGER = InStrPos(1, line, "linkedPath(")
+    IF lpPos = 0 THEN
+        RETURN line
+    ENDIF
+
+    ' Check if already transformed (has "m, " after the opening paren)
+    DIM afterOpen AS STRING = Mid(line, lpPos + 11, 3)
+    IF afterOpen = "m, " THEN
+        RETURN line
+    ENDIF
+
+    ' Find the opening paren position (lpPos + 10 = after "linkedPath(")
+    DIM openParen AS INTEGER = lpPos + 10
+
+    ' Count parentheses to find the matching close paren
+    DIM parenCount AS INTEGER = 1
+    DIM pos AS INTEGER = openParen + 1
+    DIM lineLen AS INTEGER = Len(line)
+    DIM inString AS BOOLEAN = FALSE
+
+    WHILE pos <= lineLen AND parenCount > 0
+        DIM ch AS STRING = Mid(line, pos, 1)
+        IF ch = Chr(34) THEN
+            inString = NOT inString
+        ELSEIF NOT inString THEN
+            IF ch = "(" THEN
+                parenCount = parenCount + 1
+            ELSEIF ch = ")" THEN
+                parenCount = parenCount - 1
+            ENDIF
+        ENDIF
+        pos = pos + 1
+    WEND
+
+    IF parenCount <> 0 THEN
+        ' Unbalanced parens, return unchanged
+        RETURN line
+    ENDIF
+
+    ' pos is now one past the closing paren
+    DIM closeParen AS INTEGER = pos - 1
+
+    ' Extract the arguments between the parens
+    DIM args AS STRING = Mid(line, openParen + 1, closeParen - openParen - 1)
+
+    ' Build the transformed line: m = linkedPath(m, args)
+    DIM beforeLP AS STRING = Left(line, lpPos - 1)
+    DIM afterLP AS STRING = Mid(line, closeParen + 1, lineLen - closeParen)
+
+    ' Handle leading whitespace - preserve indentation
+    DIM indent AS STRING = ""
+    DIM indentLen AS INTEGER = 0
+    WHILE indentLen < Len(beforeLP) AND (Mid(beforeLP, indentLen + 1, 1) = " " OR Mid(beforeLP, indentLen + 1, 1) = Chr(9))
+        indent = indent & Mid(beforeLP, indentLen + 1, 1)
+        indentLen = indentLen + 1
+    WEND
+
+    RETURN indent & "m = linkedPath(m, " & args & ")" & afterLP
 END FUNCTION
 
 ' Extract module-level variables from form code
