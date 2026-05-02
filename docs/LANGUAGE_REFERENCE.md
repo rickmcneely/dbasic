@@ -17,7 +17,9 @@ DBasic is a modern BASIC dialect that compiles to Go. It combines familiar BASIC
 7. [Functions and Subroutines](#functions-and-subroutines)
 8. [User-Defined Types](#user-defined-types)
 9. [Arrays and Slices](#arrays-and-slices)
-10. [Pointers](#pointers)
+10. [Maps](#maps)
+11. [Deferred Calls](#deferred-calls)
+12. [Pointers](#pointers)
 11. [Error Handling](#error-handling)
 12. [Concurrency](#concurrency)
 13. [Go Package Integration](#go-package-integration)
@@ -95,6 +97,7 @@ DIM x AS INTEGER  ' Inline comment
 | `POINTER TO T` | Pointer to type T | `*T` |
 | `CHAN OF T` | Channel of type T | `chan T` |
 | `[]T` | Slice/dynamic array | `[]T` |
+| `MAP OF K TO V` | Lookup table from key K to value V | `map[K]V` |
 
 ### Type Literals
 
@@ -189,6 +192,22 @@ CONST APP_NAME AS STRING = "MyApp"
 | `OR` | Logical OR | `a OR b` |
 | `XOR` | Logical XOR | `a XOR b` |
 | `NOT` | Logical NOT | `NOT a` |
+
+`AND`, `OR`, `XOR`, and `NOT` accept booleans (canonical) or numeric
+operands. With numeric operands, `0` is false and any non-zero value is
+true:
+
+```basic
+DIM x AS INTEGER = 5
+DIM y AS INTEGER = 0
+IF x AND y THEN ...     ' false (y is 0)
+IF x OR y THEN ...      ' true  (x is non-zero)
+IF NOT y THEN ...       ' true  (y is 0)
+```
+
+Function calls and struct field access are not auto-wrapped — Go's
+strict bool semantics still apply there. Use a comparison
+(`foo() = TRUE` or `foo() <> 0`) when you need to be explicit.
 
 ### String Operators
 
@@ -430,6 +449,49 @@ FUNCTION Calculate() AS INTEGER
 END FUNCTION
 ```
 
+### Anonymous Functions (Lambdas)
+
+A `FUNCTION(...) AS T ... END FUNCTION` or `SUB(...) ... END SUB`
+expression evaluates to a function value. Use this when a Go API
+expects a callback. The body can read variables from the enclosing
+scope (closure capture).
+
+```basic
+IMPORT "sort" AS sort
+
+SUB Main()
+    DIM nums AS []INTEGER = []INTEGER{3, 1, 4, 1, 5, 9, 2, 6}
+
+    ' Pass an inline comparator to sort.Slice. The lambda captures
+    ' `nums` from the surrounding scope.
+    sort.Slice(nums, FUNCTION(i AS INTEGER, j AS INTEGER) AS BOOLEAN
+        RETURN nums[i] < nums[j]
+    END FUNCTION)
+
+    PRINT nums
+END SUB
+```
+
+Use `SUB(...)` instead of `FUNCTION(...)` when the callback returns
+nothing — for example, an `http.HandleFunc` handler:
+
+```basic
+IMPORT "net/http" AS http
+IMPORT "fmt" AS fmt
+
+SUB Main()
+    http.HandleFunc("/hello",
+        SUB(w AS http.ResponseWriter, r AS POINTER TO http.Request)
+            fmt.Fprintln(w, "hello from a DBasic lambda")
+        END SUB)
+    http.ListenAndServe(":8080", NIL)
+END SUB
+```
+
+Anonymous `FUNCTION` literals require an explicit return type after the
+parameter list (same syntax as named functions). Anonymous `SUB`
+literals omit the return-type clause.
+
 ---
 
 ## User-Defined Types
@@ -521,9 +583,13 @@ DIM numbers AS []INTEGER
 ' Literal initialization
 DIM primes AS []INTEGER = []INTEGER{2, 3, 5, 7, 11}
 
-' Append elements
+' Append (expression form: returns the new slice)
 numbers = APPEND(numbers, 1)
 numbers = APPEND(numbers, 2, 3, 4)
+
+' Append (statement form: mutates in place)
+APPEND(numbers, 5)
+APPEND(numbers, 6, 7)
 
 ' Access elements (0-indexed)
 DIM first AS INTEGER = numbers[0]
@@ -554,6 +620,88 @@ DIM copy AS []INTEGER = arr[:]     ' Full copy
 ```basic
 ' Legacy syntax
 DIM fixedArray(10) AS INTEGER  ' 10-element array
+```
+
+---
+
+## Maps
+
+A `MAP OF K TO V` is a lookup table from keys of type `K` to values of
+type `V`. It corresponds directly to Go's `map[K]V`.
+
+### Declaration and Use
+
+```basic
+' Declare an empty map (initialized automatically — no need for MAKE)
+DIM phoneBook AS MAP OF STRING TO STRING
+
+' Write
+phoneBook["Alice"] = "555-0100"
+phoneBook["Bob"]   = "555-0102"
+
+' Read
+PRINT phoneBook["Alice"]
+
+' Number of entries
+PRINT Len(phoneBook)
+```
+
+### Map of Structs
+
+```basic
+TYPE Contact
+    DIM Email AS STRING
+    DIM Phone AS STRING
+END TYPE
+
+DIM contacts AS MAP OF STRING TO Contact
+contacts["Alice"] = Contact{Email: "alice@example.com", Phone: "555-0100"}
+PRINT contacts["Alice"].Email
+```
+
+A map declared with `DIM m AS MAP OF K TO V` is initialized to an empty
+(but writable) map automatically — you do not need a separate `MAKE`
+call before assigning to it.
+
+---
+
+## Deferred Calls
+
+`DEFER FuncName(args)` schedules a function call to run when the
+enclosing `SUB` or `FUNCTION` returns — by any path: explicit `RETURN`,
+falling off the end, or panic. Multiple deferred calls run in
+last-in-first-out (LIFO) order.
+
+This corresponds directly to Go's `defer` statement and is the
+canonical way to clean up resources without forgetting cleanup at every
+return path.
+
+```basic
+SUB ProcessFile(path AS STRING)
+    DIM f AS POINTER TO os.File
+    DIM err AS ERROR
+    f, err = os.Open(path)
+    IF err <> NIL THEN RETURN
+    DEFER f.Close()                ' guaranteed to run on every return
+
+    ' ... read from f ...
+END SUB
+```
+
+`DEFER` requires a function call as its operand (not a statement).
+Wrap inline cleanup logic in a small helper if needed:
+
+```basic
+SUB Cleanup(label AS STRING)
+    PRINT "cleaning up:"; label
+END SUB
+
+SUB Demo()
+    DEFER Cleanup("C")            ' runs THIRD
+    DEFER Cleanup("B")            ' runs SECOND
+    DEFER Cleanup("A")            ' runs FIRST (LIFO)
+    PRINT "doing real work..."
+END SUB
 ```
 
 ---
@@ -755,6 +903,51 @@ IF ok THEN
     ' Handle key message
 ENDIF
 ```
+
+### Interface-Typed Parameters
+
+DBasic accepts Go interface types like `io.Reader` and `io.Writer`
+directly as parameter and variable types. Any concrete value satisfying
+the interface — `*strings.Reader`, `*os.File`, `*bytes.Buffer`, etc. —
+can be passed in. The DBasic compiler does not type-check interface
+satisfaction itself; that check happens at `go build` time, where any
+mismatch is reported against the `.dbas` source line via `//line`
+directives.
+
+```basic
+IMPORT "io" AS io
+IMPORT "strings" AS strings
+IMPORT "os" AS os
+
+' Take any io.Writer / io.Reader, forward to io.Copy.
+SUB CopyInterface(dst AS io.Writer, src AS io.Reader)
+    io.Copy(dst, src)
+END SUB
+
+SUB Main()
+    DIM r AS POINTER TO strings.Reader = strings.NewReader("hello via io.Reader")
+    CopyInterface(os.Stdout, r)
+END SUB
+```
+
+### Calling Generic Go Functions
+
+Go's generic functions (e.g. `slices.Sort`, `slices.Contains`) work
+through type inference. DBasic does not require explicit type-parameter
+syntax — Go infers the type from the argument:
+
+```basic
+IMPORT "slices" AS slices
+
+SUB Main()
+    DIM nums AS []INTEGER = []INTEGER{3, 1, 4, 1, 5}
+    slices.Sort(nums)            ' [int] inferred from nums
+    PRINT nums
+END SUB
+```
+
+Explicit type-parameter syntax (`Sort[int]`) is rarely needed in
+practice and is not currently part of the DBasic surface.
 
 ---
 
@@ -1099,10 +1292,10 @@ pid, err = ShellStart("python -m http.server 8080")
 `DIM`, `LET`, `CONST`, `TYPE`, `AS`, `EMBED`, `IMPLEMENTS`
 
 ### Data Type Keywords
-`INTEGER`, `LONG`, `SINGLE`, `DOUBLE`, `STRING`, `BOOLEAN`, `BYTES`, `BSTRING`, `JSON`, `POINTER`, `CHAN`, `ANY`, `ERROR`
+`INTEGER`, `LONG`, `SINGLE`, `DOUBLE`, `STRING`, `BOOLEAN`, `BYTES`, `BSTRING`, `JSON`, `POINTER`, `CHAN`, `MAP`, `ANY`, `ERROR`
 
 ### Control Flow Keywords
-`IF`, `THEN`, `ELSE`, `ELSEIF`, `ENDIF`, `FOR`, `TO`, `STEP`, `NEXT`, `WHILE`, `WEND`, `DO`, `LOOP`, `UNTIL`, `EXIT`, `SELECT`, `CASE`, `END`, `GOTO`, `RETURN`
+`IF`, `THEN`, `ELSE`, `ELSEIF`, `ENDIF`, `FOR`, `TO`, `STEP`, `NEXT`, `WHILE`, `WEND`, `DO`, `LOOP`, `UNTIL`, `EXIT`, `SELECT`, `CASE`, `END`, `GOTO`, `RETURN`, `DEFER`
 
 ### Function Keywords
 `SUB`, `FUNCTION`, `BYREF`, `BYVAL`
@@ -1136,12 +1329,25 @@ dbasic emit program.dbas
 # Check for errors only
 dbasic check program.dbas
 
+# Cross-compile (auto-disables CGO; .exe added for windows targets)
+dbasic build program.dbas --target windows/amd64
+dbasic build program.dbas --target linux/arm64
+dbasic build program.dbas --target darwin/arm64
+
+# Build using only cached Go modules (when proxy.golang.org is unreachable)
+dbasic build program.dbas --offline
+
 # Show version
 dbasic version
 
 # Show help
 dbasic help
 ```
+
+`go build` errors and runtime panics are reported against your `.dbas`
+source file and line number, not the temporary `main.go` — DBasic emits
+`//line` directives during transpilation that the Go compiler honors
+natively.
 
 ---
 
