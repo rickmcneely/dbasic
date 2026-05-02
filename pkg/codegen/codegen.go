@@ -109,10 +109,14 @@ func (g *Generator) scanStatementForImports(stmt parser.Statement) {
 		g.scanBlockForImports(s.Body)
 	case *parser.FunctionStatement:
 		g.scanBlockForImports(s.Body)
+	case *parser.MethodStatement:
+		g.scanBlockForImports(s.Body)
 	case *parser.InputStatement:
 		g.imports["bufio"] = ""
 		g.imports["os"] = ""
 		g.imports["strings"] = ""
+	case *parser.PrintStatement:
+		g.imports["fmt"] = ""
 	}
 }
 
@@ -126,6 +130,8 @@ func (g *Generator) scanBlockForImports(block *parser.BlockStatement) {
 			g.imports["bufio"] = ""
 			g.imports["os"] = ""
 			g.imports["strings"] = ""
+		case *parser.PrintStatement:
+			g.imports["fmt"] = ""
 		case *parser.IfStatement:
 			g.scanBlockForImports(s.Consequence)
 			for _, elseif := range s.ElseIfs {
@@ -210,8 +216,10 @@ func (g *Generator) exprNeedsMath(expr parser.Expression) bool {
 }
 
 func (g *Generator) collectImports() {
-	// Always include fmt for PRINT
-	g.imports["fmt"] = ""
+	// fmt is added conditionally: by scanBlockForImports for PRINT,
+	// and at use-sites for Printf/Sprintf/Str and runtime helpers
+	// that emit fmt.* calls. Adding it unconditionally caused
+	// "fmt imported and not used" errors in programs that don't print.
 
 	// Add user imports with their aliases
 	for _, imp := range g.symbols.AllImports() {
@@ -1123,7 +1131,68 @@ func (g *Generator) generateBlockStatement(block *parser.BlockStatement) {
 	}
 }
 
+// stmtLine returns the source line number associated with a statement,
+// or 0 if it cannot be determined.
+func stmtLine(stmt parser.Statement) int {
+	switch s := stmt.(type) {
+	case *parser.DimStatement:
+		return s.Token.Line
+	case *parser.LetStatement:
+		return s.Token.Line
+	case *parser.ConstStatement:
+		return s.Token.Line
+	case *parser.AssignmentStatement:
+		return s.Token.Line
+	case *parser.MultiAssignmentStatement:
+		return s.Token.Line
+	case *parser.PrintStatement:
+		return s.Token.Line
+	case *parser.InputStatement:
+		return s.Token.Line
+	case *parser.IfStatement:
+		return s.Token.Line
+	case *parser.ForStatement:
+		return s.Token.Line
+	case *parser.WhileStatement:
+		return s.Token.Line
+	case *parser.DoLoopStatement:
+		return s.Token.Line
+	case *parser.SelectStatement:
+		return s.Token.Line
+	case *parser.ReturnStatement:
+		return s.Token.Line
+	case *parser.ExitStatement:
+		return s.Token.Line
+	case *parser.GotoStatement:
+		return s.Token.Line
+	case *parser.LabelStatement:
+		return s.Token.Line
+	case *parser.SpawnStatement:
+		return s.Token.Line
+	case *parser.DeferStatement:
+		return s.Token.Line
+	case *parser.SendStatement:
+		return s.Token.Line
+	case *parser.ReceiveStatement:
+		return s.Token.Line
+	case *parser.ExpressionStatement:
+		return s.Token.Line
+	case *parser.SubStatement:
+		return s.Token.Line
+	case *parser.FunctionStatement:
+		return s.Token.Line
+	case *parser.MethodStatement:
+		return s.Token.Line
+	case *parser.TypeStatement:
+		return s.Token.Line
+	case *parser.ImportStatement:
+		return s.Token.Line
+	}
+	return 0
+}
+
 func (g *Generator) generateStatement(stmt parser.Statement) {
+	g.emitLineDirective(stmtLine(stmt))
 	switch s := stmt.(type) {
 	case *parser.DimStatement:
 		g.generateLocalDim(s)
@@ -1157,15 +1226,48 @@ func (g *Generator) generateStatement(stmt parser.Statement) {
 		g.generateLabel(s)
 	case *parser.SpawnStatement:
 		g.generateSpawn(s)
+	case *parser.DeferStatement:
+		g.generateDefer(s)
 	case *parser.SendStatement:
 		g.generateSend(s)
 	case *parser.ReceiveStatement:
 		g.generateReceive(s)
 	case *parser.ExpressionStatement:
 		if s.Expression != nil {
+			// Special-case: APPEND(slice, ...) used as a statement is a
+			// mutation form. Rewrite to `slice = append(slice, ...)` so
+			// users don't have to write `slice = APPEND(slice, ...)`.
+			if g.tryEmitAppendMutation(s.Expression) {
+				return
+			}
 			g.writeLine(g.exprToGo(s.Expression))
 		}
 	}
+}
+
+// tryEmitAppendMutation rewrites a top-level APPEND call statement into
+// `slice = append(slice, args...)`. Returns true if it emitted code.
+func (g *Generator) tryEmitAppendMutation(expr parser.Expression) bool {
+	call, ok := expr.(*parser.CallExpression)
+	if !ok || call.Function == nil || len(call.Arguments) < 2 {
+		return false
+	}
+	ident, ok := call.Function.(*parser.Identifier)
+	if !ok || strings.ToUpper(ident.Value) != "APPEND" {
+		return false
+	}
+	// First argument must be an assignable target (the slice variable).
+	target, ok := call.Arguments[0].(*parser.Identifier)
+	if !ok {
+		return false
+	}
+	args := make([]string, 0, len(call.Arguments))
+	args = append(args, g.toGoIdent(target.Value))
+	for _, a := range call.Arguments[1:] {
+		args = append(args, g.exprToGo(a))
+	}
+	g.writeLine(fmt.Sprintf("%s = append(%s)", g.toGoIdent(target.Value), strings.Join(args, ", ")))
+	return true
 }
 
 func (g *Generator) generateLocalDim(stmt *parser.DimStatement) {
@@ -1184,6 +1286,9 @@ func (g *Generator) generateLocalDim(stmt *parser.DimStatement) {
 		g.writeLineWithSource(fmt.Sprintf("%s := make([]%s, %s)", varName, varType, g.exprToGo(stmt.ArraySize)), stmt.Token.Line)
 	} else if stmt.Value != nil {
 		g.writeLineWithSource(fmt.Sprintf("var %s %s = %s", varName, varType, g.exprToGo(stmt.Value)), stmt.Token.Line)
+	} else if stmt.Type != nil && stmt.Type.IsMap {
+		// Maps need explicit make() — nil maps cannot be written to.
+		g.writeLineWithSource(fmt.Sprintf("%s := make(%s)", varName, varType), stmt.Token.Line)
 	} else {
 		g.writeLineWithSource(fmt.Sprintf("var %s %s", varName, varType), stmt.Token.Line)
 	}
@@ -1281,14 +1386,25 @@ func (g *Generator) generateFor(stmt *parser.ForStatement) {
 	}
 
 	// Determine comparison operator based on step direction
-	// Check if step is negative (handles literal negative numbers and prefix expressions)
 	comparison := "<="
 	if g.isNegativeStep(stmt.Step) {
 		comparison = ">="
 	}
 
-	// In BASIC, FOR loop variables are typically pre-declared
-	// Use = instead of := to avoid redeclaration
+	// Auto-declare the loop variable if it isn't already in scope.
+	// This matches traditional BASIC, where `FOR i = 1 TO 10` does not
+	// require a separate DIM. We emit `var i int` before the loop so the
+	// outer scope can read i's final value (matching the legacy semantics
+	// when the user does pre-declare).
+	if g.currentScope != nil && g.currentScope.Resolve(stmt.Variable.Value) == nil {
+		g.writeLine(fmt.Sprintf("var %s int", varName))
+		g.currentScope.Define(&analyzer.Symbol{
+			Name: stmt.Variable.Value,
+			Kind: analyzer.SymVariable,
+			Type: analyzer.IntegerType,
+		})
+	}
+
 	g.writeLine(fmt.Sprintf("for %s = %s; %s %s %s; %s += %s {",
 		varName, start, varName, comparison, end, varName, step))
 	g.indent++
@@ -1431,6 +1547,61 @@ func (g *Generator) generateSpawn(stmt *parser.SpawnStatement) {
 	g.writeLine(fmt.Sprintf("go %s", g.exprToGo(stmt.Call)))
 }
 
+func (g *Generator) generateDefer(stmt *parser.DeferStatement) {
+	g.writeLine(fmt.Sprintf("defer %s", g.exprToGo(stmt.Call)))
+}
+
+// functionLiteralToGo emits a Go func literal for an anonymous FUNCTION/SUB.
+// The body is generated into a swapped output buffer so it can be embedded
+// inline as part of the surrounding expression's string.
+func (g *Generator) functionLiteralToGo(lit *parser.FunctionLiteral) string {
+	// Header: parameters
+	paramParts := make([]string, 0, len(lit.Params))
+	for _, p := range lit.Params {
+		paramName := g.toGoIdent(p.Name.Value)
+		paramType := g.typeSpecToGo(p.Type)
+		paramParts = append(paramParts, paramName+" "+paramType)
+	}
+	paramStr := strings.Join(paramParts, ", ")
+
+	// Header: return type(s)
+	var returnStr string
+	if !lit.IsSub && len(lit.ReturnTypes) > 0 {
+		if len(lit.ReturnTypes) == 1 {
+			returnStr = " " + g.typeSpecToGo(lit.ReturnTypes[0])
+		} else {
+			rts := make([]string, 0, len(lit.ReturnTypes))
+			for _, rt := range lit.ReturnTypes {
+				rts = append(rts, g.typeSpecToGo(rt))
+			}
+			returnStr = " (" + strings.Join(rts, ", ") + ")"
+		}
+	}
+
+	// Body: swap output buffer and scope, generate, capture, restore.
+	savedOutput := g.output
+	savedScope := g.currentScope
+	g.output = strings.Builder{}
+	g.currentScope = analyzer.NewScope("__lambda__", g.currentScope)
+	for _, p := range lit.Params {
+		paramType := g.typeFromTypeSpec(p.Type)
+		g.currentScope.Define(&analyzer.Symbol{
+			Name: p.Name.Value,
+			Kind: analyzer.SymParameter,
+			Type: paramType,
+		})
+	}
+	g.indent++
+	g.generateBlockStatement(lit.Body)
+	g.indent--
+	body := g.output.String()
+	g.output = savedOutput
+	g.currentScope = savedScope
+
+	closingIndent := strings.Repeat("\t", g.indent)
+	return fmt.Sprintf("func(%s)%s {\n%s%s}", paramStr, returnStr, body, closingIndent)
+}
+
 func (g *Generator) generateSend(stmt *parser.SendStatement) {
 	g.writeLine(fmt.Sprintf("%s <- %s", g.exprToGo(stmt.Channel), g.exprToGo(stmt.Value)))
 }
@@ -1468,6 +1639,8 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 		return g.arrayLiteralToGo(e)
 	case *parser.StructLiteral:
 		return g.structLiteralToGo(e)
+	case *parser.FunctionLiteral:
+		return g.functionLiteralToGo(e)
 	case *parser.SliceLiteral:
 		return g.sliceLiteralToGo(e)
 	case *parser.PrefixExpression:
@@ -1806,6 +1979,10 @@ func (g *Generator) typeSpecToGo(spec *parser.TypeSpec) string {
 		return "chan " + g.typeSpecToGo(spec.ElementType)
 	}
 
+	if spec.IsMap {
+		return fmt.Sprintf("map[%s]%s", g.typeSpecToGo(spec.KeyType), g.typeSpecToGo(spec.ElementType))
+	}
+
 	if spec.IsArray {
 		// Slice type (dynamic array)
 		if spec.ArraySize == nil {
@@ -1860,6 +2037,10 @@ func (g *Generator) typeFromTypeSpec(spec *parser.TypeSpec) *analyzer.Type {
 
 	if spec.IsChannel {
 		return analyzer.NewChannelType(g.typeFromTypeSpec(spec.ElementType))
+	}
+
+	if spec.IsMap {
+		return analyzer.NewMapType(g.typeFromTypeSpec(spec.KeyType), g.typeFromTypeSpec(spec.ElementType))
 	}
 
 	if spec.IsArray {
@@ -1980,6 +2161,16 @@ func (g *Generator) writeLineWithSource(s string, line int) {
 	} else {
 		g.writeLine(s)
 	}
+}
+
+// emitLineDirective writes a //line directive at column 0 so the Go compiler
+// reports errors and panics against the original .dbas source, not the
+// generated main.go. Must start at column 0 to be honored by Go.
+func (g *Generator) emitLineDirective(line int) {
+	if g.sourceFile == "" || line <= 0 {
+		return
+	}
+	g.output.WriteString(fmt.Sprintf("//line %s:%d\n", g.sourceFile, line))
 }
 
 // writeComment writes a comment line

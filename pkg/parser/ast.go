@@ -51,9 +51,11 @@ type TypeSpec struct {
 	Name        string      // Base type name (INTEGER, STRING, etc.)
 	IsPointer   bool        // POINTER TO X
 	IsChannel   bool        // CHAN OF X
-	ElementType *TypeSpec   // For POINTER TO and CHAN OF
+	ElementType *TypeSpec   // For POINTER TO and CHAN OF (also map value type when IsMap)
 	IsArray     bool        // Array type
 	ArraySize   Expression  // Array size expression (can be nil for dynamic)
+	IsMap       bool        // MAP OF K TO V
+	KeyType     *TypeSpec   // Map key type (when IsMap)
 }
 
 func (t *TypeSpec) TokenLiteral() string { return t.Token.Literal }
@@ -63,6 +65,9 @@ func (t *TypeSpec) String() string {
 	}
 	if t.IsChannel {
 		return "CHAN OF " + t.ElementType.String()
+	}
+	if t.IsMap {
+		return "MAP OF " + t.KeyType.String() + " TO " + t.ElementType.String()
 	}
 	if t.IsArray {
 		if t.ArraySize != nil {
@@ -624,6 +629,66 @@ type SpawnStatement struct {
 func (ss *SpawnStatement) statementNode()       {}
 func (ss *SpawnStatement) TokenLiteral() string { return ss.Token.Literal }
 func (ss *SpawnStatement) String() string       { return "SPAWN " + ss.Call.String() }
+
+// DeferStatement represents a DEFER statement (deferred call, maps to Go's defer)
+type DeferStatement struct {
+	Token lexer.Token
+	Call  *CallExpression
+}
+
+func (ds *DeferStatement) statementNode()       {}
+func (ds *DeferStatement) TokenLiteral() string { return ds.Token.Literal }
+func (ds *DeferStatement) String() string       { return "DEFER " + ds.Call.String() }
+
+// FunctionLiteral represents an anonymous function expression:
+//   FUNCTION(args) AS Type ... END FUNCTION
+//   SUB(args) ... END SUB
+// Maps to a Go func literal. Captures variables from enclosing scopes naturally
+// (Go closures handle the capture).
+type FunctionLiteral struct {
+	Token       lexer.Token  // FUNCTION or SUB
+	IsSub       bool         // true if SUB (no return type), false if FUNCTION
+	Params      []*Parameter
+	ReturnTypes []*TypeSpec
+	Body        *BlockStatement
+}
+
+func (fl *FunctionLiteral) expressionNode()      {}
+func (fl *FunctionLiteral) TokenLiteral() string { return fl.Token.Literal }
+func (fl *FunctionLiteral) String() string {
+	var sb strings.Builder
+	if fl.IsSub {
+		sb.WriteString("SUB(")
+	} else {
+		sb.WriteString("FUNCTION(")
+	}
+	for i, p := range fl.Params {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(p.Name.String())
+		sb.WriteString(" AS ")
+		sb.WriteString(p.Type.String())
+	}
+	sb.WriteString(")")
+	if !fl.IsSub && len(fl.ReturnTypes) > 0 {
+		sb.WriteString(" AS ")
+		if len(fl.ReturnTypes) > 1 {
+			sb.WriteString("(")
+		}
+		for i, t := range fl.ReturnTypes {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(t.String())
+		}
+		if len(fl.ReturnTypes) > 1 {
+			sb.WriteString(")")
+		}
+	}
+	sb.WriteString(" ... END")
+	return sb.String()
+}
 
 // SendStatement represents a SEND ... TO ... statement
 type SendStatement struct {

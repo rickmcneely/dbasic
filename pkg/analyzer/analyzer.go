@@ -373,6 +373,12 @@ func (a *Analyzer) resolveTypeSpec(spec *parser.TypeSpec) *Type {
 		return NewChannelType(elemType)
 	}
 
+	if spec.IsMap {
+		keyType := a.resolveTypeSpec(spec.KeyType)
+		valueType := a.resolveTypeSpec(spec.ElementType)
+		return NewMapType(keyType, valueType)
+	}
+
 	// Handle slice/array types with []TYPE syntax
 	if spec.IsArray {
 		var elemType *Type
@@ -469,6 +475,8 @@ func (a *Analyzer) analyzeStatement(stmt parser.Statement) {
 		a.analyzeLabelStatement(s)
 	case *parser.SpawnStatement:
 		a.analyzeSpawnStatement(s)
+	case *parser.DeferStatement:
+		a.analyzeDeferStatement(s)
 	case *parser.SendStatement:
 		a.analyzeSendStatement(s)
 	case *parser.ReceiveStatement:
@@ -737,6 +745,38 @@ func (a *Analyzer) analyzeSubStatement(stmt *parser.SubStatement) {
 	a.analyzeBlockStatement(stmt.Body)
 }
 
+// analyzeFunctionLiteral handles anonymous FUNCTION/SUB expressions.
+// Body is analyzed in a nested scope so it can see (close over) variables
+// from enclosing scopes — Go func literals capture automatically at codegen.
+func (a *Analyzer) analyzeFunctionLiteral(lit *parser.FunctionLiteral) *Type {
+	a.symbols.EnterScope("__lambda__")
+	defer a.symbols.ExitScope()
+
+	paramTypes := make([]*Type, 0, len(lit.Params))
+	for _, param := range lit.Params {
+		paramType := a.resolveTypeSpec(param.Type)
+		paramTypes = append(paramTypes, paramType)
+		a.symbols.Define(&Symbol{
+			Name:    param.Name.Value,
+			Kind:    SymParameter,
+			Type:    paramType,
+			IsByRef: param.ByRef,
+		})
+	}
+
+	a.analyzeBlockStatement(lit.Body)
+
+	if lit.IsSub {
+		return NewSubType(paramTypes)
+	}
+
+	returnTypes := make([]*Type, 0, len(lit.ReturnTypes))
+	for _, rt := range lit.ReturnTypes {
+		returnTypes = append(returnTypes, a.resolveTypeSpec(rt))
+	}
+	return NewFunctionType(paramTypes, returnTypes)
+}
+
 func (a *Analyzer) analyzeFunctionStatement(stmt *parser.FunctionStatement) {
 	a.symbols.EnterScope(stmt.Name.Value)
 	defer a.symbols.ExitScope()
@@ -812,6 +852,10 @@ func (a *Analyzer) analyzeLabelStatement(stmt *parser.LabelStatement) {
 }
 
 func (a *Analyzer) analyzeSpawnStatement(stmt *parser.SpawnStatement) {
+	a.analyzeExpression(stmt.Call)
+}
+
+func (a *Analyzer) analyzeDeferStatement(stmt *parser.DeferStatement) {
 	a.analyzeExpression(stmt.Call)
 }
 
@@ -911,6 +955,8 @@ func (a *Analyzer) analyzeExpression(expr parser.Expression) *Type {
 		a.analyzeExpression(e.Value)
 		// Return the target type
 		return a.resolveTypeSpec(e.TargetType)
+	case *parser.FunctionLiteral:
+		return a.analyzeFunctionLiteral(e)
 	case *parser.StructLiteral:
 		// Analyze struct literal fields
 		for _, fieldExpr := range e.Fields {
@@ -1059,7 +1105,7 @@ func (a *Analyzer) analyzeCallExpression(call *parser.CallExpression) *Type {
 			if len(call.Arguments) == 1 {
 				argType := a.analyzeExpression(call.Arguments[0])
 				switch argType.Kind {
-				case TypeString, TypeSlice, TypeArray, TypeJSON, TypeChannel, TypeBytes:
+				case TypeString, TypeSlice, TypeArray, TypeJSON, TypeChannel, TypeBytes, TypeMap:
 					return IntegerType
 				}
 			}
@@ -1195,7 +1241,13 @@ func (a *Analyzer) analyzeIndexExpression(expr *parser.IndexExpression) *Type {
 	// Analyze index if present
 	if expr.Index != nil {
 		indexType := a.analyzeExpression(expr.Index)
-		if !indexType.IsInteger() {
+		// Maps can be keyed by anything; arrays/slices/strings/bytes need integers.
+		if leftType.Kind == TypeMap {
+			if leftType.KeyType != nil && !leftType.KeyType.IsCompatibleWith(indexType) {
+				a.error(expr.Token.Line, "map key type mismatch: expected %s, got %s",
+					leftType.KeyType.String(), indexType.String())
+			}
+		} else if !indexType.IsInteger() {
 			a.error(expr.Token.Line, "array index must be integer")
 		}
 	}
@@ -1226,6 +1278,8 @@ func (a *Analyzer) analyzeIndexExpression(expr *parser.IndexExpression) *Type {
 	// For regular indexing [index], return the element type
 	switch leftType.Kind {
 	case TypeArray, TypeSlice:
+		return leftType.ElementType
+	case TypeMap:
 		return leftType.ElementType
 	case TypeString:
 		return IntegerType // character code

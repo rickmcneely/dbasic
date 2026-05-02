@@ -120,6 +120,8 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(lexer.TOKEN_AT, p.parseAddressOf)
 	p.registerPrefix(lexer.TOKEN_CARET, p.parseDereference)
 	p.registerPrefix(lexer.TOKEN_MAKE_CHAN, p.parseMakeChan)
+	p.registerPrefix(lexer.TOKEN_FUNCTION, p.parseFunctionLiteral)
+	p.registerPrefix(lexer.TOKEN_SUB, p.parseFunctionLiteral)
 
 	p.infixParseFns = make(map[lexer.TokenType]infixParseFn)
 	p.registerInfix(lexer.TOKEN_PLUS, p.parseInfixExpression)
@@ -295,6 +297,8 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseGotoStatement()
 	case lexer.TOKEN_SPAWN:
 		return p.parseSpawnStatement()
+	case lexer.TOKEN_DEFER:
+		return p.parseDeferStatement()
 	case lexer.TOKEN_SEND:
 		return p.parseSendStatement()
 	case lexer.TOKEN_RECEIVE:
@@ -453,6 +457,19 @@ func (p *Parser) parseTypeSpec() *TypeSpec {
 	case lexer.TOKEN_CHAN:
 		spec.IsChannel = true
 		if !p.expectPeek(lexer.TOKEN_OF) {
+			return nil
+		}
+		p.nextToken()
+		spec.ElementType = p.parseTypeSpec()
+	case lexer.TOKEN_MAP:
+		// MAP OF KeyType TO ValueType
+		spec.IsMap = true
+		if !p.expectPeek(lexer.TOKEN_OF) {
+			return nil
+		}
+		p.nextToken()
+		spec.KeyType = p.parseTypeSpec()
+		if !p.expectPeek(lexer.TOKEN_TO) {
 			return nil
 		}
 		p.nextToken()
@@ -1128,6 +1145,76 @@ func (p *Parser) parseSpawnStatement() *SpawnStatement {
 	return stmt
 }
 
+// parseFunctionLiteral parses an anonymous function expression:
+//   FUNCTION(params) AS Type ... END FUNCTION
+//   FUNCTION(params) AS (T1, T2) ... END FUNCTION
+//   SUB(params) ... END SUB
+// Used as an expression value: assignments, arguments, etc.
+func (p *Parser) parseFunctionLiteral() Expression {
+	tok := p.curToken
+	isSub := p.curTokenIs(lexer.TOKEN_SUB)
+
+	lit := &FunctionLiteral{Token: tok, IsSub: isSub}
+
+	if !p.expectPeek(lexer.TOKEN_LPAREN) {
+		return nil
+	}
+
+	lit.Params = p.parseParameters()
+
+	if !p.expectPeek(lexer.TOKEN_RPAREN) {
+		return nil
+	}
+
+	if !isSub {
+		// FUNCTION literal: AS Type or AS (T1, T2, ...) is required
+		if !p.expectPeek(lexer.TOKEN_AS) {
+			return nil
+		}
+		p.nextToken()
+		if p.curTokenIs(lexer.TOKEN_LPAREN) {
+			p.nextToken()
+			for !p.curTokenIs(lexer.TOKEN_RPAREN) {
+				lit.ReturnTypes = append(lit.ReturnTypes, p.parseTypeSpec())
+				if p.peekTokenIs(lexer.TOKEN_COMMA) {
+					p.nextToken()
+				}
+				p.nextToken()
+			}
+		} else {
+			lit.ReturnTypes = append(lit.ReturnTypes, p.parseTypeSpec())
+		}
+	}
+
+	p.nextToken()
+	if isSub {
+		lit.Body = p.parseBlockStatementUntilEnd("SUB")
+	} else {
+		lit.Body = p.parseBlockStatementUntilEnd("FUNCTION")
+	}
+
+	return lit
+}
+
+func (p *Parser) parseDeferStatement() *DeferStatement {
+	stmt := &DeferStatement{Token: p.curToken}
+
+	p.nextToken()
+
+	expr := p.parseExpression(LOWEST)
+	call, ok := expr.(*CallExpression)
+	if !ok {
+		msg := p.formatError(p.curToken.Line, p.curToken.Column,
+			"DEFER requires a function call",
+			"use: DEFER FuncName(args)")
+		p.errors = append(p.errors, msg)
+		return nil
+	}
+
+	stmt.Call = call
+	return stmt
+}
+
 func (p *Parser) parseSendStatement() *SendStatement {
 	stmt := &SendStatement{Token: p.curToken}
 
@@ -1775,7 +1862,17 @@ func (p *Parser) isKeywordToken(t lexer.TokenType) bool {
 		lexer.TOKEN_RETURN, lexer.TOKEN_SELECT, lexer.TOKEN_CASE,
 		lexer.TOKEN_SUB, lexer.TOKEN_FUNCTION, lexer.TOKEN_DIM,
 		lexer.TOKEN_PRINT, lexer.TOKEN_INPUT, lexer.TOKEN_EXIT,
-		lexer.TOKEN_IMPORT, lexer.TOKEN_AS, lexer.TOKEN_TO, lexer.TOKEN_STEP:
+		lexer.TOKEN_IMPORT, lexer.TOKEN_AS, lexer.TOKEN_TO, lexer.TOKEN_STEP,
+		lexer.TOKEN_BYTES, lexer.TOKEN_ERROR_TYPE, lexer.TOKEN_JSON,
+		lexer.TOKEN_BSTRING, lexer.TOKEN_ANY, lexer.TOKEN_POINTER,
+		lexer.TOKEN_CHAN, lexer.TOKEN_OF, lexer.TOKEN_FROM,
+		lexer.TOKEN_LET, lexer.TOKEN_CONST, lexer.TOKEN_GOTO,
+		lexer.TOKEN_LOOP, lexer.TOKEN_UNTIL, lexer.TOKEN_WEND,
+		lexer.TOKEN_ELSEIF, lexer.TOKEN_ENDIF, lexer.TOKEN_BYREF,
+		lexer.TOKEN_BYVAL, lexer.TOKEN_XOR, lexer.TOKEN_MOD,
+		lexer.TOKEN_EMBED, lexer.TOKEN_IMPLEMENTS, lexer.TOKEN_INCLUDE,
+		lexer.TOKEN_SPAWN, lexer.TOKEN_SEND, lexer.TOKEN_RECEIVE,
+		lexer.TOKEN_MAKE_CHAN:
 		return true
 	default:
 		return false

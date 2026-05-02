@@ -21,6 +21,7 @@ var (
 	debugMode   bool
 	verboseMode bool
 	outputFile  string
+	targetSpec  string
 )
 
 func main() {
@@ -36,6 +37,7 @@ func main() {
 	flagSet.BoolVar(&debugMode, "debug", false, "Enable debug mode (include source line comments)")
 	flagSet.BoolVar(&verboseMode, "v", false, "Verbose output")
 	flagSet.StringVar(&outputFile, "o", "", "Output file name")
+	flagSet.StringVar(&targetSpec, "target", "", "Cross-compile target as os/arch (e.g. windows/amd64, linux/arm64, darwin/arm64)")
 
 	switch command {
 	case "build":
@@ -297,10 +299,20 @@ func build(filename, outputName string) {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w.String())
 	}
 
-	// Determine output name
+	// Parse cross-compile target
+	goos, goarch, err := parseTarget(targetSpec)
+	if err != nil {
+		errorf("%v", err)
+		os.Exit(1)
+	}
+
+	// Determine output name (auto-append .exe for windows targets)
 	if outputName == "" {
 		base := filepath.Base(filename)
 		outputName = strings.TrimSuffix(base, filepath.Ext(base))
+		if goos == "windows" && !strings.HasSuffix(outputName, ".exe") {
+			outputName += ".exe"
+		}
 	}
 
 	// Create temp directory for Go files
@@ -359,6 +371,19 @@ func build(filename, outputName string) {
 	cmd := exec.Command("go", "build", "-o", outputPath, ".")
 	cmd.Dir = tempDir
 	cmd.Stderr = os.Stderr
+	if goos != "" || goarch != "" {
+		// Cross-compiling: disable CGO (target toolchain typically unavailable)
+		// and set the target via env vars.
+		env := append(os.Environ(), "CGO_ENABLED=0")
+		if goos != "" {
+			env = append(env, "GOOS="+goos)
+		}
+		if goarch != "" {
+			env = append(env, "GOARCH="+goarch)
+		}
+		cmd.Env = env
+		infof("cross-compiling for %s/%s (CGO disabled)", goos, goarch)
+	}
 
 	if err := cmd.Run(); err != nil {
 		errorf("building executable: %v", err)
@@ -366,6 +391,19 @@ func build(filename, outputName string) {
 	}
 
 	fmt.Fprintf(os.Stderr, "Built: %s\n", outputPath)
+}
+
+// parseTarget splits a "os/arch" string into separate GOOS / GOARCH values.
+// An empty string means "use the host platform" — both returned values empty.
+func parseTarget(spec string) (string, string, error) {
+	if spec == "" {
+		return "", "", nil
+	}
+	parts := strings.SplitN(spec, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("invalid --target %q: expected os/arch (e.g. windows/amd64)", spec)
+	}
+	return parts[0], parts[1], nil
 }
 
 func run(filename string) {

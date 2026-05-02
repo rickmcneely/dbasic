@@ -69,6 +69,7 @@ const (
 	TOKEN_BSTRING
 	TOKEN_POINTER
 	TOKEN_CHAN
+	TOKEN_MAP
 	TOKEN_TO
 	TOKEN_OF
 	TOKEN_ANY         // ANY type (maps to interface{})
@@ -102,6 +103,7 @@ const (
 	TOKEN_FUNCTION
 	TOKEN_BYREF
 	TOKEN_BYVAL
+	TOKEN_DEFER
 
 	// Keywords - Logical
 	TOKEN_AND
@@ -188,6 +190,7 @@ var tokenNames = map[TokenType]string{
 	TOKEN_BSTRING:     "BSTRING",
 	TOKEN_POINTER:     "POINTER",
 	TOKEN_CHAN:        "CHAN",
+	TOKEN_MAP:         "MAP",
 	TOKEN_TO:          "TO",
 	TOKEN_OF:          "OF",
 	TOKEN_ANY:         "ANY",
@@ -217,6 +220,7 @@ var tokenNames = map[TokenType]string{
 	TOKEN_FUNCTION:    "FUNCTION",
 	TOKEN_BYREF:       "BYREF",
 	TOKEN_BYVAL:       "BYVAL",
+	TOKEN_DEFER:       "DEFER",
 	TOKEN_AND:         "AND",
 	TOKEN_OR:          "OR",
 	TOKEN_NOT:         "NOT",
@@ -256,6 +260,7 @@ var Keywords = map[string]TokenType{
 	"BSTRING":   TOKEN_BSTRING,
 	"POINTER":   TOKEN_POINTER,
 	"CHAN":      TOKEN_CHAN,
+	"MAP":       TOKEN_MAP,
 	"TO":        TOKEN_TO,
 	"OF":        TOKEN_OF,
 	"ANY":       TOKEN_ANY,
@@ -285,6 +290,7 @@ var Keywords = map[string]TokenType{
 	"FUNCTION":  TOKEN_FUNCTION,
 	"BYREF":     TOKEN_BYREF,
 	"BYVAL":     TOKEN_BYVAL,
+	"DEFER":     TOKEN_DEFER,
 	"AND":       TOKEN_AND,
 	"OR":        TOKEN_OR,
 	"NOT":       TOKEN_NOT,

@@ -29,6 +29,7 @@ const (
 	TypeSub
 	TypeStruct    // User-defined struct type
 	TypeExternal  // External Go type (e.g., tea.Cmd)
+	TypeMap       // map[K]V
 )
 
 // StructField represents a field in a struct type
@@ -50,6 +51,7 @@ type Type struct {
 	PackagePath  string         // For external types: the full import path
 	PackageAlias string         // For external types: the alias used in code (e.g., "tea")
 	Variadic     bool           // True if function accepts variable arguments
+	KeyType      *Type          // For map types
 }
 
 // Predefined types
@@ -132,6 +134,16 @@ func NewSliceType(elem *Type) *Type {
 		Name:        elem.String() + "()",
 		ElementType: elem,
 		ArraySize:   -1,
+	}
+}
+
+// NewMapType creates a new map type (MAP OF K TO V).
+func NewMapType(key, value *Type) *Type {
+	return &Type{
+		Kind:        TypeMap,
+		Name:        "MAP OF " + key.String() + " TO " + value.String(),
+		KeyType:     key,
+		ElementType: value,
 	}
 }
 
@@ -334,6 +346,10 @@ func (t *Type) IsCompatibleWith(other *Type) bool {
 		if t.Kind == TypeArray || t.Kind == TypeSlice {
 			return t.ElementType.IsCompatibleWith(other.ElementType)
 		}
+		if t.Kind == TypeMap {
+			return t.KeyType.IsCompatibleWith(other.KeyType) &&
+				t.ElementType.IsCompatibleWith(other.ElementType)
+		}
 		return true
 	}
 
@@ -344,6 +360,20 @@ func (t *Type) IsCompatibleWith(other *Type) bool {
 
 	// Any type is compatible with everything
 	if t.Kind == TypeAny || other.Kind == TypeAny {
+		return true
+	}
+
+	// External Go types cross the type-system boundary — DBasic cannot see
+	// Go package metadata, so trust the user. Real mismatches surface when
+	// `go build` runs the generated code (with //line directives the error
+	// is reported against the original .dbas source).
+	if t.Kind == TypeExternal || other.Kind == TypeExternal {
+		return true
+	}
+	if t.Kind == TypePointer && t.ElementType != nil && t.ElementType.Kind == TypeExternal {
+		return true
+	}
+	if other.Kind == TypePointer && other.ElementType != nil && other.ElementType.Kind == TypeExternal {
 		return true
 	}
 
@@ -395,6 +425,8 @@ func (t *Type) DefaultValue() string {
 	case TypeChannel:
 		return "nil"
 	case TypeSlice:
+		return "nil"
+	case TypeMap:
 		return "nil"
 	default:
 		return "nil"
