@@ -1,69 +1,164 @@
-' Test file for new DBasic features
-' Demonstrates: slice types, struct literals, APPEND, slice operations
+' ============================================================================
+' New DBasic Features Demo
+' ============================================================================
+' What this file teaches:
+'   - Slices         : Resizable lists of values (like arrays that can grow)
+'   - Slice literals : Creating a slice with initial values using [ ]
+'   - APPEND         : Adding new items to the end of a slice
+'   - Slice slicing  : Extracting a portion of a slice using [start:end]
+'   - Struct literals: Creating a struct and setting its fields in one line
+'   - Slice of structs: Combining slices and structs together
+'   - MAP            : A lookup table (key -> value)
+'   - DEFER          : Run a cleanup call when the function ends
+'   - FUNCTION literal: A function value used inline as a callback
+'   - Interface params: Accept any Go value that implements an interface
+'
+' What is a slice?
+'   A slice is like a list that can grow or shrink. Unlike a fixed-size
+'   array (which you must declare with a set size), a slice starts empty
+'   and you can keep adding items to it with APPEND.
+'   Think of it as a shopping list where you can always add more items.
+'
+' What is a struct literal?
+'   Normally you create a struct (TYPE) and then set each field one at
+'   a time. A struct literal lets you create it AND set all fields in a
+'   single line, like: Person{Name: "John", Age: 30}
+'
+' What is a MAP?
+'   A MAP is a lookup table. You give it a "key" (like a name) and it
+'   gives you back the matching "value" (like a phone number). Unlike a
+'   slice (where items are accessed by position 0, 1, 2, ...), a map's
+'   items are accessed by name.
+'
+' What is DEFER?
+'   DEFER tells DBasic "run this call AT THE END, no matter what." It's
+'   useful for cleanup -- close a file, release a lock -- so you don't
+'   have to remember to do it before every RETURN.
+'
+' What is a FUNCTION literal?
+'   A small function defined right where you use it, with no name. They
+'   are useful when a Go library wants you to pass it a function (a
+'   "callback") -- you can write the callback inline instead of giving
+'   it a name in a separate place.
+' ============================================================================
 
-' Define a simple struct type
+' Bring in standard Go packages used by the FUNCTION-literal and
+' interface-types demos at the bottom of the file. These names work
+' just like a regular Go import.
+IMPORT "sort" AS sort
+IMPORT "strings" AS strings
+IMPORT "io" AS io
+IMPORT "os" AS os
+
+' Define a simple struct type called Person.
+' Every Person has a Name (text) and an Age (whole number).
 TYPE Person
     DIM Name AS STRING
     DIM Age AS INTEGER
 END TYPE
 
-' Define a MenuItem type for testing struct literals
+' Define a MenuItem type for testing struct literals.
+' A menu item has a Label (what the user sees) and a Shortcut (keyboard combo).
 TYPE MenuItem
     DIM Label AS STRING
     DIM Shortcut AS STRING
 END TYPE
 
 SUB Main()
-    ' Test 1: Slice type declaration
+    ' -----------------------------------------------------------------------
+    ' Test 1: Slice type declaration and initialization
+    ' -----------------------------------------------------------------------
+    ' []STRING means "a slice (resizable list) of strings."
+    ' The square brackets with nothing inside [ ] mean "slice" (no fixed size).
+    ' We initialize it with three names using a slice literal: ["Alice", ...]
     PRINT "=== Slice Types ==="
     DIM names AS []STRING
     names = ["Alice", "Bob", "Charlie"]
+    ' Access individual items using their index (position number).
+    ' Indexes start at 0, NOT 1. So:
+    '   names[0] = "Alice"  (first item)
+    '   names[1] = "Bob"    (second item)
+    '   names[2] = "Charlie" (third item)
     PRINT "Initial names:"
     PRINT names[0]
     PRINT names[1]
     PRINT names[2]
 
+    ' -----------------------------------------------------------------------
     ' Test 2: APPEND to slice
+    ' -----------------------------------------------------------------------
+    ' APPEND adds a new item to the end of a slice and returns the updated slice.
+    ' You MUST assign the result back to the slice variable because APPEND
+    ' may need to create a larger list behind the scenes.
+    ' After these two APPENDs, names has 5 items: Alice, Bob, Charlie, David, Eve
     PRINT ""
     PRINT "=== APPEND ==="
     names = APPEND(names, "David")
     names = APPEND(names, "Eve")
+    ' Len() returns how many items are in the slice.
     PRINT "After append, length:"; Len(names)
 
-    ' Test 3: Slice operations
+    ' -----------------------------------------------------------------------
+    ' Test 3: Slice operations (extracting portions of a slice)
+    ' -----------------------------------------------------------------------
+    ' "Slicing a slice" means taking a subset of the items.
+    ' The syntax is: slice[start:end]
+    '   - start = the index to begin at (included)
+    '   - end   = the index to stop at (NOT included)
+    ' Think of it like saying "give me items from position start up to
+    ' (but not including) position end."
     PRINT ""
     PRINT "=== Slice Operations ==="
     DIM numbers AS []INTEGER
     numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-    ' Get first 3 elements
+    ' Get the first 3 elements: indexes 0, 1, 2
+    ' numbers[0:3] means "start at 0, stop before 3" -- gives us [1, 2, 3]
     DIM first3 AS []INTEGER
     first3 = numbers[0:3]
     PRINT "First 3:"; first3[0]; first3[1]; first3[2]
 
-    ' Get last 3 elements
+    ' Get the last 3 elements: indexes 7, 8, 9
+    ' numbers[7:] means "start at 7, go to the end" -- gives us [8, 9, 10]
+    ' When you leave out the end, it means "all the way to the last item."
     DIM last3 AS []INTEGER
     last3 = numbers[7:]
     PRINT "Last 3:"; last3[0]; last3[1]; last3[2]
 
-    ' Get middle elements
+    ' Get middle elements: indexes 3, 4, 5, 6
+    ' numbers[3:7] means "start at 3, stop before 7" -- gives us [4, 5, 6, 7]
     DIM middle AS []INTEGER
     middle = numbers[3:7]
     PRINT "Middle (indices 3-6):"; middle[0]; middle[1]; middle[2]; middle[3]
 
+    ' -----------------------------------------------------------------------
     ' Test 4: Struct literals
+    ' -----------------------------------------------------------------------
+    ' Instead of creating a struct and then setting each field one by one:
+    '   DIM p AS Person
+    '   p.Name = "John"
+    '   p.Age = 30
+    ' You can do it all in one line with a struct literal:
+    '   p = Person{Name: "John", Age: 30}
+    ' This is shorter and easier to read.
     PRINT ""
     PRINT "=== Struct Literals ==="
     DIM p AS Person
     p = Person{Name: "John", Age: 30}
     PRINT "Person:"; p.Name; "age"; p.Age
 
-    ' Test with MenuItem
+    ' Same thing with MenuItem -- create it in one line.
     DIM item AS MenuItem
     item = MenuItem{Label: "New", Shortcut: "Ctrl+N"}
     PRINT "Menu item:"; item.Label; "-"; item.Shortcut
 
+    ' -----------------------------------------------------------------------
     ' Test 5: Slice of structs
+    ' -----------------------------------------------------------------------
+    ' You can combine slices and struct literals to build a list of
+    ' structured data. []Person means "a resizable list of Person structs."
+    ' APPEND adds a new Person to the list each time.
+    ' This is how you would build a list of users, products, records, etc.
     PRINT ""
     PRINT "=== Slice of Structs ==="
     DIM people AS []Person
@@ -71,10 +166,103 @@ SUB Main()
     people = APPEND(people, Person{Name: "Bob", Age: 35})
     people = APPEND(people, Person{Name: "Charlie", Age: 28})
 
+    ' Len(people) tells us how many Person structs are in the slice.
     PRINT "People count:"; Len(people)
+    ' Access a specific person by index, then use dot notation for their fields.
+    ' people[0].Name means: "get the first person, then get their Name."
     PRINT "First person:"; people[0].Name; "age"; people[0].Age
     PRINT "Second person:"; people[1].Name; "age"; people[1].Age
 
+    ' -----------------------------------------------------------------------
+    ' Test 6: MAP (lookup table)
+    ' -----------------------------------------------------------------------
+    ' Slices are accessed by position (0, 1, 2). A MAP is accessed by
+    ' name -- you "look up" the value for a given key.
+    '
+    ' Syntax: DIM nameOfMap AS MAP OF KeyType TO ValueType
+    ' Read:   nameOfMap[someKey]
+    ' Write:  nameOfMap[someKey] = someValue
+    PRINT ""
+    PRINT "=== MAP ==="
+    DIM phoneBook AS MAP OF STRING TO STRING
+    phoneBook["Alice"] = "555-0100"
+    phoneBook["Bob"]   = "555-0102"
+    phoneBook["Carol"] = "555-0104"
+    PRINT "Alice's number:"; phoneBook["Alice"]
+    PRINT "Bob's number:";   phoneBook["Bob"]
+    PRINT "Number of entries:"; Len(phoneBook)
+
+    ' -----------------------------------------------------------------------
+    ' Test 7: DEFER (run a cleanup call at the end)
+    ' -----------------------------------------------------------------------
+    ' DEFER lets you say "no matter how this SUB ends, please run this
+    ' line for me first." Multiple DEFERs run in REVERSE order -- the
+    ' last one you wrote runs first. (Think of it like a stack of plates.)
+    '
+    ' This makes cleanup code easy: you put the DEFER right next to the
+    ' thing being opened, instead of having to remember to clean up at
+    ' every RETURN.
+    PRINT ""
+    PRINT "=== DEFER ==="
+    DemoDefer()
+
+    ' -----------------------------------------------------------------------
+    ' Test 8: FUNCTION literals (inline functions / "lambdas")
+    ' -----------------------------------------------------------------------
+    ' A FUNCTION literal is a function defined right where you need it,
+    ' without a name. It's perfect when a Go library wants a callback.
+    '
+    ' Here we sort a slice of numbers by passing sort.Slice a callback
+    ' that says "is item i smaller than item j?". The callback "captures"
+    ' (sees) the nums slice from the surrounding scope -- this is called
+    ' a "closure".
+    PRINT ""
+    PRINT "=== FUNCTION literal + closure ==="
+    DIM nums AS []INTEGER = []INTEGER{5, 2, 8, 1, 9, 3}
+    sort.Slice(nums, FUNCTION(i AS INTEGER, j AS INTEGER) AS BOOLEAN
+        RETURN nums[i] < nums[j]
+    END FUNCTION)
+    PRINT "Sorted:"; nums
+
+    ' -----------------------------------------------------------------------
+    ' Test 9: Interface-typed parameters (use Go interfaces directly)
+    ' -----------------------------------------------------------------------
+    ' DBasic can accept Go interface types like io.Reader and io.Writer
+    ' as parameters. Any Go value that "satisfies" the interface (provides
+    ' the right methods) can be passed in -- even values you didn't write.
+    '
+    ' Below, CopyInterface takes io.Reader / io.Writer and forwards to
+    ' io.Copy. We pass it strings.NewReader (a Reader) and os.Stdout (a
+    ' Writer), and it just works.
+    PRINT ""
+    PRINT "=== Interface-typed parameters ==="
+    DIM r AS POINTER TO strings.Reader = strings.NewReader("hello via io.Reader" + Chr(10))
+    CopyInterface(os.Stdout, r)
+
     PRINT ""
     PRINT "=== All tests complete! ==="
+END SUB
+
+' DemoDefer shows DEFER's reverse-order cleanup. Think of these like a
+' stack of plates: the LAST one you defer is the FIRST one to run when
+' the SUB exits.
+'
+' DEFER takes a function CALL (not a statement), so we wrap each cleanup
+' message in a tiny helper sub.
+SUB Cleanup(label AS STRING)
+    PRINT "  cleaning up:"; label
+END SUB
+
+SUB DemoDefer()
+    DEFER Cleanup("C  (deferred FIRST runs LAST)")
+    DEFER Cleanup("B")
+    DEFER Cleanup("A  (deferred LAST runs FIRST)")
+    PRINT "  doing real work..."
+END SUB
+
+' CopyInterface takes Go interface types directly as parameters and
+' forwards to io.Copy. Any Go value satisfying io.Writer/io.Reader can
+' be passed in -- DBasic does not need to know about each concrete type.
+SUB CopyInterface(dst AS io.Writer, src AS io.Reader)
+    io.Copy(dst, src)
 END SUB
