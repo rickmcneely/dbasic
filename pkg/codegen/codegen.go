@@ -1274,24 +1274,45 @@ func (g *Generator) generateLocalDim(stmt *parser.DimStatement) {
 	varName := g.toGoIdent(stmt.Name.Value)
 	varType := g.typeSpecToGo(stmt.Type)
 
-	// Track the variable type in current scope
-	t := g.typeFromTypeSpec(stmt.Type)
-	g.currentScope.Define(&analyzer.Symbol{
-		Name: stmt.Name.Value,
-		Kind: analyzer.SymVariable,
-		Type: t,
-	})
+	// Detect rebind: if a variable of this name was already declared in
+	// THIS scope (not just shadowed from an outer scope), emit an
+	// assignment to the existing slot instead of re-declaring. Use
+	// ResolveLocal — Resolve would walk up to parents and false-trigger
+	// on shadowing.
+	rebind := false
+	if g.currentScope != nil && g.currentScope.ResolveLocal(stmt.Name.Value) != nil {
+		rebind = true
+	} else if g.currentScope != nil {
+		t := g.typeFromTypeSpec(stmt.Type)
+		g.currentScope.Define(&analyzer.Symbol{
+			Name: stmt.Name.Value,
+			Kind: analyzer.SymVariable,
+			Type: t,
+		})
+	}
 
 	if stmt.ArraySize != nil {
-		g.writeLineWithSource(fmt.Sprintf("%s := make([]%s, %s)", varName, varType, g.exprToGo(stmt.ArraySize)), stmt.Token.Line)
+		op := ":="
+		if rebind {
+			op = "="
+		}
+		g.writeLineWithSource(fmt.Sprintf("%s %s make([]%s, %s)", varName, op, varType, g.exprToGo(stmt.ArraySize)), stmt.Token.Line)
 	} else if stmt.Value != nil {
-		g.writeLineWithSource(fmt.Sprintf("var %s %s = %s", varName, varType, g.exprToGo(stmt.Value)), stmt.Token.Line)
+		if rebind {
+			g.writeLineWithSource(fmt.Sprintf("%s = %s", varName, g.exprToGo(stmt.Value)), stmt.Token.Line)
+		} else {
+			g.writeLineWithSource(fmt.Sprintf("var %s %s = %s", varName, varType, g.exprToGo(stmt.Value)), stmt.Token.Line)
+		}
 	} else if stmt.Type != nil && stmt.Type.IsMap {
-		// Maps need explicit make() — nil maps cannot be written to.
-		g.writeLineWithSource(fmt.Sprintf("%s := make(%s)", varName, varType), stmt.Token.Line)
-	} else {
+		op := ":="
+		if rebind {
+			op = "="
+		}
+		g.writeLineWithSource(fmt.Sprintf("%s %s make(%s)", varName, op, varType), stmt.Token.Line)
+	} else if !rebind {
 		g.writeLineWithSource(fmt.Sprintf("var %s %s", varName, varType), stmt.Token.Line)
 	}
+	// Bare `DIM x AS T` rebind with no value is a no-op (var already exists).
 }
 
 func (g *Generator) generateLet(stmt *parser.LetStatement) {
@@ -1820,12 +1841,49 @@ func (g *Generator) prefixExprToGo(expr *parser.PrefixExpression) string {
 
 	switch expr.Operator {
 	case "NOT":
-		return fmt.Sprintf("!(%s)", right)
+		return fmt.Sprintf("!(%s)", g.toBoolGo(expr.Right, right))
 	case "-":
 		return fmt.Sprintf("-%s", right)
 	default:
 		return fmt.Sprintf("%s%s", expr.Operator, right)
 	}
+}
+
+// isProvablyNumeric returns true only when codegen can prove an
+// expression is a number — used to decide whether AND/OR/XOR/NOT need
+// the (x != 0) truthiness wrap. Anything we cannot positively identify
+// as numeric (function calls, struct field access, external types) is
+// left alone so Go's normal bool semantics still apply.
+func (g *Generator) isProvablyNumeric(expr parser.Expression) bool {
+	switch e := expr.(type) {
+	case *parser.IntegerLiteral, *parser.FloatLiteral:
+		return true
+	case *parser.PrefixExpression:
+		return e.Operator == "-"
+	case *parser.InfixExpression:
+		switch e.Operator {
+		case "+", "-", "*", "/", "\\", "^", "MOD":
+			return true
+		}
+	case *parser.Identifier:
+		if g.currentScope != nil {
+			if sym := g.currentScope.Resolve(e.Value); sym != nil && sym.Type != nil {
+				return sym.Type.IsNumeric()
+			}
+		}
+	}
+	return false
+}
+
+// toBoolGo wraps an operand as (x != 0) when we can prove it's numeric
+// (so AND/OR/XOR/NOT can apply Go's `&&` / `||` / `!`). Anything we
+// can't prove is numeric is passed through unchanged — preserving the
+// old strict-boolean behavior for bool-returning calls / struct fields.
+func (g *Generator) toBoolGo(expr parser.Expression, rendered string) string {
+	if g.isProvablyNumeric(expr) {
+		return fmt.Sprintf("(%s != 0)", rendered)
+	}
+	return rendered
 }
 
 func (g *Generator) infixExprToGo(expr *parser.InfixExpression) string {
@@ -1838,11 +1896,13 @@ func (g *Generator) infixExprToGo(expr *parser.InfixExpression) string {
 	case "<>":
 		return fmt.Sprintf("(%s != %s)", left, right)
 	case "AND":
-		return fmt.Sprintf("(%s && %s)", left, right)
+		return fmt.Sprintf("(%s && %s)", g.toBoolGo(expr.Left, left), g.toBoolGo(expr.Right, right))
 	case "OR":
-		return fmt.Sprintf("(%s || %s)", left, right)
+		return fmt.Sprintf("(%s || %s)", g.toBoolGo(expr.Left, left), g.toBoolGo(expr.Right, right))
 	case "XOR":
-		return fmt.Sprintf("((%s || %s) && !(%s && %s))", left, right, left, right)
+		l := g.toBoolGo(expr.Left, left)
+		r := g.toBoolGo(expr.Right, right)
+		return fmt.Sprintf("((%s || %s) && !(%s && %s))", l, r, l, r)
 	case "MOD":
 		return fmt.Sprintf("(%s %% %s)", left, right)
 	case "&":

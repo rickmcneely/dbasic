@@ -219,7 +219,14 @@ func (a *Analyzer) Analyze(program *parser.Program) (*SymbolTable, []string) {
 				Kind: SymVariable,
 				Type: varType,
 			}
-			a.symbols.DefineGlobal(sym)
+			if err := a.symbols.DefineGlobal(sym); err != nil {
+				// Allow rebind only when the type hasn't changed.
+				existing := a.symbols.Resolve(ds.Name.Value)
+				if existing == nil || existing.Type == nil ||
+					existing.Type.Kind != varType.Kind {
+					a.error(ds.Token.Line, "duplicate definition: %s (cannot rebind with different type)", ds.Name.Value)
+				}
+			}
 		}
 	}
 
@@ -491,7 +498,10 @@ func (a *Analyzer) analyzeStatement(stmt parser.Statement) {
 func (a *Analyzer) analyzeDimStatement(stmt *parser.DimStatement) {
 	varType := a.resolveTypeSpec(stmt.Type)
 
-	// Skip defining global variables (they're already defined in the earlier pass)
+	// Skip defining global variables (they're already defined in the earlier pass).
+	// Otherwise: try to define locally. If a same-name variable already exists in
+	// this scope, allow the rebind silently when the type matches (BASIC-friendly);
+	// only error if the type changed.
 	if !a.symbols.IsGlobalScope() || a.symbols.Resolve(stmt.Name.Value) == nil {
 		sym := &Symbol{
 			Name: stmt.Name.Value,
@@ -501,7 +511,11 @@ func (a *Analyzer) analyzeDimStatement(stmt *parser.DimStatement) {
 		}
 
 		if err := a.symbols.Define(sym); err != nil {
-			a.error(stmt.Token.Line, err.Error())
+			existing := a.symbols.Resolve(stmt.Name.Value)
+			if existing == nil || existing.Type == nil ||
+				existing.Type.Kind != varType.Kind {
+				a.error(stmt.Token.Line, "%s (cannot rebind with different type)", err.Error())
+			}
 		}
 	}
 
@@ -1018,13 +1032,26 @@ func (a *Analyzer) analyzePrefixExpression(expr *parser.PrefixExpression) *Type 
 		}
 		return rightType
 	case "NOT":
-		if rightType.Kind != TypeBoolean {
-			a.error(expr.Token.Line, "NOT requires boolean operand")
+		// Boolean is canonical; numeric values use truthiness (0 = false).
+		// External Go types and ANY are passed through; codegen wraps if needed.
+		if rightType.Kind != TypeBoolean && !rightType.IsNumeric() &&
+			rightType.Kind != TypeAny && rightType.Kind != TypeExternal {
+			a.error(expr.Token.Line, "NOT requires boolean or numeric operand")
 		}
 		return BooleanType
 	default:
 		return rightType
 	}
+}
+
+// logicalOperandOK accepts boolean, numeric, or "trust the user" types
+// (ANY / external Go types) for AND/OR/XOR operands.
+func logicalOperandOK(t *Type) bool {
+	if t == nil {
+		return false
+	}
+	return t.Kind == TypeBoolean || t.IsNumeric() ||
+		t.Kind == TypeAny || t.Kind == TypeExternal
 }
 
 func (a *Analyzer) analyzeInfixExpression(expr *parser.InfixExpression) *Type {
@@ -1067,8 +1094,10 @@ func (a *Analyzer) analyzeInfixExpression(expr *parser.InfixExpression) *Type {
 		return BooleanType
 
 	case "AND", "OR", "XOR":
-		if leftType.Kind != TypeBoolean || rightType.Kind != TypeBoolean {
-			a.error(expr.Token.Line, "logical operators require boolean operands")
+		// Allow boolean (canonical) or numeric/any/external operands.
+		// Numeric operands use truthiness (0 = false); codegen wraps them.
+		if !logicalOperandOK(leftType) || !logicalOperandOK(rightType) {
+			a.error(expr.Token.Line, "logical operators require boolean or numeric operands")
 		}
 		return BooleanType
 
