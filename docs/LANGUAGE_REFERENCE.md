@@ -1349,6 +1349,26 @@ source file and line number, not the temporary `main.go` — DBasic emits
 `//line` directives during transpilation that the Go compiler honors
 natively.
 
+### Debugging
+
+Because of those `//line` directives, the standard Go debugger
+[Delve](https://github.com/go-delve/delve) sees DBasic source files
+directly. Build with debug symbols (the default), then run dlv
+against the resulting binary and set breakpoints in `.dbas` files:
+
+```bash
+dbasic build hello.dbas -o hello
+dlv exec ./hello
+(dlv) break hello.dbas:23
+(dlv) continue
+(dlv) print myVar
+```
+
+Delve resolves `.dbas:line` directly to the matching machine
+instruction. Run `dlv` from the directory containing the `.dbas`
+source so it can find the file by its `//line`-recorded relative
+path.
+
 ---
 
 ## Example Program

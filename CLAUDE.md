@@ -18,6 +18,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 go build -o dbasic ./cmd/dbasic
 go install ./cmd/dbasic
 
+# Build the LSP server (for editor diagnostics)
+go build -o dbasic-lsp ./cmd/dbasic-lsp
+go install ./cmd/dbasic-lsp
+
 # Check DBasic source for errors (no compilation)
 dbasic check myfile.dbas
 
@@ -88,6 +92,10 @@ These are non-obvious behaviors that cause build failures. Always follow these r
 12. **Build offline: use `dbasic build --offline`** when proxy.golang.org is unreachable but you have the modules cached in `$GOMODCACHE`. Pins each non-stdlib import to the latest cached version compatible with the project's Go directive, then runs `go mod tidy` and `go build` with `GOPROXY=off GOSUMDB=off`.
 
 13. **Go-build error messages reference your `.dbas` source.** Codegen emits `//line` directives, so `cannot use X as Y` and similar Go errors point to the original `.dbas:line`, not a temp `main.go`.
+
+14. **Delve sees `.dbas` source directly.** Because of the `//line` directives, the standard Go debugger picks up DBasic source. Build, then `dlv exec ./prog` and set breakpoints with `break foo.dbas:42`. Run dlv from the directory containing the `.dbas` source.
+
+15. **`dbasic-lsp` provides editor diagnostics.** The LSP binary at `cmd/dbasic-lsp` runs over stdio and publishes parse + analyze errors as you type. Wire it up in any LSP-aware editor (VS Code, Neovim, Helix, etc.). Currently diagnostics-only; completions / hover / go-to-definition are not yet implemented.
 
 ## VDBTerm (examples/vdbterm/)
 
