@@ -174,6 +174,21 @@ func (l *Lexer) NextToken() Token {
 				return tok
 			}
 			tok.Literal = l.readIdentifier()
+			// REM acts as a comment-to-end-of-line: when an identifier
+			// "REM" is followed by whitespace or end-of-line, swallow the
+			// rest of the line and emit it as a TOKEN_COMMENT.
+			if strings.EqualFold(tok.Literal, "REM") && (l.ch == ' ' || l.ch == '\t' || l.ch == '\n' || l.ch == 0) {
+				for l.ch == ' ' || l.ch == '\t' {
+					l.readChar()
+				}
+				start := l.position
+				for l.ch != '\n' && l.ch != 0 {
+					l.readChar()
+				}
+				tok.Type = TOKEN_COMMENT
+				tok.Literal = strings.TrimSpace(l.input[start:l.position])
+				return tok
+			}
 			tok.Type = LookupIdent(strings.ToUpper(tok.Literal))
 			tok.Line = l.line
 			tok.Column = l.column

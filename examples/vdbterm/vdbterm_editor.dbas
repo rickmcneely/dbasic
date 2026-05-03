@@ -1,9 +1,10 @@
 ' VDBTerm Code Editor
-' Textarea component integration for code editing
+' Textarea component integration for code editing (v2 API)
 
-IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
-IMPORT "github.com/charmbracelet/bubbles/key" AS key
-IMPORT "github.com/charmbracelet/bubbletea" AS tea
+IMPORT "charm.land/bubbles/v2/textarea" AS textarea
+IMPORT "charm.land/bubbles/v2/key" AS key
+IMPORT "charm.land/bubbletea/v2" AS tea
+IMPORT "strings" AS strings
 
 ' Initialize the textarea component with Windows-style key bindings
 FUNCTION InitCodeEditor(width AS INTEGER, height AS INTEGER) AS textarea.Model
@@ -49,7 +50,7 @@ FUNCTION SyncCodeToEditor(editor AS textarea.Model, code AS STRING) AS textarea.
     RETURN editor
 END FUNCTION
 
-' Focus the editor
+' Focus the editor (v2: Focus() returns tea.Cmd)
 FUNCTION FocusEditor(editor AS textarea.Model) AS textarea.Model
     editor.Focus()
     RETURN editor
@@ -73,7 +74,7 @@ FUNCTION UpdateEditorSize(editor AS textarea.Model, width AS INTEGER, height AS 
     RETURN editor
 END FUNCTION
 
-' Handle key input for the editor - returns updated editor and whether it was handled
+' Handle key input for the editor - returns updated editor and command
 FUNCTION HandleEditorKeyInput(editor AS textarea.Model, msg AS tea.Msg) AS (textarea.Model, tea.Cmd)
     DIM newEditor AS textarea.Model
     DIM cmd AS tea.Cmd
@@ -86,26 +87,128 @@ FUNCTION GetEditorCursorLine(editor AS textarea.Model) AS INTEGER
     RETURN editor.Line()
 END FUNCTION
 
-' Get cursor column position from editor
+' Get cursor column position from editor (v2: use Column() directly)
 FUNCTION GetEditorCursorCol(editor AS textarea.Model) AS INTEGER
-    DIM info AS textarea.LineInfo = editor.LineInfo()
-    RETURN info.ColumnOffset
+    RETURN editor.Column()
 END FUNCTION
 
-' Set cursor to specific line and column
-' Note: This uses textarea methods but mouse positioning may have limitations
+' Set cursor to specific line and column - fast version
+' Uses Reset + InsertString to avoid slow CursorDown loop
 FUNCTION SetEditorCursor(editor AS textarea.Model, line AS INTEGER, col AS INTEGER) AS textarea.Model
-    ' Move to start first
-    editor.CursorStart()
+    DIM code AS STRING = editor.Value()
+    DIM codeLines AS []STRING = strings.Split(code, Chr(10))
 
-    ' Move down to target line
+    ' Clamp line to valid range
+    DIM maxLine AS INTEGER = Len(codeLines) - 1
+    IF maxLine < 0 THEN
+        maxLine = 0
+    ENDIF
+    IF line > maxLine THEN
+        line = maxLine
+    ENDIF
+    IF line < 0 THEN
+        line = 0
+    ENDIF
+
+    ' Clamp col
+    IF col < 0 THEN
+        col = 0
+    ENDIF
+    IF line < Len(codeLines) AND col > Len(codeLines[line]) THEN
+        col = Len(codeLines[line])
+    ENDIF
+
+    ' Build text before cursor position and text after
+    DIM beforeLines AS []STRING
     DIM i AS INTEGER
     FOR i = 0 TO line - 1
-        editor.CursorDown()
+        beforeLines = APPEND(beforeLines, codeLines[i])
     NEXT
 
-    ' Set column position within current line
-    editor.SetCursor(col)
+    DIM beforeCursor AS STRING = ""
+    IF Len(beforeLines) > 0 THEN
+        beforeCursor = strings.Join(beforeLines, Chr(10)) & Chr(10)
+    ENDIF
+    ' Add partial current line up to col
+    IF line < Len(codeLines) THEN
+        DIM currentLine AS STRING = codeLines[line]
+        IF col <= Len(currentLine) THEN
+            beforeCursor = beforeCursor & Left(currentLine, col)
+        ELSE
+            beforeCursor = beforeCursor & currentLine
+        ENDIF
+    ENDIF
+
+    DIM afterCursor AS STRING = ""
+    IF line < Len(codeLines) THEN
+        DIM currentLine2 AS STRING = codeLines[line]
+        IF col < Len(currentLine2) THEN
+            afterCursor = Mid(currentLine2, col + 1, Len(currentLine2) - col)
+        ENDIF
+    ENDIF
+    IF line < Len(codeLines) - 1 THEN
+        DIM afterLines AS []STRING
+        DIM j AS INTEGER
+        FOR j = line + 1 TO Len(codeLines) - 1
+            afterLines = APPEND(afterLines, codeLines[j])
+        NEXT
+        afterCursor = afterCursor & Chr(10) & strings.Join(afterLines, Chr(10))
+    ENDIF
+
+    ' Fast cursor positioning: choose shorter path from top or bottom
+    DIM totalLines AS INTEGER = Len(codeLines)
+    DIM fromTop AS INTEGER = line
+    DIM fromBottom AS INTEGER = totalLines - 1 - line
+
+    editor.Reset()
+    editor.InsertString(code)
+
+    IF fromTop <= fromBottom THEN
+        ' Faster to go from top
+        editor.MoveToBegin()
+        DIM k AS INTEGER
+        FOR k = 0 TO line - 1
+            editor.CursorDown()
+        NEXT
+    ELSE
+        ' Faster to go from bottom (cursor is at end after InsertString)
+        DIM k2 AS INTEGER
+        FOR k2 = 0 TO fromBottom - 1
+            editor.CursorUp()
+        NEXT
+    ENDIF
+    editor.SetCursorColumn(col)
+
+    RETURN editor
+END FUNCTION
+
+' Sync the textarea cursor to match CodeCursorX/CodeCursorY
+' Call this before passing input to the textarea for editing
+FUNCTION SyncEditorCursorPosition(editor AS textarea.Model, targetLine AS INTEGER, targetCol AS INTEGER) AS textarea.Model
+    DIM currentLine AS INTEGER = editor.Line()
+    DIM currentCol AS INTEGER = editor.Column()
+
+    ' Skip if already at the right position
+    IF currentLine = targetLine AND currentCol = targetCol THEN
+        RETURN editor
+    ENDIF
+
+    ' Move vertically using relative moves (delta is usually small)
+    DIM lineDelta AS INTEGER = targetLine - currentLine
+    IF lineDelta > 0 THEN
+        DIM i AS INTEGER
+        FOR i = 0 TO lineDelta - 1
+            editor.CursorDown()
+        NEXT
+    ELSEIF lineDelta < 0 THEN
+        DIM j AS INTEGER
+        FOR j = 0 TO (0 - lineDelta) - 1
+            editor.CursorUp()
+        NEXT
+    ENDIF
+
+    ' Set column
+    editor.SetCursorColumn(targetCol)
 
     RETURN editor
 END FUNCTION
@@ -138,4 +241,9 @@ FUNCTION GetEditorViewLines(editor AS textarea.Model) AS []STRING
     ENDIF
 
     RETURN lines
+END FUNCTION
+
+' Get the word at the cursor position (v2)
+FUNCTION GetEditorWord(editor AS textarea.Model) AS STRING
+    RETURN editor.Word()
 END FUNCTION

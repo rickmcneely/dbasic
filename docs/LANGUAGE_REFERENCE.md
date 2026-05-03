@@ -11,22 +11,23 @@ DBasic is a modern BASIC dialect that compiles to Go. It combines familiar BASIC
 1. [Program Structure](#program-structure)
 2. [Comments](#comments)
 3. [Data Types](#data-types)
-4. [Variables and Constants](#variables-and-constants)
+4. [Variables and Constants](#variables-and-constants) — DIM, REDIM, STATIC, SHARED, OPTION, reserved-word relaxation
 5. [Operators](#operators)
-6. [Control Flow](#control-flow)
-7. [Functions and Subroutines](#functions-and-subroutines)
+6. [Control Flow](#control-flow) — IF/SELECT CASE/FOR/WHILE/DO, single-line IF, WITH
+7. [Functions and Subroutines](#functions-and-subroutines) — SUB, FUNCTION, DECLARE, CALL, lambdas
 8. [User-Defined Types](#user-defined-types)
 9. [Arrays and Slices](#arrays-and-slices)
 10. [Maps](#maps)
 11. [Deferred Calls](#deferred-calls)
 12. [Pointers](#pointers)
-11. [Error Handling](#error-handling)
-12. [Concurrency](#concurrency)
-13. [Go Package Integration](#go-package-integration)
-14. [Built-in Functions](#built-in-functions)
-15. [HTTP Functions](#http-functions)
-16. [Shell Functions](#shell-functions)
-17. [Keywords Reference](#keywords-reference)
+13. [Error Handling](#error-handling)
+14. [Concurrency](#concurrency)
+15. [Go Package Integration](#go-package-integration) — IMPORT, generic instantiation
+16. [Built-in Functions](#built-in-functions)
+17. [HTTP Functions](#http-functions)
+18. [Shell Functions](#shell-functions)
+19. [Keywords Reference](#keywords-reference)
+20. [Compiler Usage](#compiler-usage) — build, run, fmt, doc, test, cross-compile, LSP
 
 ---
 
@@ -64,12 +65,17 @@ END SUB
 
 ## Comments
 
-DBasic uses single-quote for line comments:
+DBasic accepts two comment styles, both terminated by end of line:
 
 ```basic
-' This is a comment
+' This is an apostrophe comment
 DIM x AS INTEGER  ' Inline comment
+
+REM This is a REM comment (classic BASIC)
+REM REM is recognized when followed by whitespace or end of line
 ```
+
+`REM` only acts as a comment when it appears at statement-start position. Identifiers like `remainder` are unaffected.
 
 ---
 
@@ -151,11 +157,65 @@ CONST MAX_USERS AS INTEGER = 100
 CONST APP_NAME AS STRING = "MyApp"
 ```
 
+### STATIC Variables
+
+`STATIC` declares a variable inside a SUB or FUNCTION whose value persists across calls. The compiler hoists it to a uniquified package-level variable.
+
+```basic
+SUB Counter()
+    STATIC count AS INTEGER = 0
+    count = count + 1
+    PRINT "called "; count; " time(s)"
+END SUB
+```
+
+### SHARED Declarations
+
+`SHARED name1, name2, ...` inside a sub declares that the listed module-level names are visible. DBasic already resolves identifiers up the scope chain, so `SHARED` is parsed and accepted without changing semantics — useful for QB-style code.
+
+```basic
+DIM gCounter AS INTEGER = 0
+
+SUB Bump()
+    SHARED gCounter AS INTEGER
+    gCounter = gCounter + 1
+END SUB
+```
+
+### Reserved Words as Identifiers
+
+`STEP`, `BYTES`, `STRING`, and `TYPE` may be used as variable, parameter, field, or sub/function names. They retain their keyword meaning in syntactic positions (e.g. `FOR i = 1 TO 10 STEP 2`).
+
+```basic
+DIM TYPE AS INTEGER = 99       ' a variable named TYPE
+DIM BYTES AS INTEGER = 16
+PRINT TYPE; BYTES
+```
+
+### REDIM
+
+`REDIM x(N) AS T` resizes a slice. With `PRESERVE`, existing elements are copied into the new slice (truncated or zero-padded as needed).
+
+```basic
+DIM xs AS []INTEGER
+REDIM xs(5) AS INTEGER         ' fresh slice of length 5
+REDIM PRESERVE xs(8) AS INTEGER ' grow to 8, keep first 5 values
+```
+
 ### Scope
 
 - Variables declared at module level are global
 - Variables declared in functions/subs are local
 - FOR loop variables are scoped to the loop
+- `STATIC` variables are local in name but persistent across calls
+
+### OPTION Pragmas
+
+| Pragma | Effect |
+|--------|--------|
+| `OPTION EXPLICIT` | Require DIM before use. DBasic always enforces this; the pragma is accepted as a no-op for QB compatibility. |
+| `OPTION BASE 0` | Default; arrays/slices are 0-indexed. |
+| `OPTION BASE 1` | Rewrites every `xs[i]` access to `xs[i-1]` so user code can be 1-indexed. Don't combine with map-style indexing under OPTION BASE 1. |
 
 ---
 
@@ -242,8 +302,11 @@ strict bool semantics still apply there. Use a comparison
 ### IF Statement
 
 ```basic
-' Single line
+' Single line (no ELSE)
 IF condition THEN statement
+
+' Single line with ELSE
+IF condition THEN x = 1 ELSE x = 2
 
 ' Block form
 IF condition THEN
@@ -268,6 +331,8 @@ ELSE
     ' default branch
 ENDIF
 ```
+
+`AND`, `OR`, `XOR`, and `NOT` accept boolean OR numeric operands; `0` is false, non-zero is true. Use a comparison (`x = TRUE`, `x <> 0`) for explicit checks against function-call results.
 
 ### FOR Loop
 
@@ -360,6 +425,28 @@ GOTO label
 
 label:
     ' statements
+```
+
+### WITH
+
+`WITH expr ... END WITH` introduces a block where `.field` is shorthand for `expr.field`. Useful for property-heavy types. The receiver expression is re-evaluated per `.field` access (so it should normally be a simple lvalue). Nested WITHs are supported.
+
+```basic
+DIM p AS Point
+WITH p
+    .X = 3.0
+    .Y = 4.0
+    .Label = "origin"
+END WITH
+
+' Nested
+WITH config.window
+    .Title = "Hello"
+    WITH .Position
+        .X = 100
+        .Y = 50
+    END WITH
+END WITH
 ```
 
 ---
@@ -491,6 +578,28 @@ END SUB
 Anonymous `FUNCTION` literals require an explicit return type after the
 parameter list (same syntax as named functions). Anonymous `SUB`
 literals omit the return-type clause.
+
+### DECLARE (Forward References)
+
+`DECLARE SUB Name(params)` and `DECLARE FUNCTION Name(params) AS T` are accepted as no-ops. DBasic auto-resolves forward references, so the syntax is supported only for QB compatibility.
+
+```basic
+DECLARE SUB Hello(name AS STRING)
+DECLARE FUNCTION Twice(x AS INTEGER) AS INTEGER
+
+SUB Main()
+    Hello("Rick")
+    PRINT Twice(7)
+END SUB
+```
+
+### CALL
+
+`CALL` is an optional prefix on a sub call. The compiler strips it and parses the rest as an ordinary call expression.
+
+```basic
+CALL Hello("Rick")    ' equivalent to: Hello("Rick")
+```
 
 ---
 
@@ -1081,9 +1190,21 @@ practice and is not currently part of the DBasic surface.
 | Function | Description |
 |----------|-------------|
 | `PRINT expr, ...` | Print to console |
-| `INPUT var` | Read line from console |
+| `INPUT var` | Read whitespace-delimited token from stdin |
+| `LINE INPUT [prompt$,] var$` | Read a whole line including embedded spaces |
 | `Printf(fmt, args...)` | Formatted print |
 | `Sprintf(fmt, args...)` | Formatted string |
+
+`LINE INPUT` accepts an optional prompt followed by `,` or `;` and a target variable. With no prompt, it just reads:
+
+```basic
+DIM name AS STRING
+LINE INPUT "What is your name? ", name
+PRINT "Hello, "; name
+
+DIM line AS STRING
+LINE INPUT line
+```
 
 ---
 
@@ -1289,16 +1410,16 @@ pid, err = ShellStart("python -m http.server 8080")
 ## Keywords Reference
 
 ### Declaration Keywords
-`DIM`, `LET`, `CONST`, `TYPE`, `AS`, `EMBED`, `IMPLEMENTS`
+`DIM`, `LET`, `CONST`, `TYPE`, `AS`, `EMBED`, `IMPLEMENTS`, `REDIM`, `PRESERVE`, `STATIC`, `SHARED`, `OPTION`, `EXPLICIT`, `BASE`
 
 ### Data Type Keywords
 `INTEGER`, `LONG`, `SINGLE`, `DOUBLE`, `STRING`, `BOOLEAN`, `BYTES`, `BSTRING`, `JSON`, `POINTER`, `CHAN`, `MAP`, `ANY`, `ERROR`
 
 ### Control Flow Keywords
-`IF`, `THEN`, `ELSE`, `ELSEIF`, `ENDIF`, `FOR`, `TO`, `STEP`, `NEXT`, `WHILE`, `WEND`, `DO`, `LOOP`, `UNTIL`, `EXIT`, `SELECT`, `CASE`, `END`, `GOTO`, `RETURN`, `DEFER`
+`IF`, `THEN`, `ELSE`, `ELSEIF`, `ENDIF`, `FOR`, `TO`, `STEP`, `NEXT`, `WHILE`, `WEND`, `DO`, `LOOP`, `UNTIL`, `EXIT`, `SELECT`, `CASE`, `END`, `GOTO`, `RETURN`, `DEFER`, `WITH`
 
 ### Function Keywords
-`SUB`, `FUNCTION`, `BYREF`, `BYVAL`
+`SUB`, `FUNCTION`, `BYREF`, `BYVAL`, `DECLARE`, `CALL`
 
 ### Logical Keywords
 `AND`, `OR`, `NOT`, `XOR`, `MOD`
@@ -1307,10 +1428,10 @@ pid, err = ShellStart("python -m http.server 8080")
 `TRUE`, `FALSE`, `NIL`
 
 ### I/O Keywords
-`PRINT`, `INPUT`
+`PRINT`, `INPUT`, `LINE INPUT`, `REM`
 
 ### Go Integration Keywords
-`IMPORT`, `SPAWN`, `SEND`, `RECEIVE`, `FROM`, `MAKE_CHAN`, `OF`
+`IMPORT`, `SPAWN`, `SEND`, `RECEIVE`, `FROM`, `MAKE_CHAN`, `OF`, `INCLUDE`
 
 ---
 
@@ -1329,6 +1450,20 @@ dbasic emit program.dbas
 # Check for errors only
 dbasic check program.dbas
 
+# Reformat source (token-stream, comment-preserving, idempotent)
+dbasic fmt program.dbas              # print to stdout
+dbasic fmt -w program.dbas           # write back in place
+dbasic fmt -l examples/*.dbas        # list files needing formatting
+
+# Generate Markdown API docs from a .dbas file (top-level decls + leading ' comments)
+dbasic doc program.dbas              # print Markdown to stdout
+dbasic doc -o api.md program.dbas    # write to api.md
+
+# Run *_test.dbas files; subs named Test* are invoked in a recover() wrapper
+dbasic test                          # current dir, recursive
+dbasic test ./tests
+dbasic test mypkg_test.dbas          # single file
+
 # Cross-compile (auto-disables CGO; .exe added for windows targets)
 dbasic build program.dbas --target windows/amd64
 dbasic build program.dbas --target linux/arm64
@@ -1342,6 +1477,19 @@ dbasic version
 
 # Show help
 dbasic help
+```
+
+### Explicit Generic Instantiation
+
+When Go's type inference can't pin the type parameters, use the `(OF T1, T2, ...)` form to specify them explicitly:
+
+```basic
+IMPORT "slices"
+
+SUB Main()
+    DIM nums AS []INTEGER = [3, 1, 4, 1, 5, 9, 2, 6]
+    slices.Sort(OF []INTEGER)(nums)   ' emits: slices.Sort[[]int](nums)
+END SUB
 ```
 
 `go build` errors and runtime panics are reported against your `.dbas`
@@ -1368,6 +1516,27 @@ Delve resolves `.dbas:line` directly to the matching machine
 instruction. Run `dlv` from the directory containing the `.dbas`
 source so it can find the file by its `//line`-recorded relative
 path.
+
+### Editor Support (LSP)
+
+`dbasic-lsp` is a Language Server Protocol implementation for any LSP-aware editor (VS Code, Neovim, Helix, Emacs, JetBrains). It runs over stdio and provides:
+
+| Capability | What it does |
+|-----------|--------------|
+| Diagnostics | Live parse + analyze errors as you type |
+| Document symbols | File outline (TYPEs, SUBs, FUNCTIONs, fields) |
+| Hover | Signature info for top-level identifiers |
+| Go-to-definition | Jump to top-level decl |
+| Find references | Locate every use, scope-aware (locals stay in their sub) |
+| Rename | Rename a symbol with the same scope rules |
+| Completions | Keywords + top-level idents; type-narrowed members after `.` |
+| Signature help | Parameter info inside a `(...)` call |
+
+Install with `go install ./cmd/dbasic-lsp`. The VS Code package at `tools/vscode-dbasic/` bundles it for VS Code; for Neovim, point your LSP client at the `dbasic-lsp` binary for `*.dbas` files.
+
+### Go-Build Errors Are DBasic-Flavored
+
+When the Go compiler reports an error against generated code, DBasic strips the `# dbasic_program` package header and rewrites common Go phrasings into BASIC-flavored ones. For example, `cannot use X (variable of type T1) as T2 value in argument to F` becomes `type mismatch: X is T1 but F expects T2`. The file:line in the error always points to your `.dbas` source via `//line`.
 
 ---
 

@@ -1,7 +1,30 @@
-' Advanced JSON functions demo
-' Demonstrates: JSONParse, JSONStringify, JSONPretty, JSONGet, JSONSet,
-'               StructToJSON, JSONToStruct
+' ============================================================================
+' Advanced JSON Functions Demo
+' ============================================================================
+' What this file teaches:
+'   - JSONStringify  : Convert a JSON object into a plain text string
+'   - JSONPretty     : Convert a JSON object into a nicely formatted string
+'   - JSONGet        : Read a value deep inside nested JSON using a path
+'   - JSONSet        : Change a value deep inside nested JSON using a path
+'   - StructToJSON   : Convert a DBasic TYPE (struct) into a JSON object
+'   - JSONToStruct   : Convert a JSON object back into a DBasic TYPE (struct)
+'
+' Why are these useful?
+'   - JSONStringify/JSONPretty: When you need to save JSON to a file or
+'     send it over a network, you need it as a string. Pretty-printing
+'     makes it human-readable with indentation.
+'   - JSONGet/JSONSet: When your JSON has objects inside objects (nested),
+'     you can reach deep values using a dot-path like "server.host"
+'     instead of chaining multiple lookups.
+'   - StructToJSON/JSONToStruct: DBasic TYPEs (structs) are great for
+'     organizing data in your program, and JSON is great for storing or
+'     sending data. These functions let you convert between the two.
+' ============================================================================
 
+' Define a simple struct type called Person.
+' A TYPE (also called a "struct") is like a blueprint that says:
+' "Every Person will have a Name, an Age, and an Active status."
+' This is similar to defining columns in a spreadsheet.
 TYPE Person
     DIM Name AS STRING
     DIM Age AS INTEGER
@@ -12,17 +35,23 @@ SUB Main()
     ' === Basic JSON Functions ===
     PRINT "=== Basic JSON Functions ==="
 
-    ' Create JSON object directly
+    ' Create a JSON object with three properties.
+    ' This is the same syntax we learned in the basic JSON example.
     DIM data AS JSON = {name: "John", age: 30, city: "NYC"}
     PRINT "Name:"; data.name
     PRINT "Age:"; data.age
 
-    ' Stringify to JSON
+    ' JSONStringify converts a JSON object into a single-line text string.
+    ' This is useful when you need to save JSON to a file, send it over
+    ' a network, or just see the entire object as one piece of text.
+    ' The result looks like: {"name":"John","age":30,"city":"NYC"}
     DIM output AS STRING
     output = JSONStringify(data)
     PRINT "Stringified:"; output
 
-    ' Pretty print
+    ' JSONPretty does the same thing as JSONStringify, but it adds
+    ' line breaks and indentation so the output is easy for humans to read.
+    ' Think of it as the "nice formatting" version.
     PRINT ""
     PRINT "Pretty printed:"
     PRINT JSONPretty(data)
@@ -31,15 +60,28 @@ SUB Main()
     PRINT ""
     PRINT "=== JSONGet and JSONSet ==="
 
-    ' Create nested JSON
+    ' Create a NESTED JSON object. "Nested" means there is a JSON object
+    ' inside another JSON object. Here, "server" contains its own object
+    ' with "host" and "port" inside it.
+    ' Think of it like a folder inside a folder:
+    '   config/
+    '     server/
+    '       host = "localhost"
+    '       port = 8080
+    '     debug = TRUE
     DIM config AS JSON = {server: {host: "localhost", port: 8080}, debug: TRUE}
 
-    ' Get nested value using path
+    ' JSONGet lets you reach into nested objects using a dot-separated path.
+    ' "server.host" means: go into "server", then get "host".
+    ' Without JSONGet, you would have to access nested values step by step.
     PRINT "Server host:"; JSONGet(config, "server.host")
     PRINT "Server port:"; JSONGet(config, "server.port")
     PRINT "Debug:"; JSONGet(config, "debug")
 
-    ' Set nested value using path
+    ' JSONSet lets you change a nested value using the same dot-path notation.
+    ' Here we change the port from 8080 to 9000.
+    ' We also ADD a brand new property "server.ssl" that did not exist before.
+    ' JSONSet can both update existing values and create new ones.
     JSONSet(config, "server.port", 9000)
     JSONSet(config, "server.ssl", TRUE)
     PRINT "Updated port:"; JSONGet(config, "server.port")
@@ -49,12 +91,17 @@ SUB Main()
     PRINT ""
     PRINT "=== Struct to JSON ==="
 
+    ' Create a Person struct and fill in its fields.
+    ' A struct keeps your data organized with specific types for each field.
     DIM person AS Person
     person.Name = "Alice"
     person.Age = 28
     person.Active = TRUE
 
-    ' Convert struct to JSON
+    ' StructToJSON converts the struct into a JSON object.
+    ' This is like taking a row from a spreadsheet and turning it into
+    ' a JSON object where each column name becomes a key.
+    ' After conversion, you can use all JSON functions on it.
     DIM personJSON AS JSON
     personJSON = StructToJSON(person)
     PRINT "Struct as JSON:"; JSONStringify(personJSON)
@@ -65,10 +112,17 @@ SUB Main()
     PRINT ""
     PRINT "=== JSON to Struct ==="
 
+    ' JSONToStruct does the opposite -- it takes a JSON object and fills
+    ' in a struct with matching field names.
+    ' Notice the @ symbol before newPerson: this passes the variable
+    ' "by reference" (like giving someone your actual notebook instead of
+    ' a photocopy). This allows JSONToStruct to fill in the struct directly.
     DIM inputJSON AS JSON = {Name: "Bob", Age: 35, Active: FALSE}
     DIM newPerson AS Person
     JSONToStruct(inputJSON, @newPerson)
 
+    ' Now newPerson has all the values from the JSON object.
+    ' The field names in the JSON must match the field names in the TYPE.
     PRINT "Name from struct:"; newPerson.Name
     PRINT "Age from struct:"; newPerson.Age
     PRINT "Active from struct:"; newPerson.Active

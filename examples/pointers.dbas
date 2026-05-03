@@ -1,50 +1,104 @@
-' Pointers Example in DBasic
-' Demonstrates pointer operations: address-of (@) and dereference (^)
+' ============================================================================
+' POINTERS EXAMPLE IN DBASIC
+' ============================================================================
+'
+' What this file teaches:
+'   - What pointers are and why they are useful
+'   - How to create a pointer to a variable using @ (address-of)
+'   - How to read/write the value a pointer points to using ^ (dereference)
+'   - How to pass pointers to SUBs so the SUB can change the original variable
+'
+' Think of a pointer like a street address written on a sticky note.
+' The sticky note (pointer) is NOT the house (variable) itself --
+' it just tells you WHERE the house is. If you go to that address,
+' you can look inside the house (read) or change what is inside (write).
+'
+' Key symbols:
+'   @variable  = "give me the address of this variable" (address-of)
+'   ^pointer   = "go to this address and get/set the value" (dereference)
+'
+' ============================================================================
 
-' Swap two values using pointers
+' ---------------------------------------------------------------------------
+' Swap: Exchanges the values of two INTEGER variables using pointers.
+'
+' Why pointers here? Without pointers, SUBs get COPIES of values. Changing a
+' copy would not affect the original variable. By passing pointers (addresses),
+' the SUB can reach into the original variables and change them directly.
+'
+' Parameters:
+'   a - a pointer to the first INTEGER (not the integer itself!)
+'   b - a pointer to the second INTEGER
+' ---------------------------------------------------------------------------
 SUB Swap(a AS POINTER TO INTEGER, b AS POINTER TO INTEGER)
     DIM temp AS INTEGER
-    temp = ^a
-    ^a = ^b
-    ^b = temp
+    ' ^a means "the value stored at the address a points to"
+    temp = ^a       ' Save a copy of the first value
+    ^a = ^b         ' Overwrite the first value with the second value
+    ^b = temp       ' Overwrite the second value with the saved copy
 END SUB
 
-' Increment value through pointer
+' ---------------------------------------------------------------------------
+' Increment: Adds 1 to whatever INTEGER the pointer points at.
+'
+' This shows how a SUB can modify a variable it does not own -- it just
+' needs the address (pointer) of that variable.
+' ---------------------------------------------------------------------------
 SUB Increment(ptr AS POINTER TO INTEGER)
+    ' Read the current value (^ptr), add 1, then store it back (^ptr = ...)
     ^ptr = ^ptr + 1
 END SUB
 
 SUB Main()
     PRINT "=== Basic Pointer Operations ==="
 
-    ' Create a variable and a pointer to it
+    ' Create a regular integer variable with the value 42
     DIM value AS INTEGER = 42
+
+    ' Create a pointer that holds the ADDRESS of "value"
+    ' Think of it as writing down value's home address on a sticky note
     DIM ptr AS POINTER TO INTEGER = @value
 
+    ' Printing "value" gives us 42 directly
     PRINT "Original value: "; value
+
+    ' Printing "^ptr" also gives us 42 -- we follow the address to find
+    ' the same value. Both "value" and "^ptr" look at the same spot in memory.
     PRINT "Value via pointer: "; ^ptr
 
-    ' Modify through pointer
+    ' Now we change the value BY GOING THROUGH THE POINTER.
+    ' Since ptr points to "value", this changes "value" itself!
     ^ptr = 100
+    ' Proof: printing "value" now shows 100, not 42
     PRINT "After modification via pointer: "; value
 
-    ' Swap example
+    ' --- Swap Example ---
+    ' We create two variables and swap their contents using pointers.
     PRINT ""
     PRINT "=== Swap Example ==="
     DIM x AS INTEGER = 10
     DIM y AS INTEGER = 20
 
     PRINT "Before swap: x = "; x; ", y = "; y
+
+    ' @x and @y pass the ADDRESSES of x and y to the Swap SUB
+    ' so Swap can reach in and change them directly
     Swap(@x, @y)
+
+    ' After the swap, x is 20 and y is 10 -- the values traded places!
     PRINT "After swap: x = "; x; ", y = "; y
 
-    ' Increment example
+    ' --- Increment via Pointer ---
+    ' We increment a counter 5 times by passing its address to Increment.
     PRINT ""
     PRINT "=== Increment via Pointer ==="
     DIM counter AS INTEGER = 0
     PRINT "Initial counter: "; counter
 
     DIM i AS INTEGER
+    ' Each time through the loop, we pass counter's address to Increment.
+    ' Increment adds 1 to counter through the pointer.
+    ' After 5 loops, counter will be 5.
     FOR i = 1 TO 5
         Increment(@counter)
         PRINT "After increment "; i; ": "; counter

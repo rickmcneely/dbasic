@@ -1,2 +1,19 @@
-' Simple slice test
+' ============================================================
+' Simple Slice Test
+' ============================================================
+'
+' WHAT THIS FILE TEACHES:
+'   - []STRING: how to declare a "slice" (a dynamic list/array)
+'     A slice is like a list that can grow or shrink as needed.
+'     Unlike a fixed-size array, you don't have to say how many
+'     items it will hold up front.
+'
+' NOTE: This file just declares a slice. In a full program,
+' you would add items to it with APPEND and loop through it
+' with FOR EACH or a regular FOR loop.
+' ============================================================
+
+' Declare a slice (dynamic list) of strings.
+' Right now it's empty -- it has zero items in it.
+' You could add items like: names = APPEND(names, "Alice")
 DIM names AS []STRING

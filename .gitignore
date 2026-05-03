@@ -1,9 +1,49 @@
 # Compiled binaries
 /dbasic
+/dbasic-lsp
+/edit
 examples/*/edit
 examples/*/gorillas
 examples/edit/edit
+examples/edit/edit_dbas
+examples/edit/main
 examples/gorillas/gorillas
+examples/hello
+examples/vdbterm/test_codegen
+examples/vdbterm/test_codegen_output
+
+# Compiled outputs from `dbasic build`/`dbasic run` at repo root
+# (each .dbas at the root produces a same-named binary)
+/arrays
+/bytes
+/control_flow
+/errors
+/functions
+/goroutines
+/gorillas
+/hello
+/json
+/json_advanced
+/main
+/new_features
+/pointers
+/structs
+/tictactoe
+/variables
+/onerr
+
+# VDBTerm scratch / test outputs
+/Form1.frm
+/frmMain.frm
+/Project1.vdb
+/Project1.vdbp
+/Project1_run
+/examples/vdbterm/Project1.vdb
+/examples/vdbterm/tmp/
+
+# Misplaced shell expansion / scratch
+/home/
+/tmp/
 
 # Database files
 *.db

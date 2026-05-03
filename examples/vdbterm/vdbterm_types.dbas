@@ -1,8 +1,8 @@
 ' VDBTerm Type Definitions
 ' Data structures for controls, forms, modules, projects, and the main model
 
-IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
-IMPORT "github.com/charmbracelet/bubbles/textinput" AS textinput
+IMPORT "charm.land/bubbles/v2/textarea" AS textarea
+IMPORT "charm.land/bubbles/v2/textinput" AS textinput
 IMPORT "time" AS time
 
 ' Syntax highlighting token
@@ -95,6 +95,13 @@ TYPE VDBControl
     ' Curl widget properties
     DIM URL AS STRING            ' URL for HTTP request
     DIM HttpMethod AS STRING     ' GET, POST, PUT, DELETE, etc.
+
+    ' Viewport widget properties
+    DIM SoftWrap AS BOOLEAN
+    DIM MouseWheel AS BOOLEAN
+
+    ' Clipboard widget properties
+    DIM FallbackEnabled AS BOOLEAN
 
     ' Plugin widget properties
     DIM PluginTypeID AS STRING   ' Plugin ID (e.g., "gauge") for plugin widgets
@@ -314,7 +321,19 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM CodeSelecting AS BOOLEAN
     DIM CodeSelStartX AS INTEGER
     DIM CodeSelStartY AS INTEGER
+    DIM CodeSelEndX AS INTEGER
+    DIM CodeSelEndY AS INTEGER
     DIM CodeClipboard AS STRING
+    DIM CodeDraggingText AS BOOLEAN
+    DIM CodeDropLine AS INTEGER
+    DIM CodeDropCol AS INTEGER
+
+    ' Find/Replace state
+    DIM FindText AS STRING
+    DIM ReplaceText AS STRING
+    DIM FindMatches AS [][]INTEGER
+    DIM FindMatchIdx AS INTEGER
+    DIM FindActive AS BOOLEAN
 
     ' Property inspector state
     DIM PropIndex AS INTEGER
@@ -426,4 +445,11 @@ TYPE VDBTermModel IMPLEMENTS tea.Model
     DIM FileBrowserBtnIdx AS INTEGER      ' Selected button (0=Open, 1=Cancel)
     DIM FileBrowserMode AS INTEGER        ' 0=Open, 1=Save (for future use)
     DIM FileBrowserTitle AS STRING        ' Dialog title
+
+    ' Build spinner state
+    DIM BuildInProgress AS BOOLEAN
+    DIM BuildSpinnerFrame AS INTEGER
+
+    ' Terminal focus state
+    DIM TerminalFocused AS BOOLEAN
 END TYPE

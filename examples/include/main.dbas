@@ -1,29 +1,80 @@
-' Main Program - Demonstrates INCLUDE directive
-' Include utility libraries
+' ============================================================
+' Main Program - Demonstrates the INCLUDE Directive
+' ============================================================
+'
+' WHAT THIS FILE TEACHES:
+'   - INCLUDE: how to split your code into multiple files
+'     and pull them together. This is like copying the contents
+'     of another file right into this spot. It lets you reuse
+'     code across different programs without copy-pasting.
+'   - Printf: formatted printing (like PRINT, but you use
+'     placeholders like %d for numbers and %s for strings)
+'   - Calling FUNCTIONS defined in other files
+'
+' HOW INCLUDE WORKS:
+'   When the compiler sees INCLUDE "mathutils.dbas", it acts
+'   as if the entire contents of mathutils.dbas were typed
+'   right here. This means all the functions defined in that
+'   file become available to use in this file.
+' ============================================================
 
+' Pull in our utility libraries
+' After these two lines, we can use all functions from both files
 INCLUDE "mathutils.dbas"
 INCLUDE "stringutils.dbas"
 
+' Main() is always the starting point of a DBasic program.
 SUB Main()
     PRINT "=== DBasic INCLUDE Demo ==="
     PRINT ""
 
-    ' Test math utilities
+    ' ---- Test math utilities (defined in mathutils.dbas) ----
     PRINT "--- Math Utilities ---"
+
+    ' Printf works like PRINT but with format codes:
+    '   %d = insert a whole number (integer/long)
+    '   %s = insert a string (text)
+    '   %v = insert any value (auto-formatted)
+    '   \n = start a new line
+    ' The value after the comma fills in the placeholder.
+
+    ' Factorial: 5! = 5 * 4 * 3 * 2 * 1 = 120
     Printf("Factorial(5) = %d\n", Factorial(5))
+    ' Factorial: 10! = 3628800
     Printf("Factorial(10) = %d\n", Factorial(10))
+
+    ' Fibonacci: the sequence 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55...
+    ' The 10th Fibonacci number is 55
     Printf("Fibonacci(10) = %d\n", Fibonacci(10))
+    ' The 20th Fibonacci number is 6765
     Printf("Fibonacci(20) = %d\n", Fibonacci(20))
+
+    ' IsPrime checks if a number can only be divided by 1 and itself
+    ' 17 is prime (TRUE), 18 is not (FALSE, because 18 = 2 * 9)
     Printf("IsPrime(17) = %v\n", IsPrime(17))
     Printf("IsPrime(18) = %v\n", IsPrime(18))
+
+    ' GCD = Greatest Common Divisor (the largest number that divides both evenly)
+    ' GCD(48, 18) = 6 because 48/6=8 and 18/6=3
     Printf("GCD(48, 18) = %d\n", GCD(48, 18))
     PRINT ""
 
-    ' Test string utilities
+    ' ---- Test string utilities (defined in stringutils.dbas) ----
     PRINT "--- String Utilities ---"
+
+    ' RepeatStr repeats a string N times: "ab" repeated 5 times = "ababababab"
     Printf("RepeatStr(\"ab\", 5) = %s\n", RepeatStr("ab", 5))
+
+    ' ReverseStr flips a string backwards: "Hello" becomes "olleH"
     Printf("ReverseStr(\"Hello\") = %s\n", ReverseStr("Hello"))
+
+    ' CountChar counts how many times a letter appears in a string
+    ' "banana" has 3 "a" characters
     Printf("CountChar(\"banana\", \"a\") = %d\n", CountChar("banana", "a"))
+
+    ' IsPalindrome checks if a word reads the same forwards and backwards
+    ' "racecar" reversed is still "racecar" -> TRUE
+    ' "hello" reversed is "olleh" -> FALSE
     Printf("IsPalindrome(\"racecar\") = %v\n", IsPalindrome("racecar"))
     Printf("IsPalindrome(\"hello\") = %v\n", IsPalindrome("hello"))
     PRINT ""

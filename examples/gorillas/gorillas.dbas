@@ -1,19 +1,53 @@
+' ============================================================
 ' Gorillas.BAS - A DBasic Terminal Version
-' Simplified version of the classic QBasic game
-' Demonstrates structs, methods, and game logic
+' ============================================================
+'
+' WHAT THIS FILE TEACHES:
+'   - TYPE (struct) definitions: how to group related data together
+'   - CONST: how to define values that never change
+'   - POINTER: how to pass variables "by reference" so functions
+'     can modify them (instead of working on a copy)
+'   - FUNCTION vs SUB: functions return a value, subs do not
+'   - Game loop pattern: init -> draw -> input -> update -> repeat
+'   - Nested types: a TYPE can contain another TYPE as a field
+'   - String concatenation with & operator
+'   - FOR/NEXT loops and WHILE/WEND loops
+'
+' This is a simplified version of the classic QBasic "Gorillas"
+' game where two gorillas on rooftops throw bananas at each other.
+' In this demo version, the throws are pre-programmed (auto-play)
+' so you can watch the game play itself.
+' ============================================================
+
+' ---- CONSTANTS ----
+' CONST defines a value that never changes throughout the program.
+' Think of them as "rules" of the game that are set in stone.
+' Using constants instead of bare numbers makes code easier to read
+' and easier to change later (you only change it in one place).
 
 ' Game constants
 CONST SCREEN_WIDTH AS INTEGER = 40
 CONST FIELD_WIDTH AS INTEGER = 40
 CONST GRAVITY AS DOUBLE = 0.3
 
+' ---- TYPE DEFINITIONS ----
+' A TYPE is like a blueprint for grouping related pieces of data.
+' Think of it like a form you fill out -- it has specific fields.
+' Once you define a TYPE, you can create variables of that type.
+
 ' Point type for positions
+' A Point holds an X and Y coordinate (like a dot on graph paper).
+' We use DOUBLE (decimal numbers) so positions can be fractional,
+' which gives smoother movement for the banana projectile.
 TYPE Point
     DIM X AS DOUBLE
     DIM Y AS DOUBLE
 END TYPE
 
 ' Player type
+' Each player (gorilla) has a position on screen, a name, and a score.
+' Notice that Position is itself a TYPE (Point) -- types can contain
+' other types! This is called "nesting" or "composition".
 TYPE Player
     DIM Position AS Point
     DIM Name AS STRING
@@ -21,108 +55,161 @@ TYPE Player
 END TYPE
 
 ' Banana/projectile type
+' The banana is what players throw. It has a position (where it is),
+' velocity (how fast and in what direction it's moving), and a flag
+' to say whether it's currently in the air (Active).
 TYPE Banana
     DIM Position AS Point
-    DIM VelocityX AS DOUBLE
-    DIM VelocityY AS DOUBLE
-    DIM Active AS BOOLEAN
+    DIM VelocityX AS DOUBLE    ' Horizontal speed (left/right)
+    DIM VelocityY AS DOUBLE    ' Vertical speed (up/down)
+    DIM Active AS BOOLEAN      ' TRUE if the banana is currently flying
 END TYPE
 
 ' Game state
+' This TYPE holds EVERYTHING about the current state of the game:
+' both players, the banana, whose turn it is, and wind conditions.
+' By putting it all in one TYPE, we can pass the entire game around
+' to different functions easily.
 TYPE GameState
     DIM Player1 AS Player
     DIM Player2 AS Player
     DIM Projectile AS Banana
-    DIM CurrentPlayer AS INTEGER
+    DIM CurrentPlayer AS INTEGER   ' 1 or 2, tells us whose turn it is
     DIM GameOver AS BOOLEAN
-    DIM Wind AS DOUBLE
+    DIM Wind AS DOUBLE             ' Wind affects banana's horizontal path
 END TYPE
 
+' ---- FUNCTIONS ----
+' A FUNCTION is a reusable block of code that RETURNS a value.
+' This is different from a SUB, which does work but doesn't return anything.
+
 ' Calculate distance between two points
+' We use the "distance squared" formula (dx*dx + dy*dy) instead of
+' the full Pythagorean theorem (which would need a square root).
+' This is a common game programming trick -- comparing squared distances
+' is faster and works just as well for checking "is this close enough?"
 FUNCTION Distance(x1 AS DOUBLE, y1 AS DOUBLE, x2 AS DOUBLE, y2 AS DOUBLE) AS DOUBLE
-    DIM dx AS DOUBLE = x2 - x1
-    DIM dy AS DOUBLE = y2 - y1
-    RETURN dx * dx + dy * dy
+    DIM dx AS DOUBLE = x2 - x1    ' Horizontal difference
+    DIM dy AS DOUBLE = y2 - y1    ' Vertical difference
+    RETURN dx * dx + dy * dy       ' Return squared distance (no square root needed)
 END FUNCTION
 
+' ---- SUBROUTINES (SUBS) ----
+' A SUB is a reusable block of code that does NOT return a value.
+' It just performs actions (like changing variables or printing).
+
 ' Initialize game state
+' POINTER TO GameState means we receive the ADDRESS of the game variable,
+' not a copy. This way, changes we make here affect the ORIGINAL variable.
+' The @ symbol creates a pointer, and ^g "dereferences" it (follows the
+' address back to the original data).
+' Without pointers, this SUB would modify a COPY and the original would
+' be unchanged -- that's not what we want!
 SUB InitGame(g AS POINTER TO GameState)
-    ' Set up player 1 on the left
+    ' Set up player 1 on the left side of the screen
+    ' (^g) means "the thing g points to" -- it's how we access the original data
     (^g).Player1.Position.X = 5.0
     (^g).Player1.Position.Y = 10.0
     (^g).Player1.Name = "Player 1"
     (^g).Player1.Score = 0
 
-    ' Set up player 2 on the right
+    ' Set up player 2 on the right side of the screen
     (^g).Player2.Position.X = 35.0
     (^g).Player2.Position.Y = 10.0
     (^g).Player2.Name = "Player 2"
     (^g).Player2.Score = 0
 
-    ' Initialize projectile
+    ' Initialize projectile -- no banana is flying yet
     (^g).Projectile.Active = FALSE
 
-    ' Start with player 1
+    ' Start with player 1's turn
     (^g).CurrentPlayer = 1
     (^g).GameOver = FALSE
     (^g).Wind = 0.0
 END SUB
 
 ' Fire a banana with given angle and power
+' This SUB calculates the banana's starting position and velocity
+' based on who's throwing, the angle, and the power.
+' Velocity is broken into X (horizontal) and Y (vertical) components.
 SUB FireBanana(g AS POINTER TO GameState, angle AS DOUBLE, power AS DOUBLE)
+    ' Convert power to a speed value (divide by 20 to keep it manageable)
     DIM speed AS DOUBLE = power / 20.0
     ' Simple approximation using angle to adjust trajectory
     ' cos and sin approximations (simplified physics)
+    ' In a full game, you'd use real trigonometry functions here.
+    ' These formulas approximate cos/sin near 45 degrees.
     DIM cosAngle AS DOUBLE = 0.866 - (angle - 45.0) * 0.005
     DIM sinAngle AS DOUBLE = 0.5 + (angle - 45.0) * 0.005
 
+    ' Mark the banana as active (it's now in the air!)
     (^g).Projectile.Active = TRUE
 
+    ' Set starting position and velocity based on which player is throwing
     IF (^g).CurrentPlayer = 1 THEN
+        ' Player 1 is on the left, so banana starts just to their right (+2)
         (^g).Projectile.Position.X = (^g).Player1.Position.X + 2.0
         (^g).Projectile.Position.Y = (^g).Player1.Position.Y
+        ' Positive VelocityX = banana moves to the right (toward Player 2)
         (^g).Projectile.VelocityX = speed * cosAngle
+        ' Negative VelocityY = banana moves UP (screen Y goes down, so up is negative)
         (^g).Projectile.VelocityY = -speed * sinAngle
     ELSE
+        ' Player 2 is on the right, so banana starts just to their left (-2)
         (^g).Projectile.Position.X = (^g).Player2.Position.X - 2.0
         (^g).Projectile.Position.Y = (^g).Player2.Position.Y
+        ' Negative VelocityX = banana moves to the left (toward Player 1)
         (^g).Projectile.VelocityX = -speed * cosAngle
         (^g).Projectile.VelocityY = -speed * sinAngle
     ENDIF
 END SUB
 
 ' Update projectile physics
+' This is called every "tick" of the game to move the banana.
+' It applies gravity and wind, checks if the banana went out of bounds
+' or hit a player, and returns a result code:
+'   0 = still flying
+'  -1 = missed (out of bounds or hit ground)
+'   1 = hit Player 2
+'   2 = hit Player 1
 FUNCTION UpdateProjectile(g AS POINTER TO GameState) AS INTEGER
+    ' If the banana isn't active, there's nothing to update
     IF NOT (^g).Projectile.Active THEN
         RETURN 0
     ENDIF
 
-    ' Update position
+    ' Update position by adding velocity (basic physics: position += velocity)
+    ' Each tick, the banana moves by its velocity amount
     (^g).Projectile.Position.X = (^g).Projectile.Position.X + (^g).Projectile.VelocityX
     (^g).Projectile.Position.Y = (^g).Projectile.Position.Y + (^g).Projectile.VelocityY
 
-    ' Apply gravity
+    ' Apply gravity: each tick, the banana falls a little faster
+    ' Gravity increases the downward velocity (positive Y = downward on screen)
     (^g).Projectile.VelocityY = (^g).Projectile.VelocityY + GRAVITY
 
-    ' Apply wind
+    ' Apply wind: wind pushes the banana left or right each tick
     (^g).Projectile.VelocityX = (^g).Projectile.VelocityX + (^g).Wind
 
-    ' Check bounds
+    ' Check bounds: did the banana fly off the left or right edge?
     IF (^g).Projectile.Position.X < 0.0 OR (^g).Projectile.Position.X > 40.0 THEN
         (^g).Projectile.Active = FALSE
         RETURN -1  ' Out of bounds
     ENDIF
 
+    ' Did the banana hit the ground? (Y > 20 means below the playing field)
     IF (^g).Projectile.Position.Y > 20.0 THEN
         (^g).Projectile.Active = FALSE
         RETURN -1  ' Hit ground
     ENDIF
 
-    ' Check collision with players
+    ' Check collision with players using squared distance
+    ' If the squared distance is less than 4.0, that means the banana
+    ' is within about 2 units of the player -- close enough for a hit!
     DIM dist AS DOUBLE
 
-    ' Check player 2 (if player 1 is throwing)
+    ' Check if the banana hit the OTHER player (not the one who threw it)
     IF (^g).CurrentPlayer = 1 THEN
+        ' Player 1 threw it, so check if it hit Player 2
         dist = Distance((^g).Projectile.Position.X, (^g).Projectile.Position.Y, (^g).Player2.Position.X, (^g).Player2.Position.Y)
         IF dist < 4.0 THEN
             (^g).Projectile.Active = FALSE
@@ -130,6 +217,7 @@ FUNCTION UpdateProjectile(g AS POINTER TO GameState) AS INTEGER
             RETURN 1  ' Hit player 2
         ENDIF
     ELSE
+        ' Player 2 threw it, so check if it hit Player 1
         dist = Distance((^g).Projectile.Position.X, (^g).Projectile.Position.Y, (^g).Player1.Position.X, (^g).Player1.Position.Y)
         IF dist < 4.0 THEN
             (^g).Projectile.Active = FALSE
@@ -142,6 +230,11 @@ FUNCTION UpdateProjectile(g AS POINTER TO GameState) AS INTEGER
 END FUNCTION
 
 ' Draw a simple ASCII representation
+' This SUB prints the entire game screen using text characters:
+'   "G" = gorilla (player)
+'   "*" = banana (projectile)
+'   "=" = ground
+' It loops through every row and column to build each line of the display.
 SUB DrawGame(g AS POINTER TO GameState)
     PRINT ""
     PRINT "=========================================="
@@ -149,6 +242,8 @@ SUB DrawGame(g AS POINTER TO GameState)
     PRINT "=========================================="
     PRINT ""
 
+    ' Convert player X positions from DOUBLE to INTEGER for grid drawing
+    ' Int() truncates the decimal part (e.g., 5.7 becomes 5)
     DIM p1x AS INTEGER = Int((^g).Player1.Position.X)
     DIM p2x AS INTEGER = Int((^g).Player2.Position.X)
 
@@ -156,27 +251,35 @@ SUB DrawGame(g AS POINTER TO GameState)
     PRINT "Score: "; (^g).Player1.Name; " = "; (^g).Player1.Score; "  "; (^g).Player2.Name; " = "; (^g).Player2.Score
     PRINT ""
 
-    ' Draw simple field
+    ' Draw the game field row by row
+    ' We use nested FOR loops: outer loop = rows, inner loop = columns
     DIM row AS INTEGER
     FOR row = 0 TO 15
         DIM col AS INTEGER
-        DIM line AS STRING = ""
+        DIM line AS STRING = ""     ' Start each row with an empty string
         FOR col = 0 TO 39
+            ' Check what character should appear at this (col, row) position
             IF col = p1x AND row = 10 THEN
+                ' Player 1's gorilla is at row 10, at their X position
                 line = line & "G"
             ELSEIF col = p2x AND row = 10 THEN
+                ' Player 2's gorilla is at row 10, at their X position
                 line = line & "G"
             ELSEIF (^g).Projectile.Active AND Int((^g).Projectile.Position.X) = col AND Int((^g).Projectile.Position.Y) = row THEN
+                ' If the banana is flying and its position matches this cell, draw it
                 line = line & "*"
             ELSEIF row = 15 THEN
+                ' Row 15 is the ground -- draw it as a line of "=" characters
                 line = line & "="
             ELSE
+                ' Empty space
                 line = line & " "
             ENDIF
         NEXT
-        PRINT line
+        PRINT line   ' Print the completed row
     NEXT
 
+    ' Show whose turn it is
     IF (^g).CurrentPlayer = 1 THEN
         PRINT ""
         PRINT ">>> "; (^g).Player1.Name; "'s turn <<<"
@@ -187,8 +290,13 @@ SUB DrawGame(g AS POINTER TO GameState)
 END SUB
 
 ' Get throw parameters for a turn
+' Since this is an auto-play demo (no real player input), this SUB
+' provides pre-defined angle and power values for each turn.
+' The angle and power parameters are POINTERS so this SUB can set
+' their values and the caller will see the changes.
 SUB GetThrowParams(turn AS INTEGER, angle AS POINTER TO DOUBLE, power AS POINTER TO DOUBLE)
     ' Predefined throws for demo
+    ' Each turn gets a different angle/power combination
     IF turn = 0 THEN
         ^angle = 45.0
         ^power = 60.0
@@ -210,8 +318,22 @@ SUB GetThrowParams(turn AS INTEGER, angle AS POINTER TO DOUBLE, power AS POINTER
     ENDIF
 END SUB
 
-' Main game loop - Auto-play demo
+' ---- MAIN GAME LOOP ----
+' Main() is the entry point of every DBasic program.
+' This is where execution begins when you run the compiled program.
+' The game loop pattern here is:
+'   1. Initialize the game
+'   2. WHILE still playing:
+'      a. Draw the screen
+'      b. Get input (here: pre-defined throws)
+'      c. Fire the banana
+'      d. Simulate the banana's flight (inner WHILE loop)
+'      e. Check results and update scores
+'      f. Switch players
+'   3. Show final scores
 SUB Main()
+    ' Create a GameState variable and initialize it
+    ' @game creates a pointer (address) to the game variable
     DIM game AS GameState
     InitGame(@game)
 
@@ -219,48 +341,57 @@ SUB Main()
     PRINT "Auto-play demo - watch the bananas fly!"
     PRINT ""
 
-    DIM turnCount AS INTEGER = 0
-    DIM playing AS BOOLEAN = TRUE
+    DIM turnCount AS INTEGER = 0        ' Which turn we're on (0, 1, 2, ...)
+    DIM playing AS BOOLEAN = TRUE       ' Set to FALSE when someone wins
 
+    ' Main game loop: keep playing until someone wins or we've done 6 turns
     WHILE playing AND turnCount < 6
+        ' Step 1: Draw the current game state
         DrawGame(@game)
 
-        ' Get pre-defined input
+        ' Step 2: Get pre-defined angle and power for this turn
         DIM angle AS DOUBLE
         DIM power AS DOUBLE
         GetThrowParams(turnCount, @angle, @power)
 
         PRINT ""
         PRINT "Throwing at angle "; angle; " with power "; power
+        ' Sleep(500) pauses for 500 milliseconds (half a second) for dramatic effect
         Sleep(500)
 
-        ' Fire the banana
+        ' Step 3: Fire the banana with the chosen angle and power
         FireBanana(@game, angle, power)
 
-        ' Simulate the projectile
+        ' Step 4: Simulate the banana's flight
+        ' Each iteration of this inner loop moves the banana one "tick"
         DIM result AS INTEGER = 0
         DIM steps AS INTEGER = 0
         WHILE game.Projectile.Active AND steps < 100
+            ' Update physics: move banana, apply gravity and wind, check collisions
             result = UpdateProjectile(@game)
 
             IF game.Projectile.Active THEN
-                ' Show trajectory
+                ' Show the banana's current position as it flies
                 PRINT "Banana at: "; Int(game.Projectile.Position.X); ", "; Int(game.Projectile.Position.Y)
+                ' Sleep(100) pauses 100ms so you can see the banana move
                 Sleep(100)
             ENDIF
 
-            steps = steps + 1
+            steps = steps + 1    ' Safety counter to prevent infinite loops
         WEND
 
-        ' Check result
+        ' Step 5: Check what happened
         IF result = 1 THEN
+            ' Player 1's banana hit Player 2
             PRINT ""
             PRINT "*** "; game.Player1.Name; " hit "; game.Player2.Name; "! ***"
+            ' Check if Player 1 has reached 3 points (winning score)
             IF game.Player1.Score >= 3 THEN
                 PRINT game.Player1.Name; " WINS THE GAME!"
-                playing = FALSE
+                playing = FALSE   ' End the game
             ENDIF
         ELSEIF result = 2 THEN
+            ' Player 2's banana hit Player 1
             PRINT ""
             PRINT "*** "; game.Player2.Name; " hit "; game.Player1.Name; "! ***"
             IF game.Player2.Score >= 3 THEN
@@ -268,10 +399,11 @@ SUB Main()
                 playing = FALSE
             ENDIF
         ELSE
+            ' The banana went out of bounds or hit the ground
             PRINT "Missed!"
         ENDIF
 
-        ' Switch players
+        ' Step 6: Switch to the other player's turn
         IF game.CurrentPlayer = 1 THEN
             game.CurrentPlayer = 2
         ELSE
@@ -279,9 +411,11 @@ SUB Main()
         ENDIF
 
         turnCount = turnCount + 1
+        ' Pause 1 second between turns so the player can read the result
         Sleep(1000)
     WEND
 
+    ' Game is over -- show final results
     PRINT ""
     PRINT "Game Over!"
     PRINT "Final Score: "; game.Player1.Name; " = "; game.Player1.Score; "  "; game.Player2.Name; " = "; game.Player2.Score

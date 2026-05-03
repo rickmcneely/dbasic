@@ -1,20 +1,39 @@
 # DBasic Language Support for Visual Studio Code
 
-This extension provides syntax highlighting, code snippets, and language configuration for DBasic - a modern BASIC-to-Go transpiler.
+This extension provides syntax highlighting, code snippets, language configuration, and full LSP integration for DBasic — a modern BASIC-to-Go transpiler.
 
 ## Features
 
-- **Syntax Highlighting** - Full syntax highlighting for DBasic source files (`.dbas`, `.dbasic`)
-- **Code Snippets** - Quick snippets for common patterns:
-  - `sub`, `main`, `func` - Function definitions
-  - `dim`, `let`, `const` - Variable declarations
-  - `if`, `ifelse`, `for`, `while` - Control flow
-  - `select` - Select Case statement
-  - `chan`, `spawn`, `send`, `receive` - Concurrency
-  - `json`, `ptr`, `import` - Advanced features
-- **Bracket Matching** - Auto-closing and matching for brackets and quotes
-- **Code Folding** - Fold SUB/FUNCTION/IF/FOR/WHILE/SELECT blocks
-- **Auto-Indentation** - Smart indentation for code blocks
+- **Syntax Highlighting** — Full syntax highlighting for DBasic source files (`.dbas`, `.dbasic`)
+- **Code Snippets** — Quick snippets for common patterns:
+  - `sub`, `main`, `func` — Function definitions
+  - `dim`, `let`, `const` — Variable declarations
+  - `if`, `ifelse`, `for`, `while` — Control flow
+  - `select` — Select Case statement
+  - `chan`, `spawn`, `send`, `receive` — Concurrency
+  - `json`, `ptr`, `import` — Advanced features
+- **Bracket Matching** — Auto-closing and matching for brackets and quotes
+- **Code Folding** — Fold SUB/FUNCTION/IF/FOR/WHILE/SELECT blocks
+- **Auto-Indentation** — Smart indentation for code blocks
+- **Language Server Integration** (via `dbasic-lsp`):
+  - Live parse + analyze diagnostics
+  - Document outline (`Ctrl+Shift+O`)
+  - Hover info on top-level identifiers
+  - Go-to-definition (`F12`)
+  - Find references (`Shift+F12`) — scope-aware
+  - Rename symbol (`F2`) — scope-aware
+  - Completions (keywords, top-level names, type-narrowed members after `.`)
+  - Signature help inside function calls
+
+## Requirements for LSP features
+
+Install `dbasic-lsp` and put it on your `PATH`:
+
+```sh
+go install github.com/zditech/dbasic/cmd/dbasic-lsp@latest
+```
+
+If the binary is in a non-standard location, set `dbasic.lspPath` in VS Code settings. To disable the language server entirely (grammar-only mode), set `dbasic.lspEnabled` to `false`.
 
 ## Installation
 

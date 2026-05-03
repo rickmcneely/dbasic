@@ -61,6 +61,109 @@ END FUNCTION
 
 ' Handle dialog input with custom scrolling text field
 FUNCTION HandleDialogInput(m AS VDBTermModel, key AS STRING) AS (tea.Model, tea.Cmd)
+    ' Find/Replace dialog input (handle before generic esc)
+    IF m.DialogMode = DIALOG_FIND OR m.DialogMode = DIALOG_REPLACE THEN
+        IF key = "esc" THEN
+            m.DialogMode = DIALOG_NONE
+            m.FindActive = FALSE
+            DIM clearMatches AS [][]INTEGER
+            m.FindMatches = clearMatches
+            RETURN m, NIL
+        ELSEIF key = "enter" OR key = "f3" THEN
+            ' Find next match
+            IF Len(m.FindMatches) > 0 THEN
+                m.FindMatchIdx = (m.FindMatchIdx + 1) MOD Len(m.FindMatches)
+                ' Navigate to match
+                DIM matchInfo AS []INTEGER = m.FindMatches[m.FindMatchIdx]
+                m.CodeCursorY = matchInfo[0]
+                m.CodeCursorX = matchInfo[1]
+            ENDIF
+            RETURN m, NIL
+        ELSEIF key = "shift+f3" THEN
+            ' Find previous match
+            IF Len(m.FindMatches) > 0 THEN
+                m.FindMatchIdx = m.FindMatchIdx - 1
+                IF m.FindMatchIdx < 0 THEN
+                    m.FindMatchIdx = Len(m.FindMatches) - 1
+                ENDIF
+                DIM matchInfo2 AS []INTEGER = m.FindMatches[m.FindMatchIdx]
+                m.CodeCursorY = matchInfo2[0]
+                m.CodeCursorX = matchInfo2[1]
+            ENDIF
+            RETURN m, NIL
+        ELSEIF key = "ctrl+r" THEN
+            ' Replace current match (only in DIALOG_REPLACE mode)
+            IF m.DialogMode = DIALOG_REPLACE AND Len(m.FindMatches) > 0 AND m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                DIM rMatchInfo AS []INTEGER = m.FindMatches[m.FindMatchIdx]
+                DIM rLine AS INTEGER = rMatchInfo[0]
+                DIM rCol AS INTEGER = rMatchInfo[1]
+                DIM rLen AS INTEGER = rMatchInfo[2]
+                ' Get current code
+                DIM formCode AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
+                DIM codeLines AS []STRING = SplitStr(formCode, Chr(10))
+                IF rLine < Len(codeLines) THEN
+                    DIM origLine AS STRING = codeLines[rLine]
+                    DIM newLine AS STRING = Left(origLine, rCol) & m.ReplaceText & Mid(origLine, rCol + rLen + 1, Len(origLine) - rCol - rLen)
+                    codeLines[rLine] = newLine
+                    ' Rebuild code
+                    DIM newCode AS STRING = ""
+                    DIM k AS INTEGER
+                    FOR k = 0 TO Len(codeLines) - 1
+                        IF k > 0 THEN
+                            newCode = newCode & Chr(10)
+                        ENDIF
+                        newCode = newCode & codeLines[k]
+                    NEXT
+                    m.Project.Forms[m.CurrentFormIdx].Code = newCode
+                    m.Project.Modified = TRUE
+                    ' Re-search
+                    m.FindMatches = FindAllMatches(newCode, m.FindText)
+                    IF m.FindMatchIdx >= Len(m.FindMatches) THEN
+                        m.FindMatchIdx = 0
+                    ENDIF
+                    ' Update code editor
+                    IF m.CodeEditorInited THEN
+                        m.CodeEditor.SetValue(newCode)
+                    ENDIF
+                ENDIF
+            ENDIF
+            RETURN m, NIL
+        ELSEIF key = "backspace" THEN
+            IF m.DialogMode = DIALOG_REPLACE AND m.DialogField = 1 AND Len(m.ReplaceText) > 0 THEN
+                m.ReplaceText = Left(m.ReplaceText, Len(m.ReplaceText) - 1)
+            ELSEIF (m.DialogMode = DIALOG_FIND OR m.DialogField = 0) AND Len(m.FindText) > 0 THEN
+                m.FindText = Left(m.FindText, Len(m.FindText) - 1)
+                ' Re-search
+                IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                    m.FindMatches = FindAllMatches(m.Project.Forms[m.CurrentFormIdx].Code, m.FindText)
+                    m.FindMatchIdx = 0
+                ENDIF
+            ENDIF
+            RETURN m, NIL
+        ELSEIF key = "tab" THEN
+            ' Switch between find and replace fields
+            IF m.DialogMode = DIALOG_REPLACE THEN
+                m.DialogField = 1 - m.DialogField
+            ENDIF
+            RETURN m, NIL
+        ELSE
+            ' Type character into find/replace field
+            IF Len(key) = 1 THEN
+                IF m.DialogMode = DIALOG_REPLACE AND m.DialogField = 1 THEN
+                    m.ReplaceText = m.ReplaceText & key
+                ELSE
+                    m.FindText = m.FindText & key
+                    ' Re-search as you type
+                    IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+                        m.FindMatches = FindAllMatches(m.Project.Forms[m.CurrentFormIdx].Code, m.FindText)
+                        m.FindMatchIdx = 0
+                    ENDIF
+                ENDIF
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+    ENDIF
+
     IF key = "esc" THEN
         m.DialogMode = DIALOG_NONE
         RETURN m, NIL
@@ -1240,9 +1343,9 @@ FUNCTION HandleCodeInputMsg(m AS VDBTermModel, msg AS tea.Msg) AS (tea.Model, te
 
     IF NOT m.CodeEditorInited THEN
         ' Fall back to string-based handler
-        DIM keyMsg AS tea.KeyMsg
+        DIM keyMsg AS tea.KeyPressMsg
         DIM ok AS BOOLEAN
-        keyMsg, ok = msg.(tea.KeyMsg)
+        keyMsg, ok = msg.(tea.KeyPressMsg)
         IF ok THEN
             RETURN HandleCodeInput(m, keyMsg.String())
         ENDIF
@@ -1250,33 +1353,260 @@ FUNCTION HandleCodeInputMsg(m AS VDBTermModel, msg AS tea.Msg) AS (tea.Model, te
     ENDIF
 
     ' Check for special keys before passing to textarea
-    DIM specialKeyMsg AS tea.KeyMsg
+    DIM specialKeyMsg AS tea.KeyPressMsg
     DIM specialKeyOk AS BOOLEAN
-    specialKeyMsg, specialKeyOk = msg.(tea.KeyMsg)
+    specialKeyMsg, specialKeyOk = msg.(tea.KeyPressMsg)
     IF specialKeyOk THEN
         DIM specialKey AS STRING = specialKeyMsg.String()
+        DIM keystroke AS STRING = specialKeyMsg.Keystroke()
+
 
         ' Tab - insert spaces manually since textarea doesn't handle it
         IF specialKey = "tab" THEN
+            ' If selection active, delete it first then insert
+            IF m.CodeSelecting THEN
+                DIM tabCode AS STRING = GetEditorCode(m.CodeEditor)
+                tabCode = DeleteSelectedText(tabCode, m)
+                m.CodeEditor.SetValue(tabCode)
+                ClearSelection(@m)
+            ENDIF
             DIM spaces AS STRING = RepeatStr(" ", m.TabSize)
             m.CodeEditor.InsertString(spaces)
-            ' Sync to form
             m.Project.Forms[m.CurrentFormIdx].Code = GetEditorCode(m.CodeEditor)
             m.Project.Modified = TRUE
-            ' Update cursor position
             m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
             m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
             RETURN m, NIL
         ENDIF
 
-        ' Ctrl+C - copy current line to clipboard
-        IF specialKey = "ctrl+c" THEN
+        ' === SELECTION KEYS (Shift+arrow, Shift+Home/End) ===
+        ' Use direct textarea cursor methods to move, then track selection
+
+        IF specialKey = "shift+right" OR keystroke = "shift+right" THEN
+            StartSelection(@m)
+            DIM srLineLen AS INTEGER = Len(GetCachedLine(m.CodeCursorY))
+            IF m.CodeCursorX < srLineLen THEN
+                m.CodeCursorX = m.CodeCursorX + 1
+            ELSEIF m.CodeCursorY < gCodeLineCount - 1 THEN
+                m.CodeCursorY = m.CodeCursorY + 1
+                m.CodeCursorX = 0
+            ENDIF
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        IF specialKey = "shift+left" OR keystroke = "shift+left" THEN
+            StartSelection(@m)
+            IF m.CodeCursorX > 0 THEN
+                m.CodeCursorX = m.CodeCursorX - 1
+            ELSEIF m.CodeCursorY > 0 THEN
+                m.CodeCursorY = m.CodeCursorY - 1
+                m.CodeCursorX = Len(GetCachedLine(m.CodeCursorY))
+            ENDIF
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        IF specialKey = "shift+up" OR keystroke = "shift+up" THEN
+            StartSelection(@m)
+            IF m.CodeCursorY > 0 THEN
+                m.CodeCursorY = m.CodeCursorY - 1
+                m.CodeCursorX = ClampCol(m.CodeCursorY, m.CodeCursorX)
+            ENDIF
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        IF specialKey = "shift+down" OR keystroke = "shift+down" THEN
+            StartSelection(@m)
+            IF m.CodeCursorY < gCodeLineCount - 1 THEN
+                m.CodeCursorY = m.CodeCursorY + 1
+                m.CodeCursorX = ClampCol(m.CodeCursorY, m.CodeCursorX)
+            ENDIF
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        IF specialKey = "shift+home" OR keystroke = "shift+home" THEN
+            StartSelection(@m)
+            m.CodeCursorX = 0
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        IF specialKey = "shift+end" OR keystroke = "shift+end" THEN
+            StartSelection(@m)
+            m.CodeCursorX = Len(GetCachedLine(m.CodeCursorY))
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+Shift+Right - select word right
+        IF keystroke = "ctrl+shift+right" THEN
+            StartSelection(@m)
+            DIM wrLine AS INTEGER
+            DIM wrCol AS INTEGER
+            wrLine, wrCol = WordRight(m.CodeCursorY, m.CodeCursorX)
+            m.CodeCursorY = wrLine
+            m.CodeCursorX = wrCol
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+Shift+Left - select word left
+        IF keystroke = "ctrl+shift+left" THEN
+            StartSelection(@m)
+            DIM wlLine AS INTEGER
+            DIM wlCol AS INTEGER
+            wlLine, wlCol = WordLeft(m.CodeCursorY, m.CodeCursorX)
+            m.CodeCursorY = wlLine
+            m.CodeCursorX = wlCol
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+Shift+Home - select to beginning of document
+        IF keystroke = "ctrl+shift+home" THEN
+            StartSelection(@m)
+            m.CodeCursorY = 0
+            m.CodeCursorX = 0
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+Shift+End - select to end of document
+        IF keystroke = "ctrl+shift+end" THEN
+            StartSelection(@m)
+            IF gCodeLineCount > 0 THEN
+                m.CodeCursorY = gCodeLineCount - 1
+                m.CodeCursorX = Len(GetCachedLine(m.CodeCursorY))
+            ENDIF
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+Up - select line up (terminal can't send ctrl+shift+up)
+        IF keystroke = "ctrl+shift+up" OR keystroke = "ctrl+up" OR specialKey = "ctrl+up" THEN
+            StartSelection(@m)
+            IF m.CodeCursorY > 0 THEN
+                m.CodeCursorY = m.CodeCursorY - 1
+                m.CodeCursorX = ClampCol(m.CodeCursorY, m.CodeCursorX)
+            ENDIF
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+Down - select line down (terminal can't send ctrl+shift+down)
+        IF keystroke = "ctrl+shift+down" OR keystroke = "ctrl+down" OR specialKey = "ctrl+down" THEN
+            StartSelection(@m)
+            IF m.CodeCursorY < gCodeLineCount - 1 THEN
+                m.CodeCursorY = m.CodeCursorY + 1
+                m.CodeCursorX = ClampCol(m.CodeCursorY, m.CodeCursorX)
+            ENDIF
+            UpdateSelectionEnd(@m)
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+Right - word right (no selection)
+        IF keystroke = "ctrl+right" OR specialKey = "ctrl+right" THEN
+            IF m.CodeSelecting THEN ClearSelection(@m)
+            DIM crLine AS INTEGER
+            DIM crCol AS INTEGER
+            crLine, crCol = WordRight(m.CodeCursorY, m.CodeCursorX)
+            m.CodeCursorY = crLine
+            m.CodeCursorX = crCol
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+Left - word left (no selection)
+        IF keystroke = "ctrl+left" OR specialKey = "ctrl+left" THEN
+            IF m.CodeSelecting THEN ClearSelection(@m)
+            DIM clLine AS INTEGER
+            DIM clCol AS INTEGER
+            clLine, clCol = WordLeft(m.CodeCursorY, m.CodeCursorX)
+            m.CodeCursorY = clLine
+            m.CodeCursorX = clCol
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+A - select all
+        IF specialKey = "ctrl+a" THEN
             DIM allCode AS STRING = GetEditorCode(m.CodeEditor)
-            DIM codeLines AS []STRING = SplitStr(allCode, Chr(10))
-            DIM currentLine AS INTEGER = GetEditorCursorLine(m.CodeEditor)
-            IF currentLine >= 0 AND currentLine < Len(codeLines) THEN
-                CopyToClipboard(codeLines[currentLine])
-                m.Message = "Line copied to clipboard"
+            DIM allLines AS []STRING = SplitStr(allCode, Chr(10))
+            m.CodeSelecting = TRUE
+            m.CodeSelStartX = 0
+            m.CodeSelStartY = 0
+            IF Len(allLines) > 0 THEN
+                m.CodeSelEndY = Len(allLines) - 1
+                m.CodeSelEndX = Len(allLines[Len(allLines) - 1])
+            ELSE
+                m.CodeSelEndY = 0
+                m.CodeSelEndX = 0
+            ENDIF
+            m.Message = "All code selected"
+            RETURN m, NIL
+        ENDIF
+
+        ' === CLIPBOARD KEYS (selection-aware) ===
+
+        ' Ctrl+C - copy selection (or current line if no selection)
+        IF specialKey = "ctrl+c" THEN
+            DIM copyCode AS STRING = GetEditorCode(m.CodeEditor)
+            IF m.CodeSelecting THEN
+                DIM selText AS STRING = GetSelectedText(copyCode, m)
+                IF Len(selText) > 0 THEN
+                    CopyToClipboard(selText)
+                    m.Message = "Selection copied"
+                ENDIF
+            ELSE
+                DIM codeLines AS []STRING = SplitStr(copyCode, Chr(10))
+                DIM currentLine AS INTEGER = GetEditorCursorLine(m.CodeEditor)
+                IF currentLine >= 0 AND currentLine < Len(codeLines) THEN
+                    CopyToClipboard(codeLines[currentLine])
+                    m.Message = "Line copied"
+                ENDIF
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+
+        ' Ctrl+X - cut selection (or current line if no selection)
+        IF specialKey = "ctrl+x" THEN
+            DIM cutCode AS STRING = GetEditorCode(m.CodeEditor)
+            IF m.CodeSelecting THEN
+                DIM cutText AS STRING = GetSelectedText(cutCode, m)
+                IF Len(cutText) > 0 THEN
+                    CopyToClipboard(cutText)
+                    cutCode = DeleteSelectedText(cutCode, m)
+                    m.CodeEditor.SetValue(cutCode)
+                    ClearSelection(@m)
+                    m.Project.Forms[m.CurrentFormIdx].Code = cutCode
+                    m.Project.Modified = TRUE
+                    m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
+                    m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
+                    m.Message = "Selection cut"
+                ENDIF
+            ELSE
+                ' Cut entire current line
+                DIM cutLines AS []STRING = SplitStr(cutCode, Chr(10))
+                DIM cutLineIdx AS INTEGER = GetEditorCursorLine(m.CodeEditor)
+                IF cutLineIdx >= 0 AND cutLineIdx < Len(cutLines) THEN
+                    CopyToClipboard(cutLines[cutLineIdx])
+                    ' Remove the line
+                    DIM newLines AS []STRING
+                    DIM cli AS INTEGER
+                    FOR cli = 0 TO Len(cutLines) - 1
+                        IF cli <> cutLineIdx THEN
+                            newLines = APPEND(newLines, cutLines[cli])
+                        ENDIF
+                    NEXT
+                    DIM newCutCode AS STRING = strings.Join(newLines, Chr(10))
+                    m.CodeEditor.SetValue(newCutCode)
+                    m.Project.Forms[m.CurrentFormIdx].Code = newCutCode
+                    m.Project.Modified = TRUE
+                    m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
+                    m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
+                    m.Message = "Line cut"
+                ENDIF
             ENDIF
             RETURN m, NIL
         ENDIF
@@ -1288,7 +1618,58 @@ FUNCTION HandleCodeInputMsg(m AS VDBTermModel, msg AS tea.Msg) AS (tea.Model, te
             m.Message = "All code copied to clipboard"
             RETURN m, NIL
         ENDIF
+
+        ' Any non-shift navigation key clears selection
+        IF specialKey = "left" OR specialKey = "right" OR specialKey = "up" OR specialKey = "down" OR specialKey = "home" OR specialKey = "end" OR specialKey = "escape" THEN
+            IF m.CodeSelecting THEN
+                ClearSelection(@m)
+            ENDIF
+        ENDIF
+
+        ' Typing a character with active selection: delete selection first
+        IF m.CodeSelecting THEN
+            DIM isTyping AS BOOLEAN = FALSE
+            IF Len(specialKey) = 1 THEN
+                isTyping = TRUE
+            ELSEIF specialKey = "enter" OR specialKey = "backspace" OR specialKey = "delete" THEN
+                isTyping = TRUE
+            ENDIF
+            IF isTyping THEN
+                ' Calculate where cursor should go after deletion
+                ' (normalized start of selection - the earlier position)
+                DIM delStartLine AS INTEGER = m.CodeSelStartY
+                DIM delStartCol AS INTEGER = m.CodeSelStartX
+                DIM delEndLine AS INTEGER = m.CodeSelEndY
+                DIM delEndCol AS INTEGER = m.CodeSelEndX
+                IF delStartLine > delEndLine OR (delStartLine = delEndLine AND delStartCol > delEndCol) THEN
+                    delStartLine = m.CodeSelEndY
+                    delStartCol = m.CodeSelEndX
+                ENDIF
+
+                DIM typeCode AS STRING = GetEditorCode(m.CodeEditor)
+                typeCode = DeleteSelectedText(typeCode, m)
+                m.CodeEditor.SetValue(typeCode)
+                ClearSelection(@m)
+
+                ' Reposition cursor to where the selection started
+                m.CodeEditor = SetEditorCursor(m.CodeEditor, delStartLine, delStartCol)
+                m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
+                m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
+
+                m.Project.Forms[m.CurrentFormIdx].Code = typeCode
+                m.Project.Modified = TRUE
+                ' For backspace/delete with selection, the delete IS the action
+                IF specialKey = "backspace" OR specialKey = "delete" THEN
+                    RETURN m, NIL
+                ENDIF
+                ' For enter/chars, fall through to let textarea handle the insertion
+            ENDIF
+        ENDIF
     ENDIF
+
+    ' Sync textarea cursor to our tracked position before passing input
+    ' (mouse clicks update tracking vars without touching textarea for speed)
+    m.CodeEditor = SyncEditorCursorPosition(m.CodeEditor, m.CodeCursorY, m.CodeCursorX)
 
     ' Get previous code to detect changes
     DIM prevCode AS STRING = GetEditorCode(m.CodeEditor)
@@ -1305,7 +1686,7 @@ FUNCTION HandleCodeInputMsg(m AS VDBTermModel, msg AS tea.Msg) AS (tea.Model, te
         m.Project.Modified = TRUE
     ENDIF
 
-    ' Update legacy cursor position for status bar and rendering
+    ' Update cursor position for status bar and rendering
     m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
     m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
 
@@ -1618,6 +1999,20 @@ FUNCTION ApplyPropertyEdit(m AS VDBTermModel) AS VDBTermModel
                 ELSEIF typeIdx = 1 THEN
                     m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].HttpMethod = val
                 ENDIF
+            ELSEIF ctlType = CTRL_VIEWPORT THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Value = val
+                ELSEIF typeIdx = 1 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].SoftWrap = (val = "True" OR val = "true" OR val = "1")
+                ELSEIF typeIdx = 2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].ShowLineNumbers = (val = "True" OR val = "true" OR val = "1")
+                ELSEIF typeIdx = 3 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].MouseWheel = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
+            ELSEIF ctlType = CTRL_CLIPBOARD THEN
+                IF typeIdx = 0 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].FallbackEnabled = (val = "True" OR val = "true" OR val = "1")
+                ENDIF
             ENDIF
         ENDIF
         m.Project.Modified = TRUE
@@ -1720,12 +2115,10 @@ END FUNCTION
 ' MOUSE INPUT HANDLER
 ' ============================================================================
 
-FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.Model, tea.Cmd)
-    DIM x AS INTEGER = Int(mouseMsg.X)
-    DIM y AS INTEGER = Int(mouseMsg.Y)
-    DIM action AS tea.MouseAction = mouseMsg.Action
-    DIM button AS tea.MouseButton = mouseMsg.Button
-
+' HandleMouseClick - handles left-click and right-click (Bubble Tea v2 MouseClickMsg)
+FUNCTION HandleMouseClick(m AS VDBTermModel, clickMsg AS tea.MouseClickMsg) AS (tea.Model, tea.Cmd)
+    DIM x AS INTEGER = Int(clickMsg.X)
+    DIM y AS INTEGER = Int(clickMsg.Y)
     ' Calculate layout dimensions (same as View())
     DIM leftPanelWidth AS INTEGER = 16
     DIM propertiesWidth AS INTEGER = 22
@@ -1739,8 +2132,8 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
     DIM widgetsStart AS INTEGER = m.ProjectHeight
     DIM toolboxStart AS INTEGER = m.ProjectHeight + m.WidgetsHeight
 
-    ' Handle mouse press events
-    IF action = tea.MouseActionPress AND button = tea.MouseButtonLeft THEN
+    ' Handle left-click
+    IF clickMsg.Button = tea.MouseLeft THEN
         ' Row 0 = Menu bar
         IF y = 0 THEN
             RETURN HandleMenuBarClick(m, x)
@@ -1811,9 +2204,49 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
             IF m.ViewMode = VIEW_FORM THEN
                 RETURN HandleFormClick(m, localX, contentY)
             ELSE
-                ' Mouse positioning not supported in textarea v1
-                ' Just set focus to code area
+                ' Code editor: click handling
                 m.FocusArea = FOCUS_CODE
+                IF m.CodeEditorInited THEN
+                    DIM lineNumWidth AS INTEGER = 0
+                    IF m.ShowLineNumbers THEN
+                        lineNumWidth = 5
+                    ENDIF
+                    DIM codeClickCol AS INTEGER = localX - lineNumWidth
+                    DIM codeClickLine AS INTEGER = contentY
+
+                    ' Adjust for scroll
+                    DIM editorContentHeight AS INTEGER = m.Height - 4
+                    IF m.CodeCursorY >= editorContentHeight THEN
+                        codeClickLine = codeClickLine + (m.CodeCursorY - editorContentHeight + 1)
+                    ENDIF
+
+                    IF codeClickCol >= 0 THEN
+                        ' Clamp
+                        DIM maxLine AS INTEGER = m.CodeEditor.LineCount() - 1
+                        IF maxLine < 0 THEN maxLine = 0
+                        IF codeClickLine > maxLine THEN codeClickLine = maxLine
+                        IF codeClickLine < 0 THEN codeClickLine = 0
+                        IF codeClickCol < 0 THEN codeClickCol = 0
+                        codeClickCol = ClampCol(codeClickLine, codeClickCol)
+
+                        ' Check if clicking inside existing selection → start text drag
+                        IF m.CodeSelecting AND IsInSelectionGlobal(codeClickLine, codeClickCol) THEN
+                            m.CodeDraggingText = TRUE
+                            m.CodeDropLine = codeClickLine
+                            m.CodeDropCol = codeClickCol
+                            RETURN m, NIL
+                        ENDIF
+
+                        ' Normal click: clear selection, set cursor
+                        ClearSelection(@m)
+                        m.CodeDraggingText = FALSE
+                        m.CodeCursorY = codeClickLine
+                        m.CodeCursorX = ClampCol(codeClickLine, codeClickCol)
+                        m.CodeSelStartX = m.CodeCursorX
+                        m.CodeSelStartY = m.CodeCursorY
+                    ENDIF
+                    RETURN m, NIL
+                ENDIF
                 RETURN m, NIL
             ENDIF
         ELSE
@@ -1822,7 +2255,7 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
         ENDIF
 
     ' Handle right-click for context menus (events popup)
-    ELSEIF action = tea.MouseActionPress AND button = tea.MouseButtonRight THEN
+    ELSEIF clickMsg.Button = tea.MouseRight THEN
         ' Close any existing popup first
         m.PopupMode = POPUP_NONE
 
@@ -1850,9 +2283,364 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
                 RETURN HandleFormRightClick(m, rcLocalX, rcContentY, x, y)
             ENDIF
         ENDIF
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+' HandleMouseRelease - handles mouse release (Bubble Tea v2 MouseReleaseMsg)
+FUNCTION HandleMouseRelease(m AS VDBTermModel, releaseMsg AS tea.MouseReleaseMsg) AS (tea.Model, tea.Cmd)
+    ' Handle text drag-drop in code editor
+    IF m.CodeDraggingText THEN
+        m.CodeDraggingText = FALSE
+        IF m.CodeSelecting AND m.CodeEditorInited THEN
+            ' Check drop position is outside the selection
+            IF NOT IsInSelectionGlobal(m.CodeDropLine, m.CodeDropCol) THEN
+                DIM code AS STRING = m.Project.Forms[m.CurrentFormIdx].Code
+                DIM selText AS STRING = GetSelectedText(code, m)
+                IF Len(selText) > 0 THEN
+                    ' Normalize selection bounds
+                    DIM sStartLine AS INTEGER = m.CodeSelStartY
+                    DIM sStartCol AS INTEGER = m.CodeSelStartX
+                    DIM sEndLine AS INTEGER = m.CodeSelEndY
+                    DIM sEndCol AS INTEGER = m.CodeSelEndX
+                    IF sStartLine > sEndLine OR (sStartLine = sEndLine AND sStartCol > sEndCol) THEN
+                        DIM tmpL AS INTEGER = sStartLine
+                        DIM tmpC AS INTEGER = sStartCol
+                        sStartLine = sEndLine
+                        sStartCol = sEndCol
+                        sEndLine = tmpL
+                        sEndCol = tmpC
+                    ENDIF
+
+                    ' Determine if drop is before or after the selection
+                    DIM dropBeforeSel AS BOOLEAN = FALSE
+                    IF m.CodeDropLine < sStartLine OR (m.CodeDropLine = sStartLine AND m.CodeDropCol < sStartCol) THEN
+                        dropBeforeSel = TRUE
+                    ENDIF
+
+                    ' Delete selected text first
+                    code = DeleteSelectedText(code, m)
+
+                    ' Adjust drop position if the deletion shifted text
+                    DIM adjDropLine AS INTEGER = m.CodeDropLine
+                    DIM adjDropCol AS INTEGER = m.CodeDropCol
+                    IF NOT dropBeforeSel THEN
+                        ' Drop is after selection - adjust for deleted text
+                        IF sStartLine = sEndLine THEN
+                            ' Single line deletion
+                            IF adjDropLine = sStartLine THEN
+                                adjDropCol = adjDropCol - (sEndCol - sStartCol)
+                            ENDIF
+                        ELSE
+                            ' Multi-line deletion
+                            DIM deletedLines AS INTEGER = sEndLine - sStartLine
+                            IF adjDropLine = sEndLine THEN
+                                ' Drop was on the last line of selection
+                                adjDropLine = sStartLine
+                                adjDropCol = sStartCol + (adjDropCol - sEndCol)
+                            ELSEIF adjDropLine > sEndLine THEN
+                                adjDropLine = adjDropLine - deletedLines
+                            ENDIF
+                        ENDIF
+                    ENDIF
+
+                    ' Insert text at adjusted drop position
+                    DIM codeLines AS []STRING = SplitStr(code, Chr(10))
+                    IF adjDropLine < 0 THEN adjDropLine = 0
+                    IF adjDropLine >= Len(codeLines) THEN adjDropLine = Len(codeLines) - 1
+                    IF adjDropCol < 0 THEN adjDropCol = 0
+
+                    DIM dropLineText AS STRING = ""
+                    IF adjDropLine < Len(codeLines) THEN
+                        dropLineText = codeLines[adjDropLine]
+                    ENDIF
+                    IF adjDropCol > Len(dropLineText) THEN
+                        adjDropCol = Len(dropLineText)
+                    ENDIF
+
+                    DIM beforeDrop AS STRING = Left(dropLineText, adjDropCol)
+                    DIM afterDrop AS STRING = ""
+                    IF adjDropCol < Len(dropLineText) THEN
+                        afterDrop = Mid(dropLineText, adjDropCol + 1, Len(dropLineText) - adjDropCol)
+                    ENDIF
+                    codeLines[adjDropLine] = beforeDrop & selText & afterDrop
+
+                    DIM newCode AS STRING = strings.Join(codeLines, Chr(10))
+                    m.CodeEditor.SetValue(newCode)
+                    m.Project.Forms[m.CurrentFormIdx].Code = newCode
+                    m.Project.Modified = TRUE
+
+                    ' Position cursor at end of dropped text
+                    DIM selLines AS []STRING = SplitStr(selText, Chr(10))
+                    IF Len(selLines) = 1 THEN
+                        m.CodeCursorY = adjDropLine
+                        m.CodeCursorX = adjDropCol + Len(selText)
+                    ELSE
+                        m.CodeCursorY = adjDropLine + Len(selLines) - 1
+                        m.CodeCursorX = Len(selLines[Len(selLines) - 1])
+                    ENDIF
+
+                    ClearSelection(@m)
+                    m.Message = "Text moved"
+                ENDIF
+            ELSE
+                ' Dropped inside selection - just clear drag state
+                m.Message = ""
+            ENDIF
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    IF m.PanelDragging <> PANEL_DRAG_NONE THEN
+        ' Apply final panel resize on release (motion events may not fire reliably)
+        DIM relY AS INTEGER = Int(releaseMsg.Y)
+        DIM relContentHeight AS INTEGER = m.Height - 4
+        DIM relDragDelta AS INTEGER = relY - m.PanelDragStartY
+
+        IF m.PanelDragging = PANEL_DRAG_WIDGETS THEN
+            DIM relNewPH AS INTEGER = m.PanelDragOrigHeight + relDragDelta
+            IF relNewPH < 3 THEN
+                relNewPH = 3
+            ENDIF
+            DIM relMaxPH AS INTEGER = relContentHeight - 3 - m.ToolboxHeight
+            IF relNewPH > relMaxPH THEN
+                relNewPH = relMaxPH
+            ENDIF
+            DIM relDeltaPH AS INTEGER = relNewPH - m.ProjectHeight
+            m.ProjectHeight = relNewPH
+            m.WidgetsHeight = m.WidgetsHeight - relDeltaPH
+            IF m.WidgetsHeight < 3 THEN
+                m.WidgetsHeight = 3
+            ENDIF
+        ELSEIF m.PanelDragging = PANEL_DRAG_TOOLBOX THEN
+            DIM relNewWH AS INTEGER = m.PanelDragOrigHeight + relDragDelta
+            IF relNewWH < 3 THEN
+                relNewWH = 3
+            ENDIF
+            DIM relMaxWH AS INTEGER = relContentHeight - m.ProjectHeight - 2
+            IF relNewWH > relMaxWH THEN
+                relNewWH = relMaxWH
+            ENDIF
+            m.WidgetsHeight = relNewWH
+            m.ToolboxHeight = relContentHeight - m.ProjectHeight - m.WidgetsHeight
+            IF m.ToolboxHeight < 2 THEN
+                m.ToolboxHeight = 2
+            ENDIF
+        ENDIF
+
+        m.PanelDragging = PANEL_DRAG_NONE
+        RETURN m, NIL
+    ELSEIF m.IsDragging THEN
+        IF m.DraggingForm THEN
+            ' Apply the final position to the form
+            IF m.ViewMode = VIEW_FORM THEN
+                m.Project.Forms[m.CurrentFormIdx].X = m.DragOutlineX
+                m.Project.Forms[m.CurrentFormIdx].Y = m.DragOutlineY
+                m.Project.Modified = TRUE
+            ENDIF
+            m.IsDragging = FALSE
+            m.DraggingForm = FALSE
+            m.Message = "Form moved"
+        ELSE
+            ' Apply the final outline position to the actual control
+            IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+                DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+                IF m.SelectedCtrlIdx < ctrlCount THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
+                    m.Project.Modified = TRUE
+                ENDIF
+            ENDIF
+            m.IsDragging = FALSE
+            m.Message = "Control moved"
+        ENDIF
+    ELSEIF m.IsResizing THEN
+        IF m.ResizingForm THEN
+            ' Apply the final size to the form
+            IF m.ViewMode = VIEW_FORM THEN
+                m.Project.Forms[m.CurrentFormIdx].Width = m.DragCtrlWidth
+                m.Project.Forms[m.CurrentFormIdx].Height = m.DragCtrlHeight
+                m.Project.Modified = TRUE
+            ENDIF
+            m.IsResizing = FALSE
+            m.ResizingForm = FALSE
+            m.Message = "Form resized"
+        ELSE
+            ' Apply the final size to the actual control
+            IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
+                DIM ctrlCount2 AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
+                IF m.SelectedCtrlIdx < ctrlCount2 THEN
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width = m.DragCtrlWidth
+                    m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Height = m.DragCtrlHeight
+                    m.Project.Modified = TRUE
+                ENDIF
+            ENDIF
+            m.IsResizing = FALSE
+            m.Message = "Control resized"
+        ENDIF
+    ELSEIF m.DraggingFromWidgets THEN
+        ' Drop widget from toolbox onto form
+        IF m.ViewMode = VIEW_FORM AND m.DragOutlineX >= 0 AND m.DragOutlineY >= 0 THEN
+            DIM ctlType AS INTEGER = m.DragWidgetType
+            DIM ctlName AS STRING = GetControlTypeName(ctlType) & Str(m.Project.Forms[m.CurrentFormIdx].NextCtrlID)
+            DIM newCtrl AS VDBControl = NewControl(ctlType, ctlName, m.DragOutlineX, m.DragOutlineY)
+            newCtrl.ID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
+            newCtrl.ZOrder = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
+            newCtrl.TabIndex = GetNextTabIndex(m.Project.Forms[m.CurrentFormIdx])
+            m.Project.Forms[m.CurrentFormIdx].NextCtrlID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID + 1
+            m.Project.Forms[m.CurrentFormIdx].Controls = APPEND(m.Project.Forms[m.CurrentFormIdx].Controls, newCtrl)
+            m.SelectedCtrlIdx = Len(m.Project.Forms[m.CurrentFormIdx].Controls) - 1
+            m.Project.Modified = TRUE
+            m.FocusArea = FOCUS_FORM
+            m.Message = "Added " & ctlName & " at (" & Str(m.DragOutlineX) & "," & Str(m.DragOutlineY) & ")"
+        ELSE
+            m.Message = "Drop cancelled - not over form"
+        ENDIF
+        m.DraggingFromWidgets = FALSE
+        m.DragWidgetType = 0
+        m.DragOutlineX = -1
+        m.DragOutlineY = -1
+    ENDIF
+
+    RETURN m, NIL
+END FUNCTION
+
+' HandleMouseMotion - handles all mouse motion (Bubble Tea v2 MouseMotionMsg)
+FUNCTION HandleMouseMotion(m AS VDBTermModel, motionMsg AS tea.MouseMotionMsg) AS (tea.Model, tea.Cmd)
+    DIM x AS INTEGER = Int(motionMsg.X)
+    DIM y AS INTEGER = Int(motionMsg.Y)
+
+    ' Calculate layout dimensions (same as View())
+    DIM leftPanelWidth AS INTEGER = 16
+    DIM propertiesWidth AS INTEGER = 22
+    DIM contentHeight AS INTEGER = m.Height - 4
+    DIM contentWidth AS INTEGER = m.Width - leftPanelWidth - propertiesWidth
+    IF contentWidth < 20 THEN
+        contentWidth = 20
+    ENDIF
+
+    ' Handle menu hover when a dropdown is open
+    IF m.MenuOpen <> MENU_NONE THEN
+        IF y = 0 THEN
+            ' Hovering over menu bar - switch to hovered menu (only if different)
+            DIM newMenu AS INTEGER = m.MenuOpen
+            IF x >= 0 AND x < 6 THEN
+                newMenu = MENU_FILE
+            ELSEIF x >= 6 AND x < 12 THEN
+                newMenu = MENU_EDIT
+            ELSEIF x >= 12 AND x < 18 THEN
+                newMenu = MENU_VIEW
+            ELSEIF x >= 18 AND x < 23 THEN
+                newMenu = MENU_RUN
+            ELSEIF x >= 23 AND x < 30 THEN
+                newMenu = MENU_DEBUG
+            ELSEIF x >= 30 AND x < 39 THEN
+                newMenu = MENU_OPTIONS
+            ELSEIF x >= 39 AND x < 46 THEN
+                newMenu = MENU_HELP
+            ENDIF
+            IF newMenu <> m.MenuOpen THEN
+                m.MenuOpen = newMenu
+                m.MenuIndex = 0
+            ENDIF
+            RETURN m, NIL
+        ELSE
+            ' Hovering over dropdown area - highlight hovered item
+            DIM hoverDropOffset AS INTEGER = GetMenuOffset(m.MenuOpen)
+            DIM hoverDropWidth AS INTEGER = 20
+            DIM hoverDropRow AS INTEGER = y - 1
+            IF x >= hoverDropOffset AND x < hoverDropOffset + hoverDropWidth AND hoverDropRow >= 0 THEN
+                ' Row 0 = top border, items start at row 1
+                DIM hoverItemIdx AS INTEGER = hoverDropRow - 1
+                IF hoverItemIdx >= 0 THEN
+                    ' Check if this is a separator or border row
+                    DIM isSeparator AS BOOLEAN = FALSE
+                    DIM menuMaxItems AS INTEGER = GetMenuItemCount(m.MenuOpen)
+                    IF hoverItemIdx >= menuMaxItems THEN
+                        isSeparator = TRUE
+                    ELSEIF m.MenuOpen = MENU_FILE THEN
+                        IF hoverItemIdx = 4 OR hoverItemIdx = 7 THEN
+                            isSeparator = TRUE
+                        ENDIF
+                    ELSEIF m.MenuOpen = MENU_EDIT THEN
+                        IF hoverItemIdx = 3 OR hoverItemIdx = 6 THEN
+                            isSeparator = TRUE
+                        ENDIF
+                    ELSEIF m.MenuOpen = MENU_VIEW THEN
+                        IF hoverItemIdx = 2 OR hoverItemIdx = 5 THEN
+                            isSeparator = TRUE
+                        ENDIF
+                    ELSEIF m.MenuOpen = MENU_RUN THEN
+                        IF hoverItemIdx = 2 THEN
+                            isSeparator = TRUE
+                        ENDIF
+                    ELSEIF m.MenuOpen = MENU_DEBUG THEN
+                        IF hoverItemIdx = 3 THEN
+                            isSeparator = TRUE
+                        ENDIF
+                    ELSEIF m.MenuOpen = MENU_OPTIONS THEN
+                        IF hoverItemIdx = 3 THEN
+                            isSeparator = TRUE
+                        ENDIF
+                    ENDIF
+                    IF NOT isSeparator AND hoverItemIdx <> m.MenuIndex THEN
+                        m.MenuIndex = hoverItemIdx
+                    ENDIF
+                ENDIF
+            ENDIF
+            RETURN m, NIL
+        ENDIF
+    ENDIF
+
+    ' Handle mouse drag in code editor (selection drag or text drag-drop)
+    IF m.FocusArea = FOCUS_CODE AND m.ViewMode = VIEW_CODE AND m.CodeEditorInited THEN
+        IF NOT m.IsDragging AND NOT m.IsResizing AND m.PanelDragging = PANEL_DRAG_NONE AND NOT m.DraggingFromWidgets THEN
+            DIM contentY AS INTEGER = y - 1
+            DIM localX AS INTEGER = x - leftPanelWidth
+            IF localX >= 0 AND localX < contentWidth THEN
+                DIM lineNumWidth AS INTEGER = 0
+                IF m.ShowLineNumbers THEN
+                    lineNumWidth = 5
+                ENDIF
+                DIM dragCodeCol AS INTEGER = localX - lineNumWidth
+                DIM dragCodeLine AS INTEGER = contentY
+
+                ' Adjust for scroll
+                DIM editorContentHeight AS INTEGER = m.Height - 4
+                IF m.CodeSelStartY >= editorContentHeight THEN
+                    dragCodeLine = dragCodeLine + (m.CodeSelStartY - editorContentHeight + 1)
+                ENDIF
+
+                IF dragCodeCol >= 0 THEN
+                    DIM maxDragLine AS INTEGER = m.CodeEditor.LineCount() - 1
+                    IF maxDragLine < 0 THEN maxDragLine = 0
+                    IF dragCodeLine > maxDragLine THEN dragCodeLine = maxDragLine
+                    IF dragCodeLine < 0 THEN dragCodeLine = 0
+                    IF dragCodeCol < 0 THEN dragCodeCol = 0
+
+                    IF m.CodeDraggingText THEN
+                        ' Text drag-drop: update drop indicator position
+                        m.CodeDropLine = dragCodeLine
+                        m.CodeDropCol = ClampCol(dragCodeLine, dragCodeCol)
+                    ELSE
+                        ' Normal selection drag
+                        m.CodeCursorY = dragCodeLine
+                        m.CodeCursorX = ClampCol(dragCodeLine, dragCodeCol)
+                        m.CodeSelecting = TRUE
+                        m.CodeSelEndX = m.CodeCursorX
+                        m.CodeSelEndY = m.CodeCursorY
+                    ENDIF
+                ENDIF
+                RETURN m, NIL
+            ENDIF
+        ENDIF
+    ENDIF
 
     ' Handle panel caption dragging
-    ELSEIF action = tea.MouseActionMotion AND m.PanelDragging <> PANEL_DRAG_NONE THEN
+    IF m.PanelDragging <> PANEL_DRAG_NONE THEN
         DIM dragDelta AS INTEGER = y - m.PanelDragStartY
 
         IF m.PanelDragging = PANEL_DRAG_WIDGETS THEN
@@ -1898,7 +2686,7 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
         RETURN m, NIL
 
     ' Handle mouse drag - only update outline position, not actual control/form
-    ELSEIF action = tea.MouseActionMotion AND m.IsDragging THEN
+    ELSEIF m.IsDragging THEN
         ' Skip every other frame to reduce rendering overhead
         m.DragSkipFrame = NOT m.DragSkipFrame
         IF m.DragSkipFrame THEN
@@ -1945,7 +2733,7 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
         ENDIF
 
     ' Handle mouse resize - update outline size based on corner being dragged
-    ELSEIF action = tea.MouseActionMotion AND m.IsResizing THEN
+    ELSEIF m.IsResizing THEN
         m.DragSkipFrame = NOT m.DragSkipFrame
         IF m.DragSkipFrame THEN
             RETURN m, NIL
@@ -2054,7 +2842,7 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
         ENDIF
 
     ' Handle mouse drag for widget from toolbox
-    ELSEIF action = tea.MouseActionMotion AND m.DraggingFromWidgets THEN
+    ELSEIF m.DraggingFromWidgets THEN
         m.DragSkipFrame = NOT m.DragSkipFrame
         IF m.DragSkipFrame THEN
             RETURN m, NIL
@@ -2094,86 +2882,68 @@ FUNCTION HandleMouseInput(m AS VDBTermModel, mouseMsg AS tea.MouseMsg) AS (tea.M
                 m.DragOutlineY = formRelY
             ENDIF
         ENDIF
+    ENDIF
 
-    ' Handle mouse release - apply final position/size
-    ELSEIF action = tea.MouseActionRelease THEN
-        IF m.PanelDragging <> PANEL_DRAG_NONE THEN
-            ' End panel caption dragging
-            m.PanelDragging = PANEL_DRAG_NONE
-            m.Message = "Panel resized"
-            RETURN m, NIL
-        ELSEIF m.IsDragging THEN
-            IF m.DraggingForm THEN
-                ' Apply the final position to the form
-                IF m.ViewMode = VIEW_FORM THEN
-                    m.Project.Forms[m.CurrentFormIdx].X = m.DragOutlineX
-                    m.Project.Forms[m.CurrentFormIdx].Y = m.DragOutlineY
-                    m.Project.Modified = TRUE
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION HandleMouseWheel(m AS VDBTermModel, wheelMsg AS tea.MouseWheelMsg) AS (tea.Model, tea.Cmd)
+    ' Mouse wheel scrolling in code editor
+    IF m.ViewMode = VIEW_CODE AND m.CodeEditorInited THEN
+        IF wheelMsg.Button = tea.MouseWheelUp THEN
+            ' Scroll up: move cursor up 3 lines
+            DIM wu AS INTEGER
+            FOR wu = 0 TO 2
+                m.CodeEditor.CursorUp()
+            NEXT
+            m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
+            m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
+        ELSEIF wheelMsg.Button = tea.MouseWheelDown THEN
+            ' Scroll down: move cursor down 3 lines
+            DIM wd AS INTEGER
+            FOR wd = 0 TO 2
+                m.CodeEditor.CursorDown()
+            NEXT
+            m.CodeCursorY = GetEditorCursorLine(m.CodeEditor)
+            m.CodeCursorX = GetEditorCursorCol(m.CodeEditor)
+        ENDIF
+        RETURN m, NIL
+    ENDIF
+
+    ' Mouse wheel scrolling in other panels
+    DIM leftPanelWidth AS INTEGER = 16
+    DIM wx AS INTEGER = Int(wheelMsg.X)
+    IF wx < leftPanelWidth THEN
+        ' Left panel scrolling
+        DIM wy AS INTEGER = Int(wheelMsg.Y) - 1
+        DIM toolboxStart AS INTEGER = m.ProjectHeight + m.WidgetsHeight
+        IF wy < m.ProjectHeight THEN
+            ' Project tree scroll
+            IF wheelMsg.Button = tea.MouseWheelUp THEN
+                IF m.ProjectScroll > 0 THEN
+                    m.ProjectScroll = m.ProjectScroll - 1
                 ENDIF
-                m.IsDragging = FALSE
-                m.DraggingForm = FALSE
-                m.Message = "Form moved"
-            ELSE
-                ' Apply the final outline position to the actual control
-                IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
-                    DIM ctrlCount AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
-                    IF m.SelectedCtrlIdx < ctrlCount THEN
-                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
-                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
-                        m.Project.Modified = TRUE
-                    ENDIF
-                ENDIF
-                m.IsDragging = FALSE
-                m.Message = "Control moved"
+            ELSEIF wheelMsg.Button = tea.MouseWheelDown THEN
+                m.ProjectScroll = m.ProjectScroll + 1
             ENDIF
-        ELSEIF m.IsResizing THEN
-            IF m.ResizingForm THEN
-                ' Apply the final size to the form
-                IF m.ViewMode = VIEW_FORM THEN
-                    m.Project.Forms[m.CurrentFormIdx].Width = m.DragCtrlWidth
-                    m.Project.Forms[m.CurrentFormIdx].Height = m.DragCtrlHeight
-                    m.Project.Modified = TRUE
+        ELSEIF wy < toolboxStart THEN
+            ' Widgets panel scroll
+            IF wheelMsg.Button = tea.MouseWheelUp THEN
+                IF m.WidgetsScroll > 0 THEN
+                    m.WidgetsScroll = m.WidgetsScroll - 1
                 ENDIF
-                m.IsResizing = FALSE
-                m.ResizingForm = FALSE
-                m.Message = "Form resized"
-            ELSE
-                ' Apply the final size to the actual control
-                IF m.ViewMode = VIEW_FORM AND m.SelectedCtrlIdx >= 0 THEN
-                    DIM ctrlCount2 AS INTEGER = Len(m.Project.Forms[m.CurrentFormIdx].Controls)
-                    IF m.SelectedCtrlIdx < ctrlCount2 THEN
-                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].X = m.DragOutlineX
-                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Y = m.DragOutlineY
-                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Width = m.DragCtrlWidth
-                        m.Project.Forms[m.CurrentFormIdx].Controls[m.SelectedCtrlIdx].Height = m.DragCtrlHeight
-                        m.Project.Modified = TRUE
-                    ENDIF
+            ELSEIF wheelMsg.Button = tea.MouseWheelDown THEN
+                m.WidgetsScroll = m.WidgetsScroll + 1
+            ENDIF
+        ELSE
+            ' Toolbox panel scroll
+            IF wheelMsg.Button = tea.MouseWheelUp THEN
+                IF m.ToolboxScroll > 0 THEN
+                    m.ToolboxScroll = m.ToolboxScroll - 1
                 ENDIF
-                m.IsResizing = FALSE
-                m.Message = "Control resized"
+            ELSEIF wheelMsg.Button = tea.MouseWheelDown THEN
+                m.ToolboxScroll = m.ToolboxScroll + 1
             ENDIF
-        ELSEIF m.DraggingFromWidgets THEN
-            ' Drop widget from toolbox onto form
-            IF m.ViewMode = VIEW_FORM AND m.DragOutlineX >= 0 AND m.DragOutlineY >= 0 THEN
-                DIM ctlType AS INTEGER = m.DragWidgetType
-                DIM ctlName AS STRING = GetControlTypeName(ctlType) & Str(m.Project.Forms[m.CurrentFormIdx].NextCtrlID)
-                DIM newCtrl AS VDBControl = NewControl(ctlType, ctlName, m.DragOutlineX, m.DragOutlineY)
-                newCtrl.ID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
-                newCtrl.ZOrder = m.Project.Forms[m.CurrentFormIdx].NextCtrlID
-                newCtrl.TabIndex = GetNextTabIndex(m.Project.Forms[m.CurrentFormIdx])
-                m.Project.Forms[m.CurrentFormIdx].NextCtrlID = m.Project.Forms[m.CurrentFormIdx].NextCtrlID + 1
-                m.Project.Forms[m.CurrentFormIdx].Controls = APPEND(m.Project.Forms[m.CurrentFormIdx].Controls, newCtrl)
-                m.SelectedCtrlIdx = Len(m.Project.Forms[m.CurrentFormIdx].Controls) - 1
-                m.Project.Modified = TRUE
-                m.FocusArea = FOCUS_FORM
-                m.Message = "Added " & ctlName & " at (" & Str(m.DragOutlineX) & "," & Str(m.DragOutlineY) & ")"
-            ELSE
-                m.Message = "Drop cancelled - not over form"
-            ENDIF
-            m.DraggingFromWidgets = FALSE
-            m.DragWidgetType = 0
-            m.DragOutlineX = -1
-            m.DragOutlineY = -1
         ENDIF
     ENDIF
 
@@ -2221,44 +2991,44 @@ FUNCTION HandleDropdownClick(m AS VDBTermModel, row AS INTEGER) AS (tea.Model, t
     DIM maxItems AS INTEGER
 
     IF m.MenuOpen = MENU_FILE THEN
-        maxItems = 8
-        ' Items: 0=New Project, 1=Open, 2=Save, 3=separator, 4=New Form, 5=New Module, 6=separator, 7=Exit
-        IF itemIdx = 3 OR itemIdx = 6 THEN
+        maxItems = 9
+        ' Items: 0=New, 1=Open, 2=Save, 3=SaveAs, 4=sep, 5=NewForm, 6=NewModule, 7=sep, 8=Exit
+        IF itemIdx = 4 OR itemIdx = 7 THEN
             RETURN m, NIL ' Separator clicked
         ENDIF
     ELSEIF m.MenuOpen = MENU_EDIT THEN
         maxItems = 8
-        ' Items: 0=Cut, 1=Copy, 2=Paste, 3=separator, 4=Select All, 5=Delete, 6=separator, 7=Menu Editor
+        ' Items: 0=Cut, 1=Copy, 2=Paste, 3=sep, 4=SelectAll, 5=Delete, 6=sep, 7=MenuEditor
         IF itemIdx = 3 OR itemIdx = 6 THEN
             RETURN m, NIL ' Separator clicked
         ENDIF
     ELSEIF m.MenuOpen = MENU_VIEW THEN
         maxItems = 7
-        ' Items: 0=Form View, 1=Code View, 2=separator, 3=Show Grid, 4=Line Numbers, 5=separator, 6=Object Browser
+        ' Items: 0=FormView, 1=CodeView, 2=sep, 3=ShowGrid, 4=LineNums, 5=sep, 6=ObjBrowser
         IF itemIdx = 2 OR itemIdx = 5 THEN
             RETURN m, NIL ' Separator clicked
         ENDIF
     ELSEIF m.MenuOpen = MENU_RUN THEN
         maxItems = 4
-        ' Items: 0=Run, 1=Build, 2=separator, 3=Set Startup
+        ' Items: 0=Run, 1=Build, 2=sep, 3=SetStartup
         IF itemIdx = 2 THEN
             RETURN m, NIL ' Separator clicked
         ENDIF
     ELSEIF m.MenuOpen = MENU_DEBUG THEN
         maxItems = 5
-        ' Items: 0=Step, 1=Breakpoint, 2=Watch, 3=separator, 4=Clear All
+        ' Items: 0=Step, 1=Breakpoint, 2=Watch, 3=sep, 4=ClearAll
         IF itemIdx = 3 THEN
             RETURN m, NIL ' Separator clicked
         ENDIF
     ELSEIF m.MenuOpen = MENU_OPTIONS THEN
-        maxItems = 4
-        ' Items: 0=Environment, 1=Editor, 2=Colors, 3=Compiler
-    ELSEIF m.MenuOpen = MENU_HELP THEN
-        maxItems = 3
-        ' Items: 0=Contents, 1=separator, 2=About
-        IF itemIdx = 1 THEN
+        maxItems = 5
+        ' Items: 0=Environment, 1=Editor, 2=ThemeEditor, 3=sep, 4=Colors
+        IF itemIdx = 3 THEN
             RETURN m, NIL ' Separator clicked
         ENDIF
+    ELSEIF m.MenuOpen = MENU_HELP THEN
+        maxItems = 2
+        ' Items: 0=Help, 1=About
     ELSE
         RETURN m, NIL
     ENDIF
@@ -2276,7 +3046,7 @@ END FUNCTION
 FUNCTION HandleWidgetsClick(m AS VDBTermModel, y AS INTEGER, startDrag AS BOOLEAN) AS (tea.Model, tea.Cmd)
     m.FocusArea = FOCUS_WIDGETS
 
-    ' Row 0 is the title (handled in HandleMouseInput for dragging), items start at row 1
+    ' Row 0 is the title (handled in HandleMouseClick for dragging), items start at row 1
     ' Account for scroll offset to get the actual widget index
     DIM visibleRow AS INTEGER = y - 1
     DIM itemIdx AS INTEGER = visibleRow + m.WidgetsScroll
@@ -2304,7 +3074,7 @@ END FUNCTION
 FUNCTION HandleToolboxClick(m AS VDBTermModel, y AS INTEGER) AS (tea.Model, tea.Cmd)
     m.FocusArea = FOCUS_TOOLBOX
 
-    ' Row 0 is the title (handled in HandleMouseInput for dragging), items start at row 1
+    ' Row 0 is the title (handled in HandleMouseClick for dragging), items start at row 1
     ' Account for scroll offset to get the actual tool index
     DIM visibleRow AS INTEGER = y - 1
     DIM itemIdx AS INTEGER = visibleRow + m.ToolboxScroll

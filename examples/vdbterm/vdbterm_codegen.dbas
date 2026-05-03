@@ -248,11 +248,11 @@ FUNCTION GenerateMsgBoxSupport() AS STRING
     code = code & "        RETURN m, NIL" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
-    code = code & "    ' Handle mouse events" & Chr(10)
-    code = code & "    DIM mouseMsg AS tea.MouseMsg" & Chr(10)
-    code = code & "    DIM mouseOk AS BOOLEAN" & Chr(10)
-    code = code & "    mouseMsg, mouseOk = msg.(tea.MouseMsg)" & Chr(10)
-    code = code & "    IF mouseOk THEN" & Chr(10)
+    code = code & "    ' Handle mouse click events" & Chr(10)
+    code = code & "    DIM clickMsg AS tea.MouseClickMsg" & Chr(10)
+    code = code & "    DIM clickOk AS BOOLEAN" & Chr(10)
+    code = code & "    clickMsg, clickOk = msg.(tea.MouseClickMsg)" & Chr(10)
+    code = code & "    IF clickOk AND clickMsg.Button = tea.MouseLeft THEN" & Chr(10)
     code = code & "        ' Calculate dialog position (same logic as View)" & Chr(10)
     code = code & "        DIM msgLines AS []STRING = strings.Split(m.Message, Chr(10))" & Chr(10)
     code = code & "        DIM maxLineLen AS INTEGER = Len(m.Title) + 4" & Chr(10)
@@ -284,9 +284,9 @@ FUNCTION GenerateMsgBoxSupport() AS STRING
     code = code & "        DIM buttonRowY AS INTEGER = startY + dlgHeight - 3" & Chr(10)
     code = code & "        DIM innerWidth AS INTEGER = dlgWidth - 2" & Chr(10)
     code = code & Chr(10)
-    code = code & "        ' Check if click is on button row (left button press only)" & Chr(10)
-    code = code & "        IF mouseMsg.Y = buttonRowY AND mouseMsg.Action = tea.MouseActionPress AND mouseMsg.Button = tea.MouseButtonLeft THEN" & Chr(10)
-    code = code & "            DIM clickedBtn AS INTEGER = MsgBoxGetClickedButton(m.Buttons, mouseMsg.X, startX, innerWidth)" & Chr(10)
+    code = code & "        ' Check if click is on button row" & Chr(10)
+    code = code & "        IF clickMsg.Y = buttonRowY THEN" & Chr(10)
+    code = code & "            DIM clickedBtn AS INTEGER = MsgBoxGetClickedButton(m.Buttons, clickMsg.X, startX, innerWidth)" & Chr(10)
     code = code & "            IF clickedBtn >= 0 THEN" & Chr(10)
     code = code & "                m.SelectedBtn = clickedBtn" & Chr(10)
     code = code & "                m.Result = MsgBoxGetResult(m.Buttons, m.SelectedBtn)" & Chr(10)
@@ -296,9 +296,9 @@ FUNCTION GenerateMsgBoxSupport() AS STRING
     code = code & "        RETURN m, NIL" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
-    code = code & "    DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM keyMsg AS tea.KeyPressMsg" & Chr(10)
     code = code & "    DIM keyOk AS BOOLEAN" & Chr(10)
-    code = code & "    keyMsg, keyOk = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "    keyMsg, keyOk = msg.(tea.KeyPressMsg)" & Chr(10)
     code = code & "    IF keyOk THEN" & Chr(10)
     code = code & "        DIM keyBtnCount AS INTEGER = MsgBoxBtnCount(m.Buttons)" & Chr(10)
     code = code & "        IF keyMsg.String() = " & q & "left" & q & " OR keyMsg.String() = " & q & "shift+tab" & q & " THEN" & Chr(10)
@@ -332,7 +332,7 @@ FUNCTION GenerateMsgBoxSupport() AS STRING
     code = code & Chr(10)
 
     ' View for MsgBoxDialogModel - overlays dialog on background
-    code = code & "FUNCTION (m AS MsgBoxDialogModel) View() AS STRING" & Chr(10)
+    code = code & "FUNCTION (m AS MsgBoxDialogModel) View() AS tea.View" & Chr(10)
     code = code & "    DIM msgLines AS []STRING = strings.Split(m.Message, Chr(10))" & Chr(10)
     code = code & Chr(10)
     code = code & "    ' Calculate dialog dimensions" & Chr(10)
@@ -413,7 +413,10 @@ FUNCTION GenerateMsgBoxSupport() AS STRING
     code = code & "    DIM styledDlg AS STRING = dlgStyle.Render(dlgText)" & Chr(10)
     code = code & Chr(10)
     code = code & "    ' Center dialog on blank screen" & Chr(10)
-    code = code & "    RETURN lipgloss.Place(m.Width, m.Height, lipgloss.Center, lipgloss.Center, styledDlg)" & Chr(10)
+    code = code & "    DIM v AS tea.View = tea.NewView(lipgloss.Place(m.Width, m.Height, lipgloss.Center, lipgloss.Center, styledDlg))" & Chr(10)
+    code = code & "    v.AltScreen = TRUE" & Chr(10)
+    code = code & "    v.MouseMode = tea.MouseModeCellMotion" & Chr(10)
+    code = code & "    RETURN v" & Chr(10)
     code = code & "END FUNCTION" & Chr(10)
     code = code & Chr(10)
 
@@ -610,7 +613,7 @@ FUNCTION GenerateMsgBoxSupport() AS STRING
     code = code & Chr(10)
     code = code & "    ' Run a temporary BubbleTea program for the dialog" & Chr(10)
     code = code & "    ' Use WithoutSignalHandler to avoid conflicts with parent program" & Chr(10)
-    code = code & "    DIM p AS POINTER TO tea.Program = tea.NewProgram(dlgModel, tea.WithMouseCellMotion(), tea.WithoutSignalHandler())" & Chr(10)
+    code = code & "    DIM p AS POINTER TO tea.Program = tea.NewProgram(dlgModel, tea.WithoutSignalHandler())" & Chr(10)
     code = code & "    DIM finalModel AS tea.Model" & Chr(10)
     code = code & "    DIM err AS error" & Chr(10)
     code = code & "    finalModel, err = (^p).Run()" & Chr(10)
@@ -700,7 +703,7 @@ FUNCTION GenerateDirBrowserWidget() AS STRING
     code = code & "    db.pathInput = textinput.New()" & Chr(10)
     code = code & "    db.pathInput.SetValue(db.path)" & Chr(10)
     code = code & "    db.pathInput.CursorEnd()" & Chr(10)
-    code = code & "    db.pathInput.Width = width - 5" & Chr(10)
+    code = code & "    db.pathInput.SetWidth(width - 5)" & Chr(10)
     code = code & "    db.pathInput.CharLimit = 256" & Chr(10)
     code = code & Chr(10)
     code = code & "    RETURN db" & Chr(10)
@@ -739,12 +742,12 @@ FUNCTION GenerateDirBrowserWidget() AS STRING
     code = code & "FUNCTION (db AS DirBrowser) Update(msg AS tea.Msg) AS (DirBrowser, tea.Cmd)" & Chr(10)
     code = code & "    DIM cmd AS tea.Cmd" & Chr(10)
     code = code & Chr(10)
-    code = code & "    ' Handle mouse messages" & Chr(10)
-    code = code & "    DIM mouseMsg AS tea.MouseMsg" & Chr(10)
-    code = code & "    DIM mouseOk AS BOOLEAN" & Chr(10)
-    code = code & "    mouseMsg, mouseOk = msg.(tea.MouseMsg)" & Chr(10)
-    code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionPress AND mouseMsg.Button = tea.MouseButtonLeft THEN" & Chr(10)
-    code = code & "        DIM my AS INTEGER = Int(mouseMsg.Y)" & Chr(10)
+    code = code & "    ' Handle mouse click messages" & Chr(10)
+    code = code & "    DIM clickMsg AS tea.MouseClickMsg" & Chr(10)
+    code = code & "    DIM clickOk AS BOOLEAN" & Chr(10)
+    code = code & "    clickMsg, clickOk = msg.(tea.MouseClickMsg)" & Chr(10)
+    code = code & "    IF clickOk AND clickMsg.Button = tea.MouseLeft THEN" & Chr(10)
+    code = code & "        DIM my AS INTEGER = Int(clickMsg.Y)" & Chr(10)
     code = code & "        IF my = 1 THEN" & Chr(10)
     code = code & "            ' Clicked on path input" & Chr(10)
     code = code & "            db.pathInput.Focus()" & Chr(10)
@@ -765,9 +768,9 @@ FUNCTION GenerateDirBrowserWidget() AS STRING
     code = code & "    ' Route to path input if focused" & Chr(10)
     code = code & "    IF db.pathInput.Focused() THEN" & Chr(10)
     code = code & "        ' Check for Enter to apply path" & Chr(10)
-    code = code & "        DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "        DIM keyMsg AS tea.KeyPressMsg" & Chr(10)
     code = code & "        DIM keyOk AS BOOLEAN" & Chr(10)
-    code = code & "        keyMsg, keyOk = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "        keyMsg, keyOk = msg.(tea.KeyPressMsg)" & Chr(10)
     code = code & "        IF keyOk AND keyMsg.String() = " & q & "enter" & q & " THEN" & Chr(10)
     code = code & "            ' Apply path from input" & Chr(10)
     code = code & "            db.path = db.pathInput.Value()" & Chr(10)
@@ -782,7 +785,7 @@ FUNCTION GenerateDirBrowserWidget() AS STRING
     code = code & "        IF keyOk THEN" & Chr(10)
     code = code & "            DIM pKey AS STRING = keyMsg.String()" & Chr(10)
     code = code & "            IF pKey = " & q & "left" & q & " OR pKey = " & q & "right" & q & " OR pKey = " & q & "home" & q & " OR pKey = " & q & "end" & q & " OR pKey = " & q & "ctrl+left" & q & " OR pKey = " & q & "ctrl+right" & q & " THEN" & Chr(10)
-    code = code & "                db.pathInput.Cursor.Blink = TRUE" & Chr(10)
+    code = code & "                ' Cursor blink is now managed via textinput Styles in v2" & Chr(10)
     code = code & "                RETURN db, cmd" & Chr(10)
     code = code & "            ENDIF" & Chr(10)
     code = code & "        ENDIF" & Chr(10)
@@ -790,9 +793,9 @@ FUNCTION GenerateDirBrowserWidget() AS STRING
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
     code = code & "    ' Handle keyboard for directory list" & Chr(10)
-    code = code & "    DIM keyMsg2 AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM keyMsg2 AS tea.KeyPressMsg" & Chr(10)
     code = code & "    DIM keyOk2 AS BOOLEAN" & Chr(10)
-    code = code & "    keyMsg2, keyOk2 = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "    keyMsg2, keyOk2 = msg.(tea.KeyPressMsg)" & Chr(10)
     code = code & "    IF keyOk2 AND db.focused THEN" & Chr(10)
     code = code & "        DIM key AS STRING = keyMsg2.String()" & Chr(10)
     code = code & "        DIM listH AS INTEGER = db.height - 4  ' Visible list rows" & Chr(10)
@@ -1021,7 +1024,7 @@ FUNCTION GeneratePathWidget() AS STRING
     code = code & "    pw.textInput.SetValue(pw.path)" & Chr(10)
     code = code & "    pw.textInput.CursorEnd()" & Chr(10)
     code = code & "    pw.textInput.Prompt = " & q & "> " & q & Chr(10)
-    code = code & "    pw.textInput.Width = width - 5" & Chr(10)
+    code = code & "    pw.textInput.SetWidth(width - 5)" & Chr(10)
     code = code & "    pw.textInput.CharLimit = 256" & Chr(10)
     code = code & Chr(10)
     code = code & "    RETURN pw" & Chr(10)
@@ -1037,9 +1040,9 @@ FUNCTION GeneratePathWidget() AS STRING
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
     code = code & "    ' Check for Enter key" & Chr(10)
-    code = code & "    DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM keyMsg AS tea.KeyPressMsg" & Chr(10)
     code = code & "    DIM keyOk AS BOOLEAN" & Chr(10)
-    code = code & "    keyMsg, keyOk = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "    keyMsg, keyOk = msg.(tea.KeyPressMsg)" & Chr(10)
     code = code & "    IF keyOk AND keyMsg.String() = " & q & "enter" & q & " THEN" & Chr(10)
     code = code & "        pw.path = pw.textInput.Value()" & Chr(10)
     code = code & "        RETURN pw, NIL" & Chr(10)
@@ -1225,12 +1228,12 @@ FUNCTION GenerateDirectoriesWidget() AS STRING
     code = code & "        RETURN dw, NIL, FALSE" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
-    code = code & "    ' Handle mouse messages" & Chr(10)
-    code = code & "    DIM mouseMsg AS tea.MouseMsg" & Chr(10)
-    code = code & "    DIM mouseOk AS BOOLEAN" & Chr(10)
-    code = code & "    mouseMsg, mouseOk = msg.(tea.MouseMsg)" & Chr(10)
-    code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionPress AND mouseMsg.Button = tea.MouseButtonLeft THEN" & Chr(10)
-    code = code & "        DIM my AS INTEGER = Int(mouseMsg.Y)" & Chr(10)
+    code = code & "    ' Handle mouse click messages" & Chr(10)
+    code = code & "    DIM clickMsg AS tea.MouseClickMsg" & Chr(10)
+    code = code & "    DIM clickOk AS BOOLEAN" & Chr(10)
+    code = code & "    clickMsg, clickOk = msg.(tea.MouseClickMsg)" & Chr(10)
+    code = code & "    IF clickOk AND clickMsg.Button = tea.MouseLeft THEN" & Chr(10)
+    code = code & "        DIM my AS INTEGER = Int(clickMsg.Y)" & Chr(10)
     code = code & "        IF my >= 1 AND my < dw.height - 1 THEN" & Chr(10)
     code = code & "            DIM targetIdx AS INTEGER = my - 1 + dw.scroll" & Chr(10)
     code = code & "            IF targetIdx >= 0 AND targetIdx < Len(dw.dirs) THEN" & Chr(10)
@@ -1243,9 +1246,9 @@ FUNCTION GenerateDirectoriesWidget() AS STRING
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
     code = code & "    ' Handle keyboard" & Chr(10)
-    code = code & "    DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM keyMsg AS tea.KeyPressMsg" & Chr(10)
     code = code & "    DIM keyOk AS BOOLEAN" & Chr(10)
-    code = code & "    keyMsg, keyOk = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "    keyMsg, keyOk = msg.(tea.KeyPressMsg)" & Chr(10)
     code = code & "    IF keyOk THEN" & Chr(10)
     code = code & "        DIM key AS STRING = keyMsg.String()" & Chr(10)
     code = code & "        DIM listH AS INTEGER = dw.height - 2" & Chr(10)
@@ -1506,12 +1509,12 @@ FUNCTION GenerateFilesWidget() AS STRING
     code = code & "        RETURN fw, NIL, FALSE" & Chr(10)
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
-    code = code & "    ' Handle mouse messages" & Chr(10)
-    code = code & "    DIM mouseMsg AS tea.MouseMsg" & Chr(10)
-    code = code & "    DIM mouseOk AS BOOLEAN" & Chr(10)
-    code = code & "    mouseMsg, mouseOk = msg.(tea.MouseMsg)" & Chr(10)
-    code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionPress AND mouseMsg.Button = tea.MouseButtonLeft THEN" & Chr(10)
-    code = code & "        DIM my AS INTEGER = Int(mouseMsg.Y)" & Chr(10)
+    code = code & "    ' Handle mouse click messages" & Chr(10)
+    code = code & "    DIM clickMsg AS tea.MouseClickMsg" & Chr(10)
+    code = code & "    DIM clickOk AS BOOLEAN" & Chr(10)
+    code = code & "    clickMsg, clickOk = msg.(tea.MouseClickMsg)" & Chr(10)
+    code = code & "    IF clickOk AND clickMsg.Button = tea.MouseLeft THEN" & Chr(10)
+    code = code & "        DIM my AS INTEGER = Int(clickMsg.Y)" & Chr(10)
     code = code & "        IF my >= 1 AND my < fw.height - 1 THEN" & Chr(10)
     code = code & "            DIM targetIdx AS INTEGER = my - 1 + fw.scroll" & Chr(10)
     code = code & "            IF targetIdx >= 0 AND targetIdx < Len(fw.files) THEN" & Chr(10)
@@ -1524,9 +1527,9 @@ FUNCTION GenerateFilesWidget() AS STRING
     code = code & "    ENDIF" & Chr(10)
     code = code & Chr(10)
     code = code & "    ' Handle keyboard" & Chr(10)
-    code = code & "    DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM keyMsg AS tea.KeyPressMsg" & Chr(10)
     code = code & "    DIM keyOk AS BOOLEAN" & Chr(10)
-    code = code & "    keyMsg, keyOk = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "    keyMsg, keyOk = msg.(tea.KeyPressMsg)" & Chr(10)
     code = code & "    IF keyOk THEN" & Chr(10)
     code = code & "        DIM key AS STRING = keyMsg.String()" & Chr(10)
     code = code & "        DIM listH AS INTEGER = fw.height - 2" & Chr(10)
@@ -1721,6 +1724,20 @@ FUNCTION ProjectHasCurl(proj AS VDBProject) AS BOOLEAN
     RETURN FALSE
 END FUNCTION
 
+' Check if project uses Viewport widget
+FUNCTION ProjectHasViewport(proj AS VDBProject) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(proj.Forms) - 1
+        DIM j AS INTEGER
+        FOR j = 0 TO Len(proj.Forms[i].Controls) - 1
+            IF proj.Forms[i].Controls[j].CtlType = CTRL_VIEWPORT THEN
+                RETURN TRUE
+            ENDIF
+        NEXT
+    NEXT
+    RETURN FALSE
+END FUNCTION
+
 ' Generate Curl helper functions
 FUNCTION GenerateCurlHelpers() AS STRING
     DIM code AS STRING = ""
@@ -1796,6 +1813,51 @@ FUNCTION GenerateCurlHelpers() AS STRING
     code = code & "' Perform a simple POST request" & Chr(10)
     code = code & "FUNCTION CurlPost(urlStr AS STRING, body AS STRING) AS (STRING, INTEGER, STRING)" & Chr(10)
     code = code & "    RETURN CurlFetch(urlStr, " & q & "POST" & q & ", body)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+
+    RETURN code
+END FUNCTION
+
+' Check if project uses Clipboard widget
+FUNCTION ProjectHasClipboard(proj AS VDBProject) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(proj.Forms) - 1
+        DIM j AS INTEGER
+        FOR j = 0 TO Len(proj.Forms[i].Controls) - 1
+            IF proj.Forms[i].Controls[j].CtlType = CTRL_CLIPBOARD THEN
+                RETURN TRUE
+            ENDIF
+        NEXT
+    NEXT
+    RETURN FALSE
+END FUNCTION
+
+' Generate Clipboard helper methods for a specific control
+FUNCTION GenerateClipboardHelpers(ctrl AS VDBControl) AS STRING
+    DIM code AS STRING = ""
+    DIM name AS STRING = ctrl.CtlName
+
+    code = code & "' " & name & " Clipboard Copy" & Chr(10)
+    code = code & "FUNCTION (m AS AppModel) " & name & "_Copy(text AS STRING) AS (AppModel, tea.Cmd)" & Chr(10)
+    code = code & "    m." & name & "_Content = text" & Chr(10)
+    code = code & "    IF m." & name & "_FallbackEnabled THEN" & Chr(10)
+    code = code & "        clipboard.WriteAll(text)" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    RETURN m, tea.SetClipboard(text)" & Chr(10)
+    code = code & "END FUNCTION" & Chr(10)
+    code = code & Chr(10)
+    code = code & "' " & name & " Clipboard Paste" & Chr(10)
+    code = code & "FUNCTION (m AS AppModel) " & name & "_Paste() AS (AppModel, tea.Cmd)" & Chr(10)
+    code = code & "    IF m." & name & "_FallbackEnabled THEN" & Chr(10)
+    code = code & "        DIM text AS STRING" & Chr(10)
+    code = code & "        DIM err AS error" & Chr(10)
+    code = code & "        text, err = clipboard.ReadAll()" & Chr(10)
+    code = code & "        IF err = NIL THEN" & Chr(10)
+    code = code & "            m." & name & "_Content = text" & Chr(10)
+    code = code & "        ENDIF" & Chr(10)
+    code = code & "    ENDIF" & Chr(10)
+    code = code & "    RETURN m, tea.ReadClipboard()" & Chr(10)
     code = code & "END FUNCTION" & Chr(10)
     code = code & Chr(10)
 
@@ -1893,6 +1955,8 @@ FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
     DIM needFilepath AS BOOLEAN = FALSE
     DIM needTime AS BOOLEAN = FALSE
     DIM needHttp AS BOOLEAN = FALSE
+    DIM needViewport AS BOOLEAN = FALSE
+    DIM needClipboard AS BOOLEAN = FALSE
     DIM pluginImports AS []STRING
 
     ' Scan controls to determine needed imports
@@ -1921,6 +1985,10 @@ FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
             needTime = TRUE
         ELSEIF ctrl.CtlType = CTRL_CURL THEN
             needHttp = TRUE
+        ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+            needViewport = TRUE
+        ELSEIF ctrl.CtlType = CTRL_CLIPBOARD THEN
+            needClipboard = TRUE
         ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
             ' Plugin widget - collect imports from plugin definition
             DIM plugin AS PluginWidgetDef = GetPluginByCtrlType(ctrl.CtlType, registry)
@@ -1945,8 +2013,8 @@ FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
     NEXT
 
     ' Core imports
-    code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbletea" & Chr(34) & " AS tea" & Chr(10)
-    code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/lipgloss" & Chr(34) & " AS lipgloss" & Chr(10)
+    code = code & "IMPORT " & Chr(34) & "charm.land/bubbletea/v2" & Chr(34) & " AS tea" & Chr(10)
+    code = code & "IMPORT " & Chr(34) & "charm.land/lipgloss/v2" & Chr(34) & " AS lipgloss" & Chr(10)
     code = code & "IMPORT " & Chr(34) & "fmt" & Chr(34) & " AS fmt" & Chr(10)
     code = code & "IMPORT " & Chr(34) & "strings" & Chr(34) & " AS strings" & Chr(10)
     code = code & "IMPORT " & Chr(34) & "os" & Chr(34) & " AS os" & Chr(10)
@@ -1954,17 +2022,17 @@ FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
 
     ' Conditional imports
     IF needTextInput THEN
-        code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/textinput" & Chr(34) & " AS textinput" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "charm.land/bubbles/v2/textinput" & Chr(34) & " AS textinput" & Chr(10)
     ENDIF
     IF needTextarea THEN
-        code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/textarea" & Chr(34) & " AS textarea" & Chr(10)
-        code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/key" & Chr(34) & " AS key" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "charm.land/bubbles/v2/textarea" & Chr(34) & " AS textarea" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "charm.land/bubbles/v2/key" & Chr(34) & " AS key" & Chr(10)
     ENDIF
     IF needList THEN
-        code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/list" & Chr(34) & " AS list" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "charm.land/bubbles/v2/list" & Chr(34) & " AS list" & Chr(10)
     ENDIF
     IF needTimer THEN
-        code = code & "IMPORT " & Chr(34) & "github.com/charmbracelet/bubbles/timer" & Chr(34) & " AS timer" & Chr(10)
+        code = code & "IMPORT " & Chr(34) & "charm.land/bubbles/v2/timer" & Chr(34) & " AS timer" & Chr(10)
         code = code & "IMPORT " & Chr(34) & "time" & Chr(34) & " AS time" & Chr(10)
     ENDIF
     IF needFilepath THEN
@@ -1978,6 +2046,12 @@ FUNCTION GenerateImports(form AS VDBForm, registry AS PluginRegistry) AS STRING
         code = code & "IMPORT " & Chr(34) & "net/http" & Chr(34) & " AS http" & Chr(10)
         code = code & "IMPORT " & Chr(34) & "io" & Chr(34) & " AS io" & Chr(10)
         code = code & "IMPORT " & Chr(34) & "bytes" & Chr(34) & " AS bytes" & Chr(10)
+    ENDIF
+    IF needViewport THEN
+        code = code & "IMPORT " & Chr(34) & "charm.land/bubbles/v2/viewport" & Chr(34) & " AS viewport" & Chr(10)
+    ENDIF
+    IF needClipboard THEN
+        code = code & "IMPORT " & Chr(34) & "github.com/atotto/clipboard" & Chr(34) & " AS clipboard" & Chr(10)
     ENDIF
 
     ' Plugin imports
@@ -2060,6 +2134,11 @@ FUNCTION GenerateFormType(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "    DIM " & ctrl.CtlName & "_StatusCode AS INTEGER" & Chr(10)
             code = code & "    DIM " & ctrl.CtlName & "_Error AS STRING" & Chr(10)
             code = code & "    DIM " & ctrl.CtlName & "_IsLoading AS BOOLEAN" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+            code = code & "    DIM " & ctrl.CtlName & " AS viewport.Model" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_CLIPBOARD THEN
+            code = code & "    DIM " & ctrl.CtlName & "_Content AS STRING" & Chr(10)
+            code = code & "    DIM " & ctrl.CtlName & "_FallbackEnabled AS BOOLEAN" & Chr(10)
         ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
             ' Plugin widget - generate state fields from plugin definition
             DIM plugin AS PluginWidgetDef = GetPluginByCtrlType(ctrl.CtlType, registry)
@@ -2174,7 +2253,7 @@ FUNCTION GenerateInit(form AS VDBForm, registry AS PluginRegistry) AS STRING
             IF ctrl.Prompt <> "" THEN
                 code = code & "    m." & ctrl.CtlName & ".Prompt = " & Chr(34) & ctrl.Prompt & Chr(34) & Chr(10)
             ENDIF
-            code = code & "    m." & ctrl.CtlName & ".Width = " & Str(ctrl.Width) & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".SetWidth(" & Str(ctrl.Width) & ")" & Chr(10)
             code = code & "    m." & ctrl.CtlName & ".CharLimit = " & Str(ctrl.CharLimit) & Chr(10)
             IF ctrl.EchoMode = 1 THEN
                 code = code & "    m." & ctrl.CtlName & ".EchoMode = textinput.EchoPassword" & Chr(10)
@@ -2300,10 +2379,12 @@ FUNCTION GenerateInit(form AS VDBForm, registry AS PluginRegistry) AS STRING
             IF initPath <> "" THEN
                 code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(" & Chr(34) & initPath & Chr(34) & ")" & Chr(10)
             ENDIF
-            ' Set textinput styles to match DirBrowser colors
-            code = code & "    m." & ctrl.CtlName & ".pathInput.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
-            code = code & "    m." & ctrl.CtlName & ".pathInput.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
-            code = code & "    m." & ctrl.CtlName & ".pathInput.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & "))" & Chr(10)
+            ' Set textinput styles to match DirBrowser colors (v2 Styles struct)
+            code = code & "    DIM " & ctrl.CtlName & "_dbStyles AS textinput.Styles = textinput.DefaultDarkStyles()" & Chr(10)
+            code = code & "    " & ctrl.CtlName & "_dbStyles.Focused.Text = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
+            code = code & "    " & ctrl.CtlName & "_dbStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
+            code = code & "    " & ctrl.CtlName & "_dbStyles.Cursor.Color = lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".pathInput.SetStyles(" & ctrl.CtlName & "_dbStyles)" & Chr(10)
             code = code & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_PATH THEN
             DIM pathInitPath AS STRING = ctrl.FilePath
@@ -2313,10 +2394,12 @@ FUNCTION GenerateInit(form AS VDBForm, registry AS PluginRegistry) AS STRING
             IF pathInitPath <> "" THEN
                 code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetPath(" & Chr(34) & pathInitPath & Chr(34) & ")" & Chr(10)
             ENDIF
-            ' Set textinput styles
-            code = code & "    m." & ctrl.CtlName & ".textInput.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
-            code = code & "    m." & ctrl.CtlName & ".textInput.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
-            code = code & "    m." & ctrl.CtlName & ".textInput.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & "))" & Chr(10)
+            ' Set textinput styles (v2 Styles struct)
+            code = code & "    DIM " & ctrl.CtlName & "_pwStyles AS textinput.Styles = textinput.DefaultDarkStyles()" & Chr(10)
+            code = code & "    " & ctrl.CtlName & "_pwStyles.Focused.Text = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
+            code = code & "    " & ctrl.CtlName & "_pwStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")).Background(lipgloss.Color(" & Chr(34) & Str(ctrl.BackColor) & Chr(34) & "))" & Chr(10)
+            code = code & "    " & ctrl.CtlName & "_pwStyles.Cursor.Color = lipgloss.Color(" & Chr(34) & Str(ctrl.ForeColor) & Chr(34) & ")" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & ".textInput.SetStyles(" & ctrl.CtlName & "_pwStyles)" & Chr(10)
             code = code & Chr(10)
         ELSEIF ctrl.CtlType = CTRL_DIRECTORIES THEN
             DIM dirInitPath AS STRING = ctrl.FilePath
@@ -2359,6 +2442,30 @@ FUNCTION GenerateInit(form AS VDBForm, registry AS PluginRegistry) AS STRING
             code = code & "    m." & ctrl.CtlName & "_StatusCode = 0" & Chr(10)
             code = code & "    m." & ctrl.CtlName & "_Error = " & Chr(34) & Chr(34) & Chr(10)
             code = code & "    m." & ctrl.CtlName & "_IsLoading = FALSE" & Chr(10)
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Viewport)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = viewport.New()" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetWidth(" & Str(ctrl.Width) & ")" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetHeight(" & Str(ctrl.Height) & ")" & Chr(10)
+            IF ctrl.SoftWrap THEN
+                code = code & "    m." & ctrl.CtlName & " = m." & ctrl.CtlName & ".SetSoftWrap(TRUE)" & Chr(10)
+            ENDIF
+            IF ctrl.MouseWheel THEN
+                code = code & "    m." & ctrl.CtlName & ".MouseWheelEnabled = TRUE" & Chr(10)
+            ENDIF
+            IF ctrl.Value <> "" THEN
+                code = code & "    m." & ctrl.CtlName & ".SetContent(" & Chr(34) & EscapeJSONString(ctrl.Value) & Chr(34) & ")" & Chr(10)
+            ENDIF
+            code = code & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_CLIPBOARD THEN
+            code = code & "    ' Initialize " & ctrl.CtlName & " (Clipboard)" & Chr(10)
+            code = code & "    m." & ctrl.CtlName & "_Content = " & Chr(34) & Chr(34) & Chr(10)
+            IF ctrl.FallbackEnabled THEN
+                code = code & "    m." & ctrl.CtlName & "_FallbackEnabled = TRUE" & Chr(10)
+            ELSE
+                code = code & "    m." & ctrl.CtlName & "_FallbackEnabled = FALSE" & Chr(10)
+            ENDIF
             code = code & Chr(10)
         ELSEIF ctrl.CtlType >= PLUGIN_TYPE_START THEN
             ' Plugin widget - generate init code from plugin definition
@@ -2475,13 +2582,13 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
 
     ' Handle mouse input
     code = code & "    ' Handle mouse clicks" & Chr(10)
-    code = code & "    DIM mouseMsg AS tea.MouseMsg" & Chr(10)
-    code = code & "    DIM mouseOk AS BOOLEAN" & Chr(10)
-    code = code & "    mouseMsg, mouseOk = msg.(tea.MouseMsg)" & Chr(10)
-    code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionPress AND mouseMsg.Button = tea.MouseButtonLeft THEN" & Chr(10)
+    code = code & "    DIM clickMsg AS tea.MouseClickMsg" & Chr(10)
+    code = code & "    DIM clickOk AS BOOLEAN" & Chr(10)
+    code = code & "    clickMsg, clickOk = msg.(tea.MouseClickMsg)" & Chr(10)
+    code = code & "    IF clickOk AND clickMsg.Button = tea.MouseLeft THEN" & Chr(10)
     code = code & "        ' Adjust for form border (title embedded in top border)" & Chr(10)
-    code = code & "        DIM mx AS INTEGER = Int(mouseMsg.X) - 1  ' left border" & Chr(10)
-    code = code & "        DIM my AS INTEGER = Int(mouseMsg.Y) - 1  ' top border with title" & Chr(10)
+    code = code & "        DIM mx AS INTEGER = Int(clickMsg.X) - 1  ' left border" & Chr(10)
+    code = code & "        DIM my AS INTEGER = Int(clickMsg.Y) - 1  ' top border with title" & Chr(10)
     code = code & Chr(10)
 
     ' Generate click detection for each clickable control
@@ -2743,9 +2850,12 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
 
     ' Handle mouse release for buttons (trigger click on release)
     code = code & "    ' Handle mouse release for button clicks" & Chr(10)
-    code = code & "    IF mouseOk AND mouseMsg.Action = tea.MouseActionRelease THEN" & Chr(10)
-    code = code & "        DIM rmx AS INTEGER = Int(mouseMsg.X) - 1" & Chr(10)
-    code = code & "        DIM rmy AS INTEGER = Int(mouseMsg.Y) - 1" & Chr(10)
+    code = code & "    DIM releaseMsg AS tea.MouseReleaseMsg" & Chr(10)
+    code = code & "    DIM releaseOk AS BOOLEAN" & Chr(10)
+    code = code & "    releaseMsg, releaseOk = msg.(tea.MouseReleaseMsg)" & Chr(10)
+    code = code & "    IF releaseOk THEN" & Chr(10)
+    code = code & "        DIM rmx AS INTEGER = Int(releaseMsg.X) - 1" & Chr(10)
+    code = code & "        DIM rmy AS INTEGER = Int(releaseMsg.Y) - 1" & Chr(10)
     ' Generate release handling for each button
     FOR i = 0 TO Len(form.Controls) - 1
         DIM ctrl AS VDBControl = form.Controls[i]
@@ -2769,9 +2879,9 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
 
     ' Check for quit
     code = code & "    ' Handle quit" & Chr(10)
-    code = code & "    DIM keyMsg AS tea.KeyMsg" & Chr(10)
+    code = code & "    DIM keyMsg AS tea.KeyPressMsg" & Chr(10)
     code = code & "    DIM ok AS BOOLEAN" & Chr(10)
-    code = code & "    keyMsg, ok = msg.(tea.KeyMsg)" & Chr(10)
+    code = code & "    keyMsg, ok = msg.(tea.KeyPressMsg)" & Chr(10)
     code = code & Chr(10)
     code = code & "    IF ok THEN" & Chr(10)
     code = code & "        DIM key AS STRING = keyMsg.String()" & Chr(10)
@@ -3056,9 +3166,9 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
                 ENDIF
                 code = code & "            m." & ctrl.CtlName & ", updateCmd = m." & ctrl.CtlName & ".Update(msg)" & Chr(10)
                 code = code & "            ' Reset cursor to visible on cursor movement for immediate visibility" & Chr(10)
-                code = code & "            DIM tiKeyMsg AS tea.KeyMsg" & Chr(10)
+                code = code & "            DIM tiKeyMsg AS tea.KeyPressMsg" & Chr(10)
                 code = code & "            DIM tiKeyOk AS BOOLEAN" & Chr(10)
-                code = code & "            tiKeyMsg, tiKeyOk = msg.(tea.KeyMsg)" & Chr(10)
+                code = code & "            tiKeyMsg, tiKeyOk = msg.(tea.KeyPressMsg)" & Chr(10)
                 code = code & "            IF tiKeyOk THEN" & Chr(10)
                 code = code & "                DIM tiKey AS STRING = tiKeyMsg.String()" & Chr(10)
                 code = code & "                IF tiKey = " & Chr(34) & "left" & Chr(34) & " OR tiKey = " & Chr(34) & "right" & Chr(34) & " OR tiKey = " & Chr(34) & "home" & Chr(34) & " OR tiKey = " & Chr(34) & "end" & Chr(34) & " OR tiKey = " & Chr(34) & "ctrl+left" & Chr(34) & " OR tiKey = " & Chr(34) & "ctrl+right" & Chr(34) & " THEN" & Chr(10)
@@ -3090,9 +3200,9 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
                 ENDIF
                 code = code & "            m." & ctrl.CtlName & ", updateCmd = m." & ctrl.CtlName & ".Update(msg)" & Chr(10)
                 code = code & "            ' Reset cursor to visible on cursor movement for immediate visibility" & Chr(10)
-                code = code & "            DIM taKeyMsg AS tea.KeyMsg" & Chr(10)
+                code = code & "            DIM taKeyMsg AS tea.KeyPressMsg" & Chr(10)
                 code = code & "            DIM taKeyOk AS BOOLEAN" & Chr(10)
-                code = code & "            taKeyMsg, taKeyOk = msg.(tea.KeyMsg)" & Chr(10)
+                code = code & "            taKeyMsg, taKeyOk = msg.(tea.KeyPressMsg)" & Chr(10)
                 code = code & "            IF taKeyOk THEN" & Chr(10)
                 code = code & "                DIM taKey AS STRING = taKeyMsg.String()" & Chr(10)
                 code = code & "                IF taKey = " & Chr(34) & "left" & Chr(34) & " OR taKey = " & Chr(34) & "right" & Chr(34) & " OR taKey = " & Chr(34) & "up" & Chr(34) & " OR taKey = " & Chr(34) & "down" & Chr(34) & " OR taKey = " & Chr(34) & "home" & Chr(34) & " OR taKey = " & Chr(34) & "end" & Chr(34) & " OR taKey = " & Chr(34) & "ctrl+left" & Chr(34) & " OR taKey = " & Chr(34) & "ctrl+right" & Chr(34) & " OR taKey = " & Chr(34) & "ctrl+up" & Chr(34) & " OR taKey = " & Chr(34) & "ctrl+down" & Chr(34) & " THEN" & Chr(10)
@@ -3112,9 +3222,9 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
                 code = code & "            IF m." & ctrl.CtlName & ".pathInput.Focused() THEN" & Chr(10)
                 code = code & "                m." & ctrl.CtlName & ".pathInput, updateCmd = m." & ctrl.CtlName & ".pathInput.Update(msg)" & Chr(10)
                 code = code & "                ' Reset cursor to visible on cursor movement for immediate visibility" & Chr(10)
-                code = code & "                DIM dbKeyMsg AS tea.KeyMsg" & Chr(10)
+                code = code & "                DIM dbKeyMsg AS tea.KeyPressMsg" & Chr(10)
                 code = code & "                DIM dbKeyOk AS BOOLEAN" & Chr(10)
-                code = code & "                dbKeyMsg, dbKeyOk = msg.(tea.KeyMsg)" & Chr(10)
+                code = code & "                dbKeyMsg, dbKeyOk = msg.(tea.KeyPressMsg)" & Chr(10)
                 code = code & "                IF dbKeyOk THEN" & Chr(10)
                 code = code & "                    DIM dbKey AS STRING = dbKeyMsg.String()" & Chr(10)
                 code = code & "                    IF dbKey = " & Chr(34) & "left" & Chr(34) & " OR dbKey = " & Chr(34) & "right" & Chr(34) & " OR dbKey = " & Chr(34) & "home" & Chr(34) & " OR dbKey = " & Chr(34) & "end" & Chr(34) & " OR dbKey = " & Chr(34) & "ctrl+left" & Chr(34) & " OR dbKey = " & Chr(34) & "ctrl+right" & Chr(34) & " THEN" & Chr(10)
@@ -3135,9 +3245,9 @@ FUNCTION GenerateUpdate(form AS VDBForm, registry AS PluginRegistry) AS STRING
                 ENDIF
                 code = code & "            m." & ctrl.CtlName & ".textInput, updateCmd = m." & ctrl.CtlName & ".textInput.Update(msg)" & Chr(10)
                 code = code & "            ' Reset cursor to visible on cursor movement for immediate visibility" & Chr(10)
-                code = code & "            DIM pwKeyMsg AS tea.KeyMsg" & Chr(10)
+                code = code & "            DIM pwKeyMsg AS tea.KeyPressMsg" & Chr(10)
                 code = code & "            DIM pwKeyOk AS BOOLEAN" & Chr(10)
-                code = code & "            pwKeyMsg, pwKeyOk = msg.(tea.KeyMsg)" & Chr(10)
+                code = code & "            pwKeyMsg, pwKeyOk = msg.(tea.KeyPressMsg)" & Chr(10)
                 code = code & "            IF pwKeyOk THEN" & Chr(10)
                 code = code & "                DIM pwKey AS STRING = pwKeyMsg.String()" & Chr(10)
                 code = code & "                IF pwKey = " & Chr(34) & "left" & Chr(34) & " OR pwKey = " & Chr(34) & "right" & Chr(34) & " OR pwKey = " & Chr(34) & "home" & Chr(34) & " OR pwKey = " & Chr(34) & "end" & Chr(34) & " OR pwKey = " & Chr(34) & "ctrl+left" & Chr(34) & " OR pwKey = " & Chr(34) & "ctrl+right" & Chr(34) & " THEN" & Chr(10)
@@ -3188,7 +3298,7 @@ FUNCTION GenerateView(form AS VDBForm, registry AS PluginRegistry) AS STRING
     DIM formTypeName AS STRING = form.Name & "Model"
 
     code = code & "' Render the form" & Chr(10)
-    code = code & "FUNCTION (m AS " & formTypeName & ") View() AS STRING" & Chr(10)
+    code = code & "FUNCTION (m AS " & formTypeName & ") View() AS tea.View" & Chr(10)
     code = code & Chr(10)
 
     ' Build content row by row, composing all controls at their positions
@@ -3237,7 +3347,10 @@ FUNCTION GenerateView(form AS VDBForm, registry AS PluginRegistry) AS STRING
     code = code & "    NEXT" & Chr(10)
     code = code & "    wrappedRows = APPEND(wrappedRows, borderStyle.Render(bottomBorder))" & Chr(10)
     code = code & Chr(10)
-    code = code & "    RETURN strings.Join(wrappedRows, " & Chr(34) & Chr(10) & Chr(34) & ")" & Chr(10)
+    code = code & "    DIM v AS tea.View = tea.NewView(strings.Join(wrappedRows, " & Chr(34) & Chr(10) & Chr(34) & "))" & Chr(10)
+    code = code & "    v.AltScreen = TRUE" & Chr(10)
+    code = code & "    v.MouseMode = tea.MouseModeCellMotion" & Chr(10)
+    code = code & "    RETURN v" & Chr(10)
     code = code & "END FUNCTION" & Chr(10) & Chr(10)
 
     ' Generate BuildRow function that composes all controls for a given row
@@ -3371,6 +3484,17 @@ FUNCTION GenerateBuildRowFunction(form AS VDBForm) AS STRING
             code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
             code = code & "        DIM filesLocalRow AS INTEGER = y - " & Str(ctrl.Y) & Chr(10)
             code = code & "        segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: m." & ctrl.CtlName & ".GetRow(filesLocalRow)})" & Chr(10)
+            code = code & "    ENDIF" & Chr(10)
+        ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+            ' Viewport uses View() split into rows
+            code = code & "    ' " & ctrl.CtlName & " (Viewport) at y=" & Str(ctrl.Y) & "-" & Str(ctrl.Y + ctrl.Height - 1) & Chr(10)
+            code = code & "    IF y >= " & Str(ctrl.Y) & " AND y < " & Str(ctrl.Y + ctrl.Height) & " THEN" & Chr(10)
+            code = code & "        DIM vpLocalRow AS INTEGER = y - " & Str(ctrl.Y) & Chr(10)
+            code = code & "        DIM vpView AS STRING = m." & ctrl.CtlName & ".View()" & Chr(10)
+            code = code & "        DIM vpLines AS []STRING = strings.Split(vpView, Chr(10))" & Chr(10)
+            code = code & "        IF vpLocalRow < Len(vpLines) THEN" & Chr(10)
+            code = code & "            segments = APPEND(segments, RowSegment{X: " & Str(ctrl.X) & ", Content: vpLines[vpLocalRow]})" & Chr(10)
+            code = code & "        ENDIF" & Chr(10)
             code = code & "    ENDIF" & Chr(10)
         ENDIF
     NEXT
@@ -5443,7 +5567,7 @@ FUNCTION GenerateMain(startupForm AS STRING) AS STRING
     code = code & Chr(10)
     code = code & "    ' Initialize the model before passing to NewProgram" & Chr(10)
     code = code & "    DIM model AS " & startupForm & "Model = Init" & startupForm & "Model()" & Chr(10)
-    code = code & "    tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()" & Chr(10)
+    code = code & "    tea.NewProgram(model).Run()" & Chr(10)
     code = code & "END SUB" & Chr(10)
 
     RETURN code

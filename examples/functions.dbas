@@ -1,35 +1,136 @@
-' Functions example in DBasic
+' ============================================================
+' FUNCTIONS EXAMPLE IN DBASIC
+' ============================================================
+' This file teaches you how to create and use FUNCTIONS in
+' DBasic. A function is a reusable block of code that takes
+' some input, does something with it, and gives back a result.
+'
+' Think of a function like a vending machine: you put something
+' in (the input), it does its thing, and something comes out
+' (the return value).
+'
+' What you will learn:
+'   1. How to write a simple function that returns one value
+'   2. How to write a function that returns TWO values at once
+'   3. How recursion works (a function that calls itself)
+'   4. How to call functions from your main program
+' ============================================================
 
-' Function with multiple return values
+' -------------------------------------------------------
+' FUNCTION: Divide
+' -------------------------------------------------------
+' This function divides two numbers, but it also tells you
+' whether the division was successful (TRUE) or not (FALSE).
+'
+' Why return two values? Because dividing by zero is not
+' allowed in math! Instead of crashing, we return FALSE
+' to let the caller know something went wrong.
+'
+' Parameters:
+'   a - the number being divided (the numerator)
+'   b - the number to divide by (the denominator)
+'
+' Returns:
+'   INTEGER  - the result of the division (or 0 if it failed)
+'   BOOLEAN  - TRUE if division worked, FALSE if b was zero
+' -------------------------------------------------------
 FUNCTION Divide(a AS INTEGER, b AS INTEGER) AS (INTEGER, BOOLEAN)
+    ' If someone tries to divide by zero, we can't do it.
+    ' Return 0 as the result, and FALSE meaning "it didn't work."
     IF b = 0 THEN
         RETURN 0, FALSE
     ENDIF
+    ' If b is not zero, do the division and return TRUE meaning "success!"
     RETURN a / b, TRUE
 END FUNCTION
 
-' Simple function
+' -------------------------------------------------------
+' FUNCTION: Square
+' -------------------------------------------------------
+' A simple function that takes a number and returns its square.
+' "Squaring" a number means multiplying it by itself.
+' For example: Square(5) gives you 5 * 5 = 25.
+'
+' Parameters:
+'   n - the number to square
+'
+' Returns:
+'   INTEGER - the result of n * n
+' -------------------------------------------------------
 FUNCTION Square(n AS INTEGER) AS INTEGER
     RETURN n * n
 END FUNCTION
 
-' Recursive function
+' -------------------------------------------------------
+' FUNCTION: Factorial
+' -------------------------------------------------------
+' This is a RECURSIVE function -- meaning it calls itself!
+'
+' A "factorial" is a math concept written as n! (n with an
+' exclamation mark). It means: multiply all whole numbers
+' from 1 up to n together.
+'   5! = 5 * 4 * 3 * 2 * 1 = 120
+'   3! = 3 * 2 * 1 = 6
+'   1! = 1
+'
+' How recursion works here:
+'   Factorial(5) = 5 * Factorial(4)
+'   Factorial(4) = 4 * Factorial(3)
+'   Factorial(3) = 3 * Factorial(2)
+'   Factorial(2) = 2 * Factorial(1)
+'   Factorial(1) = 1  <-- this is the "base case" that stops it
+'
+' We use LONG instead of INTEGER because factorials get very
+' big very fast, and LONG can hold larger numbers.
+'
+' Parameters:
+'   n - the number to compute the factorial of
+'
+' Returns:
+'   LONG - the factorial result (n!)
+' -------------------------------------------------------
 FUNCTION Factorial(n AS LONG) AS LONG
+    ' Base case: if n is 1 or less, stop recursing and return 1.
+    ' Without this, the function would call itself forever!
     IF n <= 1 THEN
         RETURN 1
     ENDIF
+    ' Recursive case: n! = n * (n-1)!
+    ' The function calls itself with a smaller number each time.
     RETURN n * Factorial(n - 1)
 END FUNCTION
 
+' -------------------------------------------------------
+' SUB Main - The program starts running here
+' -------------------------------------------------------
+' SUB is like FUNCTION, but it does NOT return a value.
+' Main() is special -- it is the entry point of every
+' DBasic program, just like the front door of a house.
+' -------------------------------------------------------
 SUB Main()
+    ' Declare variables to hold the results from Divide().
+    ' "DIM" means "create a variable." Think of it as
+    ' labeling a box to store something in.
     DIM result AS INTEGER
     DIM ok AS BOOLEAN
 
+    ' Call Divide(10, 2). Since Divide returns TWO values,
+    ' we need TWO variables on the left side to catch them.
+    ' "result" gets the answer (5), "ok" gets TRUE.
     result, ok = Divide(10, 2)
+
+    ' Only print the result if the division was successful.
+    ' This is why returning a BOOLEAN is useful -- we can
+    ' check it before using the result.
     IF ok THEN
-        PRINT "10 / 2 = "; result
+        PRINT "10 / 2 = "; result   ' Prints: 10 / 2 = 5
     ENDIF
 
-    PRINT "5 squared = "; Square(5)
-    PRINT "5! = "; Factorial(5)
+    ' Call Square(5) directly inside PRINT.
+    ' You don't always need to store the result in a variable
+    ' first -- you can use the function call right in the PRINT.
+    PRINT "5 squared = "; Square(5)   ' Prints: 5 squared = 25
+
+    ' Call Factorial(5) to compute 5! = 120
+    PRINT "5! = "; Factorial(5)       ' Prints: 5! = 120
 END SUB

@@ -1,57 +1,127 @@
+' ============================================================
 ' Math Utilities Library
-' Demonstrates shared code via INCLUDE
+' ============================================================
+'
+' WHAT THIS FILE TEACHES:
+'   - Recursion: a function that calls itself (Factorial)
+'   - Iterative algorithms: using a loop instead of recursion (Fibonacci)
+'   - MOD operator: gets the remainder after division (used in IsPrime, GCD)
+'   - LONG data type: for bigger whole numbers than INTEGER can hold
+'   - BOOLEAN return values: functions that answer yes/no questions
+'   - WHILE/WEND loops (used in GCD)
+'   - FOR loops with STEP 2 (counting by twos)
+'   - Classic math algorithms: Factorial, Fibonacci, Primality, GCD
+'
+' This file is meant to be INCLUDEd by other programs.
+' It does NOT have a Main() SUB because it's a library.
+' ============================================================
 
 ' Calculate factorial
+' Factorial of n (written as n!) means: n * (n-1) * (n-2) * ... * 1
+' Example: 5! = 5 * 4 * 3 * 2 * 1 = 120
+'
+' This uses RECURSION -- the function calls itself!
+' It works like this:
+'   Factorial(5) = 5 * Factorial(4)
+'   Factorial(4) = 4 * Factorial(3)
+'   Factorial(3) = 3 * Factorial(2)
+'   Factorial(2) = 2 * Factorial(1)
+'   Factorial(1) = 1  (this is the "base case" that stops the recursion)
+' Then it multiplies back up: 1 * 2 * 3 * 4 * 5 = 120
+'
+' We use LONG instead of INTEGER because factorials get very big very fast.
 FUNCTION Factorial(n AS LONG) AS LONG
     IF n <= 1 THEN
-        RETURN 1
+        RETURN 1          ' Base case: 0! and 1! are both 1
     ENDIF
-    RETURN n * Factorial(n - 1)
+    RETURN n * Factorial(n - 1)  ' Recursive case: n! = n * (n-1)!
 END FUNCTION
 
 ' Calculate fibonacci number
+' The Fibonacci sequence: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, ...
+' Each number is the sum of the two before it.
+'
+' Instead of recursion (which would be very slow for large n),
+' this uses an ITERATIVE approach (a loop). We keep track of
+' just the last two numbers (a and b) and keep adding them.
+'
+' Think of it like climbing stairs:
+'   Step 0: a=0, b=1
+'   Step 2: temp=0+1=1, a=1, b=1  -> sequence so far: 0, 1, 1
+'   Step 3: temp=1+1=2, a=1, b=2  -> sequence so far: 0, 1, 1, 2
+'   Step 4: temp=1+2=3, a=2, b=3  -> sequence so far: 0, 1, 1, 2, 3
+'   ...and so on
 FUNCTION Fibonacci(n AS LONG) AS LONG
     IF n <= 1 THEN
-        RETURN n
+        RETURN n          ' Fibonacci(0) = 0, Fibonacci(1) = 1
     ENDIF
-    DIM a AS LONG = 0
-    DIM b AS LONG = 1
+    DIM a AS LONG = 0     ' Two steps back
+    DIM b AS LONG = 1     ' One step back
     DIM i AS LONG
     FOR i = 2 TO n
-        DIM temp AS LONG = a + b
-        a = b
-        b = temp
+        DIM temp AS LONG = a + b   ' The next number is the sum of the previous two
+        a = b                       ' Shift: what was "one back" becomes "two back"
+        b = temp                    ' The new number becomes "one back"
     NEXT
-    RETURN b
+    RETURN b              ' b holds the final Fibonacci number
 END FUNCTION
 
 ' Check if a number is prime
+' A prime number can only be divided evenly by 1 and itself.
+' Examples: 2, 3, 5, 7, 11, 13, 17 are prime. 4, 6, 8, 9, 10 are not.
+'
+' HOW IT WORKS:
+'   1. Numbers less than 2 are not prime.
+'   2. 2 is the only even prime number.
+'   3. All other even numbers are NOT prime (divisible by 2).
+'   4. For odd numbers, we only need to check divisors up to
+'      the square root of n. Why? Because if n = a * b, then
+'      one of a or b must be <= sqrt(n).
+'   5. We check only odd divisors (STEP 2) since we already
+'      ruled out even numbers.
+'
+' MOD gives the remainder after division:
+'   18 MOD 2 = 0 (18 divides evenly by 2, so it's not prime)
+'   17 MOD 2 = 1 (17 does NOT divide evenly by 2)
 FUNCTION IsPrime(n AS INTEGER) AS BOOLEAN
     IF n < 2 THEN
-        RETURN FALSE
+        RETURN FALSE      ' 0 and 1 are not prime by definition
     ENDIF
     IF n = 2 THEN
-        RETURN TRUE
+        RETURN TRUE       ' 2 is the smallest (and only even) prime
     ENDIF
     IF n MOD 2 = 0 THEN
-        RETURN FALSE
+        RETURN FALSE      ' Even numbers greater than 2 are never prime
     ENDIF
     DIM i AS INTEGER
+    ' Sqr() = square root, Dbl() converts INTEGER to DOUBLE for the math,
+    ' Int() converts back to INTEGER
     DIM limit AS INTEGER = Int(Sqr(Dbl(n)))
+    ' Check odd numbers from 3 up to the square root
     FOR i = 3 TO limit STEP 2
         IF n MOD i = 0 THEN
-            RETURN FALSE
+            RETURN FALSE  ' Found a divisor, so n is not prime
         ENDIF
     NEXT
-    RETURN TRUE
+    RETURN TRUE           ' No divisors found, so n is prime!
 END FUNCTION
 
-' Greatest common divisor
+' Greatest common divisor (GCD)
+' The GCD of two numbers is the largest number that divides both evenly.
+' Example: GCD(48, 18) = 6 because 48/6=8 and 18/6=3 (both whole numbers)
+'
+' This uses EUCLID'S ALGORITHM, one of the oldest algorithms in math
+' (over 2300 years old!). It works by repeatedly replacing the larger
+' number with the remainder of dividing the two numbers:
+'   GCD(48, 18): 48 MOD 18 = 12, so now GCD(18, 12)
+'   GCD(18, 12): 18 MOD 12 = 6,  so now GCD(12, 6)
+'   GCD(12, 6):  12 MOD 6 = 0,   so now GCD(6, 0)
+'   When b = 0, the answer is a = 6
 FUNCTION GCD(a AS INTEGER, b AS INTEGER) AS INTEGER
-    WHILE b <> 0
-        DIM temp AS INTEGER = b
-        b = a MOD b
-        a = temp
+    WHILE b <> 0                     ' Keep going until b is zero
+        DIM temp AS INTEGER = b      ' Save b before we change it
+        b = a MOD b                  ' b becomes the remainder of a / b
+        a = temp                     ' a becomes what b was
     WEND
-    RETURN a
+    RETURN a                         ' When b is 0, a is the GCD
 END FUNCTION

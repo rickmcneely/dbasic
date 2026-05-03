@@ -1,40 +1,86 @@
+' ============================================================
 ' String Utilities Library
-' Demonstrates shared code via INCLUDE
+' ============================================================
+'
+' WHAT THIS FILE TEACHES:
+'   - Writing reusable FUNCTIONS that work with strings
+'   - String concatenation with the & operator (joining strings)
+'   - Built-in string functions: Len(), Mid(), LCase()
+'   - FOR loops with STEP -1 (counting backwards)
+'   - How to build up a result string character by character
+'
+' This file is meant to be INCLUDEd by other programs.
+' It does NOT have a Main() SUB because it's a library, not
+' a standalone program.
+' ============================================================
 
 ' Repeat a string n times
+' Example: RepeatStr("ha", 3) returns "hahaha"
+'
+' HOW IT WORKS:
+'   Start with an empty string, then use a FOR loop to
+'   append (add to the end) the input string n times.
+'   The & operator joins two strings together.
 FUNCTION RepeatStr(s AS STRING, n AS INTEGER) AS STRING
-    DIM result AS STRING = ""
+    DIM result AS STRING = ""   ' Start with nothing
     DIM i AS INTEGER
-    FOR i = 1 TO n
-        result = result & s
+    FOR i = 1 TO n              ' Loop n times
+        result = result & s     ' Append s to the result each time
     NEXT
-    RETURN result
+    RETURN result               ' Give back the final built-up string
 END FUNCTION
 
 ' Reverse a string
+' Example: ReverseStr("Hello") returns "olleH"
+'
+' HOW IT WORKS:
+'   Loop through the string BACKWARDS (from the last character
+'   to the first) using STEP -1. On each step, grab one character
+'   with Mid() and append it to the result.
+'
+'   Mid(s, i, 1) extracts 1 character from string s at position i.
+'   Len(s) returns the total number of characters in string s.
+'   STEP -1 makes the loop count DOWN instead of up.
 FUNCTION ReverseStr(s AS STRING) AS STRING
     DIM result AS STRING = ""
     DIM i AS INTEGER
-    FOR i = Len(s) TO 1 STEP -1
-        result = result & Mid(s, i, 1)
+    FOR i = Len(s) TO 1 STEP -1      ' Start at the end, go to the beginning
+        result = result & Mid(s, i, 1) ' Grab one character and append it
     NEXT
     RETURN result
 END FUNCTION
 
 ' Count occurrences of a character in a string
+' Example: CountChar("banana", "a") returns 3
+'
+' HOW IT WORKS:
+'   Loop through every character position in the string.
+'   If the character at that position matches what we're looking for,
+'   add 1 to our counter.
 FUNCTION CountChar(s AS STRING, ch AS STRING) AS INTEGER
-    DIM count AS INTEGER = 0
+    DIM count AS INTEGER = 0            ' Start the counter at zero
     DIM i AS INTEGER
-    FOR i = 1 TO Len(s)
+    FOR i = 1 TO Len(s)                 ' Check every position in the string
+        ' Does this character match what we're looking for?
         IF Mid(s, i, 1) = ch THEN
+            ' Yes! Increment the counter
             count = count + 1
         ENDIF
     NEXT
-    RETURN count
+    RETURN count                         ' Return the total count
 END FUNCTION
 
 ' Check if string is a palindrome
+' A palindrome reads the same forwards and backwards.
+' Examples: "racecar" -> TRUE, "hello" -> FALSE
+'
+' HOW IT WORKS:
+'   1. Convert the string to lowercase with LCase() so that
+'      "Racecar" and "racecar" are treated the same way.
+'   2. Reverse the lowercase string using our ReverseStr function.
+'   3. Compare: if the original equals the reversed version, it's
+'      a palindrome!
 FUNCTION IsPalindrome(s AS STRING) AS BOOLEAN
-    DIM lower AS STRING = LCase(s)
-    RETURN lower = ReverseStr(lower)
+    DIM lower AS STRING = LCase(s)      ' Make it all lowercase first
+    RETURN lower = ReverseStr(lower)     ' Compare original to reversed
 END FUNCTION

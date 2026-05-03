@@ -42,6 +42,8 @@ CONST DIALOG_COMPILE_ERROR AS INTEGER = 22
 CONST DIALOG_THEME_EDITOR AS INTEGER = 23
 CONST DIALOG_COLOR_PICKER_256 AS INTEGER = 24
 CONST DIALOG_FILE_BROWSER AS INTEGER = 25
+CONST DIALOG_FIND AS INTEGER = 26
+CONST DIALOG_REPLACE AS INTEGER = 27
 
 ' File browser focus areas
 CONST FILEBROWSER_FOCUS_PATH AS INTEGER = 0
@@ -74,6 +76,8 @@ CONST CTRL_PATH AS INTEGER = 20
 CONST CTRL_DIRECTORIES AS INTEGER = 21
 CONST CTRL_FILES AS INTEGER = 22
 CONST CTRL_CURL AS INTEGER = 23
+CONST CTRL_VIEWPORT AS INTEGER = 24
+CONST CTRL_CLIPBOARD AS INTEGER = 25
 
 ' Text justification
 CONST JUSTIFY_LEFT AS INTEGER = 0
@@ -96,12 +100,12 @@ CONST PANEL_DRAG_TOOLBOX AS INTEGER = 2
 ' Visible widget types (for Widgets panel)
 ' Button, Label, TextBox, CheckBox, Option, ListBox, ComboBox, Frame, HScrollBar, VScrollBar, TextArea, Progress, Spinner, Table, DirBrowser, Path, Directories, Files
 ' Note: Plugin widgets are added dynamically via the plugin registry
-CONST VISIBLE_WIDGET_COUNT AS INTEGER = 18
+CONST VISIBLE_WIDGET_COUNT AS INTEGER = 19
 
 ' Non-visible widget types (for Toolbox panel)
-' Timer, Serial, TCP/IP, UDP/IP, Curl
+' Timer, Serial, TCP/IP, UDP/IP, Curl, Clipboard
 ' Note: Plugin widgets are added dynamically via the plugin registry
-CONST NONVISIBLE_WIDGET_COUNT AS INTEGER = 5
+CONST NONVISIBLE_WIDGET_COUNT AS INTEGER = 6
 
 ' Plugin widget type IDs start at 100 (built-in are 0-99)
 CONST PLUGIN_TYPE_START AS INTEGER = 100

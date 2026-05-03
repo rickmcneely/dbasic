@@ -63,6 +63,11 @@ type Parser struct {
 
 	prefixParseFns map[lexer.TokenType]prefixParseFn
 	infixParseFns  map[lexer.TokenType]infixParseFn
+
+	// WITH-statement support: stack of synthetic identifiers for the
+	// current WITH receivers, so `.field` resolves to `<top>.field`.
+	withStack   []Expression
+	withCounter int
 }
 
 // formatError creates a formatted error message with source context
@@ -105,6 +110,13 @@ func New(l *lexer.Lexer) *Parser {
 
 	p.prefixParseFns = make(map[lexer.TokenType]prefixParseFn)
 	p.registerPrefix(lexer.TOKEN_IDENT, p.parseIdentifier)
+	// Reserved-word relaxation: these keywords can appear as identifiers in
+	// expression contexts. Syntactic positions (FOR..STEP, AS BYTES, top-level
+	// TYPE-decl) are still recognized contextually before parseExpression runs.
+	p.registerPrefix(lexer.TOKEN_STEP, p.parseIdentifier)
+	p.registerPrefix(lexer.TOKEN_BYTES, p.parseIdentifier)
+	p.registerPrefix(lexer.TOKEN_STRING_TYPE, p.parseIdentifier)
+	p.registerPrefix(lexer.TOKEN_TYPE, p.parseIdentifier)
 	p.registerPrefix(lexer.TOKEN_INT, p.parseIntegerLiteral)
 	p.registerPrefix(lexer.TOKEN_FLOAT, p.parseFloatLiteral)
 	p.registerPrefix(lexer.TOKEN_STRING, p.parseStringLiteral)
@@ -122,6 +134,9 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(lexer.TOKEN_MAKE_CHAN, p.parseMakeChan)
 	p.registerPrefix(lexer.TOKEN_FUNCTION, p.parseFunctionLiteral)
 	p.registerPrefix(lexer.TOKEN_SUB, p.parseFunctionLiteral)
+	// `.field` shorthand inside WITH blocks. Outside a WITH this errors;
+	// inside, it resolves to the current WITH receiver's member.
+	p.registerPrefix(lexer.TOKEN_DOT, p.parseWithMember)
 
 	p.infixParseFns = make(map[lexer.TokenType]infixParseFn)
 	p.registerInfix(lexer.TOKEN_PLUS, p.parseInfixExpression)
@@ -265,6 +280,29 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseImportStatement()
 	case lexer.TOKEN_DIM:
 		return p.parseDimStatement()
+	case lexer.TOKEN_STATIC:
+		stmt := p.parseDimStatement()
+		if stmt != nil {
+			stmt.IsStatic = true
+		}
+		return stmt
+	case lexer.TOKEN_SHARED:
+		return p.parseSharedStatement()
+	case lexer.TOKEN_OPTION:
+		return p.parseOptionStatement()
+	case lexer.TOKEN_DECLARE:
+		return p.parseDeclareStatement()
+	case lexer.TOKEN_CALL:
+		return p.parseCallStatement()
+	case lexer.TOKEN_WITH:
+		return p.parseWithStatement()
+	case lexer.TOKEN_ONERR:
+		return p.parseOnErrStatement()
+	case lexer.TOKEN_DOT:
+		// `.field = value` or `.field()` at statement-start (inside WITH).
+		return p.parseAssignmentOrExpression()
+	case lexer.TOKEN_REDIM:
+		return p.parseReDimStatement()
 	case lexer.TOKEN_LET:
 		return p.parseLetStatement()
 	case lexer.TOKEN_CONST:
@@ -284,7 +322,18 @@ func (p *Parser) parseStatement() Statement {
 	case lexer.TOKEN_SELECT:
 		return p.parseSelectStatement()
 	case lexer.TOKEN_TYPE:
-		return p.parseTypeStatement()
+		// Type declarations are `TYPE Name ...`. If the next token is not a
+		// name (e.g. `TYPE = 5`, `TYPE.Method()`), treat TYPE as an identifier
+		// referring to a user variable named `TYPE`.
+		if p.isIdentLike(p.peekToken.Type) {
+			return p.parseTypeStatement()
+		}
+		return p.parseAssignmentOrExpression()
+	case lexer.TOKEN_STEP, lexer.TOKEN_BYTES, lexer.TOKEN_STRING_TYPE:
+		// These reserved words can stand in as identifiers at statement start
+		// (assignments, expressions). Their keyword meaning is consumed
+		// contextually inside FOR / type specs.
+		return p.parseAssignmentOrExpression()
 	case lexer.TOKEN_SUB:
 		return p.parseSubStatement()
 	case lexer.TOKEN_FUNCTION:
@@ -304,6 +353,11 @@ func (p *Parser) parseStatement() Statement {
 	case lexer.TOKEN_RECEIVE:
 		return p.parseReceiveStatement()
 	case lexer.TOKEN_IDENT:
+		// LINE INPUT (two-keyword statement; LINE is not a reserved word
+		// so it lexes as IDENT).
+		if strings.EqualFold(p.curToken.Literal, "LINE") && p.peekTokenIs(lexer.TOKEN_INPUT) {
+			return p.parseLineInputStatement()
+		}
 		// Check if it's a label (identifier followed by colon)
 		if p.peekTokenIs(lexer.TOKEN_COLON) {
 			return p.parseLabelStatement()
@@ -353,7 +407,7 @@ func (p *Parser) parseImportStatement() *ImportStatement {
 func (p *Parser) parseDimStatement() *DimStatement {
 	stmt := &DimStatement{Token: p.curToken}
 
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 
@@ -386,10 +440,226 @@ func (p *Parser) parseDimStatement() *DimStatement {
 	return stmt
 }
 
+// parseDeclareStatement consumes a QB-style forward declaration:
+//
+//	DECLARE SUB Name(params)
+//	DECLARE FUNCTION Name(params) AS T
+//
+// DBasic auto-resolves forward references, so we accept the syntax and
+// emit nothing. Returns an empty BlockStatement so the parser's statement
+// loop continues without producing anything in the output AST.
+// parseLineInputStatement parses `LINE INPUT [prompt$,] var$`. Curtoken
+// is the IDENT "LINE"; we consume INPUT and the optional prompt + var.
+func (p *Parser) parseLineInputStatement() *LineInputStatement {
+	stmt := &LineInputStatement{Token: p.curToken}
+	p.nextToken() // consume INPUT
+	p.nextToken() // step onto first token after INPUT
+	first := p.parseExpression(LOWEST)
+	if p.peekTokenIs(lexer.TOKEN_COMMA) || p.peekTokenIs(lexer.TOKEN_SEMICOLON) {
+		// `LINE INPUT prompt, var` — first was the prompt expression.
+		p.nextToken() // consume separator
+		p.nextToken() // step onto var
+		ident, ok := p.parseIdentifier().(*Identifier)
+		if !ok {
+			msg := p.formatError(p.curToken.Line, p.curToken.Column,
+				"LINE INPUT requires a variable name after the prompt",
+				"use LINE INPUT \"Prompt: \", varName")
+			p.errors = append(p.errors, msg)
+			return nil
+		}
+		stmt.Prompt = first
+		stmt.Var = ident
+		return stmt
+	}
+	// No prompt; the parsed expression must be the variable identifier.
+	ident, ok := first.(*Identifier)
+	if !ok {
+		msg := p.formatError(p.curToken.Line, p.curToken.Column,
+			"LINE INPUT requires a variable name",
+			"use LINE INPUT varName or LINE INPUT \"Prompt: \", varName")
+		p.errors = append(p.errors, msg)
+		return nil
+	}
+	stmt.Var = ident
+	return stmt
+}
+
+// parseWithStatement parses `WITH expr` ... `END WITH`. The receiver
+// expression itself is pushed onto the parser's WITH stack so any
+// `.field` shorthand in the body parses as `receiver.field` directly —
+// QB-style. This way assignments through `.field` reach the original
+// receiver instead of a copy. The receiver is re-evaluated per access,
+// so users wanting to bind a function-call result should assign it to
+// a variable first.
+func (p *Parser) parseWithStatement() *WithStatement {
+	stmt := &WithStatement{Token: p.curToken}
+	p.nextToken()
+	stmt.Receiver = p.parseExpression(LOWEST)
+	stmt.Synthetic = nil
+
+	// Push the original receiver expression onto the stack.
+	p.withStack = append(p.withStack, stmt.Receiver)
+
+	p.nextToken()
+	p.skipNewlines()
+	stmt.Body = p.parseBlockStatementUntilEnd("WITH")
+
+	p.withStack = p.withStack[:len(p.withStack)-1]
+	return stmt
+}
+
+// parseWithMember handles the `.field` prefix syntax used inside WITH
+// blocks. We resolve it against the top of the parser's WITH stack and
+// produce a plain MemberExpression so codegen treats it like any other
+// member access.
+func (p *Parser) parseWithMember() Expression {
+	if len(p.withStack) == 0 {
+		msg := p.formatError(p.curToken.Line, p.curToken.Column,
+			"`.field` shorthand only valid inside a WITH block",
+			"wrap your member access with WITH obj ... END WITH")
+		p.errors = append(p.errors, msg)
+		return nil
+	}
+	if !p.isIdentLike(p.peekToken.Type) && !p.isKeywordToken(p.peekToken.Type) {
+		msg := p.formatError(p.curToken.Line, p.curToken.Column,
+			"expected member name after `.`",
+			"use .fieldName or .MethodName")
+		p.errors = append(p.errors, msg)
+		return nil
+	}
+	p.nextToken()
+	member := &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	receiver := p.withStack[len(p.withStack)-1]
+	return &MemberExpression{Token: p.curToken, Object: receiver, Member: member}
+}
+
+func (p *Parser) parseDeclareStatement() Statement {
+	if !p.peekTokenIs(lexer.TOKEN_SUB) && !p.peekTokenIs(lexer.TOKEN_FUNCTION) {
+		msg := p.formatError(p.curToken.Line, p.curToken.Column,
+			"DECLARE must be followed by SUB or FUNCTION",
+			"use DECLARE SUB Name(params) or DECLARE FUNCTION Name(params) AS T")
+		p.errors = append(p.errors, msg)
+		return nil
+	}
+	p.nextToken() // SUB or FUNCTION
+	if !p.expectPeekIdentLike() {
+		return nil
+	}
+	if !p.expectPeek(lexer.TOKEN_LPAREN) {
+		return nil
+	}
+	_ = p.parseParameters()
+	if !p.expectPeek(lexer.TOKEN_RPAREN) {
+		return nil
+	}
+	if p.peekTokenIs(lexer.TOKEN_AS) {
+		p.nextToken()
+		p.nextToken()
+		_ = p.parseTypeSpec()
+	}
+	return &BlockStatement{Token: p.curToken, Statements: nil}
+}
+
+// parseCallStatement parses `CALL Name(args)` as an ordinary call expression.
+// CALL is optional in QB; we strip it and parse what follows as a normal call.
+func (p *Parser) parseCallStatement() Statement {
+	p.nextToken() // step past CALL onto the identifier
+	expr := p.parseExpression(LOWEST)
+	return &ExpressionStatement{Token: p.curToken, Expression: expr}
+}
+
+func (p *Parser) parseOptionStatement() *OptionStatement {
+	stmt := &OptionStatement{Token: p.curToken}
+	p.nextToken()
+	switch p.curToken.Type {
+	case lexer.TOKEN_EXPLICIT:
+		stmt.Kind = "EXPLICIT"
+	case lexer.TOKEN_BASE:
+		stmt.Kind = "BASE"
+		if !p.expectPeek(lexer.TOKEN_INT) {
+			return nil
+		}
+		v, err := strconv.Atoi(p.curToken.Literal)
+		if err != nil || (v != 0 && v != 1) {
+			msg := p.formatError(p.curToken.Line, p.curToken.Column,
+				"OPTION BASE expects 0 or 1",
+				"use OPTION BASE 0 or OPTION BASE 1")
+			p.errors = append(p.errors, msg)
+			return nil
+		}
+		stmt.Value = v
+	default:
+		msg := p.formatError(p.curToken.Line, p.curToken.Column,
+			"unknown OPTION pragma: "+p.curToken.Literal,
+			"supported: OPTION EXPLICIT, OPTION BASE 0|1")
+		p.errors = append(p.errors, msg)
+		return nil
+	}
+	return stmt
+}
+
+func (p *Parser) parseSharedStatement() *SharedStatement {
+	stmt := &SharedStatement{Token: p.curToken}
+	if !p.expectPeekIdentLike() {
+		return nil
+	}
+	stmt.Names = append(stmt.Names, &Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	// Optional `AS T` per name (QB syntax) — accept and discard.
+	if p.peekTokenIs(lexer.TOKEN_AS) {
+		p.nextToken()
+		p.nextToken()
+		_ = p.parseTypeSpec()
+	}
+	for p.peekTokenIs(lexer.TOKEN_COMMA) {
+		p.nextToken()
+		if !p.expectPeekIdentLike() {
+			return nil
+		}
+		stmt.Names = append(stmt.Names, &Identifier{Token: p.curToken, Value: p.curToken.Literal})
+		if p.peekTokenIs(lexer.TOKEN_AS) {
+			p.nextToken()
+			p.nextToken()
+			_ = p.parseTypeSpec()
+		}
+	}
+	return stmt
+}
+
+func (p *Parser) parseReDimStatement() *ReDimStatement {
+	stmt := &ReDimStatement{Token: p.curToken}
+
+	if p.peekTokenIs(lexer.TOKEN_PRESERVE) {
+		p.nextToken()
+		stmt.Preserve = true
+	}
+
+	if !p.expectPeekIdentLike() {
+		return nil
+	}
+	stmt.Name = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	if !p.expectPeek(lexer.TOKEN_LPAREN) {
+		return nil
+	}
+	p.nextToken()
+	stmt.ArraySize = p.parseExpression(LOWEST)
+	if !p.expectPeek(lexer.TOKEN_RPAREN) {
+		return nil
+	}
+
+	if !p.expectPeek(lexer.TOKEN_AS) {
+		return nil
+	}
+	p.nextToken()
+	stmt.Type = p.parseTypeSpec()
+
+	return stmt
+}
+
 func (p *Parser) parseLetStatement() *LetStatement {
 	stmt := &LetStatement{Token: p.curToken}
 
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 
@@ -408,7 +678,7 @@ func (p *Parser) parseLetStatement() *LetStatement {
 func (p *Parser) parseConstStatement() *ConstStatement {
 	stmt := &ConstStatement{Token: p.curToken}
 
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 
@@ -562,16 +832,28 @@ func (p *Parser) parseIfStatement() *IfStatement {
 		return nil
 	}
 
-	// Check for single-line IF: IF cond THEN statement
+	// Check for single-line IF: IF cond THEN statement [ELSE statement]
 	// If peek is not NEWLINE and not a block-starting keyword, it's a single-line IF
 	if !p.peekTokenIs(lexer.TOKEN_NEWLINE) && !p.peekTokenIs(lexer.TOKEN_EOF) {
 		p.nextToken()
-		// Parse single statement
+		// Parse single THEN-statement
 		singleStmt := p.parseStatement()
 		if singleStmt != nil {
 			stmt.Consequence = &BlockStatement{
 				Token:      p.curToken,
 				Statements: []Statement{singleStmt},
+			}
+		}
+		// Optional ELSE clause on the same line: IF .. THEN x ELSE y
+		if p.peekTokenIs(lexer.TOKEN_ELSE) {
+			p.nextToken() // consume ELSE
+			p.nextToken() // step onto the alternative statement's first token
+			altStmt := p.parseStatement()
+			if altStmt != nil {
+				stmt.Alternative = &BlockStatement{
+					Token:      p.curToken,
+					Statements: []Statement{altStmt},
+				}
 			}
 		}
 		return stmt
@@ -605,7 +887,7 @@ func (p *Parser) parseIfStatement() *IfStatement {
 func (p *Parser) parseForStatement() *ForStatement {
 	stmt := &ForStatement{Token: p.curToken}
 
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 
@@ -635,8 +917,8 @@ func (p *Parser) parseForStatement() *ForStatement {
 	p.nextToken()
 	stmt.Body = p.parseBlockStatement(lexer.TOKEN_NEXT)
 
-	// Handle optional loop variable after NEXT (e.g., NEXT i)
-	if p.peekTokenIs(lexer.TOKEN_IDENT) {
+	// Handle optional loop variable after NEXT (e.g., NEXT i, NEXT STEP)
+	if p.isIdentLike(p.peekToken.Type) {
 		p.nextToken() // consume the loop variable
 	}
 
@@ -741,7 +1023,7 @@ func (p *Parser) parseSelectStatement() *SelectStatement {
 func (p *Parser) parseTypeStatement() *TypeStatement {
 	stmt := &TypeStatement{Token: p.curToken}
 
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 
@@ -795,7 +1077,7 @@ func (p *Parser) parseTypeStatement() *TypeStatement {
 		if p.curTokenIs(lexer.TOKEN_DIM) {
 			field := &FieldDeclaration{Token: p.curToken}
 
-			if !p.expectPeek(lexer.TOKEN_IDENT) {
+			if !p.expectPeekIdentLike() {
 				return nil
 			}
 
@@ -827,7 +1109,7 @@ func (p *Parser) parseSubStatement() Statement {
 
 	stmt := &SubStatement{Token: subToken}
 
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 
@@ -858,7 +1140,7 @@ func (p *Parser) parseSubMethodStatement(subToken lexer.Token) *MethodStatement 
 	}
 
 	// Parse receiver name
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 	stmt.ReceiverName = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -878,7 +1160,7 @@ func (p *Parser) parseSubMethodStatement(subToken lexer.Token) *MethodStatement 
 	}
 
 	// Parse method name
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 	stmt.Name = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -913,7 +1195,7 @@ func (p *Parser) parseFunctionStatement() Statement {
 
 	stmt := &FunctionStatement{Token: funcToken}
 
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 
@@ -964,7 +1246,7 @@ func (p *Parser) parseMethodStatement(funcToken lexer.Token) *MethodStatement {
 	}
 
 	// Parse receiver name
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 	stmt.ReceiverName = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -984,7 +1266,7 @@ func (p *Parser) parseMethodStatement(funcToken lexer.Token) *MethodStatement {
 	}
 
 	// Parse method name
-	if !p.expectPeek(lexer.TOKEN_IDENT) {
+	if !p.expectPeekIdentLike() {
 		return nil
 	}
 	stmt.Name = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -1048,7 +1330,7 @@ func (p *Parser) parseParameters() []*Parameter {
 			p.nextToken()
 		}
 
-		if !p.curTokenIs(lexer.TOKEN_IDENT) {
+		if !p.isIdentLike(p.curToken.Type) {
 			msg := p.formatError(p.curToken.Line, p.curToken.Column,
 				"expected parameter name",
 				"parameters should be: name AS TYPE")
@@ -1142,6 +1424,58 @@ func (p *Parser) parseSpawnStatement() *SpawnStatement {
 	}
 
 	stmt.Call = call
+	return stmt
+}
+
+// parseOnErrStatement parses one of:
+//
+//	ONERR GOTO LabelName    — install goto-label handler
+//	ONERR GOFUNC FuncName   — install handler-function (called with err; sub returns)
+//	ONERR GOTO 0            — clear active handler
+//
+// Codegen treats this purely as a per-function lexical directive. It
+// does not insert any defer/recover machinery; instead, it emits
+// `if err != nil { ... }` automatically after each multi-return
+// assignment whose final value is of type ERROR.
+func (p *Parser) parseOnErrStatement() *OnErrStatement {
+	stmt := &OnErrStatement{Token: p.curToken}
+	p.nextToken()
+
+	switch {
+	case p.curTokenIs(lexer.TOKEN_GOTO):
+		// ONERR GOTO label  OR  ONERR GOTO 0
+		p.nextToken()
+		if p.curTokenIs(lexer.TOKEN_INT) && p.curToken.Literal == "0" {
+			stmt.Action = OnErrClear
+			return stmt
+		}
+		if !p.curTokenIs(lexer.TOKEN_IDENT) {
+			p.errors = append(p.errors, p.formatError(p.curToken.Line, p.curToken.Column,
+				"ONERR GOTO requires a label name (or 0 to clear)",
+				"use: ONERR GOTO MyLabel  or  ONERR GOTO 0"))
+			return nil
+		}
+		stmt.Action = OnErrGoto
+		stmt.Target = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	case p.curTokenIs(lexer.TOKEN_GOFUNC):
+		// ONERR GOFUNC funcName
+		p.nextToken()
+		if !p.curTokenIs(lexer.TOKEN_IDENT) {
+			p.errors = append(p.errors, p.formatError(p.curToken.Line, p.curToken.Column,
+				"ONERR GOFUNC requires a handler function name",
+				"use: ONERR GOFUNC MyHandler"))
+			return nil
+		}
+		stmt.Action = OnErrGoFunc
+		stmt.Target = &Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	default:
+		p.errors = append(p.errors, p.formatError(p.curToken.Line, p.curToken.Column,
+			"ONERR must be followed by GOTO or GOFUNC",
+			"use: ONERR GOTO Label  |  ONERR GOFUNC Handler  |  ONERR GOTO 0"))
+		return nil
+	}
 	return stmt
 }
 
@@ -1335,9 +1669,11 @@ func (p *Parser) parseBlockStatementUntilEnd(blockType string) *BlockStatement {
 
 	for !p.curTokenIs(lexer.TOKEN_EOF) {
 		if p.curTokenIs(lexer.TOKEN_END) {
-			// Check if it's END SUB or END FUNCTION
-			if p.peekTokenIs(lexer.TOKEN_SUB) || p.peekTokenIs(lexer.TOKEN_FUNCTION) {
-				p.nextToken() // consume SUB or FUNCTION
+			// Check if it's END SUB / END FUNCTION / END WITH
+			if p.peekTokenIs(lexer.TOKEN_SUB) ||
+				p.peekTokenIs(lexer.TOKEN_FUNCTION) ||
+				p.peekTokenIs(lexer.TOKEN_WITH) {
+				p.nextToken() // consume SUB / FUNCTION / WITH
 				break
 			}
 		}
@@ -1746,6 +2082,35 @@ func (p *Parser) parseInfixExpression(left Expression) Expression {
 
 func (p *Parser) parseCallExpression(function Expression) Expression {
 	exp := &CallExpression{Token: p.curToken, Function: function}
+
+	// Explicit generic instantiation: f(OF T1, T2, ...)(args...)
+	// We're sitting on `(`. If the next token is OF, this paren group holds
+	// type arguments; the call's value arguments live in a second `(...)`.
+	if p.peekTokenIs(lexer.TOKEN_OF) {
+		p.nextToken() // consume `(`-position; curToken is now OF after move
+		// (we're actually still on `(`; advance past it to OF then to first type)
+		p.nextToken() // move to first type token
+		for !p.curTokenIs(lexer.TOKEN_RPAREN) && !p.curTokenIs(lexer.TOKEN_EOF) {
+			ts := p.parseTypeSpec()
+			if ts != nil {
+				exp.TypeArgs = append(exp.TypeArgs, ts)
+			}
+			if p.peekTokenIs(lexer.TOKEN_COMMA) {
+				p.nextToken() // consume comma
+				p.nextToken() // move to next type
+				continue
+			}
+			break
+		}
+		if !p.expectPeek(lexer.TOKEN_RPAREN) {
+			return nil
+		}
+		// Now expect the value-args `(`
+		if !p.expectPeek(lexer.TOKEN_LPAREN) {
+			return nil
+		}
+	}
+
 	exp.Arguments = p.parseExpressionList(lexer.TOKEN_RPAREN)
 	return exp
 }
@@ -1848,6 +2213,30 @@ func (p *Parser) parseTypeAssertion(value Expression, dotToken lexer.Token) Expr
 	}
 
 	return exp
+}
+
+// isIdentLike returns true for tokens that can stand in for an identifier in
+// declaration positions: TOKEN_IDENT itself plus the reserved words we
+// contextually allow as variable / parameter / field / type / sub names.
+func (p *Parser) isIdentLike(t lexer.TokenType) bool {
+	switch t {
+	case lexer.TOKEN_IDENT,
+		lexer.TOKEN_STEP, lexer.TOKEN_BYTES,
+		lexer.TOKEN_STRING_TYPE, lexer.TOKEN_TYPE:
+		return true
+	}
+	return false
+}
+
+// expectPeekIdentLike is like expectPeek(TOKEN_IDENT) but also accepts
+// reserved words that we contextually allow as names.
+func (p *Parser) expectPeekIdentLike() bool {
+	if p.isIdentLike(p.peekToken.Type) {
+		p.nextToken()
+		return true
+	}
+	p.peekError(lexer.TOKEN_IDENT)
+	return false
 }
 
 // isKeywordToken returns true if the token type is a keyword that can be used as a member name

@@ -442,6 +442,11 @@ func (a *Analyzer) analyzeStatement(stmt parser.Statement) {
 		// Already handled in first pass
 	case *parser.DimStatement:
 		a.analyzeDimStatement(s)
+	case *parser.ReDimStatement:
+		// REDIM resizes an existing slice; verify the name resolves.
+		if a.symbols.Resolve(s.Name.Value) == nil {
+			a.error(s.Token.Line, "REDIM target %s was not declared (use DIM %s() AS T first)", s.Name.Value, s.Name.Value)
+		}
 	case *parser.LetStatement:
 		a.analyzeLetStatement(s)
 	case *parser.ConstStatement:
@@ -480,6 +485,8 @@ func (a *Analyzer) analyzeStatement(stmt parser.Statement) {
 		// Label resolution is done later
 	case *parser.LabelStatement:
 		a.analyzeLabelStatement(s)
+	case *parser.OnErrStatement:
+		a.analyzeOnErrStatement(s)
 	case *parser.SpawnStatement:
 		a.analyzeSpawnStatement(s)
 	case *parser.DeferStatement:
@@ -605,8 +612,15 @@ func (a *Analyzer) analyzeMultiAssignmentStatement(stmt *parser.MultiAssignmentS
 		for _, arg := range call.Arguments {
 			a.analyzeExpression(arg)
 		}
+		var lastType *Type
 		for _, target := range stmt.Targets {
-			a.analyzeExpression(target)
+			lastType = a.analyzeExpression(target)
+		}
+		// External calls have no signature info; fall back to the
+		// last target's pre-declared type. By Go convention an `err`
+		// variable will already be `AS ERROR`.
+		if lastType != nil && lastType.Kind == TypeError {
+			stmt.LastTargetIsError = true
 		}
 		return
 	}
@@ -627,6 +641,12 @@ func (a *Analyzer) analyzeMultiAssignmentStatement(stmt *parser.MultiAssignmentS
 		if !targetType.IsCompatibleWith(funcSym.Type.ReturnTypes[i]) {
 			a.error(stmt.Token.Line, "type mismatch in multiple assignment at position %d", i+1)
 		}
+	}
+
+	// Mark for ONERR codegen: if the last return is ERROR, codegen can
+	// emit an automatic `if errVar != nil { ... }` after this assignment.
+	if n := len(funcSym.Type.ReturnTypes); n > 0 && funcSym.Type.ReturnTypes[n-1].Kind == TypeError {
+		stmt.LastTargetIsError = true
 	}
 }
 
@@ -862,6 +882,16 @@ func (a *Analyzer) analyzeLabelStatement(stmt *parser.LabelStatement) {
 	}
 	if err := a.symbols.CurrentScope.DefineLabel(stmt.Name, sym); err != nil {
 		a.error(stmt.Token.Line, err.Error())
+	}
+}
+
+// analyzeOnErrStatement validates ONERR forms. The label / function name
+// is resolved lazily at codegen time (labels may appear later in the
+// function; handler functions may be defined elsewhere in the file), so
+// the only check here is that the target identifier shape is sane.
+func (a *Analyzer) analyzeOnErrStatement(stmt *parser.OnErrStatement) {
+	if stmt.Action != parser.OnErrClear && stmt.Target == nil {
+		a.error(stmt.Token.Line, "ONERR target is missing")
 	}
 }
 

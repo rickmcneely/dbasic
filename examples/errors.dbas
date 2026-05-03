@@ -1,51 +1,105 @@
-' Error Handling Examples in DBasic
-' Demonstrates error tracking with source line numbers
+' ============================================================================
+' ERROR HANDLING EXAMPLES IN DBASIC
+' ============================================================================
+'
+' What this file teaches:
+'   - How errors work in DBasic (they are values, not crashes!)
+'   - How to create errors with NewError() and Errorf()
+'   - How to check if an error occurred (IF err <> NIL)
+'   - How functions return errors alongside normal results
+'   - How to wrap errors to build a "trail of breadcrumbs" showing what went
+'     wrong and where, using WrapError()
+'
+' In DBasic, errors do NOT crash your program automatically. Instead,
+' functions return an ERROR value that you check. If the error is NIL
+' (nothing), everything is fine. If it is NOT NIL, something went wrong
+' and the error contains a message explaining what happened.
+'
+' Think of it like ordering food at a restaurant:
+'   - NIL = your food arrives, everything is great
+'   - ERROR = the waiter comes back and says "sorry, we are out of that"
+'   You get to decide what to do next -- you are not kicked out of the restaurant!
+'
+' Error wrapping is like adding sticky notes to the error as it travels up:
+'   "invalid format" --> "input validation failed: invalid format"
+'       --> "data processing failed: input validation failed: invalid format"
+' Each layer adds context so you can trace exactly what happened.
+'
+' ============================================================================
 
 SUB Main()
     PRINT "=== Error Location Tracking Demo ==="
     PRINT ""
 
-    ' Test basic error with line tracking
+    ' --- Creating a simple error with NewError ---
+    ' NewError() creates an error with a message. DBasic also automatically
+    ' records WHICH LINE created the error, making debugging much easier.
     PRINT "--- NewError with Line Info ---"
     DIM err AS ERROR
+    ' Create an error -- this does NOT crash the program! It just creates
+    ' an error value that we store in the "err" variable.
     err = NewError("something went wrong")
+    ' Check if an error actually occurred by comparing to NIL.
+    ' NIL means "nothing" or "no error". If err is NOT NIL, we have an error.
     IF err <> NIL THEN
+        ' Printf works like PRINT but lets you insert values with %v, %d, %s etc.
+        ' %v means "print the value in its default format"
         Printf("Error: %v\n", err)
     ENDIF
 
-    ' Test formatted error with line tracking
+    ' --- Creating a formatted error with Errorf ---
+    ' Errorf() is like NewError() but lets you build the message with
+    ' placeholders, similar to how Printf works.
     PRINT ""
     PRINT "--- Errorf with Line Info ---"
     DIM filename AS STRING = "config.txt"
     DIM lineNum AS INTEGER = 42
+    ' %s inserts a string, %d inserts a number
+    ' Result: "parse error in config.txt at line 42"
     err = Errorf("parse error in %s at line %d", filename, lineNum)
     IF err <> NIL THEN
         Printf("Error: %v\n", err)
     ENDIF
 
-    ' Test function returning error (shows function name in error)
+    ' --- Functions that return errors ---
+    ' In DBasic, a function can return MULTIPLE values. A common pattern is
+    ' to return the result AND an error. The caller checks the error before
+    ' using the result.
     PRINT ""
     PRINT "--- Function Error with Location ---"
     DIM result AS INTEGER
     DIM divErr AS ERROR
 
+    ' SafeDivide returns TWO values: the result and an error.
+    ' We try to divide 10 by 0, which is impossible -- so we expect an error.
     result, divErr = SafeDivide(10, 0)
     IF divErr <> NIL THEN
+        ' Division failed -- print the error message
         Printf("Error: %v\n", divErr)
     ELSE
+        ' Division succeeded -- safe to use the result
         Printf("Result: %d\n", result)
     ENDIF
 
-    ' Test error wrapping (call chain)
+    ' --- Error wrapping: building a trail of what went wrong ---
+    ' When an error passes through multiple functions, each function can
+    ' "wrap" it with additional context using WrapError(). This creates a
+    ' chain of messages showing the full path of the failure.
     PRINT ""
     PRINT "--- Error Wrapping (Call Chain) ---"
     DIM loadErr AS ERROR
+    ' LoadConfig calls ReadConfigFile, which fails.
+    ' LoadConfig wraps that error with its own message.
+    ' The final error message shows BOTH messages, like a trail of breadcrumbs.
     loadErr = LoadConfig("missing.cfg")
     IF loadErr <> NIL THEN
         Printf("Error:\n%v\n", loadErr)
     ENDIF
 
-    ' Test nested function calls with error propagation
+    ' --- Nested error propagation: errors bubbling up through many layers ---
+    ' Here, an error starts deep inside CheckFormat(), gets wrapped by
+    ' ValidateInput(), and then wrapped again by ProcessData(). Each layer
+    ' adds its own description so you can trace the full chain of events.
     PRINT ""
     PRINT "--- Nested Error Propagation ---"
     DIM processErr AS ERROR
@@ -58,34 +112,79 @@ SUB Main()
     PRINT "=== Demo Complete ==="
 END SUB
 
-' Function that returns an error with location info
+' ============================================================================
+' SafeDivide: Divides two numbers, but returns an error if you try to
+' divide by zero (which is mathematically impossible).
+'
+' This demonstrates the "return result AND error" pattern:
+'   - If everything is fine: return the answer and NIL (no error)
+'   - If something is wrong: return 0 and an error explaining why
+'
+' The return type (INTEGER, ERROR) means this function returns TWO values.
+' ============================================================================
 FUNCTION SafeDivide(a AS INTEGER, b AS INTEGER) AS (INTEGER, ERROR)
+    ' Check for the error condition FIRST, before doing the math
     IF b = 0 THEN
+        ' Cannot divide by zero! Return 0 as a dummy result and an error.
         RETURN 0, NewError("division by zero")
     ENDIF
+    ' Safe to divide -- return the result and NIL (meaning "no error")
     RETURN a / b, NIL
 END FUNCTION
 
-' Function that wraps an error from another function
+' ============================================================================
+' LoadConfig: Tries to load a configuration file.
+'
+' This demonstrates ERROR WRAPPING. When ReadConfigFile fails, LoadConfig
+' does not just pass the raw error up -- it wraps it with WrapError() to
+' add context about WHAT it was trying to do when the error happened.
+'
+' Without wrapping: "file not found: missing.cfg"
+' With wrapping:    "failed to load config: file not found: missing.cfg"
+' ============================================================================
 FUNCTION LoadConfig(path AS STRING) AS ERROR
     DIM err AS ERROR
+    ' Try to read the config file
     err = ReadConfigFile(path)
+    ' If reading failed, wrap the error with our own context message
     IF err <> NIL THEN
         RETURN WrapError(err, "failed to load config")
     ENDIF
+    ' If we get here, everything worked -- return NIL (no error)
     RETURN NIL
 END FUNCTION
 
-' Simulates reading a config file
+' ============================================================================
+' ReadConfigFile: Simulates trying to read a file (always fails here).
+'
+' In a real program, this would try to open and read a file. For this demo,
+' it always returns an error to show how error handling works.
+' ============================================================================
 FUNCTION ReadConfigFile(path AS STRING) AS ERROR
+    ' The & operator joins (concatenates) two strings together
     RETURN NewError("file not found: " & path)
 END FUNCTION
 
-' Demonstrates multi-level error wrapping
+' ============================================================================
+' ProcessData, ValidateInput, CheckFormat: A three-layer error chain.
+'
+' This shows how errors "bubble up" through multiple function calls:
+'
+'   ProcessData() calls ValidateInput() calls CheckFormat()
+'
+' When CheckFormat() fails:
+'   1. CheckFormat returns: "invalid format: expected JSON"
+'   2. ValidateInput wraps it: "input validation failed: invalid format: expected JSON"
+'   3. ProcessData wraps it: "data processing failed: input validation failed: ..."
+'
+' Each wrapper adds one more layer of context, making it easy to understand
+' exactly what the program was trying to do when things went wrong.
+' ============================================================================
 FUNCTION ProcessData() AS ERROR
     DIM err AS ERROR
     err = ValidateInput()
     IF err <> NIL THEN
+        ' Add context: we were trying to process data when this error happened
         RETURN WrapError(err, "data processing failed")
     ENDIF
     RETURN NIL
@@ -95,11 +194,14 @@ FUNCTION ValidateInput() AS ERROR
     DIM err AS ERROR
     err = CheckFormat()
     IF err <> NIL THEN
+        ' Add context: we were validating input when this error happened
         RETURN WrapError(err, "input validation failed")
     ENDIF
     RETURN NIL
 END FUNCTION
 
+' CheckFormat: The deepest function -- this is where the original error starts.
 FUNCTION CheckFormat() AS ERROR
+    ' This is the root cause of the error chain
     RETURN NewError("invalid format: expected JSON")
 END FUNCTION

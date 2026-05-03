@@ -2,9 +2,9 @@
 ' A modern clone of VBDos Pro for terminal environments
 ' Written in DBasic for DBasic development
 
-IMPORT "github.com/charmbracelet/bubbletea" AS tea
-IMPORT "github.com/charmbracelet/lipgloss" AS lipgloss
-IMPORT "github.com/charmbracelet/bubbles/textarea" AS textarea
+IMPORT "charm.land/bubbletea/v2" AS tea
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "charm.land/bubbles/v2/textarea" AS textarea
 IMPORT "fmt" AS fmt
 IMPORT "os" AS os
 IMPORT "path/filepath" AS filepath
@@ -59,26 +59,75 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     ENDIF
 
-    ' Handle mouse messages
-    DIM mouseMsg AS tea.MouseMsg
-    DIM mouseOk AS BOOLEAN
-    mouseMsg, mouseOk = msg.(tea.MouseMsg)
-    IF mouseOk THEN
-        RETURN HandleMouseInput(m, mouseMsg)
+    ' Handle mouse messages (v2: split into click, release, motion, wheel)
+    DIM clickMsg AS tea.MouseClickMsg
+    DIM clickOk AS BOOLEAN
+    clickMsg, clickOk = msg.(tea.MouseClickMsg)
+    IF clickOk THEN
+        RETURN HandleMouseClick(m, clickMsg)
     ENDIF
 
-    ' Handle key messages
-    DIM keyMsg AS tea.KeyMsg
+    DIM releaseMsg AS tea.MouseReleaseMsg
+    DIM releaseOk AS BOOLEAN
+    releaseMsg, releaseOk = msg.(tea.MouseReleaseMsg)
+    IF releaseOk THEN
+        RETURN HandleMouseRelease(m, releaseMsg)
+    ENDIF
+
+    DIM motionMsg AS tea.MouseMotionMsg
+    DIM motionOk AS BOOLEAN
+    motionMsg, motionOk = msg.(tea.MouseMotionMsg)
+    IF motionOk THEN
+        RETURN HandleMouseMotion(m, motionMsg)
+    ENDIF
+
+    DIM wheelMsg AS tea.MouseWheelMsg
+    DIM wheelOk AS BOOLEAN
+    wheelMsg, wheelOk = msg.(tea.MouseWheelMsg)
+    IF wheelOk THEN
+        RETURN HandleMouseWheel(m, wheelMsg)
+    ENDIF
+
+    ' Handle focus/blur messages (v2 terminal focus tracking)
+    DIM focusMsg AS tea.FocusMsg
+    DIM focusOk AS BOOLEAN
+    focusMsg, focusOk = msg.(tea.FocusMsg)
+    IF focusOk THEN
+        m.TerminalFocused = TRUE
+        DIM focusStr AS STRING = fmt.Sprintf("%v", focusMsg)
+        m.Message = "Focused " & focusStr
+        RETURN m, NIL
+    ENDIF
+
+    DIM blurMsg AS tea.BlurMsg
+    DIM blurOk AS BOOLEAN
+    blurMsg, blurOk = msg.(tea.BlurMsg)
+    IF blurOk THEN
+        m.TerminalFocused = FALSE
+        DIM blurStr AS STRING = fmt.Sprintf("%v", blurMsg)
+        m.Message = "Blurred " & blurStr
+        RETURN m, NIL
+    ENDIF
+
+    ' Handle build spinner animation tick
+    IF m.BuildInProgress THEN
+        DIM spinnerFrames AS INTEGER = 4
+        m.BuildSpinnerFrame = (m.BuildSpinnerFrame + 1) MOD spinnerFrames
+    ENDIF
+
+    ' Handle key messages (v2: KeyPressMsg replaces KeyMsg)
+    DIM keyMsg AS tea.KeyPressMsg
     DIM ok AS BOOLEAN
-    keyMsg, ok = msg.(tea.KeyMsg)
+    keyMsg, ok = msg.(tea.KeyPressMsg)
 
     IF NOT ok THEN
         ' Unknown message type - check if returning from ExecProcess
         IF m.WasRunning THEN
             m.WasRunning = FALSE
             m.Message = "Returned from run"
-            ' Re-enable mouse tracking after returning from external process
-            RETURN m, tea.EnableMouseCellMotion
+            m.BuildInProgress = FALSE
+            ' Mouse tracking is now declarative in View(), no command needed
+            RETURN m, NIL
         ENDIF
         RETURN m, NIL
     ENDIF
@@ -155,6 +204,26 @@ FUNCTION (m AS VDBTermModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.ThemeEditorColIdx = 0
         m.ThemeEditingTheme = m.Project.Theme
         RETURN m, NIL
+    ELSEIF key = "ctrl+f" THEN
+        ' Open Find bar
+        IF m.ViewMode = VIEW_CODE THEN
+            m.FindActive = TRUE
+            m.DialogMode = DIALOG_FIND
+            m.FindMatchIdx = 0
+            DIM findMatches AS [][]INTEGER
+            m.FindMatches = findMatches
+            RETURN m, NIL
+        ENDIF
+    ELSEIF key = "ctrl+h" THEN
+        ' Open Find/Replace bar
+        IF m.ViewMode = VIEW_CODE THEN
+            m.FindActive = TRUE
+            m.DialogMode = DIALOG_REPLACE
+            m.FindMatchIdx = 0
+            DIM replaceMatches AS [][]INTEGER
+            m.FindMatches = replaceMatches
+            RETURN m, NIL
+        ENDIF
     ELSEIF key = "f5" THEN
         RETURN DoRun(m)
     ELSEIF key = "f7" THEN
@@ -249,6 +318,8 @@ SUB Main()
     model.AutoIndent = TRUE
     model.SyntaxHighlight = TRUE
     model.Message = "Welcome to VDBTerm! F10=menu, F1=help. Mouse enabled."
+    model.TerminalFocused = TRUE
+    model.BuildInProgress = FALSE
 
     ' Left panel layout (heights are adjustable by dragging captions)
     model.ProjectHeight = 8
@@ -302,5 +373,5 @@ SUB Main()
         ENDIF
     ENDIF
 
-    tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+    tea.NewProgram(model).Run()
 END SUB

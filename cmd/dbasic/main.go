@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/zditech/dbasic/pkg/analyzer"
 	"github.com/zditech/dbasic/pkg/codegen"
+	"github.com/zditech/dbasic/pkg/formatter"
 	"github.com/zditech/dbasic/pkg/lexer"
 	"github.com/zditech/dbasic/pkg/parser"
 	"github.com/zditech/dbasic/pkg/preprocessor"
@@ -26,6 +29,8 @@ var (
 	outputFile  string
 	targetSpec  string
 	offlineMode bool
+	fmtWrite    bool
+	fmtList     bool
 )
 
 func main() {
@@ -43,6 +48,8 @@ func main() {
 	flagSet.StringVar(&outputFile, "o", "", "Output file name")
 	flagSet.StringVar(&targetSpec, "target", "", "Cross-compile target as os/arch (e.g. windows/amd64, linux/arm64, darwin/arm64)")
 	flagSet.BoolVar(&offlineMode, "offline", false, "Build using only cached Go modules (sets GOPROXY=off and pins to the latest cached versions; useful when proxy.golang.org is unreachable)")
+	flagSet.BoolVar(&fmtWrite, "w", false, "Write formatted output back to source file (fmt only)")
+	flagSet.BoolVar(&fmtList, "l", false, "List files whose formatting differs from the formatter's output (fmt only)")
 
 	switch command {
 	case "build":
@@ -76,6 +83,29 @@ func main() {
 			os.Exit(1)
 		}
 		check(os.Args[2])
+	case "fmt", "format":
+		if len(os.Args) < 3 {
+			errorf("no input file specified")
+			fmt.Fprintln(os.Stderr, "Usage: dbasic fmt [-w] [-l] <file.dbas>...")
+			os.Exit(1)
+		}
+		flagSet.Parse(os.Args[3:])
+		formatFiles(append([]string{os.Args[2]}, flagSet.Args()...))
+	case "doc":
+		if len(os.Args) < 3 {
+			errorf("no input file specified")
+			fmt.Fprintln(os.Stderr, "Usage: dbasic doc [-o output.md] <file.dbas>")
+			os.Exit(1)
+		}
+		flagSet.Parse(os.Args[3:])
+		docFile(os.Args[2], outputFile)
+	case "test":
+		path := "."
+		if len(os.Args) >= 3 {
+			path = os.Args[2]
+			flagSet.Parse(os.Args[3:])
+		}
+		testCommand(path)
 	case "version", "-version", "--version":
 		fmt.Printf("DBasic Compiler v%s\n", version)
 	case "help", "-help", "--help", "-h":
@@ -95,6 +125,261 @@ func main() {
 // errorf prints an error message to stderr
 func errorf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)
+}
+
+// goToolFilter strips noise from `go build` / `go mod tidy` stderr so the
+// user sees DBasic-flavored diagnostics. Drops the `# dbasic_program` and
+// `# command-line-arguments` package-header lines and rewrites Go-side path
+// hints when they reference the temp file `main.go` or `dbasic_program`.
+type goToolFilter struct {
+	out io.Writer
+	buf bytes.Buffer
+}
+
+func (f *goToolFilter) Write(p []byte) (int, error) {
+	f.buf.Write(p)
+	for {
+		idx := bytes.IndexByte(f.buf.Bytes(), '\n')
+		if idx < 0 {
+			break
+		}
+		line := f.buf.Next(idx + 1)
+		clean := cleanGoToolLine(string(line))
+		if clean == "" {
+			continue
+		}
+		if _, err := io.WriteString(f.out, clean); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
+}
+
+func (f *goToolFilter) Flush() {
+	if f.buf.Len() == 0 {
+		return
+	}
+	clean := cleanGoToolLine(f.buf.String())
+	if clean != "" {
+		io.WriteString(f.out, clean)
+	}
+	f.buf.Reset()
+}
+
+func cleanGoToolLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "# dbasic_program") ||
+		strings.HasPrefix(trimmed, "# command-line-arguments") {
+		return ""
+	}
+	// Strip the temp `main.go` / `dbasic_program` references that occasionally
+	// surface in dependency errors. Leave file:line references that already
+	// point to .dbas alone (handled by //line directives).
+	if strings.Contains(line, "/dbasic-") && strings.Contains(line, "/main.go") {
+		// Pattern: /tmp/dbasic-XXXX/main.go:LINE: msg → main.go:LINE: msg
+		if i := strings.Index(line, "/main.go"); i >= 0 {
+			j := strings.LastIndex(line[:i], "/")
+			if j >= 0 {
+				line = line[j+1:]
+			}
+		}
+	}
+	line = rewriteGoErrorPhrasing(line)
+	return cleanGoToolMultilineHints(line)
+}
+
+// rewriteGoErrorPhrasing translates common Go compiler diagnostic wordings
+// into BASIC-flavored phrasing so users aren't reading Go-isms in errors
+// that originated from their .dbas source. The transforms are line-based;
+// each rule is tried in order, and the first match wins.
+func rewriteGoErrorPhrasing(line string) string {
+	// Preserve trailing newline so the caller's line buffering still works.
+	suffix := ""
+	if strings.HasSuffix(line, "\n") {
+		suffix = "\n"
+		line = strings.TrimRight(line, "\n")
+	}
+	for _, r := range goErrorRewrites {
+		if m := r.re.FindStringSubmatch(line); m != nil {
+			return r.fn(m) + suffix
+		}
+	}
+	return line + suffix
+}
+
+// simplifyGoTypeDesc reduces Go's wordy in-paren type descriptions to a bare
+// type name when possible. Examples:
+//
+//	"variable of type int"          → "int"
+//	"untyped int constant"          → "int"
+//	"untyped string constant"       → "string"
+//	"constant 5 of type int"        → "int"
+//	"value of type (int, error)"    → "(int, error)"
+//	anything else                   → returned unchanged
+func simplifyGoTypeDesc(desc string) string {
+	if i := strings.Index(desc, " of type "); i >= 0 {
+		return strings.TrimSpace(desc[i+len(" of type "):])
+	}
+	if strings.HasPrefix(desc, "untyped ") && strings.HasSuffix(desc, " constant") {
+		return strings.TrimSuffix(strings.TrimPrefix(desc, "untyped "), " constant")
+	}
+	return desc
+}
+
+var goErrorRewrites = []struct {
+	re *regexp.Regexp
+	fn func([]string) string
+}{
+	// cannot use X (DESC) as T2 value in argument to F
+	// DESC is "variable of type T", "untyped int constant", "constant 5 of type int", etc.
+	{
+		regexp.MustCompile(`^(.*?):\s*cannot use (.+?) \(([^)]+)\) as (\S+?) (?:value )?in argument to (\S+)`),
+		func(m []string) string {
+			callee := strings.TrimRight(m[5], ":,;")
+			return fmt.Sprintf("%s: type mismatch: %s is %s but %s expects %s",
+				m[1], m[2], simplifyGoTypeDesc(m[3]), callee, m[4])
+		},
+	},
+	// cannot use X (DESC) as T2 value in <context>
+	{
+		regexp.MustCompile(`^(.*?):\s*cannot use (.+?) \(([^)]+)\) as (\S+?) (?:value )?in (\S+)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: type mismatch: cannot use %s (%s) as %s",
+				m[1], m[2], simplifyGoTypeDesc(m[3]), m[4])
+		},
+	},
+	// multiple-value F(...) (value of type (T1, T2)) in single-value context
+	{
+		regexp.MustCompile(`^(.*?):\s*multiple-value (.+?) \([^)]*type \(([^)]+)\)\) in single-value context`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: %s returns multiple values (%s); assign all of them or discard with _", m[1], m[2], m[3])
+		},
+	},
+	// undefined: X
+	{
+		regexp.MustCompile(`^(.*?):\s*undefined: (.+)$`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: %s is not defined", m[1], m[2])
+		},
+	},
+	// X (variable of type T) is not used  /  declared and not used
+	{
+		regexp.MustCompile(`^(.*?):\s*(\S+?) \([^)]*?of type (.+?)\) (?:is |declared and )(?:not used|declared but not used)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: variable %s (%s) is declared but never used", m[1], m[2], m[3])
+		},
+	},
+	// declared and not used: X (older Go phrasing)
+	{
+		regexp.MustCompile(`^(.*?):\s*(\S+) declared and not used$`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: variable %s is declared but never used", m[1], m[2])
+		},
+	},
+	// X redeclared in this block
+	{
+		regexp.MustCompile(`^(.*?):\s*(\S+?) redeclared in this block`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: %s is already declared in this scope", m[1], m[2])
+		},
+	},
+	// not enough arguments in call to F
+	{
+		regexp.MustCompile(`^(.*?):\s*not enough arguments in call to (\S+)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: too few arguments passed to %s", m[1], m[2])
+		},
+	},
+	// too many arguments in call to F
+	{
+		regexp.MustCompile(`^(.*?):\s*too many arguments in call to (\S+)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: too many arguments passed to %s", m[1], m[2])
+		},
+	},
+	// assignment mismatch: N variables but M values
+	{
+		regexp.MustCompile(`^(.*?):\s*assignment mismatch: (\d+) variables? but (\d+) values?`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: assignment mismatch: %s names on the left, %s values on the right", m[1], m[2], m[3])
+		},
+	},
+	// invalid operation: X (mismatched types T1 and T2)
+	{
+		regexp.MustCompile(`^(.*?):\s*invalid operation: (.+?) \(mismatched types (.+?) and (.+?)\)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: cannot combine %s — types %s and %s do not match", m[1], m[2], m[3], m[4])
+		},
+	},
+	// X does not implement Y (missing Z method)
+	{
+		regexp.MustCompile(`^(.*?):\s*(\S+) does not implement (\S+) \(missing (?:method )?(\S+) method\)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: %s does not satisfy interface %s — missing method %s", m[1], m[2], m[3], m[4])
+		},
+	},
+	// X does not implement Y (M method has pointer receiver)
+	{
+		regexp.MustCompile(`^(.*?):\s*(\S+) does not implement (\S+) \((\S+) method has pointer receiver\)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: %s does not satisfy %s — method %s needs a POINTER TO receiver; pass @%s instead", m[1], m[2], m[3], m[4], m[2])
+		},
+	},
+	// cannot send on receive-only channel
+	{
+		regexp.MustCompile(`^(.*?):\s*cannot send on receive-only channel`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: cannot SEND on a receive-only channel", m[1])
+		},
+	},
+	// cannot receive from send-only channel
+	{
+		regexp.MustCompile(`^(.*?):\s*(?:cannot receive from send-only channel|receive from send-only channel)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: cannot RECEIVE from a send-only channel", m[1])
+		},
+	},
+	// X (untyped int constant N) overflows T
+	{
+		regexp.MustCompile(`^(.*?):\s*(.+?) \(untyped (\S+) constant (.+?)\) overflows (\S+)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: literal %s does not fit in %s", m[1], m[4], m[5])
+		},
+	},
+	// non-name X on left side of :=
+	{
+		regexp.MustCompile(`^(.*?):\s*non-name (.+?) on left side of :=`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: %s cannot appear on the left of an assignment — use a variable name", m[1], m[2])
+		},
+	},
+	// cannot range over X (...)
+	{
+		regexp.MustCompile(`^(.*?):\s*cannot range over (.+?) \(.*?\)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: cannot iterate over %s — needs to be a slice, array, map, or channel", m[1], m[2])
+		},
+	},
+	// missing return at end of function
+	{
+		regexp.MustCompile(`^(.*?):\s*missing return(?:\b| at end of function)`),
+		func(m []string) string {
+			return fmt.Sprintf("%s: function reached its end without RETURN", m[1])
+		},
+	},
+}
+
+// cleanGoToolMultilineHints rewrites tab-indented continuation lines that
+// Go emits after certain errors (have/want blocks). These come on lines
+// after the main error and use Go-flavored phrasing.
+func cleanGoToolMultilineHints(line string) string {
+	if strings.HasPrefix(line, "\thave ") {
+		return "\tgot:      " + strings.TrimPrefix(line, "\thave ")
+	}
+	if strings.HasPrefix(line, "\twant ") {
+		return "\texpected: " + strings.TrimPrefix(line, "\twant ")
+	}
+	return line
 }
 
 // warnf prints a warning message to stderr
@@ -119,6 +404,9 @@ func printUsage() {
 	fmt.Println("  run <file.dbas>       Compile and run")
 	fmt.Println("  emit <file.dbas>      Output generated Go code")
 	fmt.Println("  check <file.dbas>     Check for errors without compiling")
+	fmt.Println("  fmt <file.dbas>...    Reformat source (use -w to write, -l to list)")
+	fmt.Println("  doc <file.dbas>       Emit Markdown API docs (use -o to write to file)")
+	fmt.Println("  test [path]           Run *_test.dbas files (subs named Test*)")
 	fmt.Println("  version               Print version")
 	fmt.Println("  help                  Print this help")
 	fmt.Println("")
@@ -277,6 +565,338 @@ func check(filename string) {
 	fmt.Printf("%s: OK\n", filename)
 }
 
+// testCommand finds *_test.dbas files under path (or just path if it's
+// a single file) and runs each one in test-runner mode: every SUB whose
+// name starts with "Test" is invoked inside a recover() wrapper, and
+// PASS/FAIL is reported. Exits non-zero if any test fails.
+func testCommand(path string) {
+	files, err := findTestFiles(path)
+	if err != nil {
+		errorf("scanning %s: %v", path, err)
+		os.Exit(1)
+	}
+	if len(files) == 0 {
+		errorf("no *_test.dbas files found under %s", path)
+		os.Exit(1)
+	}
+	totalPassed, totalFailed := 0, 0
+	for _, f := range files {
+		fmt.Fprintf(os.Stderr, "--- %s ---\n", f)
+		passed, failed, err := runTestFile(f)
+		if err != nil {
+			errorf("%s: %v", f, err)
+			totalFailed++
+			continue
+		}
+		totalPassed += passed
+		totalFailed += failed
+	}
+	fmt.Fprintf(os.Stderr, "\n=== TOTAL: %d passed, %d failed across %d file(s) ===\n",
+		totalPassed, totalFailed, len(files))
+	if totalFailed > 0 {
+		os.Exit(1)
+	}
+}
+
+func findTestFiles(path string) ([]string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		if strings.HasSuffix(path, "_test.dbas") {
+			return []string{path}, nil
+		}
+		return nil, fmt.Errorf("%s is not a *_test.dbas file", path)
+	}
+	var files []string
+	err = filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(p, "_test.dbas") {
+			files = append(files, p)
+		}
+		return nil
+	})
+	sort.Strings(files)
+	return files, err
+}
+
+func runTestFile(filename string) (passed, failed int, err error) {
+	pp := preprocessor.New(filepath.Dir(filename))
+	ppResult, perr := pp.Process(filename)
+	if perr != nil {
+		return 0, 0, perr
+	}
+	source := ppResult.Source
+	l := lexer.New(source)
+	p := parser.New(l)
+	program := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		return 0, 0, fmt.Errorf("parse errors: %v", p.Errors())
+	}
+
+	// Find Test* SUBs.
+	var testNames []string
+	for _, st := range program.Statements {
+		if ss, ok := st.(*parser.SubStatement); ok {
+			if strings.HasPrefix(ss.Name.Value, "Test") {
+				testNames = append(testNames, ss.Name.Value)
+			}
+		}
+	}
+	if len(testNames) == 0 {
+		fmt.Fprintf(os.Stderr, "  (no Test* subs)\n")
+		return 0, 0, nil
+	}
+
+	a := analyzer.New()
+	a.SetSource(source)
+	symbols, errs := a.Analyze(program)
+	if len(errs) > 0 {
+		return 0, 0, fmt.Errorf("analyze errors: %v", errs)
+	}
+
+	g := codegen.New(program, symbols)
+	g.SetTypeRegistry(a.TypeRegistry())
+	g.SetSourceFile(filepath.Base(filename))
+	g.SetTestMode(testNames)
+	goCode := g.Generate()
+
+	tempDir, err := os.MkdirTemp("", "dbasic-test-*")
+	if err != nil {
+		return 0, 0, err
+	}
+	defer os.RemoveAll(tempDir)
+	goFile := filepath.Join(tempDir, "main.go")
+	if err := os.WriteFile(goFile, []byte(goCode), 0644); err != nil {
+		return 0, 0, err
+	}
+	cmdInit := exec.Command("go", "mod", "init", "dbasic_test")
+	cmdInit.Dir = tempDir
+	if err := cmdInit.Run(); err != nil {
+		return 0, 0, err
+	}
+	cmdTidy := exec.Command("go", "mod", "tidy")
+	cmdTidy.Dir = tempDir
+	cmdTidy.Stderr = &goToolFilter{out: os.Stderr}
+	_ = cmdTidy.Run()
+
+	cmdRun := exec.Command("go", "run", ".")
+	cmdRun.Dir = tempDir
+	out, runErr := cmdRun.CombinedOutput()
+	os.Stdout.Write(out)
+
+	// Parse the summary line "=== N passed, M failed ==="
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "=== ") {
+			var p, f int
+			if _, scanErr := fmt.Sscanf(line, "=== %d passed, %d failed ===", &p, &f); scanErr == nil {
+				passed, failed = p, f
+			}
+		}
+	}
+	if runErr != nil && failed == 0 {
+		// non-zero exit but we couldn't parse a summary — treat as one fail
+		failed = 1
+	}
+	return passed, failed, nil
+}
+
+// docFile emits Markdown API documentation for a single .dbas source.
+// Walks top-level TYPE/SUB/FUNCTION/CONST/method declarations and
+// renders each with its signature and any preceding `'` comments as the
+// description. Writes to stdout by default; if outFile is non-empty,
+// writes to that path.
+func docFile(filename, outFile string) {
+	src, err := os.ReadFile(filename)
+	if err != nil {
+		errorf("reading %s: %v", filename, err)
+		os.Exit(1)
+	}
+	l := lexer.New(string(src))
+	tokens := l.Tokenize()
+	// Build a map of comment-line → text so we can attach leading
+	// comment blocks to declarations by line number.
+	commentByLine := make(map[int]string)
+	for _, t := range tokens {
+		if t.Type == lexer.TOKEN_COMMENT {
+			commentByLine[t.Line] = t.Literal
+		}
+	}
+	// Re-parse for the AST.
+	p := parser.New(lexer.New(string(src)))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		errorf("could not parse %s — fix errors first:", filename)
+		for _, e := range p.Errors() {
+			fmt.Fprintln(os.Stderr, e)
+		}
+		os.Exit(1)
+	}
+
+	var sb strings.Builder
+	title := strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
+	sb.WriteString("# " + title + "\n\n")
+	sb.WriteString("Generated from `" + filepath.Base(filename) + "` by `dbasic doc`.\n\n")
+
+	for _, st := range prog.Statements {
+		emitDocFor(&sb, st, commentByLine)
+	}
+
+	out := sb.String()
+	if outFile == "" {
+		fmt.Print(out)
+		return
+	}
+	if err := os.WriteFile(outFile, []byte(out), 0644); err != nil {
+		errorf("writing %s: %v", outFile, err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Wrote: %s\n", outFile)
+}
+
+func emitDocFor(sb *strings.Builder, st parser.Statement, comments map[int]string) {
+	var heading, sig string
+	var line int
+	switch s := st.(type) {
+	case *parser.TypeStatement:
+		heading = "type " + s.Name.Value
+		line = s.Token.Line
+		sig = "TYPE " + s.Name.Value + "\n"
+		for _, f := range s.Fields {
+			sig += "    DIM " + f.Name.Value + " AS " + typeSpecStr(f.Type) + "\n"
+		}
+		sig += "END TYPE"
+	case *parser.SubStatement:
+		heading = "sub " + s.Name.Value
+		line = s.Token.Line
+		sig = "SUB " + s.Name.Value + paramSigDoc(s.Params)
+	case *parser.FunctionStatement:
+		heading = "function " + s.Name.Value
+		line = s.Token.Line
+		sig = "FUNCTION " + s.Name.Value + paramSigDoc(s.Params) + retSigDoc(s.ReturnTypes)
+	case *parser.MethodStatement:
+		recv := typeSpecStr(s.ReceiverType)
+		recvName := ""
+		if s.ReceiverName != nil {
+			recvName = s.ReceiverName.Value
+		}
+		heading = recv + "." + s.Name.Value
+		line = s.Token.Line
+		sig = "FUNCTION (" + recvName + " AS " + recv + ") " + s.Name.Value + paramSigDoc(s.Params) + retSigDoc(s.ReturnTypes)
+	case *parser.ConstStatement:
+		heading = "const " + s.Name.Value
+		line = s.Token.Line
+		sig = "CONST " + s.Name.Value + " AS " + typeSpecStr(s.Type)
+	case *parser.DimStatement:
+		heading = "var " + s.Name.Value
+		line = s.Token.Line
+		sig = "DIM " + s.Name.Value + " AS " + typeSpecStr(s.Type)
+	default:
+		return
+	}
+
+	sb.WriteString("## " + heading + "\n\n")
+	if doc := gatherLeadingComments(comments, line); doc != "" {
+		sb.WriteString(doc + "\n\n")
+	}
+	sb.WriteString("```dbasic\n")
+	sb.WriteString(sig)
+	sb.WriteString("\n```\n\n")
+}
+
+// gatherLeadingComments collects consecutive `'` comment lines immediately
+// preceding `line` and joins them as a single Markdown paragraph.
+func gatherLeadingComments(comments map[int]string, line int) string {
+	var lines []string
+	for l := line - 1; l > 0; l-- {
+		c, ok := comments[l]
+		if !ok {
+			break
+		}
+		lines = append([]string{c}, lines...)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
+}
+
+func paramSigDoc(params []*parser.Parameter) string {
+	parts := make([]string, 0, len(params))
+	for _, p := range params {
+		s := p.Name.Value + " AS " + typeSpecStr(p.Type)
+		if p.ByRef {
+			s = "BYREF " + s
+		}
+		parts = append(parts, s)
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+func retSigDoc(rets []*parser.TypeSpec) string {
+	if len(rets) == 0 {
+		return ""
+	}
+	if len(rets) == 1 {
+		return " AS " + typeSpecStr(rets[0])
+	}
+	parts := make([]string, len(rets))
+	for i, r := range rets {
+		parts[i] = typeSpecStr(r)
+	}
+	return " AS (" + strings.Join(parts, ", ") + ")"
+}
+
+func typeSpecStr(ts *parser.TypeSpec) string {
+	if ts == nil {
+		return ""
+	}
+	return ts.String()
+}
+
+func formatFiles(filenames []string) {
+	exitCode := 0
+	for _, fn := range filenames {
+		src, err := os.ReadFile(fn)
+		if err != nil {
+			errorf("reading %s: %v", fn, err)
+			exitCode = 1
+			continue
+		}
+		out, err := formatter.Format(string(src))
+		if err != nil {
+			errorf("formatting %s: %v", fn, err)
+			exitCode = 1
+			continue
+		}
+		switch {
+		case fmtList:
+			if string(src) != out {
+				fmt.Println(fn)
+			}
+		case fmtWrite:
+			if string(src) == out {
+				continue
+			}
+			if err := os.WriteFile(fn, []byte(out), 0644); err != nil {
+				errorf("writing %s: %v", fn, err)
+				exitCode = 1
+			}
+		default:
+			fmt.Print(out)
+		}
+	}
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
+}
+
 func emit(filename string) {
 	result, err := compile(filename)
 	if err != nil {
@@ -367,9 +987,11 @@ func build(filename, outputName string) {
 	modTidy := exec.Command("go", "mod", "tidy")
 	modTidy.Dir = tempDir
 	modTidy.Stdout = nil
-	modTidy.Stderr = os.Stderr
+	tidyFilter := &goToolFilter{out: os.Stderr}
+	modTidy.Stderr = tidyFilter
 	modTidy.Env = tidyEnv
 	if err := modTidy.Run(); err != nil {
+		tidyFilter.Flush()
 		if !offlineMode {
 			fmt.Fprintln(os.Stderr, "hint: if proxy.golang.org is unreachable but you have the modules cached locally, retry with --offline")
 		}
@@ -396,7 +1018,8 @@ func build(filename, outputName string) {
 	infof("building %s", outputPath)
 	cmd := exec.Command("go", "build", "-o", outputPath, ".")
 	cmd.Dir = tempDir
-	cmd.Stderr = os.Stderr
+	buildFilter := &goToolFilter{out: os.Stderr}
+	cmd.Stderr = buildFilter
 	buildEnv := os.Environ()
 	if offlineMode {
 		buildEnv = append(buildEnv, "GOPROXY=off", "GOSUMDB=off", "GOFLAGS=-mod=mod")
@@ -418,9 +1041,11 @@ func build(filename, outputName string) {
 	}
 
 	if err := cmd.Run(); err != nil {
+		buildFilter.Flush()
 		errorf("building executable: %v", err)
 		os.Exit(1)
 	}
+	buildFilter.Flush()
 
 	fmt.Fprintf(os.Stderr, "Built: %s\n", outputPath)
 }
@@ -657,24 +1282,30 @@ func run(filename string) {
 	modTidy := exec.Command("go", "mod", "tidy")
 	modTidy.Dir = tempDir
 	modTidy.Stdout = nil
-	modTidy.Stderr = os.Stderr
+	tidyFilter := &goToolFilter{out: os.Stderr}
+	modTidy.Stderr = tidyFilter
 	if err := modTidy.Run(); err != nil {
+		tidyFilter.Flush()
 		errorf("fetching dependencies: %v", err)
 		os.Exit(1)
 	}
+	tidyFilter.Flush()
 
 	// Run the program
 	cmd := exec.Command("go", "run", ".")
 	cmd.Dir = tempDir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	runFilter := &goToolFilter{out: os.Stderr}
+	cmd.Stderr = runFilter
 
 	if err := cmd.Run(); err != nil {
+		runFilter.Flush()
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
 		errorf("running program: %v", err)
 		os.Exit(1)
 	}
+	runFilter.Flush()
 }

@@ -1,47 +1,132 @@
-' DBasic Structs and Methods Example
-' Demonstrates TYPE definitions and method syntax
+' ============================================================
+' STRUCTS (TYPES) AND METHODS EXAMPLE IN DBASIC
+' ============================================================
+' This file teaches you how to create your own custom data
+' types using TYPE, and how to add methods (functions) to them.
+'
+' Think of a TYPE like a blueprint for a thing. For example,
+' a "Point" blueprint says every point has an X and a Y
+' coordinate. You can then create as many points as you want,
+' each with their own X and Y values.
+'
+' A METHOD is a function that "belongs to" a type. Instead of
+' passing the object as a regular parameter, you call it like:
+'   myPoint.Move(5, 10)
+' This is just a nicer way to say "move THIS specific point."
+'
+' What you will learn:
+'   1. How to define custom types with TYPE...END TYPE
+'   2. How to create variables of your custom type
+'   3. How to set and read fields (properties) of a type
+'   4. How to write methods (functions attached to a type)
+'   5. What POINTER TO means and why methods use it
+' ============================================================
 
-' Define a Point type
+' ---------------------------------------------------------
+' TYPE: Point
+' ---------------------------------------------------------
+' A Point represents a location in 2D space, like a dot on
+' graph paper. It has two coordinates:
+'   X - how far left or right (horizontal)
+'   Y - how far up or down (vertical)
+'
+' DOUBLE means a decimal number (like 3.14), as opposed to
+' INTEGER which can only hold whole numbers (like 3).
+' ---------------------------------------------------------
 TYPE Point
     DIM X AS DOUBLE
     DIM Y AS DOUBLE
 END TYPE
 
-' Define a Rectangle type
+' ---------------------------------------------------------
+' TYPE: Rectangle
+' ---------------------------------------------------------
+' A Rectangle is defined by its width and height.
+' Think of it like a box -- you need to know how wide it is
+' and how tall it is.
+' ---------------------------------------------------------
 TYPE Rectangle
     DIM Width AS DOUBLE
     DIM Height AS DOUBLE
 END TYPE
 
-' Method on Point to calculate distance from origin
+' ---------------------------------------------------------
+' METHOD: Point.Distance()
+' ---------------------------------------------------------
+' This method calculates the squared distance of a point
+' from the origin (0, 0). The origin is the center of the
+' graph where X = 0 and Y = 0.
+'
+' The formula is: X*X + Y*Y
+' (This is related to the Pythagorean theorem: a^2 + b^2 = c^2)
+'
+' For example, a point at (3, 4):
+'   Distance = 3*3 + 4*4 = 9 + 16 = 25
+'
+' The "(p AS POINTER TO Point)" part before the function name
+' means this function is attached to the Point type. The "p"
+' variable is the specific Point you are calling it on.
+' POINTER TO means "a reference to" -- it lets the method
+' access and modify the actual Point, not a copy of it.
+' ---------------------------------------------------------
 FUNCTION (p AS POINTER TO Point) Distance() AS DOUBLE
     RETURN p.X * p.X + p.Y * p.Y
 END FUNCTION
 
-' Method on Point to move by offset
+' ---------------------------------------------------------
+' METHOD: Point.Move(dx, dy)
+' ---------------------------------------------------------
+' This method moves a point by adding offsets to its
+' coordinates. "dx" is how far to move horizontally, and
+' "dy" is how far to move vertically.
+'
+' For example, if a point is at (3, 4) and you call
+' Move(1, -2), it moves to (4, 2).
+'
+' This is a SUB (not a FUNCTION) because it does not return
+' a value -- it just changes the point's position.
+'
+' Because we use POINTER TO, the changes happen to the
+' original point. Without POINTER TO, we would be changing
+' a copy, and the original would stay the same!
+' ---------------------------------------------------------
 SUB (p AS POINTER TO Point) Move(dx AS DOUBLE, dy AS DOUBLE)
     p.X = p.X + dx
     p.Y = p.Y + dy
 END SUB
 
-' Method on Rectangle to calculate area
+' ---------------------------------------------------------
+' METHOD: Rectangle.Area()
+' ---------------------------------------------------------
+' This method calculates the area of a rectangle.
+' Area = Width * Height. A 10x5 rectangle has area 50.
+' ---------------------------------------------------------
 FUNCTION (r AS POINTER TO Rectangle) Area() AS DOUBLE
     RETURN r.Width * r.Height
 END FUNCTION
 
+' ---------------------------------------------------------
+' SUB Main - The program starts running here
+' ---------------------------------------------------------
 SUB Main()
-    ' Create a point
+    ' Create a Point variable and set its coordinates.
+    ' DIM creates the variable, then we set each field
+    ' using dot notation: variableName.fieldName = value
     DIM pt AS Point
     pt.X = 3.0
     pt.Y = 4.0
 
+    ' Print the point's coordinates.
+    ' The semicolons (;) join the pieces together in the output.
+    ' This will print: Point: (3, 4)
     PRINT "Point: ("; pt.X; ", "; pt.Y; ")"
 
-    ' Create a rectangle
+    ' Create a Rectangle variable and set its dimensions.
     DIM rect AS Rectangle
     rect.Width = 10.0
     rect.Height = 5.0
 
-    PRINT "Rectangle width: "; rect.Width
-    PRINT "Rectangle height: "; rect.Height
+    ' Print the rectangle's properties.
+    PRINT "Rectangle width: "; rect.Width     ' Prints: Rectangle width: 10
+    PRINT "Rectangle height: "; rect.Height   ' Prints: Rectangle height: 5
 END SUB

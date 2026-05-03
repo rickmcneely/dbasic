@@ -6,17 +6,22 @@ A modern BASIC-to-Go transpiler with native JSON support, goroutines, channels, 
 
 - **BASIC Syntax**: Familiar BASIC-style programming with labels instead of line numbers
 - **Go Transpilation**: Compiles to Go source code for cross-platform executables
-- **Type System**: Strong typing with INTEGER, LONG, SINGLE, DOUBLE, STRING, BOOLEAN, JSON, BYTES
-- **Slices**: Go-style dynamic arrays with `[]TYPE` syntax, APPEND, and slice operations
-- **Structs**: User-defined types with TYPE/END TYPE and struct literal initialization
-- **Functions**: SUB and FUNCTION with multiple parameters and return values
+- **Cross-Compilation**: `dbasic build --target windows/amd64`, `linux/arm64`, `darwin/arm64`, etc.
+- **Type System**: Strong typing with INTEGER, LONG, SINGLE, DOUBLE, STRING, BOOLEAN, JSON, BYTES, MAP
+- **Slices**: Go-style dynamic arrays with `[]TYPE` syntax, APPEND, REDIM/PRESERVE, slice operations
+- **Maps**: Typed `MAP OF K TO V` with auto-initialization
+- **Structs**: User-defined types with TYPE/END TYPE, methods, embedding, and struct literals
+- **Functions**: SUB and FUNCTION with multi-return, function literals, closures, DEFER
 - **Pointers**: Go-style pointer operations with `@` (address-of) and `^` (dereference)
 - **Concurrency**: Goroutines via `SPAWN`, channels with `SEND` and `RECEIVE`
 - **JSON Support**: Native JSON type with dot notation access and helper functions
-- **HTTP Client**: Built-in CurlGet, CurlPost, CurlFetch for HTTP requests
-- **Shell Execution**: Run external programs with Shell, ShellExec, ShellStart
-- **Go Integration**: Import and use Go standard library packages
-- **VS Code Extension**: Syntax highlighting and code snippets
+- **HTTP / Shell**: Built-in HTTP client (CurlGet/Post/Fetch) and shell execution (Shell/Exec/Start)
+- **Go Integration**: Import and use any Go package; explicit generic instantiation via `(OF T)`
+- **Classic BASIC**: REM, REDIM/PRESERVE, STATIC, SHARED, OPTION EXPLICIT/BASE, DECLARE, CALL, LINE INPUT, WITH, single-line IF/ELSE
+- **Tooling**: `dbasic fmt` formatter, `dbasic doc` Markdown generator, `dbasic test` runner with recover()
+- **Editor Support**: `dbasic-lsp` provides diagnostics, hover, completions, definition, references, rename, signatureHelp, document outline
+- **VS Code Extension**: Syntax highlighting, snippets, and LSP integration in `vscode-dbasic/`
+- **Debugger**: Delve sees `.dbas:line` directly via `//line` source-map directives
 
 ## Installation
 
@@ -69,14 +74,35 @@ Commands:
   run <file.dbas>       Compile and run immediately
   emit <file.dbas>      Output generated Go code to stdout
   check <file.dbas>     Check for errors without compiling
+  fmt <file.dbas>...    Reformat source (use -w to write, -l to list)
+  doc <file.dbas>       Emit Markdown API docs (use -o to write to file)
+  test [path]           Run *_test.dbas files (subs named Test*)
   version               Print version
   help                  Print help
 
 Options:
-  -o <file>             Output file name (for build)
+  -o <file>             Output file name (for build, doc)
   -debug                Include source line comments in output
   -v                    Verbose output
+  --target os/arch      Cross-compile (e.g. windows/amd64, linux/arm64)
+  --offline             Build using only cached Go modules
+  -w                    Write formatted output back to file (fmt only)
+  -l                    List files needing formatting (fmt only)
 ```
+
+### Editor Support
+
+`dbasic-lsp` is a Language Server (over stdio) for any LSP-aware editor. It provides:
+
+- Live parse and analyze diagnostics
+- Document outline (file symbols)
+- Hover with signatures for top-level identifiers
+- Go-to-definition for top-level decls
+- Find references and rename (scope-aware: locals stay within their sub)
+- Completions (keywords + top-level + type-narrowed members after `.`)
+- Signature help inside function calls
+
+Build it with `go install ./cmd/dbasic-lsp`. See `vscode-dbasic/` for the VS Code package.
 
 ## Language Overview
 
@@ -369,16 +395,23 @@ dbasic run examples/hello.dbas
 
 ## VS Code Extension
 
-The `vscode-dbasic/` directory contains a VS Code extension with:
+The `vscode-dbasic/` directory contains a VS Code extension that bundles:
 
-- Syntax highlighting for `.dbas` files
-- Code snippets for common patterns
-- Language configuration for comments and brackets
+- Syntax highlighting for `.dbas` / `.dbasic` files (TextMate grammar)
+- Code snippets for common patterns (`sub`, `main`, `func`, `if`, `for`, `while`, etc.)
+- Language configuration (comments, brackets, indent rules, code folding)
+- LSP integration via `dbasic-lsp` (diagnostics, hover, completions, definition, references, rename, signature help, document outline)
 
-To install:
+To build and install:
 
-1. Copy `vscode-dbasic/` to `~/.vscode/extensions/`
-2. Restart VS Code
+```sh
+cd vscode-dbasic
+npm install
+npx vsce package
+code --install-extension dbasic-0.5.0.vsix
+```
+
+Make sure `dbasic-lsp` is on your PATH (`go install ./cmd/dbasic-lsp`), or set `dbasic.lspPath` in VS Code settings. Set `dbasic.lspEnabled` to `false` for grammar-only mode.
 
 ## Documentation
 
@@ -396,17 +429,21 @@ See [docs/LANGUAGE_REFERENCE.md](docs/LANGUAGE_REFERENCE.md) for a comprehensive
 
 ```
 DBasic/
-├── cmd/dbasic/         # CLI entry point
+├── cmd/
+│   ├── dbasic/         # Main compiler CLI
+│   └── dbasic-lsp/     # Language server (stdio JSON-RPC)
 ├── pkg/
 │   ├── lexer/          # Tokenizer
 │   ├── parser/         # Parser and AST
 │   ├── analyzer/       # Semantic analysis
 │   ├── codegen/        # Go code generator
-│   ├── runtime/        # Runtime support library
-│   └── errors/         # Error handling
-├── docs/               # Documentation
-├── examples/           # Example programs
-├── vscode-dbasic/      # VS Code extension
+│   ├── formatter/      # Token-stream source formatter
+│   ├── preprocessor/   # INCLUDE directive handling
+│   ├── runtime/        # Runtime helper functions
+│   └── errors/         # Error reporting with source locations
+├── docs/               # Language reference and integration guides
+├── examples/           # Example programs (and VDBTerm IDE)
+├── vscode-dbasic/      # VS Code extension (syntax + snippets + LSP integration)
 └── README.md
 ```
 

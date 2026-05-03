@@ -1,18 +1,79 @@
-' Hello World example in DBasic
+' ============================================================
+' HELLO WORLD - Your First DBasic Program
+' ============================================================
+' This file teaches the very basics of DBasic programming:
+'   - How every program starts with SUB Main()
+'   - How to print text to the screen with PRINT
+'   - How to create a variable to store data
+'   - How to ask the user for input with INPUT
+'   - How to repeat something with a FOR loop
+'
+' Think of this as your "first day" of learning DBasic.
+' Everything starts here!
+' ============================================================
 
+' Every DBasic program needs a SUB Main() -- this is where
+' the computer starts running your code, like the front door
+' of a house. Without it, the program would not know where
+' to begin.
 SUB Main()
+    ' PRINT puts text on the screen for the user to see.
+    ' The text inside the quotes is called a "string literal."
+    ' Output: Hello, World!
     PRINT "Hello, World!"
+
+    ' You can PRINT as many times as you want. Each PRINT
+    ' starts a new line on the screen.
+    ' Output: Welcome to DBasic
     PRINT "Welcome to DBasic"
 
+    ' DIM creates a new variable -- think of it as a labeled
+    ' box where you can store a value. Here we create a box
+    ' called "name" that holds text (STRING).
+    ' AS STRING means this variable can only hold text, not numbers.
     DIM name AS STRING
+
+    ' This PRINT has a semicolon (;) at the end instead of
+    ' ending normally. The semicolon tells DBasic: "don't go
+    ' to the next line yet" -- so the user's typed answer
+    ' will appear right after the question mark on the same line.
+    ' Output: What is your name? (cursor stays on same line)
     PRINT "What is your name? ";
+
+    ' INPUT pauses the program and waits for the user to type
+    ' something and press Enter. Whatever they type gets stored
+    ' in the variable "name" (our labeled box from above).
     INPUT name
 
+    ' Now we PRINT a greeting using the value the user typed.
+    ' The semicolons (;) glue pieces together on one line:
+    '   "Hello, " + whatever they typed + "!"
+    ' If the user typed "Alice", output would be: Hello, Alice!
     PRINT "Hello, "; name; "!"
 
     ' Demonstrate a loop
+    ' DIM creates another variable, this time for a whole number
+    ' (INTEGER). We will use "i" as a counter in the loop below.
     DIM i AS INTEGER
+
+    ' FOR loops let you repeat code a specific number of times.
+    ' This says: "Start i at 1, and keep going until i reaches 5,
+    ' adding 1 each time." So the code inside runs 5 times,
+    ' with i being 1, then 2, then 3, then 4, then 5.
+    ' Output:
+    '   Count: 1
+    '   Count: 2
+    '   Count: 3
+    '   Count: 4
+    '   Count: 5
     FOR i = 1 TO 5
         PRINT "Count: "; i
     NEXT
+    ' NEXT marks the end of the FOR loop. When the program hits
+    ' NEXT, it goes back to the FOR line, increases i by 1, and
+    ' checks if i is still within the range (1 TO 5). If yes,
+    ' it runs the code inside again. If no, it moves on.
+
 END SUB
+' END SUB marks the end of the Main subroutine.
+' When the program reaches here, it is finished and exits.

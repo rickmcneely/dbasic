@@ -1,14 +1,58 @@
+' ============================================================================
 ' Goroutines and Channels Example in DBasic
-' Demonstrates SPAWN (goroutines), channels, SEND, and RECEIVE
+' ============================================================================
+' What this file teaches:
+'   - SPAWN      : Run a subroutine in the background (called a "goroutine")
+'   - CHAN        : Create a channel -- a pipe that lets goroutines talk
+'   - SEND       : Put a value into a channel
+'   - RECEIVE    : Take a value out of a channel
+'   - MAKE_CHAN   : Create a channel with a buffer (a waiting queue)
+'
+' What is a goroutine?
+'   Imagine you are cooking dinner. Instead of doing everything one step
+'   at a time (chop vegetables, THEN boil water, THEN set the table),
+'   you could ask helpers to do tasks at the same time. Each helper is
+'   like a goroutine -- they all work simultaneously.
+'   In DBasic, SPAWN starts a subroutine running in the background.
+'
+' What is a channel?
+'   A channel is like a conveyor belt between workers. One worker puts
+'   an item on the belt (SEND), and another worker picks it up (RECEIVE).
+'   This is how goroutines safely pass data to each other.
+'
+' This example creates a "worker pool" pattern:
+'   - 3 workers wait for jobs on a shared "jobs" channel
+'   - The main program sends 5 jobs
+'   - Each worker picks up a job, processes it, and sends the result back
+'   - The main program collects all 5 results
+' ============================================================================
 
+' This is the Worker subroutine. Each worker runs as its own goroutine.
+' Parameters:
+'   id      - A number to identify which worker this is (1, 2, or 3)
+'   jobs    - The channel where the worker RECEIVES jobs from
+'   results - The channel where the worker SENDS results to
 SUB Worker(id AS INTEGER, jobs AS CHAN OF INTEGER, results AS CHAN OF INTEGER)
     DIM job AS INTEGER
+    ' WHILE TRUE creates an infinite loop -- the worker keeps waiting
+    ' for new jobs until it is told to stop.
     WHILE TRUE
+        ' RECEIVE waits until a job appears on the "jobs" channel,
+        ' then stores it in the "job" variable.
+        ' Think of it as: "Wait by the conveyor belt until something arrives."
         RECEIVE job FROM jobs
+        ' If the job is negative, that is our signal to stop working.
+        ' This is a common pattern: send a special "poison pill" value
+        ' to tell workers to shut down.
         IF job < 0 THEN
             EXIT WHILE
         ENDIF
+        ' Process the job -- here we simply double the number.
+        ' In a real program, this could be any work (file processing,
+        ' calculations, network requests, etc.)
         PRINT "Worker "; id; " processing job "; job
+        ' SEND puts the result onto the "results" channel.
+        ' The main program is waiting on the other end to collect it.
         SEND job * 2 TO results
     WEND
 END SUB
@@ -17,25 +61,38 @@ SUB Main()
     PRINT "=== Goroutines and Channels Demo ==="
     PRINT ""
 
-    ' Create buffered channels
+    ' MAKE_CHAN creates a buffered channel.
+    ' The second argument (10) is the buffer size -- how many items can
+    ' sit in the channel waiting to be picked up before SEND blocks.
+    ' Think of it as: "Make a conveyor belt that can hold 10 items."
+    ' CHAN OF INTEGER means this channel carries INTEGER values.
     DIM jobs AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 10)
     DIM results AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 10)
 
-    ' Start 3 worker goroutines
+    ' Start 3 worker goroutines using SPAWN.
+    ' SPAWN runs the Worker subroutine in the background -- it does NOT
+    ' wait for Worker to finish before moving to the next line.
+    ' After this loop, 3 workers are running simultaneously, all waiting
+    ' for jobs to arrive on the "jobs" channel.
     PRINT "Starting 3 workers..."
     DIM w AS INTEGER
     FOR w = 1 TO 3
         SPAWN Worker(w, jobs, results)
     NEXT
 
-    ' Send 5 jobs
+    ' Send 5 jobs to the workers through the "jobs" channel.
+    ' Any available worker will pick up each job. We do not control
+    ' which worker gets which job -- that is handled automatically.
     PRINT "Sending 5 jobs..."
     DIM j AS INTEGER
     FOR j = 1 TO 5
         SEND j TO jobs
     NEXT
 
-    ' Collect results
+    ' Collect all 5 results from the "results" channel.
+    ' RECEIVE will wait if a result is not ready yet.
+    ' Since each job doubles its input, we expect results like 2, 4, 6, 8, 10
+    ' (though the order may vary because workers run simultaneously).
     PRINT ""
     PRINT "Collecting results..."
     DIM r AS INTEGER
@@ -44,7 +101,9 @@ SUB Main()
         PRINT "Result: "; r
     NEXT
 
-    ' Signal workers to stop
+    ' Signal all 3 workers to stop by sending -1 (our "poison pill").
+    ' Each worker checks for negative values and exits its loop when
+    ' it receives one. We send 3 stop signals because we have 3 workers.
     FOR w = 1 TO 3
         SEND -1 TO jobs
     NEXT

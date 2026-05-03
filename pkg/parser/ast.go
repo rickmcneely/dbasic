@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/zditech/dbasic/pkg/lexer"
@@ -103,6 +104,105 @@ type DimStatement struct {
 	Type      *TypeSpec
 	Value     Expression // Optional initial value
 	ArraySize Expression // For array declarations
+	IsStatic  bool       // true for `STATIC x AS T`: persists across sub calls
+}
+
+// WithStatement represents `WITH expr ... END WITH`. Inside the body,
+// `.field` is shorthand for `expr.field`. The receiver expression is
+// stored once and assigned to a synthesized local at codegen time so
+// side-effecting receivers aren't re-evaluated per shorthand reference.
+type WithStatement struct {
+	Token     lexer.Token
+	Receiver  Expression  // The expression after WITH
+	Synthetic *Identifier // Auto-generated local name used as the receiver inside the block
+	Body      *BlockStatement
+}
+
+func (ws *WithStatement) statementNode()       {}
+func (ws *WithStatement) TokenLiteral() string { return ws.Token.Literal }
+func (ws *WithStatement) String() string {
+	return "WITH " + ws.Receiver.String() + "\n" + ws.Body.String() + "END WITH"
+}
+
+// LineInputStatement represents `LINE INPUT [prompt$,] var$`. Reads a
+// whole line from stdin including embedded spaces. The prompt is optional.
+type LineInputStatement struct {
+	Token  lexer.Token
+	Prompt Expression  // optional string literal or expression
+	Var    *Identifier
+}
+
+func (li *LineInputStatement) statementNode()       {}
+func (li *LineInputStatement) TokenLiteral() string { return li.Token.Literal }
+func (li *LineInputStatement) String() string {
+	if li.Prompt != nil {
+		return "LINE INPUT " + li.Prompt.String() + ", " + li.Var.String()
+	}
+	return "LINE INPUT " + li.Var.String()
+}
+
+// OptionStatement represents an `OPTION` pragma at file scope.
+// Currently supports OPTION EXPLICIT (no-op since DBasic always
+// requires DIM) and OPTION BASE 0|1 (sets default array lower bound).
+type OptionStatement struct {
+	Token lexer.Token
+	Kind  string // "EXPLICIT" or "BASE"
+	Value int    // for OPTION BASE: 0 or 1
+}
+
+func (os *OptionStatement) statementNode()       {}
+func (os *OptionStatement) TokenLiteral() string { return os.Token.Literal }
+func (os *OptionStatement) String() string {
+	if os.Kind == "BASE" {
+		return "OPTION BASE " + strconv.Itoa(os.Value)
+	}
+	return "OPTION " + os.Kind
+}
+
+// SharedStatement represents `SHARED name1, name2, ...` inside a sub or
+// function. In QB this opted the listed module-level names into the sub's
+// scope. DBasic already resolves identifiers up the scope chain, so this
+// statement is parsed and accepted but generates no Go code.
+type SharedStatement struct {
+	Token lexer.Token
+	Names []*Identifier
+}
+
+func (ss *SharedStatement) statementNode()       {}
+func (ss *SharedStatement) TokenLiteral() string { return ss.Token.Literal }
+func (ss *SharedStatement) String() string {
+	parts := make([]string, len(ss.Names))
+	for i, n := range ss.Names {
+		parts[i] = n.String()
+	}
+	return "SHARED " + strings.Join(parts, ", ")
+}
+
+// ReDimStatement represents `REDIM [PRESERVE] x(n) AS T`, which resizes
+// an existing slice. Without PRESERVE the slice's contents are discarded;
+// with PRESERVE the existing elements are copied into the new slice.
+type ReDimStatement struct {
+	Token     lexer.Token
+	Name      *Identifier
+	ArraySize Expression
+	Type      *TypeSpec
+	Preserve  bool
+}
+
+func (rd *ReDimStatement) statementNode()       {}
+func (rd *ReDimStatement) TokenLiteral() string { return rd.Token.Literal }
+func (rd *ReDimStatement) String() string {
+	var sb strings.Builder
+	sb.WriteString("REDIM ")
+	if rd.Preserve {
+		sb.WriteString("PRESERVE ")
+	}
+	sb.WriteString(rd.Name.String())
+	sb.WriteString("(")
+	sb.WriteString(rd.ArraySize.String())
+	sb.WriteString(") AS ")
+	sb.WriteString(rd.Type.String())
+	return sb.String()
 }
 
 func (ds *DimStatement) statementNode()       {}
@@ -170,6 +270,9 @@ type MultiAssignmentStatement struct {
 	Token   lexer.Token
 	Targets []Expression
 	Value   Expression // Usually a CallExpression
+	// LastTargetIsError is set by the analyzer when the final target
+	// resolves to type ERROR. Codegen uses it to emit ONERR auto-checks.
+	LastTargetIsError bool
 }
 
 func (ms *MultiAssignmentStatement) statementNode()       {}
@@ -379,6 +482,45 @@ func (ss *SelectStatement) String() string {
 	}
 	sb.WriteString("END SELECT")
 	return sb.String()
+}
+
+// OnErrAction is the kind of handler installed by an ONERR statement.
+type OnErrAction int
+
+const (
+	OnErrGoto   OnErrAction = iota // ONERR GOTO label
+	OnErrGoFunc                    // ONERR GOFUNC funcName
+	OnErrClear                     // ONERR GOTO 0  (disable handler)
+)
+
+// OnErrStatement installs (or clears) a per-function error-handling
+// directive. After this statement, subsequent multi-return assignments
+// whose final value is of type ERROR have an automatic
+//
+//	if err != nil { goto Label }                          // OnErrGoto
+//	if err != nil { Handler(err); return [zero values] }  // OnErrGoFunc
+//
+// emitted by codegen. ONERR is purely lexical/per-function — it does not
+// cross sub/function boundaries and does not introduce any defer/recover
+// machinery (no try/catch). `ONERR GOTO 0` clears the active handler.
+type OnErrStatement struct {
+	Token  lexer.Token
+	Action OnErrAction
+	Target *Identifier // label name (Goto), function name (GoFunc), nil for Clear
+}
+
+func (oe *OnErrStatement) statementNode()       {}
+func (oe *OnErrStatement) TokenLiteral() string { return oe.Token.Literal }
+func (oe *OnErrStatement) String() string {
+	switch oe.Action {
+	case OnErrGoto:
+		return "ONERR GOTO " + oe.Target.Value
+	case OnErrGoFunc:
+		return "ONERR GOFUNC " + oe.Target.Value
+	case OnErrClear:
+		return "ONERR GOTO 0"
+	}
+	return "ONERR"
 }
 
 // GotoStatement represents a GOTO statement
@@ -923,6 +1065,7 @@ type CallExpression struct {
 	Token     lexer.Token
 	Function  Expression // Identifier or MemberExpression
 	Arguments []Expression
+	TypeArgs  []*TypeSpec // Explicit generic instantiation: pkg.Func(OF T1, T2)(args)
 }
 
 func (ce *CallExpression) expressionNode()      {}

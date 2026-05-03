@@ -152,6 +152,10 @@ FUNCTION DoRun(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     ENDIF
 
+    ' Set build in progress
+    m.BuildInProgress = TRUE
+    m.BuildSpinnerFrame = 0
+
     ' Sync code from textarea to form if in code view
     IF m.CodeEditorInited AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
         m.Project.Forms[m.CurrentFormIdx].Code = GetEditorCode(m.CodeEditor)
@@ -179,6 +183,7 @@ FUNCTION DoRun(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
         m.CompileErrorBtnIdx = 0
         m.DialogMode = DIALOG_COMPILE_ERROR
         m.Message = "Transpiler errors found"
+        m.BuildInProgress = FALSE
         RETURN m, NIL
     ENDIF
 
@@ -199,8 +204,11 @@ FUNCTION DoRun(m AS VDBTermModel) AS (tea.Model, tea.Cmd)
         m.CompileErrorBtnIdx = 0
         m.DialogMode = DIALOG_COMPILE_ERROR
         m.Message = "Build errors found"
+        m.BuildInProgress = FALSE
         RETURN m, NIL
     ENDIF
+
+    m.BuildInProgress = FALSE
 
     ' No errors - run the built program directly
     DIM execCmd AS tea.Cmd = tea.ExecProcess(exec.Command(builtBinary), NIL)

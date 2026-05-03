@@ -22,7 +22,20 @@ type Generator struct {
 	labelCount      int
 	debugMode       bool
 	sourceFile      string
-	currentFunc     string            // Current function/sub name for error context
+	currentFunc     string                       // Current function/sub name for error context
+	currentOnErr    *parser.OnErrStatement       // Active ONERR handler for the current function (nil = none). Reset at every sub/function/method entry; updated by ONERR statements.
+	statics         map[string]map[string]string // funcName → varName → uniquified package-level name
+	optionBase      int                          // OPTION BASE setting (0 default; if 1, indices are emitted as `idx-1`)
+	testMode        bool                         // When set, emit a test-runner main() instead of calling Main()
+	testNames       []string                     // Names of TestXxx subs to invoke when testMode is true
+}
+
+// SetTestMode enables test-runner output: instead of calling Main(),
+// the emitted main() iterates testNames, calling each one inside a
+// recover() wrapper and printing PASS/FAIL.
+func (g *Generator) SetTestMode(testNames []string) {
+	g.testMode = true
+	g.testNames = testNames
 }
 
 // New creates a new code generator
@@ -33,6 +46,7 @@ func New(program *parser.Program, symbols *analyzer.SymbolTable) *Generator {
 		currentScope: symbols.GlobalScope,
 		imports:      make(map[string]string),
 		runtimeFuncs: make(map[string]bool),
+		statics:      make(map[string]map[string]string),
 	}
 }
 
@@ -53,6 +67,20 @@ func (g *Generator) SetTypeRegistry(types *analyzer.TypeRegistry) {
 
 // Generate generates Go source code
 func (g *Generator) Generate() string {
+	// Apply OPTION pragmas (OPTION BASE 0|1, etc.) before any other pass.
+	for _, st := range g.program.Statements {
+		if op, ok := st.(*parser.OptionStatement); ok && op.Kind == "BASE" {
+			g.optionBase = op.Value
+		}
+	}
+
+	// Test mode needs fmt + os in the runner; declare them up front so the
+	// import block emitted by generateImports() includes them.
+	if g.testMode {
+		g.imports["fmt"] = ""
+		g.imports["os"] = ""
+	}
+
 	// Collect imports from explicit IMPORT statements
 	g.collectImports()
 
@@ -80,11 +108,57 @@ func (g *Generator) Generate() string {
 	// Generate global variables
 	g.generateGlobalVariables()
 
+	// Hoist STATIC declarations from sub bodies into package-level vars,
+	// and emit them before the function definitions.
+	g.collectAndEmitStatics()
+
 	// Generate functions, subs, and methods
 	g.generateFunctions()
 
-	// Generate main function if needed
-	if g.hasMain {
+	// Generate main function. In test mode we ignore Main() and emit a
+	// runner that calls each TestXxx in turn with a recover wrapper.
+	if g.testMode {
+		g.writeLine("")
+		g.writeLine("func main() {")
+		g.indent++
+		g.writeLine("passed, failed := 0, 0")
+		g.writeLine("tests := []struct{ name string; fn func() }{")
+		g.indent++
+		for _, n := range g.testNames {
+			g.writeLine(fmt.Sprintf("{%q, %s},", n, n))
+		}
+		g.indent--
+		g.writeLine("}")
+		g.writeLine("for _, t := range tests {")
+		g.indent++
+		g.writeLine("if dbasic_runOneTest(t.name, t.fn) { passed++ } else { failed++ }")
+		g.indent--
+		g.writeLine("}")
+		g.writeLine(`fmt.Printf("\n=== %d passed, %d failed ===\n", passed, failed)`)
+		g.writeLine("if failed > 0 { os.Exit(1) }")
+		g.indent--
+		g.writeLine("}")
+		g.writeLine("")
+		g.writeLine("func dbasic_runOneTest(name string, fn func()) (ok bool) {")
+		g.indent++
+		g.writeLine("ok = true")
+		g.writeLine("defer func() {")
+		g.indent++
+		g.writeLine("if r := recover(); r != nil {")
+		g.indent++
+		g.writeLine(`fmt.Printf("FAIL %s: %v\n", name, r)`)
+		g.writeLine("ok = false")
+		g.indent--
+		g.writeLine("}")
+		g.indent--
+		g.writeLine("}()")
+		g.writeLine(`fmt.Printf("RUN  %s\n", name)`)
+		g.writeLine("fn()")
+		g.writeLine(`fmt.Printf("PASS %s\n", name)`)
+		g.writeLine("return")
+		g.indent--
+		g.writeLine("}")
+	} else if g.hasMain {
 		g.writeLine("")
 		g.writeLine("func main() {")
 		g.indent++
@@ -667,6 +741,23 @@ func WrapError(err error, file string, line int, function string, message string
 		Wrapped:  err,
 	}
 }`,
+	"LineInput": `// LineInput prints prompt (if any) and reads a full line from stdin,
+// including embedded spaces. Returns the line without the trailing newline.
+var _lineInputScanner *bufio.Scanner
+
+func LineInput(prompt string) string {
+	if prompt != "" {
+		fmt.Print(prompt)
+	}
+	if _lineInputScanner == nil {
+		_lineInputScanner = bufio.NewScanner(os.Stdin)
+		_lineInputScanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	}
+	if !_lineInputScanner.Scan() {
+		return ""
+	}
+	return _lineInputScanner.Text()
+}`,
 }
 
 // runtimeFuncImports maps runtime functions to required imports
@@ -699,6 +790,7 @@ var runtimeFuncImports = map[string][]string{
 	"NewErrorAtFunc": {"fmt"},
 	"ErrorfFunc":     {"fmt"},
 	"WrapError":      {"fmt"},
+	"LineInput":      {"bufio", "fmt", "os"},
 }
 
 // scanForRuntimeFunctions scans the AST for calls to runtime functions
@@ -761,6 +853,14 @@ func (g *Generator) scanStmtExprForRuntimeFuncs(stmt parser.Statement) {
 	case *parser.DimStatement:
 		if s.Value != nil {
 			g.scanExprForRuntimeFuncs(s.Value)
+		}
+	case *parser.LineInputStatement:
+		g.runtimeFuncs["LineInput"] = true
+		for _, imp := range runtimeFuncImports["LineInput"] {
+			g.imports[imp] = ""
+		}
+		if s.Prompt != nil {
+			g.scanExprForRuntimeFuncs(s.Prompt)
 		}
 	case *parser.PrintStatement:
 		for _, v := range s.Values {
@@ -998,8 +1098,10 @@ func (g *Generator) generateSubStatement(stmt *parser.SubStatement) {
 	// Track local variables for this sub
 	oldScope := g.currentScope
 	oldFunc := g.currentFunc
+	oldOnErr := g.currentOnErr
 	g.currentScope = analyzer.NewScope(stmt.Name.Value, g.symbols.GlobalScope)
 	g.currentFunc = stmt.Name.Value
+	g.currentOnErr = nil
 	// Add parameters to local scope
 	for _, p := range stmt.Params {
 		paramType := g.typeFromTypeSpec(p.Type)
@@ -1012,6 +1114,7 @@ func (g *Generator) generateSubStatement(stmt *parser.SubStatement) {
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
 	g.currentFunc = oldFunc
+	g.currentOnErr = oldOnErr
 	g.indent--
 	g.writeLine("}")
 }
@@ -1026,8 +1129,10 @@ func (g *Generator) generateFunctionStatement(stmt *parser.FunctionStatement) {
 	// Track local variables for this function
 	oldScope := g.currentScope
 	oldFunc := g.currentFunc
+	oldOnErr := g.currentOnErr
 	g.currentScope = analyzer.NewScope(stmt.Name.Value, g.symbols.GlobalScope)
 	g.currentFunc = stmt.Name.Value
+	g.currentOnErr = nil
 	// Add parameters to local scope
 	for _, p := range stmt.Params {
 		paramType := g.typeFromTypeSpec(p.Type)
@@ -1040,6 +1145,7 @@ func (g *Generator) generateFunctionStatement(stmt *parser.FunctionStatement) {
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
 	g.currentFunc = oldFunc
+	g.currentOnErr = oldOnErr
 	g.indent--
 	g.writeLine("}")
 }
@@ -1066,8 +1172,10 @@ func (g *Generator) generateMethodStatement(stmt *parser.MethodStatement) {
 	// Track local variables for this method
 	oldScope := g.currentScope
 	oldFunc := g.currentFunc
+	oldOnErr := g.currentOnErr
 	g.currentScope = analyzer.NewScope(stmt.Name.Value, g.symbols.GlobalScope)
 	g.currentFunc = stmt.Name.Value
+	g.currentOnErr = nil
 
 	// Add receiver to local scope
 	recvType := g.typeFromTypeSpec(stmt.ReceiverType)
@@ -1090,6 +1198,7 @@ func (g *Generator) generateMethodStatement(stmt *parser.MethodStatement) {
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
 	g.currentFunc = oldFunc
+	g.currentOnErr = oldOnErr
 	g.indent--
 	g.writeLine("}")
 }
@@ -1196,6 +1305,8 @@ func (g *Generator) generateStatement(stmt parser.Statement) {
 	switch s := stmt.(type) {
 	case *parser.DimStatement:
 		g.generateLocalDim(s)
+	case *parser.ReDimStatement:
+		g.generateReDim(s)
 	case *parser.LetStatement:
 		g.generateLet(s)
 	case *parser.AssignmentStatement:
@@ -1206,6 +1317,10 @@ func (g *Generator) generateStatement(stmt parser.Statement) {
 		g.generatePrint(s)
 	case *parser.InputStatement:
 		g.generateInput(s)
+	case *parser.LineInputStatement:
+		g.generateLineInput(s)
+	case *parser.WithStatement:
+		g.generateWith(s)
 	case *parser.IfStatement:
 		g.generateIf(s)
 	case *parser.ForStatement:
@@ -1232,6 +1347,8 @@ func (g *Generator) generateStatement(stmt parser.Statement) {
 		g.generateSend(s)
 	case *parser.ReceiveStatement:
 		g.generateReceive(s)
+	case *parser.OnErrStatement:
+		g.generateOnErr(s)
 	case *parser.ExpressionStatement:
 		if s.Expression != nil {
 			// Special-case: APPEND(slice, ...) used as a statement is a
@@ -1270,7 +1387,115 @@ func (g *Generator) tryEmitAppendMutation(expr parser.Expression) bool {
 	return true
 }
 
+// collectAndEmitStatics walks every sub/function/method body, gathers
+// STATIC declarations, and emits them as package-level vars with
+// uniquified names (`_static_<funcName>_<varName>`). The corresponding
+// in-body declarations are skipped at codegen time, and identifier
+// references inside the function are routed to the uniquified name via
+// toGoIdent's static lookup.
+func (g *Generator) collectAndEmitStatics() {
+	type entry struct {
+		funcName string
+		uniq     string
+		stmt     *parser.DimStatement
+	}
+	var entries []entry
+
+	visit := func(funcName string, body *parser.BlockStatement) {
+		if body == nil {
+			return
+		}
+		for _, st := range body.Statements {
+			ds, ok := st.(*parser.DimStatement)
+			if !ok || !ds.IsStatic {
+				continue
+			}
+			uniq := fmt.Sprintf("_static_%s_%s", funcName, ds.Name.Value)
+			if g.statics[funcName] == nil {
+				g.statics[funcName] = map[string]string{}
+			}
+			g.statics[funcName][ds.Name.Value] = uniq
+			entries = append(entries, entry{funcName: funcName, uniq: uniq, stmt: ds})
+		}
+	}
+
+	for _, st := range g.program.Statements {
+		switch s := st.(type) {
+		case *parser.SubStatement:
+			visit(s.Name.Value, s.Body)
+		case *parser.FunctionStatement:
+			visit(s.Name.Value, s.Body)
+		case *parser.MethodStatement:
+			visit(s.Name.Value, s.Body)
+		}
+	}
+
+	if len(entries) == 0 {
+		return
+	}
+
+	g.writeLine("var (")
+	g.indent++
+	for _, e := range entries {
+		typeStr := g.typeSpecToGo(e.stmt.Type)
+		if e.stmt.Value != nil {
+			oldFunc := g.currentFunc
+			g.currentFunc = e.funcName
+			val := g.exprToGo(e.stmt.Value)
+			g.currentFunc = oldFunc
+			g.writeLine(fmt.Sprintf("%s %s = %s", e.uniq, typeStr, val))
+		} else {
+			g.writeLine(fmt.Sprintf("%s %s", e.uniq, typeStr))
+		}
+	}
+	g.indent--
+	g.writeLine(")")
+	g.writeLine("")
+}
+
+// generateWith emits a WITH block. The body's `.field` shortcuts were
+// already expanded at parse time into full MemberExpressions on the
+// receiver, so codegen here just emits the body — no synthetic binding
+// is needed. This keeps QB-compatible semantics where assignments
+// through `.field` modify the original receiver, not a copy.
+func (g *Generator) generateWith(stmt *parser.WithStatement) {
+	g.generateBlockStatement(stmt.Body)
+}
+
+// generateLineInput emits a call to the LineInput runtime helper.
+func (g *Generator) generateLineInput(stmt *parser.LineInputStatement) {
+	g.runtimeFuncs["LineInput"] = true
+	prompt := `""`
+	if stmt.Prompt != nil {
+		prompt = g.exprToGo(stmt.Prompt)
+	}
+	g.writeLine(fmt.Sprintf("%s = LineInput(%s)", g.toGoIdent(stmt.Var.Value), prompt))
+}
+
+// generateReDim emits a slice resize. Without PRESERVE the new slice
+// is fresh; with PRESERVE the old elements are copied into it (truncated
+// or zero-padded as needed).
+func (g *Generator) generateReDim(stmt *parser.ReDimStatement) {
+	name := g.toGoIdent(stmt.Name.Value)
+	elemType := g.typeSpecToGo(stmt.Type)
+	size := g.exprToGo(stmt.ArraySize)
+	if stmt.Preserve {
+		old := name + "_old"
+		g.writeLine(fmt.Sprintf("%s := %s", old, name))
+		g.writeLine(fmt.Sprintf("%s = make([]%s, %s)", name, elemType, size))
+		g.writeLine(fmt.Sprintf("copy(%s, %s)", name, old))
+	} else {
+		g.writeLine(fmt.Sprintf("%s = make([]%s, %s)", name, elemType, size))
+	}
+}
+
 func (g *Generator) generateLocalDim(stmt *parser.DimStatement) {
+	// STATIC dims are hoisted to package-level vars in collectAndEmitStatics.
+	// Skip the in-body emission entirely; identifier references are routed
+	// to the uniquified package-level name via toGoIdent.
+	if stmt.IsStatic {
+		return
+	}
 	varName := g.toGoIdent(stmt.Name.Value)
 	varType := g.typeSpecToGo(stmt.Type)
 
@@ -1333,6 +1558,40 @@ func (g *Generator) generateMultiAssignment(stmt *parser.MultiAssignmentStatemen
 		targets = append(targets, g.exprToGo(t))
 	}
 	g.writeLine(fmt.Sprintf("%s = %s", strings.Join(targets, ", "), g.exprToGo(stmt.Value)))
+
+	// ONERR auto-check: when an ONERR handler is active and the analyzer
+	// determined that the last value of this multi-assignment is of type
+	// ERROR, emit the canonical Go `if err != nil { ... }` block. This is
+	// purely a code-rewrite — no defer/recover, no try/catch.
+	if g.currentOnErr != nil && stmt.LastTargetIsError && len(targets) > 0 {
+		errVar := targets[len(targets)-1]
+		g.emitOnErrCheck(errVar)
+	}
+}
+
+// generateOnErr applies the ONERR directive to the current function's
+// codegen state. It produces no Go output by itself — the effect lives
+// in subsequent multi-assignments.
+func (g *Generator) generateOnErr(stmt *parser.OnErrStatement) {
+	if stmt.Action == parser.OnErrClear {
+		g.currentOnErr = nil
+		return
+	}
+	g.currentOnErr = stmt
+}
+
+// emitOnErrCheck writes the conditional that triggers the active ONERR
+// handler. errVar is the already-rendered Go identifier of the error
+// value (last target of the preceding multi-assignment).
+func (g *Generator) emitOnErrCheck(errVar string) {
+	switch g.currentOnErr.Action {
+	case parser.OnErrGoto:
+		label := g.toGoIdent(g.currentOnErr.Target.Value)
+		g.writeLine(fmt.Sprintf("if %s != nil { goto %s }", errVar, label))
+	case parser.OnErrGoFunc:
+		handler := g.toGoIdent(g.currentOnErr.Target.Value)
+		g.writeLine(fmt.Sprintf("if %s != nil { %s(%s); return }", errVar, handler, errVar))
+	}
 }
 
 func (g *Generator) generatePrint(stmt *parser.PrintStatement) {
@@ -1683,7 +1942,11 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 			}
 			return fmt.Sprintf("%s[%s:%s]", g.exprToGo(e.Left), start, end)
 		}
-		return fmt.Sprintf("%s[%s]", g.exprToGo(e.Left), g.exprToGo(e.Index))
+		idx := g.exprToGo(e.Index)
+		if g.optionBase == 1 {
+			idx = "(" + idx + " - 1)"
+		}
+		return fmt.Sprintf("%s[%s]", g.exprToGo(e.Left), idx)
 	case *parser.MemberExpression:
 		return g.memberExprToGo(e)
 	case *parser.AddressOfExpression:
@@ -2023,6 +2286,14 @@ func (g *Generator) callExprToGo(call *parser.CallExpression) string {
 		return fmt.Sprintf("WrapError(%s)", strings.Join(args, ", "))
 	}
 
+	if len(call.TypeArgs) > 0 {
+		typeArgs := make([]string, 0, len(call.TypeArgs))
+		for _, ts := range call.TypeArgs {
+			typeArgs = append(typeArgs, g.typeSpecToGo(ts))
+		}
+		return fmt.Sprintf("%s[%s](%s)", funcName, strings.Join(typeArgs, ", "), strings.Join(args, ", "))
+	}
+
 	return fmt.Sprintf("%s(%s)", funcName, strings.Join(args, ", "))
 }
 
@@ -2077,11 +2348,11 @@ func (g *Generator) typeSpecToGo(spec *parser.TypeSpec) string {
 		// Check for custom type
 		if g.types != nil {
 			if t := g.types.Lookup(spec.Name); t != nil {
-				return t.Name
+				return g.toGoIdent(t.Name)
 			}
 		}
-		// Could be a custom type name
-		return spec.Name
+		// Could be a custom type name; mangle Go reserved words like `type`.
+		return g.toGoIdent(spec.Name)
 	}
 }
 
@@ -2162,6 +2433,16 @@ func (g *Generator) toGoIdent(name string) string {
 	// for exported functions
 	if len(name) == 0 {
 		return name
+	}
+
+	// STATIC variables defined in the current sub get rewritten to their
+	// hoisted package-level names.
+	if g.currentFunc != "" {
+		if subStatics, ok := g.statics[g.currentFunc]; ok {
+			if uniq, ok := subStatics[name]; ok {
+				return uniq
+			}
+		}
 	}
 
 	// Check for Go reserved words

@@ -1,131 +1,225 @@
+' ============================================================
 ' Curl Example - Simple HTTP Client
-' Demonstrates using the HTTP helper functions directly
+' ============================================================
+'
+' WHAT THIS FILE TEACHES:
+'   - IMPORT: how to use external Go packages in DBasic
+'   - Working with Go's net/http package to make web requests
+'   - POINTER TO: working with pointers to structs
+'   - TYPE ... IMPLEMENTS: making a type satisfy a Go interface
+'   - Methods on types: FUNCTION (m AS AppModel) ...
+'   - Multiple return values: FUNCTION Foo() AS (STRING, INTEGER, STRING)
+'   - Error handling: checking for NIL errors
+'   - The Bubble Tea (bubbletea) TUI framework pattern:
+'     Model -> Init -> Update -> View
+'   - Lipgloss styling for colorful terminal output
+'
+' This program creates an interactive terminal app that lets you
+' pick a URL and fetch its contents, like a simple version of
+' the "curl" command-line tool but with a nice TUI interface.
+' ============================================================
 
-IMPORT "github.com/charmbracelet/bubbletea" AS tea
-IMPORT "github.com/charmbracelet/lipgloss" AS lipgloss
-IMPORT "fmt" AS fmt
-IMPORT "strings" AS strings
-IMPORT "net/http" AS http
-IMPORT "io" AS io
-IMPORT "bytes" AS bytebuf
+' ---- IMPORTS ----
+' IMPORT pulls in Go packages so we can use their functions and types.
+' The "AS" keyword gives each package a short name we can use in our code.
+' DBasic can use ANY Go package -- this is one of its superpowers!
+
+IMPORT "github.com/charmbracelet/bubbletea" AS tea       ' TUI framework (handles keyboard, screen, etc.)
+IMPORT "github.com/charmbracelet/lipgloss" AS lipgloss   ' Pretty text styling (colors, bold, etc.)
+IMPORT "fmt" AS fmt                                       ' Formatted printing (Sprintf, Println, etc.)
+IMPORT "strings" AS strings                               ' String manipulation (Repeat, etc.)
+IMPORT "net/http" AS http                                 ' HTTP client (for making web requests)
+IMPORT "io" AS io                                         ' Input/Output utilities (reading response bodies)
+IMPORT "bytes" AS bytebuf                                 ' Byte buffer (for creating request bodies)
 
 ' ============================================
 ' HTTP Helper Functions
 ' ============================================
+' These functions wrap Go's net/http package to make it easier
+' to send HTTP requests and get responses.
 
 ' Convert bytes to string using fmt.Sprintf
+' Go's HTTP library returns data as BYTES (raw data).
+' We need to convert those bytes to a STRING (readable text).
+' The %s format code in Sprintf does this conversion for us.
 FUNCTION BytesToString(b AS BYTES) AS STRING
     RETURN fmt.Sprintf("%s", b)
 END FUNCTION
 
 ' Perform an HTTP request and return response body, status code, and error
+' This is the main "workhorse" function that does the actual web request.
+'
+' MULTIPLE RETURN VALUES:
+'   This function returns THREE values at once: (STRING, INTEGER, STRING)
+'   - The response body (the web page content as text)
+'   - The HTTP status code (200 = OK, 404 = Not Found, etc.)
+'   - An error message (empty string "" means no error)
+'   The caller receives all three like: body, code, err = CurlFetch(...)
+'
+' Parameters:
+'   urlStr = the web address to fetch (e.g., "https://httpbin.org/get")
+'   method = the HTTP method ("GET", "POST", "PUT", "DELETE")
+'   body   = data to send with the request (for POST/PUT), or "" for none
 FUNCTION CurlFetch(urlStr AS STRING, method AS STRING, body AS STRING) AS (STRING, INTEGER, STRING)
     DIM respBody AS STRING = ""
     DIM statusCode AS INTEGER = 0
 
+    ' Validate the URL isn't empty
     IF urlStr = "" THEN
         RETURN "", 0, "URL is empty"
     ENDIF
 
+    ' Create the HTTP request object
+    ' POINTER TO http.Request -- Go's http.NewRequest returns a pointer
     DIM req AS POINTER TO http.Request
-    DIM reqErr AS error
+    DIM reqErr AS error      ' "error" is a Go type for error values
 
+    ' If we have a body to send (for POST requests), include it;
+    ' otherwise pass NIL (which means "nothing" / "no value")
     IF body <> "" THEN
+        ' bytebuf.NewBufferString converts our string body into a format
+        ' that http.NewRequest can use as the request body
         req, reqErr = http.NewRequest(method, urlStr, bytebuf.NewBufferString(body))
     ELSE
         req, reqErr = http.NewRequest(method, urlStr, NIL)
     ENDIF
 
+    ' Check if creating the request failed
+    ' In Go/DBasic, errors are values -- if reqErr is not NIL, something went wrong
     IF reqErr <> NIL THEN
-        RETURN "", 0, fmt.Sprintf("%v", reqErr)
+        RETURN "", 0, fmt.Sprintf("%v", reqErr)   ' %v formats any value as a string
     ENDIF
 
+    ' Send the request and get the response
+    ' http.Client is the object that actually sends requests over the network
     DIM client AS http.Client
     DIM resp AS POINTER TO http.Response
     DIM respErr AS error
-    resp, respErr = client.Do(req)
+    resp, respErr = client.Do(req)    ' Do() sends the request and waits for a response
     IF respErr <> NIL THEN
         RETURN "", 0, fmt.Sprintf("%v", respErr)
     ENDIF
 
+    ' Get the HTTP status code (200, 404, 500, etc.)
+    ' (^resp) dereferences the pointer -- it means "the thing resp points to"
     statusCode = (^resp).StatusCode
 
+    ' Read the entire response body into a byte array
+    ' io.ReadAll reads all the data from the response until there's nothing left
     DIM bodyBytes AS BYTES
     DIM readErr AS error
     bodyBytes, readErr = io.ReadAll((^resp).Body)
+    ' IMPORTANT: Always close the response body when you're done reading it!
+    ' This frees up network resources. Forgetting to close is a common mistake.
     (^resp).Body.Close()
 
     IF readErr <> NIL THEN
         RETURN "", statusCode, fmt.Sprintf("%v", readErr)
     ENDIF
 
+    ' Convert the raw bytes to a readable string and return everything
     respBody = BytesToString(bodyBytes)
-    RETURN respBody, statusCode, ""
+    RETURN respBody, statusCode, ""    ' Empty error string = success!
 END FUNCTION
 
 ' Perform a simple GET request
+' GET is the most common HTTP method -- it means "give me this page/data"
+' This is a convenience wrapper around CurlFetch so callers don't
+' have to type "GET" and "" every time.
 FUNCTION CurlGet(url AS STRING) AS (STRING, INTEGER, STRING)
     RETURN CurlFetch(url, "GET", "")
 END FUNCTION
 
 ' Perform a simple POST request
+' POST means "here's some data, please process it"
+' Used for submitting forms, creating records, sending data to APIs, etc.
 FUNCTION CurlPost(url AS STRING, body AS STRING) AS (STRING, INTEGER, STRING)
     RETURN CurlFetch(url, "POST", body)
 END FUNCTION
 
 ' ============================================
-' Application Model
+' Application Model (Bubble Tea Pattern)
 ' ============================================
+'
+' Bubble Tea is a TUI framework that uses the "Model-Update-View" pattern:
+'   1. MODEL: a TYPE that holds ALL the application's state (data)
+'   2. INIT: runs once at startup, can kick off initial commands
+'   3. UPDATE: called whenever something happens (key press, window resize, etc.)
+'              It receives a "message" and returns the updated model
+'   4. VIEW: called after every Update, returns a string to display on screen
+'
+' This is similar to how React or Elm works in web development.
+' The key idea: your app is just DATA (the model) plus FUNCTIONS that
+' transform that data (update) and display it (view).
 
+' The AppModel TYPE holds everything our app needs to remember.
+' "IMPLEMENTS tea.Model" tells DBasic that this type satisfies the
+' Bubble Tea Model interface (meaning it has Init, Update, and View methods).
 TYPE AppModel IMPLEMENTS tea.Model
-    DIM url AS STRING
-    DIM response AS STRING
-    DIM statusCode AS INTEGER
-    DIM errorMsg AS STRING
-    DIM loading AS BOOLEAN
-    DIM width AS INTEGER
-    DIM height AS INTEGER
+    DIM url AS STRING          ' The URL the user wants to fetch
+    DIM response AS STRING     ' The response body from the server
+    DIM statusCode AS INTEGER  ' HTTP status code (200, 404, etc.)
+    DIM errorMsg AS STRING     ' Error message if something went wrong
+    DIM loading AS BOOLEAN     ' TRUE while we're waiting for a response
+    DIM width AS INTEGER       ' Terminal window width (in characters)
+    DIM height AS INTEGER      ' Terminal window height (in characters)
 END TYPE
 
+' Init is called once when the program starts.
+' We return NIL because we don't need to run any startup commands.
 FUNCTION (m AS AppModel) Init() AS tea.Cmd
     RETURN NIL
 END FUNCTION
 
+' Update is called every time something happens (a "message").
+' We check what kind of message it is and respond accordingly.
+'
+' TYPE ASSERTION: msg.(tea.KeyMsg) tries to treat "msg" as a KeyMsg.
+' If it succeeds, ok = TRUE and keyMsg contains the key info.
+' If it fails, ok = FALSE. This is how we check "what kind of event happened?"
 FUNCTION (m AS AppModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    ' Check if the message is a key press
     DIM keyMsg AS tea.KeyMsg
     DIM ok AS BOOLEAN
-    keyMsg, ok = msg.(tea.KeyMsg)
+    keyMsg, ok = msg.(tea.KeyMsg)    ' Type assertion: "is this a key press?"
 
     IF ok THEN
-        DIM key AS STRING = keyMsg.String()
+        DIM key AS STRING = keyMsg.String()   ' Get the key as a string ("q", "enter", "1", etc.)
         IF key = "q" OR key = "ctrl+c" THEN
+            ' User wants to quit -- tea.Quit tells Bubble Tea to exit the program
             RETURN m, tea.Quit
         ELSEIF key = "enter" THEN
-            ' Fetch the URL
+            ' User pressed Enter -- fetch the currently selected URL
             m.loading = TRUE
             DIM fetchResp AS STRING
             DIM fetchCode AS INTEGER
             DIM fetchErr AS STRING
+            ' Call our CurlGet function and store all three return values
             fetchResp, fetchCode, fetchErr = CurlGet(m.url)
             m.response = fetchResp
             m.statusCode = fetchCode
             m.errorMsg = fetchErr
             m.loading = FALSE
         ELSEIF key = "1" THEN
+            ' User pressed 1 -- select the /get endpoint
             m.url = "https://httpbin.org/get"
-            m.response = ""
+            m.response = ""     ' Clear previous response
             m.errorMsg = ""
         ELSEIF key = "2" THEN
+            ' User pressed 2 -- select the /ip endpoint (shows your IP address)
             m.url = "https://httpbin.org/ip"
             m.response = ""
             m.errorMsg = ""
         ELSEIF key = "3" THEN
+            ' User pressed 3 -- select the /user-agent endpoint
             m.url = "https://httpbin.org/user-agent"
             m.response = ""
             m.errorMsg = ""
         ENDIF
     ENDIF
 
+    ' Check if the message is a window resize event
+    ' Bubble Tea sends this whenever the terminal window changes size
     DIM sizeMsg AS tea.WindowSizeMsg
     DIM sizeOk AS BOOLEAN
     sizeMsg, sizeOk = msg.(tea.WindowSizeMsg)
@@ -134,15 +228,24 @@ FUNCTION (m AS AppModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.height = Int(sizeMsg.Height)
     ENDIF
 
+    ' Return the updated model and NIL (no follow-up command needed)
     RETURN m, NIL
 END FUNCTION
 
+' View returns a string that represents what the user sees on screen.
+' This is called after every Update. It should NEVER modify the model --
+' it only READS the model and builds a display string.
 FUNCTION (m AS AppModel) View() AS STRING
+    ' Create text styles using Lipgloss
+    ' These define how text looks (bold, colored, etc.)
+    ' Color numbers: 9=red, 10=green, 14=cyan
     DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Bold(TRUE).Foreground(lipgloss.Color("10"))
     DIM urlStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
     DIM errorStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
     DIM successStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 
+    ' Build the output string piece by piece
+    ' Chr(10) is the newline character (same as \n)
     DIM output AS STRING = ""
     output = output & titleStyle.Render("Curl Example - HTTP Client") & Chr(10)
     output = output & strings.Repeat("-", 40) & Chr(10)
@@ -156,11 +259,14 @@ FUNCTION (m AS AppModel) View() AS STRING
     output = output & "Press [q] to quit" & Chr(10)
     output = output & Chr(10)
 
+    ' Show the current state: loading, error, or response
     IF m.loading THEN
         output = output & "Loading..." & Chr(10)
     ELSEIF m.errorMsg <> "" THEN
+        ' Something went wrong -- show the error in red
         output = output & errorStyle.Render("Error: " & m.errorMsg) & Chr(10)
     ELSEIF m.statusCode > 0 THEN
+        ' We got a response -- show the status code in green and the body
         output = output & successStyle.Render("Status: HTTP " & fmt.Sprintf("%d", m.statusCode)) & Chr(10)
         output = output & Chr(10)
         output = output & "Response:" & Chr(10)
@@ -170,10 +276,16 @@ FUNCTION (m AS AppModel) View() AS STRING
     RETURN output
 END FUNCTION
 
+' ---- MAIN ENTRY POINT ----
+' Create the model with default values and start the Bubble Tea program.
+' tea.WithAltScreen() makes the app take over the whole terminal
+' (like how vim or nano do), and restores the original screen when you quit.
 SUB Main()
     DIM model AS AppModel
-    model.url = "https://httpbin.org/get"
+    model.url = "https://httpbin.org/get"   ' Default URL to show on startup
     model.loading = FALSE
 
+    ' Start the Bubble Tea program -- this takes over the terminal
+    ' and runs the Init -> Update -> View loop until the user quits
     tea.NewProgram(model, tea.WithAltScreen()).Run()
 END SUB

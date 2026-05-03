@@ -1,8 +1,8 @@
 {
   "name": "dbasic",
   "displayName": "DBasic",
-  "description": "DBasic language support - BASIC-to-Go transpiler",
-  "version": "0.4.0",
+  "description": "DBasic language support - syntax highlighting, snippets, and LSP integration for the BASIC-to-Go transpiler",
+  "version": "0.5.0",
   "publisher": "zditech",
   "engines": {
     "vscode": "^1.75.0"
@@ -14,6 +14,10 @@
     "type": "git",
     "url": "https://github.com/zditech/dbasic"
   },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:dbasic"
+  ],
   "contributes": {
     "languages": [
       {
@@ -46,6 +50,24 @@
         "language": "dbasic",
         "path": "./snippets/dbasic.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "DBasic",
+      "properties": {
+        "dbasic.lspPath": {
+          "type": "string",
+          "default": "dbasic-lsp",
+          "description": "Path to the dbasic-lsp binary. If left as the default, it must be on your PATH."
+        },
+        "dbasic.lspEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the dbasic-lsp language server (diagnostics, hover, completions, definition, references, rename, signature help)."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   }
 }

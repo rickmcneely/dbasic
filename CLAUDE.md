@@ -25,6 +25,19 @@ go install ./cmd/dbasic-lsp
 # Check DBasic source for errors (no compilation)
 dbasic check myfile.dbas
 
+# Format DBasic source (prints to stdout; -w writes back, -l lists files needing formatting)
+dbasic fmt myfile.dbas
+dbasic fmt -w examples/*.dbas
+
+# Generate Markdown API docs from a .dbas file (top-level decls + leading ' comments)
+dbasic doc myfile.dbas              # prints Markdown to stdout
+dbasic doc -o api.md myfile.dbas    # writes to api.md
+
+# Run *_test.dbas files (subs named Test*); each runs in a recover() wrapper
+dbasic test                          # current dir, recursive
+dbasic test ./tests
+dbasic test mypkg_test.dbas          # single file
+
 # Build a DBasic program to executable
 dbasic build myfile.dbas -o myprogram
 
@@ -95,7 +108,23 @@ These are non-obvious behaviors that cause build failures. Always follow these r
 
 14. **Delve sees `.dbas` source directly.** Because of the `//line` directives, the standard Go debugger picks up DBasic source. Build, then `dlv exec ./prog` and set breakpoints with `break foo.dbas:42`. Run dlv from the directory containing the `.dbas` source.
 
-15. **`dbasic-lsp` provides editor diagnostics.** The LSP binary at `cmd/dbasic-lsp` runs over stdio and publishes parse + analyze errors as you type. Wire it up in any LSP-aware editor (VS Code, Neovim, Helix, etc.). Currently diagnostics-only; completions / hover / go-to-definition are not yet implemented.
+15. **`dbasic-lsp` provides editor language support.** The LSP binary at `cmd/dbasic-lsp` runs over stdio and publishes: parse + analyze diagnostics; document symbols (file outline); hover (signature for top-level identifiers); go-to-definition; completions (keywords + top-level idents, member completions after `.`); find-references; rename. Wire it up in any LSP-aware editor (VS Code, Neovim, Helix, etc.). Note: rename and find-references are document-wide and do not honor scope — a local variable and a top-level symbol with the same name are treated as the same. Workable for top-level symbols (subs, functions, types, constants).
+
+16. **`STEP`/`BYTES`/`STRING`/`TYPE` may now be used as identifiers** in declaration positions (DIM/LET/CONST/parameter/field/sub/function/method names) AND in expression contexts. The parser disambiguates statement-start `TYPE` based on what follows (`TYPE Foo` is still a type-decl; `TYPE = 5` and `TYPE.X()` are assignments/calls on a variable named TYPE).
+
+17. **Explicit Go generic instantiation:** use `pkg.Func(OF T1, T2)(args)` when type inference can't resolve the type parameters. Example: `slices.Sort(OF []INTEGER)(nums)` emits `slices.Sort[[]int](nums)`.
+
+18. **`dbasic fmt` is a token-stream formatter.** Comment-preserving, idempotent. Default prints to stdout; `-w` writes back; `-l` lists files whose formatting differs from the formatter's output.
+
+19. **Classic-BASIC keywords supported.** REM is a comment-to-EOL alternative to `'`. REDIM and REDIM PRESERVE resize slices (`REDIM xs(N) AS T`). STATIC inside a SUB/FUNCTION declares a variable that persists across calls (codegen hoists it to a uniquified package-level var). SHARED is parsed and accepted as a no-op since DBasic already resolves identifiers up the scope chain. OPTION EXPLICIT is a no-op (already enforced); OPTION BASE 0|1 sets the array lower bound and rewrites every `xs[i]` access to `xs[i-1]` when set to 1 — don't combine with map-style indexing under OPTION BASE 1. DECLARE SUB/FUNCTION is parsed and discarded since forward references already auto-resolve. CALL is an optional prefix on call statements (stripped by the parser). LINE INPUT reads a whole line including spaces; the prompt is optional: `LINE INPUT "Name: ", n` or `LINE INPUT n`.
+
+20. **`WITH obj ... END WITH`** allows `.field` shorthand inside the block. Parser pushes the receiver expression onto a WITH stack; `.field` parses as `receiver.field` directly (QB-style — no synthetic copy, so assignments through `.field` reach the original). Nested WITHs are supported via stack push/pop. Single-line `IF .. THEN x ELSE y` also parses now.
+
+21. **`dbasic test [path]`** runs `*_test.dbas` files. Any `SUB Test*` is invoked in a `recover()` wrapper; failures (panics, including those raised by `PANIC()`) are caught and reported as FAIL with the panic message. Exits non-zero if any test fails.
+
+22. **VS Code extension** lives at `vscode-dbasic/`. Provides syntax highlighting, snippets, and LSP integration. Build with `cd vscode-dbasic && npm install && npx vsce package`. Requires `dbasic-lsp` on PATH (or set `dbasic.lspPath` in settings; set `dbasic.lspEnabled` to `false` for grammar-only mode).
+
+23. **Error handling is Go-idiomatic; there is NO try/catch.** The default pattern is multi-return + explicit check: `data, err = os.ReadFile("x"); IF err <> NIL THEN ...`. As sugar, `ONERR GOTO Label` / `ONERR GOFUNC Handler` instructs the compiler to *automatically* emit `if err != nil { goto Label }` / `if err != nil { Handler(err); return }` after every multi-assignment whose final value is of type ERROR. `ONERR GOTO 0` clears the active handler. ONERR is per-function and lexical — no defer/recover, no exceptions. Caveats: (a) Go's "goto cannot jump over a variable declaration" rule still applies, so place ONERR GOTO labels at end-of-function and avoid introducing new DIMs between the protected call and its label; (b) `ONERR GOFUNC` emits a bare `return` after the handler — works in SUBs and in FUNCTIONs whose return signature accepts a bare return (i.e. you'd need named returns or zero-only signatures) — for FUNCTIONs that return values, prefer ONERR GOTO. The full demo lives at `examples/onerr.dbas`.
 
 ## VDBTerm (examples/vdbterm/)
 

@@ -1,7 +1,22 @@
 ' VDBTerm Rendering
 ' All view rendering functions
 
-FUNCTION (m AS VDBTermModel) View() AS STRING
+FUNCTION (m AS VDBTermModel) View() AS tea.View
+    ' Check full view cache - if nothing that affects display changed, reuse cached output
+    IF gViewCacheValid THEN
+        IF gViewCacheMenuOpen = m.MenuOpen AND gViewCacheMenuIdx = m.MenuIndex AND gViewCacheWidth = m.Width AND gViewCacheHeight = m.Height AND gViewCacheViewMode = m.ViewMode AND gViewCacheFormIdx = m.CurrentFormIdx AND gViewCacheCtrlIdx = m.SelectedCtrlIdx AND gViewCacheDialog = m.DialogMode AND gViewCachePopup = m.PopupMode AND gViewCacheFocusArea = m.FocusArea AND gViewCacheModified = m.Project.Modified AND gViewCacheMessage = m.Message AND gViewCachePH = m.ProjectHeight AND gViewCacheWH = m.WidgetsHeight AND gViewCacheTH = m.ToolboxHeight THEN
+            DIM cv AS tea.View = tea.NewView(gViewCache)
+            cv.AltScreen = TRUE
+            IF m.MenuOpen <> MENU_NONE THEN
+                cv.MouseMode = tea.MouseModeAllMotion
+            ELSE
+                cv.MouseMode = tea.MouseModeCellMotion
+            ENDIF
+            cv.ReportFocus = TRUE
+            RETURN cv
+        ENDIF
+    ENDIF
+
     DIM view AS STRING = ""
 
     ' Menu bar
@@ -17,10 +32,25 @@ FUNCTION (m AS VDBTermModel) View() AS STRING
         contentWidth = 20
     ENDIF
 
-    ' Get dropdown/dialog overlays
+    ' Get dropdown/dialog overlays (cached to avoid re-rendering on every mouse motion)
     DIM dropdownLines AS []STRING
     IF m.MenuOpen <> MENU_NONE THEN
-        dropdownLines = GetDropdownLines(m)
+        IF gMenuCachedFor = m.MenuOpen AND gMenuCachedIdx = m.MenuIndex AND Len(gMenuCachedLines) > 0 THEN
+            dropdownLines = gMenuCachedLines
+        ELSE
+            dropdownLines = GetDropdownLines(m)
+            gMenuCachedLines = dropdownLines
+            gMenuCachedFor = m.MenuOpen
+            gMenuCachedIdx = m.MenuIndex
+        ENDIF
+    ELSE
+        ' Clear cache when no menu is open
+        IF Len(gMenuCachedLines) > 0 THEN
+            DIM emptyLines AS []STRING
+            gMenuCachedLines = emptyLines
+            gMenuCachedFor = 0
+            gMenuCachedIdx = 0
+        ENDIF
     ENDIF
 
     DIM dialogLines AS []STRING
@@ -66,6 +96,10 @@ FUNCTION (m AS VDBTermModel) View() AS STRING
             popupStartCol = 0
         ENDIF
     ENDIF
+
+    ' Cache code lines and selection state for rendering (once per frame)
+    SetGlobalCodeLines(m)
+    SetGlobalSelection(m)
 
     ' Render main content area row by row
     DIM row AS INTEGER
@@ -118,7 +152,35 @@ FUNCTION (m AS VDBTermModel) View() AS STRING
     ' Status bar
     view = view & RenderStatusBar(m)
 
-    RETURN view
+    ' Cache the rendered output
+    gViewCache = view
+    gViewCacheMenuOpen = m.MenuOpen
+    gViewCacheMenuIdx = m.MenuIndex
+    gViewCacheWidth = m.Width
+    gViewCacheHeight = m.Height
+    gViewCacheViewMode = m.ViewMode
+    gViewCacheFormIdx = m.CurrentFormIdx
+    gViewCacheCtrlIdx = m.SelectedCtrlIdx
+    gViewCacheDialog = m.DialogMode
+    gViewCachePopup = m.PopupMode
+    gViewCacheFocusArea = m.FocusArea
+    gViewCacheModified = m.Project.Modified
+    gViewCacheMessage = m.Message
+    gViewCachePH = m.ProjectHeight
+    gViewCacheWH = m.WidgetsHeight
+    gViewCacheTH = m.ToolboxHeight
+    gViewCacheValid = TRUE
+
+    ' Wrap in tea.View with declarative settings (v2)
+    DIM v AS tea.View = tea.NewView(view)
+    v.AltScreen = TRUE
+    IF m.MenuOpen <> MENU_NONE THEN
+        v.MouseMode = tea.MouseModeAllMotion
+    ELSE
+        v.MouseMode = tea.MouseModeCellMotion
+    ENDIF
+    v.ReportFocus = TRUE
+    RETURN v
 END FUNCTION
 
 FUNCTION RenderCellAt(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, leftPanelWidth AS INTEGER, contentWidth AS INTEGER, propertiesWidth AS INTEGER, contentHeight AS INTEGER) AS STRING
@@ -1274,6 +1336,82 @@ FUNCTION RenderControlChar(ctrl AS VDBControl, localRow AS INTEGER, localCol AS 
                 RETURN " "
             ENDIF
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+        ' Viewport: bordered box with optional line numbers
+        DIM vpW AS INTEGER = ctrl.Width
+        DIM vpH AS INTEGER = ctrl.Height
+
+        IF localRow = 0 THEN
+            ' Top border with label
+            IF localCol = 0 THEN
+                RETURN "┌"
+            ELSEIF localCol = vpW - 1 THEN
+                RETURN "┐"
+            ELSE
+                DIM vpLabel AS STRING = " Viewport "
+                DIM vpLabelStart AS INTEGER = 1
+                DIM vpLabelCol AS INTEGER = localCol - vpLabelStart
+                IF vpLabelCol >= 0 AND vpLabelCol < Len(vpLabel) THEN
+                    RETURN Mid(vpLabel, vpLabelCol + 1, 1)
+                ELSE
+                    RETURN "─"
+                ENDIF
+            ENDIF
+        ELSEIF localRow = vpH - 1 THEN
+            ' Bottom border
+            IF localCol = 0 THEN
+                RETURN "└"
+            ELSEIF localCol = vpW - 1 THEN
+                RETURN "┘"
+            ELSE
+                RETURN "─"
+            ENDIF
+        ELSE
+            ' Content area
+            IF localCol = 0 OR localCol = vpW - 1 THEN
+                RETURN "│"
+            ELSEIF ctrl.ShowLineNumbers AND localCol <= 3 THEN
+                ' Line number gutter
+                DIM vpLineNum AS INTEGER = localRow
+                DIM vpNumStr AS STRING = Str(vpLineNum)
+                DIM vpGutterCol AS INTEGER = localCol - 1
+                IF vpGutterCol < 2 THEN
+                    DIM vpPadded AS STRING = PadRight(vpNumStr, 2)
+                    IF vpGutterCol < Len(vpPadded) THEN
+                        RETURN Mid(vpPadded, vpGutterCol + 1, 1)
+                    ENDIF
+                    RETURN " "
+                ELSEIF vpGutterCol = 2 THEN
+                    RETURN "│"
+                ENDIF
+                RETURN " "
+            ELSEIF localCol = vpW - 2 THEN
+                ' Scrollbar track
+                RETURN "░"
+            ELSE
+                ' Sample content
+                IF localRow = 1 AND ctrl.Value <> "" THEN
+                    DIM vpContentStart AS INTEGER = 1
+                    IF ctrl.ShowLineNumbers THEN
+                        vpContentStart = 4
+                    ENDIF
+                    DIM vpContentCol AS INTEGER = localCol - vpContentStart
+                    IF vpContentCol >= 0 AND vpContentCol < Len(ctrl.Value) THEN
+                        RETURN Mid(ctrl.Value, vpContentCol + 1, 1)
+                    ENDIF
+                ENDIF
+                RETURN " "
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CLIPBOARD THEN
+        IF localCol = 0 THEN
+            RETURN "["
+        ELSEIF localCol = 1 THEN
+            RETURN "C"
+        ELSEIF localCol = 2 THEN
+            RETURN "]"
+        ENDIF
+        RETURN " "
     ENDIF
 
     RETURN " "
@@ -1281,45 +1419,7 @@ END FUNCTION
 
 ' Code editor rendering
 ' Render a single line of code with syntax highlighting
-FUNCTION RenderHighlightedLine(lineText AS STRING, width AS INTEGER, cursorCol AS INTEGER, showCursor AS BOOLEAN) AS STRING
-    DIM result AS STRING = ""
-    DIM lineLen AS INTEGER = Len(lineText)
-
-    ' Tokenize the line for syntax highlighting
-    DIM tokens AS []SyntaxToken = TokenizeLine(lineText)
-
-    ' Render character by character with appropriate styling
-    DIM col AS INTEGER
-    FOR col = 0 TO width - 1
-        DIM ch AS STRING = " "
-        IF col < lineLen THEN
-            ch = Mid(lineText, col + 1, 1)
-        ENDIF
-
-        ' Check if this is cursor position
-        IF showCursor AND col = cursorCol THEN
-            result = result & styleCodeCursor.Render(ch)
-        ELSE
-            ' Get token type for this column
-            DIM tokType AS INTEGER = GetTokenTypeForColumn(tokens, col)
-            IF tokType = TOKEN_KEYWORD THEN
-                result = result & styleCodeKeyword.Render(ch)
-            ELSEIF tokType = TOKEN_TYPE THEN
-                result = result & styleCodeKeyword.Render(ch)
-            ELSEIF tokType = TOKEN_STRING THEN
-                result = result & styleCodeString.Render(ch)
-            ELSEIF tokType = TOKEN_COMMENT THEN
-                result = result & styleCodeComment.Render(ch)
-            ELSEIF tokType = TOKEN_NUMBER THEN
-                result = result & styleCodeNumber.Render(ch)
-            ELSE
-                result = result & styleCodeEditor.Render(ch)
-            ENDIF
-        ENDIF
-    NEXT
-
-    RETURN result
-END FUNCTION
+' (Old per-character rendering removed - replaced by span-based RenderCodeLineSpans)
 
 FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS STRING
     DIM content AS STRING = ""
@@ -1329,41 +1429,15 @@ FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
         RETURN content
     ENDIF
 
-    ' Get code from form (or from textarea if initialized)
-    DIM code AS STRING
-    IF m.CodeEditorInited THEN
-        code = GetEditorCode(m.CodeEditor)
-    ELSE
-        code = m.Project.Forms[m.CurrentFormIdx].Code
-    ENDIF
+    DIM totalLines AS INTEGER = gCodeLineCount
+    DIM cursorLine AS INTEGER = m.CodeCursorY
+    DIM cursorCol AS INTEGER = m.CodeCursorX
 
-    DIM totalLines AS INTEGER = CountLines(code)
-
-    ' Get cursor position from textarea
-    DIM cursorLine AS INTEGER = 0
-    DIM cursorCol AS INTEGER = 0
-    IF m.CodeEditorInited THEN
-        cursorLine = GetEditorCursorLine(m.CodeEditor)
-        cursorCol = GetEditorCursorCol(m.CodeEditor)
-    ELSE
-        cursorLine = m.CodeCursorY
-        cursorCol = m.CodeCursorX
-    ENDIF
-
-    ' Calculate scroll position to keep cursor visible
-    ' Use row as the display line, calculate what code line it represents
-    DIM contentHeight AS INTEGER = m.Height - 4  ' approximate visible rows
-    DIM scrollY AS INTEGER = 0
-    IF cursorLine >= contentHeight THEN
-        scrollY = cursorLine - contentHeight + 1
-    ENDIF
-    ' For now, use simple scrolling: row maps to code line
-    ' More sophisticated scrolling can keep cursor centered
+    ' Calculate scroll
+    DIM contentHeight AS INTEGER = m.Height - 4
     DIM lineIdx AS INTEGER = row
-
-    ' Adjust for scroll if cursor would be off screen
     IF cursorLine >= contentHeight THEN
-        lineIdx = scrollY + row
+        lineIdx = (cursorLine - contentHeight + 1) + row
     ENDIF
 
     ' Line number column
@@ -1384,32 +1458,99 @@ FUNCTION RenderCodeRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) AS S
         RETURN content
     ENDIF
 
-    ' Get the line text
-    DIM lineText AS STRING = GetLine(code, lineIdx + 1)
-
-    ' Determine if cursor is on this line
+    ' Get the line text from cache (O(1) lookup)
+    DIM lineText AS STRING = GetCachedLine(lineIdx)
     DIM showCursor AS BOOLEAN = (lineIdx = cursorLine AND m.FocusArea = FOCUS_CODE)
+    DIM hasSelection AS BOOLEAN = m.CodeSelecting
 
-    ' Render with syntax highlighting
-    IF m.SyntaxHighlight THEN
-        content = content & RenderHighlightedLine(lineText, width, cursorCol, showCursor)
-    ELSE
-        ' No syntax highlighting - just render plain text with cursor
-        DIM col AS INTEGER
-        FOR col = 0 TO width - 1
-            DIM ch AS STRING = " "
-            IF col < Len(lineText) THEN
-                ch = Mid(lineText, col + 1, 1)
-            ENDIF
-            IF showCursor AND col = cursorCol THEN
-                content = content & styleCodeCursor.Render(ch)
-            ELSE
-                content = content & styleCodeEditor.Render(ch)
-            ENDIF
-        NEXT
-    ENDIF
+    ' Render using spans (batch consecutive chars with same style)
+    content = content & RenderCodeLineSpans(lineText, width, cursorCol, showCursor, hasSelection, lineIdx)
 
     RETURN content
+END FUNCTION
+
+' Render a code line using spans - groups consecutive chars with the same style
+' into a single Render call. Much faster than per-character rendering.
+FUNCTION RenderCodeLineSpans(lineText AS STRING, width AS INTEGER, cursorCol AS INTEGER, showCursor AS BOOLEAN, hasSelection AS BOOLEAN, lineIdx AS INTEGER) AS STRING
+    DIM result AS STRING = ""
+    DIM lineLen AS INTEGER = Len(lineText)
+
+    ' Tokenize once
+    DIM tokens AS []SyntaxToken
+    tokens = TokenizeLine(lineText)
+
+    ' Pad lineText to width for uniform processing
+    DIM paddedLine AS STRING = lineText
+    IF lineLen < width THEN
+        paddedLine = paddedLine & RepeatStr(" ", width - lineLen)
+    ENDIF
+
+    ' Build spans: group consecutive characters with the same style type
+    ' Style types: 0=default, 1=keyword, 2=string, 3=comment, 4=number, 5=cursor, 6=selection
+    DIM spanStart AS INTEGER = 0
+    DIM spanType AS INTEGER = -1
+    DIM col AS INTEGER
+
+    FOR col = 0 TO width - 1
+        DIM curType AS INTEGER = 0  ' default
+
+        IF gDraggingText AND lineIdx = gDropLine AND col = gDropCol THEN
+            curType = 7  ' drop cursor
+        ELSEIF showCursor AND col = cursorCol AND NOT gDraggingText THEN
+            curType = 5  ' cursor
+        ELSEIF hasSelection AND IsInSelectionGlobal(lineIdx, col) THEN
+            curType = 6  ' selection
+        ELSE
+            DIM tokType AS INTEGER = GetTokenTypeForColumn(tokens, col)
+            IF tokType = TOKEN_KEYWORD OR tokType = TOKEN_TYPE THEN
+                curType = 1
+            ELSEIF tokType = TOKEN_STRING THEN
+                curType = 2
+            ELSEIF tokType = TOKEN_COMMENT THEN
+                curType = 3
+            ELSEIF tokType = TOKEN_NUMBER THEN
+                curType = 4
+            ENDIF
+        ENDIF
+
+        IF curType <> spanType THEN
+            ' Flush previous span
+            IF spanType >= 0 AND col > spanStart THEN
+                DIM spanText AS STRING = Mid(paddedLine, spanStart + 1, col - spanStart)
+                result = result & RenderSpan(spanText, spanType)
+            ENDIF
+            spanStart = col
+            spanType = curType
+        ENDIF
+    NEXT
+
+    ' Flush last span
+    IF spanType >= 0 AND width > spanStart THEN
+        DIM lastSpan AS STRING = Mid(paddedLine, spanStart + 1, width - spanStart)
+        result = result & RenderSpan(lastSpan, spanType)
+    ENDIF
+
+    RETURN result
+END FUNCTION
+
+' Render a span of text with a given style type
+FUNCTION RenderSpan(text AS STRING, styleType AS INTEGER) AS STRING
+    IF styleType = 1 THEN
+        RETURN styleCodeKeyword.Render(text)
+    ELSEIF styleType = 2 THEN
+        RETURN styleCodeString.Render(text)
+    ELSEIF styleType = 3 THEN
+        RETURN styleCodeComment.Render(text)
+    ELSEIF styleType = 4 THEN
+        RETURN styleCodeNumber.Render(text)
+    ELSEIF styleType = 5 THEN
+        RETURN styleCodeCursor.Render(text)
+    ELSEIF styleType = 6 THEN
+        RETURN styleCodeSelection.Render(text)
+    ELSEIF styleType = 7 THEN
+        RETURN styleCodeDropCursor.Render(text)
+    ENDIF
+    RETURN styleCodeEditor.Render(text)
 END FUNCTION
 
 FUNCTION RenderCodeCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width AS INTEGER) AS STRING
@@ -1417,28 +1558,10 @@ FUNCTION RenderCodeCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
         RETURN styleCodeEditor.Render(" ")
     ENDIF
 
-    ' Get code from form (or from textarea if initialized)
-    DIM code AS STRING
-    IF m.CodeEditorInited THEN
-        code = GetEditorCode(m.CodeEditor)
-    ELSE
-        code = m.Project.Forms[m.CurrentFormIdx].Code
-    ENDIF
+    DIM totalLines AS INTEGER = gCodeLineCount
+    DIM cursorLine AS INTEGER = m.CodeCursorY
+    DIM cursorCol AS INTEGER = m.CodeCursorX
 
-    DIM totalLines AS INTEGER = CountLines(code)
-
-    ' Get cursor position from textarea
-    DIM cursorLine AS INTEGER = 0
-    DIM cursorCol AS INTEGER = 0
-    IF m.CodeEditorInited THEN
-        cursorLine = GetEditorCursorLine(m.CodeEditor)
-        cursorCol = GetEditorCursorCol(m.CodeEditor)
-    ELSE
-        cursorLine = m.CodeCursorY
-        cursorCol = m.CodeCursorX
-    ENDIF
-
-    ' Account for line numbers
     DIM lineNumWidth AS INTEGER = 0
     IF m.ShowLineNumbers THEN
         lineNumWidth = 5
@@ -1446,7 +1569,6 @@ FUNCTION RenderCodeCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
 
     DIM lineIdx AS INTEGER = row
 
-    ' Handle line number column
     IF m.ShowLineNumbers AND col < lineNumWidth THEN
         IF lineIdx < totalLines THEN
             DIM lineNumStr AS STRING = fmt.Sprintf("%4d ", lineIdx + 1)
@@ -1457,14 +1579,13 @@ FUNCTION RenderCodeCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
         RETURN styleCodeLineNum.Render(" ")
     ENDIF
 
-    ' Adjust column for line number offset
     DIM codeCol AS INTEGER = col - lineNumWidth
 
     IF lineIdx >= totalLines THEN
         RETURN styleCodeEditor.Render(" ")
     ENDIF
 
-    DIM lineText AS STRING = GetLine(code, lineIdx + 1)
+    DIM lineText AS STRING = GetCachedLine(lineIdx)
     DIM ch AS STRING = " "
 
     IF codeCol < Len(lineText) THEN
@@ -1474,6 +1595,11 @@ FUNCTION RenderCodeCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, width
     ' Cursor takes priority
     IF lineIdx = cursorLine AND codeCol = cursorCol AND m.FocusArea = FOCUS_CODE THEN
         RETURN styleCodeCursor.Render(ch)
+    ENDIF
+
+    ' Selection highlight
+    IF m.CodeSelecting AND IsInSelectionGlobal(lineIdx, codeCol) THEN
+        RETURN styleCodeSelection.Render(ch)
     ENDIF
 
     ' Apply syntax highlighting
@@ -1515,34 +1641,57 @@ FUNCTION RenderProjectRow(m AS VDBTermModel, row AS INTEGER, width AS INTEGER) A
         itemType, formIdx, ctrlIdx = GetTreeItemInfo(m, itemIdx)
 
         IF itemType = 0 THEN
-            ' Project name
-            itemText = "+ " & m.Project.Name
+            ' Project name (root node)
+            itemText = "+" & m.Project.Name
         ELSEIF itemType = 1 THEN
-            ' Form - show +/- based on expansion state
+            ' Form - tree connector with +/- for expand/collapse
             DIM expanded AS BOOLEAN = FALSE
             IF formIdx < Len(m.TreeExpanded) THEN
                 expanded = m.TreeExpanded[formIdx]
+            ENDIF
+            ' Determine if this is the last top-level item
+            DIM isLastForm AS BOOLEAN = (formIdx = Len(m.Project.Forms) - 1 AND Len(m.Project.Modules) = 0)
+            DIM treeConn AS STRING = "+"
+            IF isLastForm THEN
+                treeConn = "`"
             ENDIF
             DIM expandChar AS STRING = "+"
             IF expanded THEN
                 expandChar = "-"
             ENDIF
-            DIM formMarker AS STRING = " "
+            DIM formMarker AS STRING = ""
             IF formIdx = m.CurrentFormIdx THEN
                 formMarker = ">"
             ENDIF
-            itemText = " " & expandChar & formMarker & m.Project.Forms[formIdx].Name & ".frm"
+            itemText = treeConn & expandChar & formMarker & m.Project.Forms[formIdx].Name & ".frm"
         ELSEIF itemType = 2 THEN
-            ' Control under a form
+            ' Control under a form - nested tree connector
             DIM ctrl AS VDBControl = m.Project.Forms[formIdx].Controls[ctrlIdx]
-            DIM ctrlMarker AS STRING = " "
+            ' Check if parent form is last top-level item
+            DIM parentIsLast AS BOOLEAN = (formIdx = Len(m.Project.Forms) - 1 AND Len(m.Project.Modules) = 0)
+            DIM vertLine AS STRING = "|"
+            IF parentIsLast THEN
+                vertLine = " "
+            ENDIF
+            ' Check if this is the last control
+            DIM isLastCtrl AS BOOLEAN = (ctrlIdx = Len(m.Project.Forms[formIdx].Controls) - 1)
+            DIM ctrlConn AS STRING = "+"
+            IF isLastCtrl THEN
+                ctrlConn = "`"
+            ENDIF
+            DIM ctrlMarker AS STRING = ""
             IF formIdx = m.CurrentFormIdx AND ctrlIdx = m.SelectedCtrlIdx THEN
                 ctrlMarker = ">"
             ENDIF
-            itemText = "   " & ctrlMarker & ctrl.CtlName
+            itemText = vertLine & ctrlConn & ctrlMarker & ctrl.CtlName
         ELSEIF itemType = 3 THEN
-            ' Module
-            itemText = "    " & m.Project.Modules[formIdx].Name & ".bas"
+            ' Module - tree connector
+            DIM isLastMod AS BOOLEAN = (formIdx = Len(m.Project.Modules) - 1)
+            DIM modConn AS STRING = "+"
+            IF isLastMod THEN
+                modConn = "`"
+            ENDIF
+            itemText = modConn & m.Project.Modules[formIdx].Name & ".bas"
         ENDIF
 
         itemText = PadRight(itemText, width)
@@ -1583,30 +1732,50 @@ FUNCTION RenderProjectCell(m AS VDBTermModel, row AS INTEGER, col AS INTEGER, wi
             itemType, formIdx, ctrlIdx = GetTreeItemInfo(m, itemIdx)
 
             IF itemType = 0 THEN
-                itemText = "+ " & m.Project.Name
+                itemText = "+" & m.Project.Name
             ELSEIF itemType = 1 THEN
-                DIM expanded AS BOOLEAN = FALSE
+                DIM expanded2 AS BOOLEAN = FALSE
                 IF formIdx < Len(m.TreeExpanded) THEN
-                    expanded = m.TreeExpanded[formIdx]
+                    expanded2 = m.TreeExpanded[formIdx]
                 ENDIF
-                DIM expandChar AS STRING = "+"
-                IF expanded THEN
-                    expandChar = "-"
+                DIM isLastForm2 AS BOOLEAN = (formIdx = Len(m.Project.Forms) - 1 AND Len(m.Project.Modules) = 0)
+                DIM treeConn2 AS STRING = "+"
+                IF isLastForm2 THEN
+                    treeConn2 = "`"
                 ENDIF
-                DIM formMarker AS STRING = " "
+                DIM expandChar2 AS STRING = "+"
+                IF expanded2 THEN
+                    expandChar2 = "-"
+                ENDIF
+                DIM formMarker2 AS STRING = ""
                 IF formIdx = m.CurrentFormIdx THEN
-                    formMarker = ">"
+                    formMarker2 = ">"
                 ENDIF
-                itemText = " " & expandChar & formMarker & m.Project.Forms[formIdx].Name & ".frm"
+                itemText = treeConn2 & expandChar2 & formMarker2 & m.Project.Forms[formIdx].Name & ".frm"
             ELSEIF itemType = 2 THEN
-                DIM ctrl AS VDBControl = m.Project.Forms[formIdx].Controls[ctrlIdx]
-                DIM ctrlMarker AS STRING = " "
-                IF formIdx = m.CurrentFormIdx AND ctrlIdx = m.SelectedCtrlIdx THEN
-                    ctrlMarker = ">"
+                DIM ctrl2 AS VDBControl = m.Project.Forms[formIdx].Controls[ctrlIdx]
+                DIM parentIsLast2 AS BOOLEAN = (formIdx = Len(m.Project.Forms) - 1 AND Len(m.Project.Modules) = 0)
+                DIM vertLine2 AS STRING = "|"
+                IF parentIsLast2 THEN
+                    vertLine2 = " "
                 ENDIF
-                itemText = "   " & ctrlMarker & ctrl.CtlName
+                DIM isLastCtrl2 AS BOOLEAN = (ctrlIdx = Len(m.Project.Forms[formIdx].Controls) - 1)
+                DIM ctrlConn2 AS STRING = "+"
+                IF isLastCtrl2 THEN
+                    ctrlConn2 = "`"
+                ENDIF
+                DIM ctrlMarker2 AS STRING = ""
+                IF formIdx = m.CurrentFormIdx AND ctrlIdx = m.SelectedCtrlIdx THEN
+                    ctrlMarker2 = ">"
+                ENDIF
+                itemText = vertLine2 & ctrlConn2 & ctrlMarker2 & ctrl2.CtlName
             ELSEIF itemType = 3 THEN
-                itemText = "    " & m.Project.Modules[formIdx].Name & ".bas"
+                DIM isLastMod2 AS BOOLEAN = (formIdx = Len(m.Project.Modules) - 1)
+                DIM modConn2 AS STRING = "+"
+                IF isLastMod2 THEN
+                    modConn2 = "`"
+                ENDIF
+                itemText = modConn2 & m.Project.Modules[formIdx].Name & ".bas"
             ENDIF
 
             itemText = PadRight(itemText, width)
@@ -1944,10 +2113,27 @@ FUNCTION RenderStatusBar(m AS VDBTermModel) AS STRING
             cursorCol = GetEditorCursorCol(m.CodeEditor)
         ENDIF
         status = status & "Code Ln " & Str(cursorLine + 1) & " Col " & Str(cursorCol + 1)
+        IF m.CodeDraggingText THEN
+            status = status & " [DRAG]"
+        ELSEIF m.CodeSelecting THEN
+            status = status & " [SEL]"
+        ENDIF
+    ENDIF
+
+    ' Build spinner
+    IF m.BuildInProgress THEN
+        DIM spinChars AS STRING = "|/-" & Chr(92)
+        DIM spinChar AS STRING = Mid(spinChars, (m.BuildSpinnerFrame MOD 4) + 1, 1)
+        status = status & " [" & spinChar & " Building]"
     ENDIF
 
     IF Len(m.Message) > 0 THEN
         status = status & " | " & m.Message
+    ENDIF
+
+    ' Terminal focus indicator
+    IF NOT m.TerminalFocused THEN
+        status = status & " [UNFOCUSED]"
     ENDIF
 
     status = status & " | F1=Help F5=Run F7=View F10=Menu"
@@ -2804,6 +2990,8 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         contentLines = APPEND(contentLines, "    F1     - Help")
         contentLines = APPEND(contentLines, "    F2     - Object Browser")
         contentLines = APPEND(contentLines, "    F3     - Theme Editor")
+        contentLines = APPEND(contentLines, "    Ctrl+F - Find in code")
+        contentLines = APPEND(contentLines, "    Ctrl+H - Find & Replace in code")
         contentLines = APPEND(contentLines, "    F5     - Run project")
         contentLines = APPEND(contentLines, "    F7     - Toggle Form/Code view")
         contentLines = APPEND(contentLines, "    F10    - Open menu")
@@ -3100,6 +3288,30 @@ FUNCTION GetDialogLines(m AS VDBTermModel) AS []STRING
         title = " 256-Color Picker "
         width = 40
         contentLines = GetColorPicker256Content(m)
+    ELSEIF m.DialogMode = DIALOG_FIND THEN
+        title = " Find "
+        width = 50
+        DIM findLine AS STRING = " Find: [" & m.FindText & "]  "
+        IF Len(m.FindMatches) > 0 THEN
+            findLine = findLine & Str(m.FindMatchIdx + 1) & "/" & Str(Len(m.FindMatches))
+        ELSE
+            findLine = findLine & "No matches"
+        ENDIF
+        findLine = findLine & "  (Enter=Next, Esc=Close)"
+        contentLines = APPEND(contentLines, PadRight(findLine, width - 2))
+    ELSEIF m.DialogMode = DIALOG_REPLACE THEN
+        title = " Find & Replace "
+        width = 50
+        DIM findLine2 AS STRING = " Find: [" & m.FindText & "]  "
+        IF Len(m.FindMatches) > 0 THEN
+            findLine2 = findLine2 & Str(m.FindMatchIdx + 1) & "/" & Str(Len(m.FindMatches))
+        ELSE
+            findLine2 = findLine2 & "No matches"
+        ENDIF
+        contentLines = APPEND(contentLines, PadRight(findLine2, width - 2))
+        DIM replaceLine AS STRING = " Replace: [" & m.ReplaceText & "]"
+        replaceLine = replaceLine & "  (Ctrl+R=Replace, Esc=Close)"
+        contentLines = APPEND(contentLines, PadRight(replaceLine, width - 2))
     ENDIF
 
     ' Build dialog box
@@ -3164,7 +3376,7 @@ END FUNCTION
 
 FUNCTION GetDialogSize(m AS VDBTermModel) AS (INTEGER, INTEGER)
     IF m.DialogMode = DIALOG_HELP THEN
-        RETURN 50, 21
+        RETURN 50, 23
     ELSEIF m.DialogMode = DIALOG_ABOUT THEN
         RETURN 44, 13
     ELSEIF m.DialogMode = DIALOG_CONFIRM_EXIT THEN
@@ -3191,6 +3403,10 @@ FUNCTION GetDialogSize(m AS VDBTermModel) AS (INTEGER, INTEGER)
         RETURN 40, 26
     ELSEIF m.DialogMode = DIALOG_FILE_BROWSER THEN
         RETURN 60, 20
+    ELSEIF m.DialogMode = DIALOG_FIND THEN
+        RETURN 50, 3
+    ELSEIF m.DialogMode = DIALOG_REPLACE THEN
+        RETURN 50, 4
     ENDIF
     RETURN 40, 8
 END FUNCTION

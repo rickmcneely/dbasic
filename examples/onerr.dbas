@@ -1,0 +1,63 @@
+' onerr.dbas — ONERR error handling demo.
+'
+' DBasic does NOT have try/catch. Idiomatic Go-style error checking
+' (`IF err <> NIL THEN ...`) is always available. ONERR is sugar that
+' tells the compiler to insert that check for you, automatically, after
+' each call whose last return is an ERROR.
+'
+'   ONERR GOTO Label    — on err, GOTO Label  (auto-emits `if err != nil { goto Label }`)
+'   ONERR GOFUNC Name   — on err, call Name(err) and RETURN
+'   ONERR GOTO 0        — clear handler (back to manual checks)
+'
+' ONERR is purely a per-function lexical directive. No defer/recover,
+' no exceptions — just compile-time generation of the boilerplate
+' `if err != nil { ... }` Go programmers normally write by hand.
+
+IMPORT "os"
+
+SUB ReportErr(e AS ERROR)
+    PRINT "[handler] failed: ", e.Error()
+END SUB
+
+' --- ONERR GOFUNC: every error-returning call routes through ReportErr.
+SUB Demo1()
+    ONERR GOFUNC ReportErr
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile("nonexistent_file.txt")
+    PRINT "Demo1 read ", LEN(data), " bytes"   ' only reached if err = NIL
+END SUB
+
+' --- ONERR GOTO: every error-returning call routes to a label.
+SUB Demo2()
+    DIM data AS BYTES
+    DIM err AS ERROR
+    ONERR GOTO Bad
+    data, err = os.ReadFile("also_missing.txt")
+    PRINT "Demo2 read ", LEN(data), " bytes"
+    RETURN
+Bad:
+    PRINT "[label] failed: ", err.Error()
+END SUB
+
+' --- Mixing: ONERR GOTO 0 clears the active handler.
+SUB Demo3()
+    DIM data AS BYTES
+    DIM err AS ERROR
+    ONERR GOTO Bad
+    data, err = os.ReadFile("missing_a.txt")    ' guarded by ONERR
+    ONERR GOTO 0
+    data, err = os.ReadFile("missing_b.txt")    ' NOT auto-checked
+    IF err <> NIL THEN
+        PRINT "manual check caught: ", err.Error(), " (", LEN(data), " bytes)"
+    END IF
+    RETURN
+Bad:
+    PRINT "guarded read failed: ", err.Error()
+END SUB
+
+SUB Main()
+    Demo1()
+    Demo2()
+    Demo3()
+END SUB

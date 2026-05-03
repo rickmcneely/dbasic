@@ -1,29 +1,65 @@
-' Bytes and BSTRING Example in DBasic
-' Demonstrates byte arrays and byte string literals
+' ============================================================================
+' BYTES AND BSTRING EXAMPLE IN DBASIC
+' ============================================================================
+'
+' What this file teaches:
+'   - The difference between STRING and BYTES (byte arrays)
+'   - How to create byte string literals with the B"..." syntax
+'   - What BSTRING is (it is just another name for BYTES)
+'   - How to access and modify individual bytes by index
+'
+' Why do we need BYTES when we already have STRING?
+'   STRING in DBasic holds Unicode text -- each character can be multiple
+'   bytes long (like emojis or accented letters). This is great for text.
+'
+'   BYTES holds raw binary data -- each element is exactly one byte (0-255).
+'   This is useful for working with files, network data, images, or any
+'   situation where you need exact control over individual bytes.
+'
+' Think of STRING like a book with characters in many languages,
+' and BYTES like a row of numbered mailboxes that each hold one small number.
+'
+' ============================================================================
 
 SUB Main()
     PRINT "=== BYTES and BSTRING Demo ==="
     PRINT ""
 
-    ' Unicode string (default)
+    ' --- STRING: The normal text type ---
+    ' STRING stores text as Unicode, which supports all languages and symbols.
     DIM greeting AS STRING = "Hello, World!"
     PRINT "Unicode STRING: "; greeting
 
-    ' Byte string using BYTES type
+    ' --- BYTES: Raw byte data ---
+    ' The B"..." syntax creates a byte array from the ASCII values of the text.
+    ' For example, B"Hello" creates a 5-byte array: [72, 101, 108, 108, 111]
+    '   H=72, e=101, l=108, l=108, o=111 (these are ASCII codes)
     DIM data AS BYTES = B"Hello"
     PRINT "BYTES literal: B\"Hello\""
 
-    ' BSTRING alias (same as BYTES)
+    ' --- BSTRING: Just another name for BYTES ---
+    ' BSTRING and BYTES are exactly the same type. BSTRING exists as a
+    ' familiar name for programmers coming from older BASIC dialects.
     DIM legacy AS BSTRING = B"BASIC"
+    ' Accessing individual bytes by index (0-based: first byte is [0])
+    ' Each byte here is the ASCII code of the character:
+    '   B=66, A=65, S=83, I=73, C=67
     PRINT "BSTRING literal: "; legacy[0]; legacy[1]; legacy[2]; legacy[3]; legacy[4]
 
-    ' Access individual bytes
+    ' --- Accessing individual bytes ---
+    ' Bytes are accessed with square brackets, starting at index 0.
+    ' data[0] is the first byte, data[1] is the second, and so on.
     PRINT ""
     PRINT "=== Byte Access ==="
+    ' data was set to B"Hello", so data[0] = 72 (the letter 'H' in ASCII)
     PRINT "First byte of data: "; data[0]
+    ' data[1] = 101 (the letter 'e' in ASCII)
     PRINT "Second byte of data: "; data[1]
 
-    ' Modify bytes
+    ' --- Modifying individual bytes ---
+    ' You can change any single byte by assigning a new value to its index.
+    ' Here we change the first byte from 72 ('H') to 74 ('J').
+    ' After this, if we converted data back to text it would read "Jello".
     data[0] = 74  ' Change 'H' to 'J'
     PRINT "After data[0] = 74: first byte is now "; data[0]
 

@@ -1,26 +1,66 @@
-' Variables and Types Example in DBasic
-' Demonstrates all supported data types and variable operations
+' ============================================================
+' VARIABLES AND TYPES - Understanding Data in DBasic
+' ============================================================
+' This file teaches you about variables and data types:
+'   - What variables are (named boxes that hold values)
+'   - The different types of data DBasic can work with
+'     (integers, decimals, text, true/false)
+'   - How to let DBasic figure out the type automatically
+'   - How to join text strings together (concatenation)
+'   - Math operations: add, subtract, multiply, divide, etc.
+'   - Comparing values: greater than, less than, equal, etc.
+'   - Logic operations: AND, OR, NOT, XOR
+'
+' By the end of this file, you will understand how DBasic
+' stores and manipulates all kinds of data.
+' ============================================================
 
 SUB Main()
-    ' Integer types
+    ' ----- INTEGER TYPES -----
+    ' INTEGER holds whole numbers (no decimals) in a normal range.
+    ' Think of it like a box that can hold numbers roughly
+    ' from -2 billion to +2 billion.
     DIM smallNum AS INTEGER = 42
+
+    ' LONG also holds whole numbers, but can store much bigger
+    ' values -- useful when INTEGER is not big enough.
     DIM bigNum AS LONG = 9999999999
 
-    ' Floating point types
+    ' ----- FLOATING POINT TYPES -----
+    ' SINGLE holds decimal numbers (like 3.14) with about
+    ' 7 digits of precision. Good for most everyday math.
     DIM floatNum AS SINGLE = 3.14
+
+    ' DOUBLE holds decimal numbers with about 15 digits of
+    ' precision -- twice as precise as SINGLE. Use this when
+    ' you need very accurate calculations (science, money, etc.).
     DIM doubleNum AS DOUBLE = 3.14159265358979
 
-    ' String type
+    ' ----- STRING TYPE -----
+    ' STRING holds text -- any characters inside double quotes.
+    ' It can be a word, a sentence, or even an empty "".
     DIM greeting AS STRING = "Hello, DBasic!"
 
-    ' Boolean type
+    ' ----- BOOLEAN TYPE -----
+    ' BOOLEAN can only hold two values: TRUE or FALSE.
+    ' Think of it as a light switch -- it is either on or off.
+    ' Useful for yes/no decisions in your program.
     DIM isReady AS BOOLEAN = TRUE
 
-    ' Type inference with LET
+    ' ----- TYPE INFERENCE WITH LET -----
+    ' LET lets you create a variable without specifying the type.
+    ' DBasic looks at the value you give it and figures out
+    ' the type automatically. 100 is a number, so "inferred"
+    ' becomes an integer. This is a shortcut for lazy (smart!) coders.
     LET inferred = 100
+
+    ' Here DBasic sees the quotes and knows this is a STRING.
     LET message = "This type was inferred"
 
-    ' Print all values
+    ' ----- PRINTING ALL VALUES -----
+    ' Let's display everything we created above. PRINT with
+    ' a semicolon (;) joins the label text and the variable
+    ' value together on one line.
     PRINT "Integer: "; smallNum
     PRINT "Long: "; bigNum
     PRINT "Single: "; floatNum
@@ -30,34 +70,90 @@ SUB Main()
     PRINT "Inferred int: "; inferred
     PRINT "Inferred string: "; message
 
-    ' String concatenation
+    ' ----- STRING CONCATENATION -----
+    ' Concatenation is a fancy word for "gluing strings together."
+    ' The & operator joins two strings into one, like snapping
+    ' puzzle pieces together.
     DIM firstName AS STRING = "John"
     DIM lastName AS STRING = "Doe"
+
+    ' Here we glue firstName + a space + lastName to get "John Doe".
+    ' The " " in the middle adds a space between the two names.
     DIM fullName AS STRING = firstName & " " & lastName
+    ' Output: Full name: John Doe
     PRINT "Full name: "; fullName
 
-    ' Arithmetic operations
+    ' ----- ARITHMETIC OPERATIONS -----
+    ' These are the basic math operations you already know from
+    ' school, but written in code. Let's set up two numbers
+    ' and try every operation.
     DIM a AS INTEGER = 10
     DIM b AS INTEGER = 3
+
+    ' Addition (+): 10 + 3 = 13
     PRINT "Addition: "; a + b
+
+    ' Subtraction (-): 10 - 3 = 7
     PRINT "Subtraction: "; a - b
+
+    ' Multiplication (*): 10 * 3 = 30
     PRINT "Multiplication: "; a * b
+
+    ' Division (/): 10 / 3 = 3.333... (gives a decimal result)
     PRINT "Division: "; a / b
+
+    ' Integer Division (\): 10 \ 3 = 3 (chops off the decimal,
+    ' only keeps the whole number part -- like asking
+    ' "how many whole times does 3 fit into 10?")
     PRINT "Integer Division: "; a \ b
+
+    ' Modulo (MOD): 10 MOD 3 = 1 (the remainder after division.
+    ' 3 goes into 10 three times (9), leaving 1 left over.)
     PRINT "Modulo: "; a MOD b
+
+    ' Power (^): 10 ^ 3 = 1000 (10 raised to the 3rd power,
+    ' which means 10 * 10 * 10)
     PRINT "Power: "; a ^ b
 
-    ' Comparison operations
+    ' ----- COMPARISON OPERATIONS -----
+    ' Comparisons ask a yes-or-no question about two values.
+    ' The result is always TRUE or FALSE (a BOOLEAN).
+
+    ' Is 10 greater than 3? Yes -> TRUE
     PRINT "10 > 3: "; a > b
+
+    ' Is 10 less than 3? No -> FALSE
     PRINT "10 < 3: "; a < b
+
+    ' Is 10 equal to 10? Yes -> TRUE
+    ' (Note: in DBasic, = is used for both assignment AND comparison)
     PRINT "10 = 10: "; a = a
+
+    ' Is 10 not equal to 3? Yes -> TRUE
+    ' (<> means "not equal to" -- think of it as "less than OR
+    ' greater than", which means "anything but equal")
     PRINT "10 <> 3: "; a <> b
 
-    ' Logical operations
+    ' ----- LOGICAL OPERATIONS -----
+    ' Logical operations combine TRUE/FALSE values together,
+    ' like building compound questions: "Is it sunny AND warm?"
     DIM x AS BOOLEAN = TRUE
     DIM y AS BOOLEAN = FALSE
+
+    ' AND: Both must be TRUE for the result to be TRUE.
+    ' TRUE AND FALSE = FALSE (one of them is FALSE, so no deal)
     PRINT "TRUE AND FALSE: "; x AND y
+
+    ' OR: At least one must be TRUE for the result to be TRUE.
+    ' TRUE OR FALSE = TRUE (one of them is TRUE, good enough!)
     PRINT "TRUE OR FALSE: "; x OR y
+
+    ' NOT: Flips TRUE to FALSE, and FALSE to TRUE.
+    ' NOT TRUE = FALSE (the opposite of TRUE)
     PRINT "NOT TRUE: "; NOT x
+
+    ' XOR (exclusive or): Exactly ONE must be TRUE (not both).
+    ' TRUE XOR FALSE = TRUE (exactly one is TRUE, so yes)
+    ' TRUE XOR TRUE would be FALSE (both are TRUE, not exclusive)
     PRINT "TRUE XOR FALSE: "; x XOR y
 END SUB

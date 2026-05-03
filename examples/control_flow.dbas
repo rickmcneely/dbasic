@@ -1,20 +1,54 @@
-' Control Flow Example in DBasic
-' Demonstrates IF, FOR, WHILE, DO-LOOP, and SELECT CASE
+' ============================================================
+' CONTROL FLOW - Making Decisions and Repeating Things
+' ============================================================
+' This file teaches you how to control the flow of your program:
+'   - IF/THEN/ELSE: Make decisions ("if this, do that")
+'   - IF/ELSEIF/ELSE: Choose between many options
+'   - FOR loops: Repeat something a set number of times
+'   - FOR with STEP: Count by 2s, 3s, or even backwards
+'   - WHILE loops: Keep going as long as something is true
+'   - DO-LOOP: Different flavors of "keep repeating" loops
+'   - SELECT CASE: A cleaner way to pick from many options
+'
+' Without control flow, programs would just run top to bottom
+' in a straight line. Control flow lets your program think,
+' choose, and repeat -- that is what makes programs powerful!
+' ============================================================
 
 SUB Main()
-    ' IF-THEN-ELSE
+    ' =========================================================
+    ' IF-THEN-ELSE: The simplest decision
+    ' =========================================================
+    ' IF works like a fork in the road. The program checks a
+    ' condition (is it TRUE or FALSE?), then picks which path
+    ' to follow.
     PRINT "=== IF Statement ==="
+
+    ' We create a variable "age" set to 25.
     DIM age AS INTEGER = 25
 
+    ' The IF checks: is age greater than or equal to 18?
+    ' Since 25 >= 18 is TRUE, it prints "You are an adult."
+    ' If age were 15, it would print "You are a minor" instead.
     IF age >= 18 THEN
         PRINT "You are an adult"
     ELSE
         PRINT "You are a minor"
     ENDIF
+    ' ENDIF marks the end of the IF block. Every IF needs one.
 
-    ' IF-ELSEIF-ELSE
+    ' =========================================================
+    ' IF-ELSEIF-ELSE: Choosing between many options
+    ' =========================================================
+    ' Sometimes you have more than two choices. ELSEIF lets you
+    ' check multiple conditions, one after another, like a
+    ' checklist. The first one that is TRUE wins.
     DIM score AS INTEGER = 85
 
+    ' DBasic checks each condition from top to bottom:
+    '   Is 85 >= 90? No, skip.
+    '   Is 85 >= 80? YES! Print "Grade: B" and stop checking.
+    ' The remaining ELSEIF/ELSE blocks are ignored.
     IF score >= 90 THEN
         PRINT "Grade: A"
     ELSEIF score >= 80 THEN
@@ -24,81 +58,186 @@ SUB Main()
     ELSEIF score >= 60 THEN
         PRINT "Grade: D"
     ELSE
+        ' ELSE catches everything that did not match above.
+        ' This would only run if score < 60.
         PRINT "Grade: F"
     ENDIF
 
-    ' FOR loop
+    ' =========================================================
+    ' FOR LOOP: Repeat something a set number of times
+    ' =========================================================
+    ' A FOR loop is like telling someone: "Count from 1 to 5,
+    ' and do this thing each time you count."
     PRINT ""
     PRINT "=== FOR Loop ==="
+
     DIM i AS INTEGER
+
+    ' i starts at 1. Each time through the loop, i goes up by 1.
+    ' When i passes 5, the loop stops.
+    ' Output:
+    '   Counting: 1
+    '   Counting: 2
+    '   Counting: 3
+    '   Counting: 4
+    '   Counting: 5
     FOR i = 1 TO 5
         PRINT "Counting: "; i
     NEXT
 
-    ' FOR loop with STEP
+    ' =========================================================
+    ' FOR LOOP WITH STEP: Count by custom amounts
+    ' =========================================================
+    ' STEP tells the loop how much to add (or subtract) each time.
+    ' Here, STEP -2 means "count backwards by 2."
     PRINT ""
     PRINT "=== FOR Loop with STEP ==="
+
+    ' i starts at 10, goes down by 2 each time, stops at 0.
+    ' Output:
+    '   Countdown: 10
+    '   Countdown: 8
+    '   Countdown: 6
+    '   Countdown: 4
+    '   Countdown: 2
+    '   Countdown: 0
     FOR i = 10 TO 0 STEP -2
         PRINT "Countdown: "; i
     NEXT
 
-    ' WHILE loop
+    ' =========================================================
+    ' WHILE LOOP: Keep going as long as a condition is TRUE
+    ' =========================================================
+    ' A WHILE loop checks its condition BEFORE running the code
+    ' inside. If the condition is FALSE from the start, the code
+    ' inside never runs at all.
     PRINT ""
     PRINT "=== WHILE Loop ==="
+
     DIM counter AS INTEGER = 0
+
+    ' "While counter is less than 5, keep going."
+    ' Each time through, we add 1 to counter.
+    ' When counter reaches 5, the condition (counter < 5) becomes
+    ' FALSE, and the loop stops.
+    ' Output:
+    '   While counter: 0
+    '   While counter: 1
+    '   While counter: 2
+    '   While counter: 3
+    '   While counter: 4
     WHILE counter < 5
         PRINT "While counter: "; counter
         counter = counter + 1
     WEND
+    ' WEND means "While END" -- it marks where the loop goes
+    ' back to check the condition again.
 
-    ' DO-LOOP WHILE (post-condition)
+    ' =========================================================
+    ' DO-LOOP WHILE: Check condition AFTER running (post-condition)
+    ' =========================================================
+    ' This is different from WHILE because the code inside runs
+    ' at least once BEFORE the condition is checked. It is like
+    ' saying "do this, then check if you should do it again."
     PRINT ""
     PRINT "=== DO-LOOP WHILE ==="
+
     counter = 0
+
+    ' The code inside DO...LOOP runs first, THEN checks
+    ' "is counter < 3?" If yes, repeat. If no, stop.
+    ' Output:
+    '   Do counter: 0
+    '   Do counter: 1
+    '   Do counter: 2
     DO
         PRINT "Do counter: "; counter
         counter = counter + 1
     LOOP WHILE counter < 3
 
-    ' DO WHILE-LOOP (pre-condition)
+    ' =========================================================
+    ' DO WHILE-LOOP: Check condition BEFORE running (pre-condition)
+    ' =========================================================
+    ' This is the same as a regular WHILE loop, just written
+    ' in the DO...LOOP style. The condition is checked BEFORE
+    ' the code inside runs.
     PRINT ""
     PRINT "=== DO WHILE-LOOP ==="
+
     counter = 0
+
+    ' Check "is counter < 3?" first. If yes, run the code inside.
+    ' Output:
+    '   Do while counter: 0
+    '   Do while counter: 1
+    '   Do while counter: 2
     DO WHILE counter < 3
         PRINT "Do while counter: "; counter
         counter = counter + 1
     LOOP
 
-    ' DO-LOOP UNTIL
+    ' =========================================================
+    ' DO-LOOP UNTIL: Keep going UNTIL a condition becomes TRUE
+    ' =========================================================
+    ' UNTIL is the opposite of WHILE:
+    '   WHILE keeps going as long as the condition is TRUE.
+    '   UNTIL keeps going as long as the condition is FALSE,
+    '   and stops when it becomes TRUE.
     PRINT ""
     PRINT "=== DO-LOOP UNTIL ==="
+
     counter = 0
+
+    ' "Keep going UNTIL counter equals 3."
+    ' When counter finally reaches 3, the condition (counter = 3)
+    ' becomes TRUE, and the loop stops.
+    ' Output:
+    '   Until counter: 0
+    '   Until counter: 1
+    '   Until counter: 2
     DO
         PRINT "Until counter: "; counter
         counter = counter + 1
     LOOP UNTIL counter = 3
 
-    ' SELECT CASE
+    ' =========================================================
+    ' SELECT CASE: A clean way to match one value against many
+    ' =========================================================
+    ' SELECT CASE is like a vending machine: you put in a number,
+    ' and it gives you the matching item. It is much cleaner
+    ' than writing a long chain of IF/ELSEIF when you are
+    ' comparing one variable against specific values.
     PRINT ""
     PRINT "=== SELECT CASE ==="
+
     DIM day AS INTEGER = 3
 
+    ' DBasic looks at the value of "day" (which is 3) and
+    ' jumps directly to CASE 3, which prints "Wednesday."
+    ' All other CASEs are skipped.
     SELECT CASE day
     CASE 1
         PRINT "Monday"
     CASE 2
         PRINT "Tuesday"
     CASE 3
+        ' day is 3, so this is the one that runs.
+        ' Output: Wednesday
         PRINT "Wednesday"
     CASE 4
         PRINT "Thursday"
     CASE 5
         PRINT "Friday"
     CASE 6, 7
+        ' You can list multiple values separated by commas.
+        ' This matches if day is 6 OR 7.
         PRINT "Weekend!"
     CASE ELSE
+        ' CASE ELSE catches any value not listed above,
+        ' like a safety net. If day were 9, this would run.
         PRINT "Invalid day"
     END SELECT
+    ' END SELECT marks the end of the SELECT CASE block.
 
     PRINT ""
     PRINT "Control flow demo complete!"

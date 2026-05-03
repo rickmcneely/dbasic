@@ -23,6 +23,8 @@ DIM styleCodeKeyword AS lipgloss.Style
 DIM styleCodeString AS lipgloss.Style
 DIM styleCodeComment AS lipgloss.Style
 DIM styleCodeNumber AS lipgloss.Style
+DIM styleCodeSelection AS lipgloss.Style
+DIM styleCodeDropCursor AS lipgloss.Style
 DIM styleProperties AS lipgloss.Style
 DIM stylePropName AS lipgloss.Style
 DIM stylePropValue AS lipgloss.Style
@@ -73,6 +75,8 @@ SUB InitStyles()
     styleCodeString = lipgloss.NewStyle().Background(lipgloss.Color("234")).Foreground(lipgloss.Color("113"))
     styleCodeComment = lipgloss.NewStyle().Background(lipgloss.Color("234")).Foreground(lipgloss.Color("242"))
     styleCodeNumber = lipgloss.NewStyle().Background(lipgloss.Color("234")).Foreground(lipgloss.Color("141"))
+    styleCodeSelection = lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("255"))
+    styleCodeDropCursor = lipgloss.NewStyle().Background(lipgloss.Color("214")).Foreground(lipgloss.Color("0"))
 
     ' Properties panel
     styleProperties = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252"))

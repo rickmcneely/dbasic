@@ -83,6 +83,9 @@ FUNCTION WidgetIndexToCtrlType(widgetIdx AS INTEGER) AS INTEGER
     ELSEIF widgetIdx = 17 THEN
         ' widgetIdx 17 -> CTRL_FILES (22)
         RETURN CTRL_FILES
+    ELSEIF widgetIdx = 18 THEN
+        ' widgetIdx 18 -> CTRL_VIEWPORT (24)
+        RETURN CTRL_VIEWPORT
     ELSE
         ' New widgets skip Timer (11)
         ' widgetIdx 10 -> CTRL_TEXTAREA (12)
@@ -106,8 +109,106 @@ FUNCTION ToolboxIndexToCtrlType(toolIdx AS INTEGER) AS INTEGER
         RETURN CTRL_UDPIP
     ELSEIF toolIdx = 4 THEN
         RETURN CTRL_CURL
+    ELSEIF toolIdx = 5 THEN
+        RETURN CTRL_CLIPBOARD
     ENDIF
     RETURN CTRL_TIMER
+END FUNCTION
+
+' Clamp cursor column to valid range for a given line
+FUNCTION ClampCol(line AS INTEGER, col AS INTEGER) AS INTEGER
+    IF col < 0 THEN RETURN 0
+    IF line >= 0 AND line < gCodeLineCount THEN
+        DIM lineLen AS INTEGER = Len(gCodeLines[line])
+        IF col > lineLen THEN RETURN lineLen
+    ENDIF
+    RETURN col
+END FUNCTION
+
+' Move cursor to next word boundary (right). Returns new line, col.
+FUNCTION WordRight(curLine AS INTEGER, curCol AS INTEGER) AS (INTEGER, INTEGER)
+    DIM lineY AS INTEGER = curLine
+    DIM col AS INTEGER = curCol
+    IF lineY < 0 OR lineY >= gCodeLineCount THEN
+        RETURN lineY, col
+    ENDIF
+    DIM lineText AS STRING = GetCachedLine(lineY)
+    DIM lineLen AS INTEGER = Len(lineText)
+
+    IF col < lineLen THEN
+        ' Skip word characters
+        DO WHILE col < lineLen AND IsWordChar(Mid(lineText, col + 1, 1))
+            col = col + 1
+        LOOP
+        ' Skip whitespace/punctuation
+        DO WHILE col < lineLen AND NOT IsWordChar(Mid(lineText, col + 1, 1))
+            col = col + 1
+        LOOP
+        IF col > curCol THEN
+            RETURN lineY, col
+        ENDIF
+    ENDIF
+
+    ' At end of line or blank line - jump to next line
+    IF lineY < gCodeLineCount - 1 THEN
+        lineY = lineY + 1
+        col = 0
+        DIM nextLine AS STRING = GetCachedLine(lineY)
+        DO WHILE col < Len(nextLine) AND NOT IsWordChar(Mid(nextLine, col + 1, 1))
+            col = col + 1
+        LOOP
+    ENDIF
+    RETURN lineY, col
+END FUNCTION
+
+' Move cursor to previous word boundary (left). Returns new line, col.
+FUNCTION WordLeft(curLine AS INTEGER, curCol AS INTEGER) AS (INTEGER, INTEGER)
+    DIM lineY AS INTEGER = curLine
+    DIM col AS INTEGER = curCol
+    IF lineY < 0 OR lineY >= gCodeLineCount THEN
+        RETURN lineY, col
+    ENDIF
+    DIM lineText AS STRING = GetCachedLine(lineY)
+
+    IF col > 0 THEN
+        ' Skip whitespace/punctuation backwards
+        DO WHILE col > 0 AND NOT IsWordChar(Mid(lineText, col, 1))
+            col = col - 1
+        LOOP
+        ' Skip word characters backwards
+        DO WHILE col > 0 AND IsWordChar(Mid(lineText, col, 1))
+            col = col - 1
+        LOOP
+        IF col < curCol THEN
+            RETURN lineY, col
+        ENDIF
+    ENDIF
+
+    ' At start of line or blank line - jump to end of previous line
+    IF lineY > 0 THEN
+        lineY = lineY - 1
+        DIM prevLine AS STRING = GetCachedLine(lineY)
+        col = Len(prevLine)
+        DO WHILE col > 0 AND NOT IsWordChar(Mid(prevLine, col, 1))
+            col = col - 1
+        LOOP
+    ENDIF
+    RETURN lineY, col
+END FUNCTION
+
+' Check if a character is a word character (letter, digit, or underscore)
+FUNCTION IsWordChar(ch AS STRING) AS BOOLEAN
+    IF Len(ch) = 0 THEN RETURN FALSE
+    DIM c AS INTEGER = Asc(ch)
+    ' a-z
+    IF c >= 97 AND c <= 122 THEN RETURN TRUE
+    ' A-Z
+    IF c >= 65 AND c <= 90 THEN RETURN TRUE
+    ' 0-9
+    IF c >= 48 AND c <= 57 THEN RETURN TRUE
+    ' underscore
+    IF c = 95 THEN RETURN TRUE
+    RETURN FALSE
 END FUNCTION
 
 ' Count lines in a string
@@ -209,6 +310,10 @@ FUNCTION GetControlTypeName(ctlType AS INTEGER) AS STRING
         RETURN "Files"
     ELSEIF ctlType = CTRL_CURL THEN
         RETURN "Curl"
+    ELSEIF ctlType = CTRL_VIEWPORT THEN
+        RETURN "Viewport"
+    ELSEIF ctlType = CTRL_CLIPBOARD THEN
+        RETURN "Clipboard"
     ENDIF
     RETURN "Unknown"
 END FUNCTION
@@ -277,6 +382,10 @@ FUNCTION GetToolboxIcon(ctlType AS INTEGER) AS STRING
         RETURN "[f] "
     ELSEIF ctlType = CTRL_CURL THEN
         RETURN "[~] "
+    ELSEIF ctlType = CTRL_VIEWPORT THEN
+        RETURN "[Vw]"
+    ELSEIF ctlType = CTRL_CLIPBOARD THEN
+        RETURN "[Cl]"
     ENDIF
     RETURN "??? "
 END FUNCTION
@@ -713,6 +822,11 @@ FUNCTION GetControlEvents(ctlType AS INTEGER) AS []STRING
         events = APPEND(events, "Complete")
         events = APPEND(events, "Error")
         events = APPEND(events, "Progress")
+    ELSEIF ctlType = CTRL_VIEWPORT THEN
+        events = APPEND(events, "ScrollChange")
+        events = APPEND(events, "Click")
+    ELSEIF ctlType = CTRL_CLIPBOARD THEN
+        events = APPEND(events, "ClipboardRead")
     ENDIF
 
     RETURN events
@@ -907,6 +1021,12 @@ FUNCTION GetControlPropertyCount(ctrl AS VDBControl) AS INTEGER
     ELSEIF ctrl.CtlType = CTRL_CURL THEN
         ' URL, HttpMethod
         RETURN baseCount + 2
+    ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+        ' Value, SoftWrap, ShowLineNumbers, MouseWheel
+        RETURN baseCount + 4
+    ELSEIF ctrl.CtlType = CTRL_CLIPBOARD THEN
+        ' FallbackEnabled
+        RETURN baseCount + 1
     ENDIF
 
     RETURN baseCount
@@ -1090,6 +1210,20 @@ FUNCTION GetControlPropertyName(ctrl AS VDBControl, propIdx AS INTEGER) AS STRIN
         ELSEIF typeIdx = 1 THEN
             RETURN "HttpMethod"
         ENDIF
+    ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+        IF typeIdx = 0 THEN
+            RETURN "Value"
+        ELSEIF typeIdx = 1 THEN
+            RETURN "SoftWrap"
+        ELSEIF typeIdx = 2 THEN
+            RETURN "ShowLineNums"
+        ELSEIF typeIdx = 3 THEN
+            RETURN "MouseWheel"
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CLIPBOARD THEN
+        IF typeIdx = 0 THEN
+            RETURN "FallbackEnabled"
+        ENDIF
     ENDIF
 
     RETURN ""
@@ -1164,6 +1298,16 @@ FUNCTION IsPropertyBoolean(ctrl AS VDBControl, propIdx AS INTEGER) AS BOOLEAN
     ELSEIF ctrl.CtlType = CTRL_FILES THEN
         ' ShowHidden (1)
         IF typeIdx = 1 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+        ' SoftWrap (1), ShowLineNums (2), MouseWheel (3)
+        IF typeIdx = 1 OR typeIdx = 2 OR typeIdx = 3 THEN
+            RETURN TRUE
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CLIPBOARD THEN
+        ' FallbackEnabled (0)
+        IF typeIdx = 0 THEN
             RETURN TRUE
         ENDIF
     ENDIF
@@ -1244,6 +1388,18 @@ FUNCTION ToggleBooleanProperty(ctrl AS VDBControl, propIdx AS INTEGER) AS VDBCon
     ELSEIF ctrl.CtlType = CTRL_FILES THEN
         IF typeIdx = 1 THEN
             ctrl.ShowHidden = NOT ctrl.ShowHidden
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+        IF typeIdx = 1 THEN
+            ctrl.SoftWrap = NOT ctrl.SoftWrap
+        ELSEIF typeIdx = 2 THEN
+            ctrl.ShowLineNumbers = NOT ctrl.ShowLineNumbers
+        ELSEIF typeIdx = 3 THEN
+            ctrl.MouseWheel = NOT ctrl.MouseWheel
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CLIPBOARD THEN
+        IF typeIdx = 0 THEN
+            ctrl.FallbackEnabled = NOT ctrl.FallbackEnabled
         ENDIF
     ENDIF
 
@@ -1583,6 +1739,36 @@ FUNCTION GetControlPropertyValue(ctrl AS VDBControl, propIdx AS INTEGER) AS STRI
             RETURN ctrl.URL
         ELSEIF typeIdx = 1 THEN
             RETURN ctrl.HttpMethod
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_VIEWPORT THEN
+        IF typeIdx = 0 THEN
+            RETURN ctrl.Value
+        ELSEIF typeIdx = 1 THEN
+            IF ctrl.SoftWrap THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ELSEIF typeIdx = 2 THEN
+            IF ctrl.ShowLineNumbers THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ELSEIF typeIdx = 3 THEN
+            IF ctrl.MouseWheel THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
+        ENDIF
+    ELSEIF ctrl.CtlType = CTRL_CLIPBOARD THEN
+        IF typeIdx = 0 THEN
+            IF ctrl.FallbackEnabled THEN
+                RETURN "True"
+            ELSE
+                RETURN "False"
+            ENDIF
         ENDIF
     ENDIF
 
@@ -2387,5 +2573,344 @@ FUNCTION FileBrowserGetSelectedPath(m AS VDBTermModel) AS STRING
         RETURN ""
     ENDIF
     RETURN filepath.Join(m.FileBrowserPath, m.FileBrowserFiles[m.FileBrowserFileIdx])
+END FUNCTION
+
+' ============================================================================
+' CODE SELECTION HELPERS
+' ============================================================================
+
+' Global selection state for rendering pass (set before rendering code rows)
+' Cached code lines for rendering (set once per frame in View)
+DIM gCodeLines AS []STRING
+DIM gCodeLineCount AS INTEGER
+
+' Dropdown menu rendering cache
+DIM gMenuCachedLines AS []STRING
+DIM gMenuCachedFor AS INTEGER
+DIM gMenuCachedIdx AS INTEGER
+
+' Full view output cache (avoids re-rendering when only mouse moves)
+DIM gViewCache AS STRING
+DIM gViewCacheMenuOpen AS INTEGER
+DIM gViewCacheMenuIdx AS INTEGER
+DIM gViewCacheWidth AS INTEGER
+DIM gViewCacheHeight AS INTEGER
+DIM gViewCacheViewMode AS INTEGER
+DIM gViewCacheFormIdx AS INTEGER
+DIM gViewCacheCtrlIdx AS INTEGER
+DIM gViewCacheDialog AS INTEGER
+DIM gViewCachePopup AS INTEGER
+DIM gViewCacheFocusArea AS INTEGER
+DIM gViewCacheModified AS BOOLEAN
+DIM gViewCacheMessage AS STRING
+DIM gViewCachePH AS INTEGER
+DIM gViewCacheWH AS INTEGER
+DIM gViewCacheTH AS INTEGER
+DIM gViewCacheValid AS BOOLEAN
+
+SUB SetGlobalCodeLines(m AS VDBTermModel)
+    IF m.ProjectLoaded AND m.CurrentFormIdx < Len(m.Project.Forms) THEN
+        gCodeLines = SplitStr(m.Project.Forms[m.CurrentFormIdx].Code, Chr(10))
+        gCodeLineCount = Len(gCodeLines)
+    ELSE
+        gCodeLines = NIL
+        gCodeLineCount = 0
+    ENDIF
+END SUB
+
+FUNCTION GetCachedLine(lineIdx AS INTEGER) AS STRING
+    IF lineIdx >= 0 AND lineIdx < gCodeLineCount THEN
+        RETURN gCodeLines[lineIdx]
+    ENDIF
+    RETURN ""
+END FUNCTION
+
+' Global text drag-drop state for rendering
+DIM gDraggingText AS BOOLEAN
+DIM gDropLine AS INTEGER
+DIM gDropCol AS INTEGER
+
+DIM gSelActive AS BOOLEAN
+DIM gSelStartLine AS INTEGER
+DIM gSelStartCol AS INTEGER
+DIM gSelEndLine AS INTEGER
+DIM gSelEndCol AS INTEGER
+
+' Set global selection state from model (call before rendering code)
+SUB SetGlobalSelection(m AS VDBTermModel)
+    gDraggingText = m.CodeDraggingText
+    gDropLine = m.CodeDropLine
+    gDropCol = m.CodeDropCol
+    gSelActive = m.CodeSelecting
+    IF NOT gSelActive THEN
+        RETURN
+    ENDIF
+    ' Normalize direction
+    gSelStartLine = m.CodeSelStartY
+    gSelStartCol = m.CodeSelStartX
+    gSelEndLine = m.CodeSelEndY
+    gSelEndCol = m.CodeSelEndX
+    IF gSelStartLine > gSelEndLine OR (gSelStartLine = gSelEndLine AND gSelStartCol > gSelEndCol) THEN
+        DIM tmpL AS INTEGER = gSelStartLine
+        DIM tmpC AS INTEGER = gSelStartCol
+        gSelStartLine = gSelEndLine
+        gSelStartCol = gSelEndCol
+        gSelEndLine = tmpL
+        gSelEndCol = tmpC
+    ENDIF
+END SUB
+
+' Check if a position is in the global selection (for use during rendering)
+FUNCTION IsInSelectionGlobal(line AS INTEGER, col AS INTEGER) AS BOOLEAN
+    IF NOT gSelActive THEN
+        RETURN FALSE
+    ENDIF
+    ' Same start/end = no selection
+    IF gSelStartLine = gSelEndLine AND gSelStartCol = gSelEndCol THEN
+        RETURN FALSE
+    ENDIF
+    IF gSelStartLine = gSelEndLine THEN
+        RETURN line = gSelStartLine AND col >= gSelStartCol AND col < gSelEndCol
+    ENDIF
+    IF line = gSelStartLine THEN
+        RETURN col >= gSelStartCol
+    ELSEIF line = gSelEndLine THEN
+        RETURN col < gSelEndCol
+    ELSEIF line > gSelStartLine AND line < gSelEndLine THEN
+        RETURN TRUE
+    ENDIF
+    RETURN FALSE
+END FUNCTION
+
+' Check if a cell (line, col) is within the current selection range
+FUNCTION IsInSelection(m AS VDBTermModel, line AS INTEGER, col AS INTEGER) AS BOOLEAN
+    IF NOT m.CodeSelecting THEN
+        RETURN FALSE
+    ENDIF
+
+    ' Normalize selection to startLine/startCol <= endLine/endCol
+    DIM startLine AS INTEGER = m.CodeSelStartY
+    DIM startCol AS INTEGER = m.CodeSelStartX
+    DIM endLine AS INTEGER = m.CodeSelEndY
+    DIM endCol AS INTEGER = m.CodeSelEndX
+
+    IF startLine > endLine OR (startLine = endLine AND startCol > endCol) THEN
+        ' Swap
+        DIM tmpL AS INTEGER = startLine
+        DIM tmpC AS INTEGER = startCol
+        startLine = endLine
+        startCol = endCol
+        endLine = tmpL
+        endCol = tmpC
+    ENDIF
+
+    ' Single line selection
+    IF startLine = endLine THEN
+        RETURN line = startLine AND col >= startCol AND col < endCol
+    ENDIF
+
+    ' Multi-line selection
+    IF line = startLine THEN
+        RETURN col >= startCol
+    ELSEIF line = endLine THEN
+        RETURN col < endCol
+    ELSEIF line > startLine AND line < endLine THEN
+        RETURN TRUE
+    ENDIF
+
+    RETURN FALSE
+END FUNCTION
+
+' Get the selected text from code
+FUNCTION GetSelectedText(code AS STRING, m AS VDBTermModel) AS STRING
+    IF NOT m.CodeSelecting THEN
+        RETURN ""
+    ENDIF
+
+    DIM codeLines AS []STRING = SplitStr(code, Chr(10))
+
+    ' Normalize selection direction
+    DIM startLine AS INTEGER = m.CodeSelStartY
+    DIM startCol AS INTEGER = m.CodeSelStartX
+    DIM endLine AS INTEGER = m.CodeSelEndY
+    DIM endCol AS INTEGER = m.CodeSelEndX
+
+    IF startLine > endLine OR (startLine = endLine AND startCol > endCol) THEN
+        DIM tmpL AS INTEGER = startLine
+        DIM tmpC AS INTEGER = startCol
+        startLine = endLine
+        startCol = endCol
+        endLine = tmpL
+        endCol = tmpC
+    ENDIF
+
+    ' Empty selection
+    IF startLine = endLine AND startCol = endCol THEN
+        RETURN ""
+    ENDIF
+
+    DIM result AS STRING = ""
+
+    DIM i AS INTEGER
+    FOR i = startLine TO endLine
+        IF i >= 0 AND i < Len(codeLines) THEN
+        DIM lineText AS STRING = codeLines[i]
+        IF i = startLine AND i = endLine THEN
+            ' Single line selection
+            IF startCol < Len(lineText) THEN
+                DIM endC AS INTEGER = endCol
+                IF endC > Len(lineText) THEN
+                    endC = Len(lineText)
+                ENDIF
+                result = Mid(lineText, startCol + 1, endC - startCol)
+            ENDIF
+        ELSEIF i = startLine THEN
+            ' First line of multi-line
+            IF startCol < Len(lineText) THEN
+                result = Mid(lineText, startCol + 1, Len(lineText) - startCol)
+            ENDIF
+            result = result & Chr(10)
+        ELSEIF i = endLine THEN
+            ' Last line of multi-line
+            IF endCol > 0 AND Len(lineText) > 0 THEN
+                DIM lastEnd AS INTEGER = endCol
+                IF lastEnd > Len(lineText) THEN
+                    lastEnd = Len(lineText)
+                ENDIF
+                result = result & Mid(lineText, 1, lastEnd)
+            ENDIF
+        ELSE
+            ' Middle lines - take entire line
+            result = result & lineText & Chr(10)
+        ENDIF
+        ENDIF
+    NEXT
+
+    RETURN result
+END FUNCTION
+
+' Clear the current selection
+SUB ClearSelection(m AS POINTER TO VDBTermModel)
+    m.CodeSelecting = FALSE
+    m.CodeSelStartX = 0
+    m.CodeSelStartY = 0
+    m.CodeSelEndX = 0
+    m.CodeSelEndY = 0
+END SUB
+
+' Start or extend a selection from current cursor position
+SUB StartSelection(m AS POINTER TO VDBTermModel)
+    IF NOT m.CodeSelecting THEN
+        m.CodeSelecting = TRUE
+        m.CodeSelStartX = m.CodeCursorX
+        m.CodeSelStartY = m.CodeCursorY
+    ENDIF
+    m.CodeSelEndX = m.CodeCursorX
+    m.CodeSelEndY = m.CodeCursorY
+END SUB
+
+' Update selection end to current cursor position
+SUB UpdateSelectionEnd(m AS POINTER TO VDBTermModel)
+    m.CodeSelEndX = m.CodeCursorX
+    m.CodeSelEndY = m.CodeCursorY
+END SUB
+
+' Find all occurrences of searchText in code
+' Returns array of [lineNum, colStart, length] triples (0-indexed)
+FUNCTION FindAllMatches(code AS STRING, searchText AS STRING) AS [][]INTEGER
+    DIM matches AS [][]INTEGER
+    IF Len(searchText) = 0 THEN
+        RETURN matches
+    ENDIF
+
+    DIM lines AS []STRING = SplitStr(code, Chr(10))
+    DIM searchUpper AS STRING = UCase(searchText)
+    DIM searchLen AS INTEGER = Len(searchText)
+    DIM i AS INTEGER
+
+    FOR i = 0 TO Len(lines) - 1
+        DIM lineUpper AS STRING = UCase(lines[i])
+        DIM pos AS INTEGER = 1
+        DIM found AS INTEGER = InStrPos(pos, lineUpper, searchUpper)
+        WHILE found > 0
+            DIM match AS []INTEGER
+            match = APPEND(match, i)
+            match = APPEND(match, found - 1)
+            match = APPEND(match, searchLen)
+            matches = APPEND(matches, match)
+            pos = found + 1
+            found = InStrPos(pos, lineUpper, searchUpper)
+        WEND
+    NEXT
+
+    RETURN matches
+END FUNCTION
+
+' Delete the selected text and return the resulting code
+FUNCTION DeleteSelectedText(code AS STRING, m AS VDBTermModel) AS STRING
+    IF NOT m.CodeSelecting THEN
+        RETURN code
+    ENDIF
+
+    DIM codeLines AS []STRING = SplitStr(code, Chr(10))
+
+    ' Normalize selection direction
+    DIM startLine AS INTEGER = m.CodeSelStartY
+    DIM startCol AS INTEGER = m.CodeSelStartX
+    DIM endLine AS INTEGER = m.CodeSelEndY
+    DIM endCol AS INTEGER = m.CodeSelEndX
+
+    IF startLine > endLine OR (startLine = endLine AND startCol > endCol) THEN
+        DIM tmpL AS INTEGER = startLine
+        DIM tmpC AS INTEGER = startCol
+        startLine = endLine
+        startCol = endCol
+        endLine = tmpL
+        endCol = tmpC
+    ENDIF
+
+    ' Build result by keeping text before selection start and after selection end
+    DIM result AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(codeLines) - 1
+        IF i < startLine THEN
+            result = result & codeLines[i] & Chr(10)
+        ELSEIF i = startLine AND i = endLine THEN
+            ' Single line: keep before start and after end
+            DIM before AS STRING = ""
+            IF startCol > 0 THEN
+                before = Left(codeLines[i], startCol)
+            ENDIF
+            DIM after AS STRING = ""
+            IF endCol < Len(codeLines[i]) THEN
+                after = Mid(codeLines[i], endCol + 1, Len(codeLines[i]) - endCol)
+            ENDIF
+            result = result & before & after & Chr(10)
+        ELSEIF i = startLine THEN
+            ' First line of multi-line: keep before start
+            DIM beforeML AS STRING = ""
+            IF startCol > 0 THEN
+                beforeML = Left(codeLines[i], startCol)
+            ENDIF
+            result = result & beforeML
+        ELSEIF i = endLine THEN
+            ' Last line of multi-line: keep after end, join with start line
+            DIM afterML AS STRING = ""
+            IF endCol < Len(codeLines[i]) THEN
+                afterML = Mid(codeLines[i], endCol + 1, Len(codeLines[i]) - endCol)
+            ENDIF
+            result = result & afterML & Chr(10)
+        ELSEIF i > endLine THEN
+            result = result & codeLines[i] & Chr(10)
+        ENDIF
+        ' Lines between startLine and endLine (exclusive) are deleted
+    NEXT
+
+    ' Remove trailing newline
+    IF Len(result) > 0 AND Right(result, 1) = Chr(10) THEN
+        result = Left(result, Len(result) - 1)
+    ENDIF
+
+    RETURN result
 END FUNCTION
 
