@@ -1,0 +1,15 @@
+' ============================================================
+' greeter.dbas — Helper file
+' ============================================================
+' This file is INCLUDEd by FirstProgram.dbas. When DBasic sees
+' INCLUDE "greeter.dbas", it acts as if the contents of THIS
+' file were copy-pasted right there. So the SUB defined here
+' becomes usable in the main program.
+' ============================================================
+
+' SayHello prints a friendly greeting using the name we're given.
+' The semicolons (;) glue the pieces together so they end up on
+' one line.
+SUB SayHello(name AS STRING)
+    PRINT "Hello, "; name; "! Welcome to DBasic."
+END SUB

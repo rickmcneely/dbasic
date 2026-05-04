@@ -1,0 +1,34 @@
+' ============================================================
+' FirstProgram.dbas — Your first DBasic program
+' ============================================================
+' This program asks for your name, makes it ALL CAPS using a
+' Go standard-library package, then prints a greeting using a
+' SUB defined in another DBasic file.
+'
+' Two ways DBasic pulls in code from outside this file:
+'   1. IMPORT  — borrows a Go package (here: "strings")
+'   2. INCLUDE — pastes another .dbas file in (here: greeter.dbas)
+' ============================================================
+
+' Borrow Go's "strings" package. Now we can call strings.ToUpper.
+IMPORT "strings"
+
+' Pull in our helper file. The SUB SayHello defined there
+' becomes usable below.
+INCLUDE "greeter.dbas"
+
+SUB Main()
+    ' DIM creates a labeled box that holds text (a STRING).
+    DIM name AS STRING
+
+    ' Ask the user a question. The semicolon at the end keeps
+    ' the cursor on the same line so they can type their answer.
+    PRINT "What is your name? ";
+    INPUT name
+
+    ' Use Go's strings.ToUpper to convert "alice" into "ALICE".
+    DIM shouty AS STRING = strings.ToUpper(name)
+
+    ' Call the SUB from greeter.dbas.
+    SayHello(shouty)
+END SUB

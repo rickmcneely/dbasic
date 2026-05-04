@@ -1,0 +1,2607 @@
+' =============================================================================
+' PACMAN CLONE - A Beginner's Guide to Game Programming
+' =============================================================================
+'
+' Welcome! This is a complete PacMan game written in DBasic.
+'
+' HOW A GAME WORKS (the big picture):
+'   A game is like a flipbook. The computer draws a picture (a "frame"),
+'   shows it to you, then draws the next picture with things moved slightly.
+'   It does this 60 times per second, so it looks like smooth motion.
+'
+'   Every frame, the game does 3 things:
+'     1. CHECK INPUT  - What buttons is the player pressing?
+'     2. UPDATE       - Move PacMan, move ghosts, check collisions
+'     3. DRAW         - Paint everything on screen
+'
+' HOW THE MAZE WORKS:
+'   The maze is a grid of 28 columns x 31 rows. Each cell in the grid
+'   is one of: wall, dot, power pellet, empty space, or ghost house door.
+'   Think of it like graph paper where each square has a type.
+'
+' HOW MOVEMENT WORKS:
+'   Characters don't just jump from tile to tile. They slide smoothly
+'   between tiles, moving 2 pixels at a time. A tile is 16 pixels wide,
+'   so it takes 8 "steps" to cross one tile. Characters can only change
+'   direction when they're exactly at the center of a tile.
+'
+' HOW SPEED WORKS:
+'   Different characters move at different speeds (PacMan at 80%,
+'   ghosts at 75%, etc). We use an "accumulator" trick: each frame,
+'   we add the speed percentage to a counter. When the counter hits 100,
+'   the character takes one step. So at 80% speed, the character moves
+'   on 4 out of every 5 frames. This keeps speed consistent on any computer.
+'
+' GAME MODES:
+'   - 1 Player:         Classic solo PacMan. Arrow keys or WASD.
+'   - 2P Alternating:   Players take turns. When one dies, the other plays.
+'                        Both use arrow keys. Separate scores and lives.
+'   - 2P Co-op:         Both players on screen at once! P1=WASD, P2=Arrows.
+'                        Shared maze, separate scores. Ghosts chase nearest.
+'
+' HIGH SCORES:
+'   Top 5 scores saved to "pacman_scores.txt". If you qualify, enter your
+'   3-letter initials using Up/Down to pick letters and Left/Right to move.
+'
+' Controls: Arrow keys or WASD to move, Enter to select menu items
+' =============================================================================
+
+' ======================== IMPORTS ========================
+' These bring in code libraries that other people wrote, so we don't
+' have to build everything from scratch. It's like using LEGO pieces
+' someone else designed.
+
+' Ebitengine is a "game engine" - it handles the window, drawing, and
+' running our game loop 60 times per second.
+IMPORT "github.com/hajimehoshi/ebiten/v2" AS ebiten
+
+' The "vector" package lets us draw shapes like circles and rectangles.
+IMPORT "github.com/hajimehoshi/ebiten/v2/vector" AS vector
+
+' This gives us a simple way to draw text on screen (for score, messages).
+IMPORT "github.com/hajimehoshi/ebiten/v2/ebitenutil" AS ebitenutil
+
+' inpututil gives us IsKeyJustPressed for single-press detection.
+IMPORT "github.com/hajimehoshi/ebiten/v2/inpututil" AS inpututil
+
+' Colors! We need this to say things like "draw this circle in yellow."
+IMPORT "image/color" AS color
+
+' For printing error messages if something goes wrong.
+IMPORT "fmt" AS fmt
+
+' Audio support - lets us play sound effects!
+IMPORT "github.com/hajimehoshi/ebiten/v2/audio" AS audio
+
+' String reader - used to feed generated audio data to the audio player.
+IMPORT "strings" AS strings
+
+' strconv for parsing integers from strings.
+IMPORT "strconv" AS strconv
+
+
+' Global audio context - Ebitengine only allows ONE audio context per program.
+' We create it once in Main() and share it with the game.
+DIM GAudioCtx AS POINTER TO audio.Context
+
+' ======================== CONSTANTS ========================
+' Constants are values that never change while the game is running.
+' We give them names so the code is easier to read.
+' For example, writing "TILE" is clearer than writing "16" everywhere.
+
+' Each square in our maze grid is 16x16 pixels on screen.
+CONST TILE AS INTEGER = 16
+
+' The maze is 28 tiles wide and 31 tiles tall (just like the real PacMan!).
+CONST MW AS INTEGER = 28
+CONST MH AS INTEGER = 31
+
+' Screen size in pixels. Width = 28 tiles * 16 pixels = 448 pixels.
+' Height = 31 tiles * 16 + room for score display = 560 pixels.
+CONST SCRW AS INTEGER = 448
+CONST SCRH AS INTEGER = 560
+
+' The score display takes up 32 pixels at the top of the screen.
+' Everything in the maze is shifted down by this amount.
+CONST HUD_TOP AS INTEGER = 32
+
+' Each "step" of movement is 2 pixels. Since tiles are 16 pixels wide,
+' it takes 8 steps to cross one tile (16 / 2 = 8).
+CONST PX_STEP AS INTEGER = 2
+
+' --- CELL TYPES ---
+' Each square in the maze grid is one of these types.
+' We use numbers as codes so the computer can quickly check what's there.
+CONST C_EMPTY AS INTEGER = 0
+CONST C_WALL AS INTEGER = 1
+CONST C_DOT AS INTEGER = 2
+CONST C_POWER AS INTEGER = 3
+CONST C_DOOR AS INTEGER = 4
+
+' --- DIRECTIONS ---
+' We represent directions as numbers. When PacMan is heading left,
+' his direction is set to 3 (D_LEFT).
+CONST D_NONE AS INTEGER = 0
+CONST D_UP AS INTEGER = 1
+CONST D_DOWN AS INTEGER = 2
+CONST D_LEFT AS INTEGER = 3
+CONST D_RIGHT AS INTEGER = 4
+
+' --- GHOST MODES ---
+' Ghosts change behavior depending on their "mode." Think of modes
+' like moods - sometimes they're chasing you, sometimes they're scared.
+'
+' SCATTER: Ghosts retreat to their assigned corner of the maze.
+' CHASE:   Ghosts actively hunt PacMan (each ghost has a unique strategy).
+' FRIGHT:  Ghosts are scared (after PacMan eats a power pellet) and run away.
+' EATEN:   Ghost was eaten by PacMan - only the eyes remain, rushing back to jail.
+' HOUSE:   Ghost is waiting inside the "ghost house" (jail) to be released.
+' ENTER:   Ghost eyes are moving down into the ghost house after being eaten.
+' LEAVE:   Ghost is floating up out of the ghost house to rejoin the game.
+CONST M_SCATTER AS INTEGER = 0
+CONST M_CHASE AS INTEGER = 1
+CONST M_FRIGHT AS INTEGER = 2
+CONST M_EATEN AS INTEGER = 3
+CONST M_HOUSE AS INTEGER = 4
+CONST M_ENTER AS INTEGER = 5
+CONST M_LEAVE AS INTEGER = 6
+
+' --- GAME STATES ---
+' The game itself has states too. It can be showing "READY!", actively
+' playing, showing PacMan's death animation, showing "GAME OVER",
+' celebrating a cleared level, on the title screen, or entering initials.
+CONST S_READY AS INTEGER = 0
+CONST S_PLAY AS INTEGER = 1
+CONST S_DYING AS INTEGER = 2
+CONST S_OVER AS INTEGER = 3
+CONST S_WON AS INTEGER = 4
+CONST S_INTRO AS INTEGER = 5
+CONST S_HISCORE AS INTEGER = 6
+
+' --- GAME MODES ---
+' Single player, 2-player alternating (take turns), 2-player co-op (simultaneous).
+CONST GM_SINGLE AS INTEGER = 0
+CONST GM_ALTER AS INTEGER = 1
+CONST GM_COOP AS INTEGER = 2
+
+' --- SPEED PERCENTAGES ---
+' These control how fast everything moves. 100 = full speed (move every frame).
+' 80 = move on 4 out of every 5 frames. 50 = move on every other frame.
+' These match the speeds from the original PacMan arcade game!
+'
+' The speed system works like a piggy bank:
+'   - Each frame, you put in coins equal to your speed (e.g., 80 coins)
+'   - When you have 100 coins or more, you get to move and spend 100 coins
+'   - At 80% speed: frame 1 (80), frame 2 (160->move->60), frame 3 (140->move->40)...
+'   - This means you move slightly less often than full speed
+CONST SPD_PAC AS INTEGER = 80
+CONST SPD_PAC_DOT AS INTEGER = 71
+CONST SPD_GHOST AS INTEGER = 75
+CONST SPD_FRIGHT_PAC AS INTEGER = 90
+CONST SPD_FRIGHT_GHOST AS INTEGER = 50
+CONST SPD_TUNNEL AS INTEGER = 40
+CONST SPD_EYES AS INTEGER = 150
+CONST SPD_HOUSE AS INTEGER = 30
+
+' --- TIMERS ---
+' These are measured in "ticks" (frames). At 60 frames per second:
+'   120 ticks = 2 seconds, 360 ticks = 6 seconds, etc.
+CONST T_READY AS INTEGER = 120
+CONST T_DYING AS INTEGER = 60
+CONST T_FRIGHT AS INTEGER = 360
+CONST T_FLASH AS INTEGER = 120
+
+' --- POSITIONS ---
+' Where PacMan and the ghost house are located on the grid.
+CONST PAC_SX AS INTEGER = 14
+CONST PAC_SY AS INTEGER = 23
+CONST TUNNEL_Y AS INTEGER = 14
+
+' The ghost house ("jail") has three key locations:
+' - The DOOR is where ghosts enter/exit (the pink line in the maze)
+' - The CENTER is where ghosts wait inside
+' - The EXIT is just above the door where ghosts emerge
+CONST HOUSE_DOOR_X AS INTEGER = 14
+CONST HOUSE_DOOR_Y AS INTEGER = 12
+CONST HOUSE_CENTER_X AS INTEGER = 14
+CONST HOUSE_CENTER_Y AS INTEGER = 14
+CONST HOUSE_EXIT_X AS INTEGER = 14
+CONST HOUSE_EXIT_Y AS INTEGER = 11
+
+' --- GHOST RELEASE THRESHOLDS ---
+' Ghosts start inside the house and are released one by one as PacMan
+' eats dots. Pinky comes out almost immediately, Inky after 30 dots,
+' and Clyde (the slowpoke) after 60 dots.
+CONST REL_PINKY AS INTEGER = 1
+CONST REL_INKY AS INTEGER = 30
+CONST REL_CLYDE AS INTEGER = 60
+
+' --- HIGH SCORE CONSTANTS ---
+' We keep 5 high scores. The file name is hardcoded.
+CONST MAX_HISCORES AS INTEGER = 5
+CONST HISCORE_FILE AS STRING = "pacman_scores.txt"
+
+' ======================== TYPES (Data Structures) ========================
+' A TYPE is like a form or template. It groups related information together.
+' Think of it like a character sheet in a board game - it holds all the
+' stats for one character in one place.
+
+' --- GHOST ---
+' Each ghost has its own position, direction, behavior mode, etc.
+TYPE Ghost
+    DIM X AS INTEGER            ' Horizontal pixel position (not tile, but exact pixel)
+    DIM Y AS INTEGER            ' Vertical pixel position
+    DIM Dir AS INTEGER          ' Which way the ghost is currently moving (D_UP, D_LEFT, etc.)
+    DIM GType AS INTEGER        ' Which ghost this is: 0=Blinky, 1=Pinky, 2=Inky, 3=Clyde
+    DIM Mode AS INTEGER         ' Current behavior mode (M_CHASE, M_FRIGHT, M_EATEN, etc.)
+    DIM FTimer AS INTEGER       ' Countdown timer for how long the ghost stays frightened
+    DIM ScatX AS INTEGER        ' X tile of this ghost's "scatter corner" (where it retreats to)
+    DIM ScatY AS INTEGER        ' Y tile of this ghost's "scatter corner"
+    DIM MoveAcc AS INTEGER      ' Speed accumulator (the "piggy bank" described above)
+    DIM HouseTimer AS INTEGER   ' Countdown for how long to wait inside the house before leaving
+END TYPE
+
+' --- PLAYER ---
+' Each player (1 or 2) has their own PacMan with position, score, lives, etc.
+' In co-op, both players are on screen at once. In alternating, they take turns.
+' The Clr field is 0 for yellow (P1) and 1 for green (P2).
+TYPE Player
+    DIM PX AS INTEGER           ' PacMan's X pixel position
+    DIM PY AS INTEGER           ' PacMan's Y pixel position
+    DIM PDir AS INTEGER         ' PacMan's current movement direction
+    DIM PNext AS INTEGER        ' The direction the player WANTS PacMan to go next
+    DIM PMoveAcc AS INTEGER     ' PacMan's speed accumulator
+    DIM Mouth AS BOOLEAN        ' Is PacMan's mouth open? (toggles for animation)
+    DIM MouthT AS INTEGER       ' Timer for mouth open/close animation
+    DIM Score AS INTEGER        ' Player's score (10 per dot, 50 per power pellet, 200+ per ghost)
+    DIM Lives AS INTEGER        ' How many lives PacMan has left
+    DIM IFrames AS INTEGER      ' Invincibility frames (not currently used, reserved)
+    DIM Alive AS BOOLEAN        ' Is this player currently alive? (for co-op)
+    DIM Clr AS INTEGER          ' 0=yellow (P1), 1=green (P2)
+END TYPE
+
+' --- HISCORE ENTRY ---
+' One entry in the high score table. Has 3-letter initials and a score.
+TYPE HiEntry
+    DIM Initials AS STRING      ' 3 letters, e.g. "ACE"
+    DIM Pts AS INTEGER          ' The score
+END TYPE
+
+' --- GAME ---
+' This holds EVERYTHING about the current game: the maze, players,
+' all 4 ghosts, game mode, high scores, etc.
+' It's like the "game board" that contains the entire state of the game.
+TYPE Game
+    DIM Maze AS []INTEGER       ' The maze grid stored as a flat list (28*31 = 868 cells)
+    DIM Gh AS []Ghost           ' Array of 4 ghosts (Blinky, Pinky, Inky, Clyde)
+    DIM Level AS INTEGER        ' Current level number
+    DIM Eaten AS INTEGER        ' How many dots have been eaten this level
+    DIM Total AS INTEGER        ' Total number of dots in the maze (eat them all to win!)
+    DIM State AS INTEGER        ' Current game state (S_READY, S_PLAY, S_DYING, etc.)
+    DIM STimer AS INTEGER       ' General-purpose state timer (counts down for animations)
+    DIM GMode AS INTEGER        ' The current global ghost mode (scatter or chase)
+    DIM MTimer AS INTEGER       ' Timer for the scatter/chase cycle
+    DIM MPhase AS INTEGER       ' Which phase of the scatter/chase cycle we're in
+    DIM GScore AS INTEGER       ' Points for eating the next ghost (doubles: 200, 400, 800, 1600)
+    DIM Frame AS INTEGER        ' Total frames elapsed (used for blinking animations)
+    DIM EPause AS INTEGER       ' Brief pause when PacMan eats a dot (makes eating feel crunchy)
+    DIM WallImg AS POINTER TO ebiten.Image  ' Pre-drawn image of all walls (performance optimization)
+
+    ' --- MULTIPLAYER FIELDS ---
+    DIM Pl AS []Player          ' Array of players (1 or 2 depending on mode)
+    DIM NumPl AS INTEGER        ' Number of players (1 or 2)
+    DIM CurPl AS INTEGER        ' Index of current player in alternating mode (0 or 1)
+    DIM GmMode AS INTEGER       ' Game mode: GM_SINGLE, GM_ALTER, GM_COOP
+
+    ' --- MENU / INTRO FIELDS ---
+    DIM MenuSel AS INTEGER      ' Currently highlighted menu option (0, 1, or 2)
+
+    ' --- HIGH SCORE FIELDS ---
+    DIM HiScores AS []HiEntry   ' Top 5 high scores
+    DIM HiName AS []INTEGER     ' 3 letter codes (0-25 = A-Z) being entered
+    DIM HiCursor AS INTEGER     ' Which letter position the cursor is on (0, 1, or 2)
+    DIM HiSlot AS INTEGER       ' Which slot in the table this score goes into
+    DIM HiPlIdx AS INTEGER      ' Which player is entering their score (0 or 1)
+    DIM HiDone0 AS BOOLEAN      ' Has P1 finished entering their initials?
+    DIM HiDone1 AS BOOLEAN      ' Has P2 finished entering their initials?
+
+    ' --- ALTERNATING MODE FIELDS ---
+    DIM AltMaze0 AS []INTEGER   ' Saved maze state for player 0
+    DIM AltMaze1 AS []INTEGER   ' Saved maze state for player 1
+    DIM AltEaten0 AS INTEGER    ' Saved eaten count for player 0
+    DIM AltEaten1 AS INTEGER    ' Saved eaten count for player 1
+    DIM AltDying AS INTEGER     ' Which player is dying in alternating mode
+
+    ' --- SOUND PLAYERS ---
+    DIM SndWaka AS POINTER TO audio.Player   ' "waka" sound when eating a dot
+    DIM SndPower AS POINTER TO audio.Player  ' sound when eating a power pellet
+    DIM SndEatGh AS POINTER TO audio.Player  ' sound when eating a ghost
+    DIM SndDie AS POINTER TO audio.Player    ' sound when PacMan dies
+    DIM SndReady AS POINTER TO audio.Player  ' jingle at start of round
+    DIM SndWon AS POINTER TO audio.Player    ' sound when level is cleared
+    DIM SndMenu AS POINTER TO audio.Player   ' blip for menu selection
+END TYPE
+
+' ======================== MAZE LAYOUT ========================
+' The maze is defined as text art! Each character represents one tile:
+'   # = Wall (blue blocks you can't walk through)
+'   . = Dot (small pellet worth 10 points)
+'   o = Power Pellet (big blinking pellet that lets you eat ghosts!)
+'   - = Ghost House Door (ghosts can pass through, PacMan cannot)
+'   (space) = Empty walkable space
+'
+' This is the classic PacMan maze layout - 28 characters wide, 31 rows tall.
+' The ghost house is in the middle (rows 12-16), and the tunnel that wraps
+' around from left to right is on row 14.
+
+FUNCTION GetMazeLayout() AS []STRING
+    DIM m AS []STRING
+    m = APPEND(m, "############################")
+    m = APPEND(m, "#............##............#")
+    m = APPEND(m, "#.####.#####.##.#####.####.#")
+    m = APPEND(m, "#o####.#####.##.#####.####o#")
+    m = APPEND(m, "#.####.#####.##.#####.####.#")
+    m = APPEND(m, "#..........................#")
+    m = APPEND(m, "#.####.##.########.##.####.#")
+    m = APPEND(m, "#.####.##.########.##.####.#")
+    m = APPEND(m, "#......##....##....##......#")
+    m = APPEND(m, "######.#####.##.#####.######")
+    m = APPEND(m, "     #.#####.##.#####.#     ")
+    m = APPEND(m, "     #.##          ##.#     ")
+    m = APPEND(m, "     #.## ###--### ##.#     ")
+    m = APPEND(m, "######.## #      # ##.######")
+    m = APPEND(m, "      .   #      #   .      ")
+    m = APPEND(m, "######.## #      # ##.######")
+    m = APPEND(m, "     #.## ######## ##.#     ")
+    m = APPEND(m, "     #.##          ##.#     ")
+    m = APPEND(m, "     #.## ######## ##.#     ")
+    m = APPEND(m, "######.## ######## ##.######")
+    m = APPEND(m, "#............##............#")
+    m = APPEND(m, "#.####.#####.##.#####.####.#")
+    m = APPEND(m, "#.####.#####.##.#####.####.#")
+    m = APPEND(m, "#o..##.......  .......##..o#")
+    m = APPEND(m, "###.##.##.########.##.##.###")
+    m = APPEND(m, "###.##.##.########.##.##.###")
+    m = APPEND(m, "#......##....##....##......#")
+    m = APPEND(m, "#.##########.##.##########.#")
+    m = APPEND(m, "#.##########.##.##########.#")
+    m = APPEND(m, "#..........................#")
+    m = APPEND(m, "############################")
+    RETURN m
+END FUNCTION
+
+' ======================== HELPER FUNCTIONS ========================
+' These are small utility functions used throughout the code.
+' Think of them as tools in a toolbox.
+
+' T2P: "Tile to Pixel" - converts a tile coordinate to a pixel position.
+' It returns the CENTER of the tile, not the top-left corner.
+' Example: tile 3 -> pixel 3*16 + 8 = 56 (the center of a 16px-wide tile)
+FUNCTION T2P(t AS INTEGER) AS INTEGER
+    RETURN t * TILE + TILE / 2
+END FUNCTION
+
+' P2T: "Pixel to Tile" - converts a pixel position back to a tile coordinate.
+' Example: pixel 56 -> tile 56/16 = 3
+FUNCTION P2T(p AS INTEGER) AS INTEGER
+    IF p < 0 THEN RETURN -1
+    RETURN p / TILE
+END FUNCTION
+
+' AtCenter: Checks if a pixel position is exactly at the center of a tile.
+' Characters can only change direction when they're at a tile center.
+' The center of any tile has coordinates where (x mod 16 == 8) and (y mod 16 == 8).
+FUNCTION AtCenter(x AS INTEGER, y AS INTEGER) AS BOOLEAN
+    RETURN (x MOD TILE = TILE / 2) AND (y MOD TILE = TILE / 2)
+END FUNCTION
+
+' Opposite: Returns the reverse of a direction (UP<->DOWN, LEFT<->RIGHT).
+' Used when ghosts need to turn around.
+FUNCTION Opposite(d AS INTEGER) AS INTEGER
+    IF d = D_UP THEN RETURN D_DOWN
+    IF d = D_DOWN THEN RETURN D_UP
+    IF d = D_LEFT THEN RETURN D_RIGHT
+    IF d = D_RIGHT THEN RETURN D_LEFT
+    RETURN D_NONE
+END FUNCTION
+
+' DirDX and DirDY: Convert a direction into X and Y offsets.
+' LEFT = -1 on X axis, RIGHT = +1 on X axis, UP = -1 on Y axis, etc.
+' (In computer graphics, Y increases DOWNWARD, so "up" is negative Y.)
+FUNCTION DirDX(d AS INTEGER) AS INTEGER
+    IF d = D_LEFT THEN RETURN -1
+    IF d = D_RIGHT THEN RETURN 1
+    RETURN 0
+END FUNCTION
+
+FUNCTION DirDY(d AS INTEGER) AS INTEGER
+    IF d = D_UP THEN RETURN -1
+    IF d = D_DOWN THEN RETURN 1
+    RETURN 0
+END FUNCTION
+
+' Cell: Looks up what type of cell is at a given tile position in the maze.
+' If you ask about a tile outside the maze, it returns WALL (can't go there).
+' Special case: the tunnel row (row 14) wraps around, so tiles off the
+' left/right edge are treated as EMPTY on that row.
+FUNCTION (g AS POINTER TO Game) Cell(tx AS INTEGER, ty AS INTEGER) AS INTEGER
+    IF ty < 0 OR ty >= MH THEN RETURN C_WALL
+    IF tx < 0 OR tx >= MW THEN
+        IF ty = TUNNEL_Y THEN RETURN C_EMPTY
+        RETURN C_WALL
+    ENDIF
+    RETURN g.Maze[ty * MW + tx]
+END FUNCTION
+
+' Passable: Can a character walk on this tile?
+' Walls are never passable. The ghost house door is passable for ghosts
+' but NOT for PacMan (the "pac" parameter tells us who's asking).
+FUNCTION (g AS POINTER TO Game) Passable(tx AS INTEGER, ty AS INTEGER, pac AS BOOLEAN) AS BOOLEAN
+    DIM c AS INTEGER = g.Cell(tx, ty)
+    IF c = C_WALL THEN RETURN FALSE
+    IF c = C_DOOR THEN
+        IF pac THEN RETURN FALSE
+    ENDIF
+    RETURN TRUE
+END FUNCTION
+
+' CanGo: Can a character at tile (tx,ty) move in direction d?
+' It checks the NEXT tile in that direction to see if it's passable.
+FUNCTION (g AS POINTER TO Game) CanGo(tx AS INTEGER, ty AS INTEGER, d AS INTEGER, pac AS BOOLEAN) AS BOOLEAN
+    RETURN g.Passable(tx + DirDX(d), ty + DirDY(d), pac)
+END FUNCTION
+
+' DistSq: Returns the SQUARED distance between two points.
+' We use squared distance (no square root) because it's faster to compute
+' and works fine for comparing "which is closer?" (if A^2 < B^2, then A < B).
+FUNCTION DistSq(x1 AS INTEGER, y1 AS INTEGER, x2 AS INTEGER, y2 AS INTEGER) AS INTEGER
+    DIM dx AS INTEGER = x1 - x2
+    DIM dy AS INTEGER = y1 - y2
+    RETURN dx * dx + dy * dy
+END FUNCTION
+
+' IAbs: Returns the absolute value (always positive) of a number.
+' Example: IAbs(-5) = 5, IAbs(3) = 3
+FUNCTION IAbs(x AS INTEGER) AS INTEGER
+    IF x < 0 THEN RETURN -x
+    RETURN x
+END FUNCTION
+
+' InTunnel: Checks if a tile position is inside the side tunnels.
+' The tunnels are the passages on the far left and right of row 14.
+' Ghosts move slower in tunnels (40% speed) but PacMan doesn't!
+FUNCTION InTunnel(tx AS INTEGER, ty AS INTEGER) AS BOOLEAN
+    IF ty <> TUNNEL_Y THEN RETURN FALSE
+    IF tx < 6 THEN RETURN TRUE
+    IF tx > 21 THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' PhaseDuration: Returns how many ticks each scatter/chase phase lasts.
+' In the original PacMan, ghosts alternate between "scatter" (going to their
+' corner) and "chase" (hunting PacMan). The pattern for Level 1 is:
+'   7 seconds scatter -> 20 seconds chase -> 7s scatter -> 20s chase ->
+'   5s scatter -> 20s chase -> 5s scatter -> chase FOREVER
+FUNCTION PhaseDuration(phase AS INTEGER) AS INTEGER
+    IF phase = 0 THEN RETURN 420
+    IF phase = 1 THEN RETURN 1200
+    IF phase = 2 THEN RETURN 420
+    IF phase = 3 THEN RETURN 1200
+    IF phase = 4 THEN RETURN 300
+    IF phase = 5 THEN RETURN 1200
+    IF phase = 6 THEN RETURN 300
+    RETURN 99999
+END FUNCTION
+
+' PhaseMode: Even-numbered phases are scatter, odd-numbered are chase.
+FUNCTION PhaseMode(phase AS INTEGER) AS INTEGER
+    IF phase MOD 2 = 0 THEN RETURN M_SCATTER
+    RETURN M_CHASE
+END FUNCTION
+
+' NearestPl: In co-op mode, ghosts target the NEAREST alive player.
+' Returns the index (0 or 1) of the closest living player to the given position.
+' If no players are alive, returns 0 as a fallback.
+FUNCTION (g AS POINTER TO Game) NearestPl(gx AS INTEGER, gy AS INTEGER) AS INTEGER
+    DIM best AS INTEGER = 0
+    DIM bestD AS INTEGER = 999999
+    DIM i AS INTEGER
+    FOR i = 0 TO g.NumPl - 1
+        IF g.Pl[i].Alive THEN
+            DIM d AS INTEGER = DistSq(gx, gy, g.Pl[i].PX, g.Pl[i].PY)
+            IF d < bestD THEN
+                bestD = d
+                best = i
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN best
+END FUNCTION
+
+' ======================== HIGH SCORE MANAGEMENT ========================
+' High scores are stored in a simple text file: each line has "AAA 12345"
+' (3-letter initials, a space, then the score number).
+' We keep the top 5 scores sorted from highest to lowest.
+
+' LoadHiScores: Reads the high score file and returns up to 5 entries.
+' If the file doesn't exist or is corrupt, returns a default list.
+FUNCTION LoadHiScores() AS []HiEntry
+    DIM scores AS []HiEntry
+    DIM content AS STRING = ReadFile(HISCORE_FILE)
+    IF LEN(content) = 0 THEN
+        ' File doesn't exist yet or is empty - return defaults
+        DIM j AS INTEGER
+        FOR j = 0 TO MAX_HISCORES - 1
+            DIM def AS HiEntry
+            def.Initials = "---"
+            def.Pts = 0
+            scores = APPEND(scores, def)
+        NEXT
+        RETURN scores
+    ENDIF
+
+    ' Parse the file line by line
+    DIM lines AS []STRING = strings.Split(content, Chr(10))
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(lines) - 1
+        IF LEN(scores) >= MAX_HISCORES THEN
+            ' We have enough entries, stop
+            RETURN scores
+        ENDIF
+        DIM ln AS STRING = strings.TrimSpace(lines[k])
+        IF LEN(ln) > 4 THEN
+            ' Format: "AAA 12345"
+            DIM initials AS STRING = Mid(ln, 1, 3)
+            DIM numStr AS STRING = Mid(ln, 5, LEN(ln) - 4)
+            DIM pts AS INTEGER
+            DIM parseErr AS ERROR
+            pts, parseErr = strconv.Atoi(numStr)
+            IF parseErr = NIL THEN
+                DIM entry AS HiEntry
+                entry.Initials = initials
+                entry.Pts = pts
+                scores = APPEND(scores, entry)
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' Pad with defaults if fewer than 5 entries
+    DO WHILE LEN(scores) < MAX_HISCORES
+        DIM pad AS HiEntry
+        pad.Initials = "---"
+        pad.Pts = 0
+        scores = APPEND(scores, pad)
+    LOOP
+
+    RETURN scores
+END FUNCTION
+
+' SaveHiScores: Writes the high score table to the file.
+SUB SaveHiScores(scores AS []HiEntry)
+    DIM content AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(scores) - 1
+        IF i >= MAX_HISCORES THEN
+            WriteFile(HISCORE_FILE, content)
+            RETURN
+        ENDIF
+        content = content & scores[i].Initials & " " & Str(scores[i].Pts) & Chr(10)
+    NEXT
+    WriteFile(HISCORE_FILE, content)
+END SUB
+
+' CheckHiScore: Returns the slot index (0-4) where this score should go,
+' or -1 if it doesn't qualify for the top 5.
+FUNCTION CheckHiScore(scores AS []HiEntry, pts AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(scores) - 1
+        IF i >= MAX_HISCORES THEN RETURN -1
+        IF pts > scores[i].Pts THEN
+            RETURN i
+        ENDIF
+    NEXT
+    RETURN -1
+END FUNCTION
+
+' InsertHiScore: Inserts a new score at the given slot, shifting others down.
+' Returns the updated list (still capped at MAX_HISCORES).
+FUNCTION InsertHiScore(scores AS []HiEntry, slot AS INTEGER, entry AS HiEntry) AS []HiEntry
+    DIM result AS []HiEntry
+    DIM i AS INTEGER
+    DIM inserted AS BOOLEAN = FALSE
+    FOR i = 0 TO LEN(scores) - 1
+        IF i = slot THEN
+            IF NOT inserted THEN
+                result = APPEND(result, entry)
+                inserted = TRUE
+            ENDIF
+        ENDIF
+        IF LEN(result) < MAX_HISCORES THEN
+            result = APPEND(result, scores[i])
+        ENDIF
+    NEXT
+    ' If slot is at the end
+    IF NOT inserted THEN
+        IF LEN(result) < MAX_HISCORES THEN
+            result = APPEND(result, entry)
+        ENDIF
+    ENDIF
+    ' Trim to MAX_HISCORES
+    DIM trimmed AS []HiEntry
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(result) - 1
+        IF j >= MAX_HISCORES THEN
+            RETURN trimmed
+        ENDIF
+        trimmed = APPEND(trimmed, result[j])
+    NEXT
+    RETURN trimmed
+END FUNCTION
+
+' ======================== SOUND GENERATION ========================
+' These functions create retro-style sound effects from pure math.
+' We generate raw audio data (PCM) by computing a waveform one sample
+' at a time, then hand that data to Ebitengine's audio player.
+'
+' PCM audio = a list of numbers that describe the sound wave's shape.
+' Each number is a 16-bit integer (-32768 to 32767) representing how
+' far the speaker cone should push out (positive) or pull in (negative).
+' We need 44100 of these numbers per second (the "sample rate").
+' Stereo means we need TWO numbers per sample (left + right ear).
+
+' MakeTone: Generates a square-wave beep at a given frequency.
+'   freq   = pitch in Hz (higher = squeakier, lower = deeper)
+'   durMs  = duration in milliseconds
+'   vol    = loudness (0-8000 is a good range)
+' Returns raw PCM bytes ready for Ebitengine's audio player.
+FUNCTION MakeTone(freq AS INTEGER, durMs AS INTEGER, vol AS INTEGER) AS STRING
+    DIM rate AS INTEGER = 44100
+    DIM samples AS INTEGER = rate * durMs / 1000
+    DIM result AS STRING = ""
+    DIM period AS INTEGER = rate / freq
+    DIM half AS INTEGER = period / 2
+    DIM i AS INTEGER
+    DIM val AS INTEGER
+    DIM uv AS INTEGER
+    DIM lo AS INTEGER
+    DIM hi AS INTEGER
+
+    FOR i = 0 TO samples - 1
+        ' Square wave: alternate between +vol and -vol
+        val = vol
+        IF (i MOD period) >= half THEN
+            val = -vol
+        ENDIF
+        ' Decay envelope: sound fades out toward the end
+        val = val * (samples - i) / samples
+
+        ' Convert signed int16 to two bytes (little-endian)
+        uv = val
+        IF uv < 0 THEN
+            uv = uv + 65536
+        ENDIF
+        lo = uv MOD 256
+        hi = uv / 256
+        ' Append one stereo sample (4 chars: lo+hi for left, lo+hi for right)
+        result = result & Chr(lo) & Chr(hi) & Chr(lo) & Chr(hi)
+    NEXT
+    RETURN result
+END FUNCTION
+
+' MakeChirp: Generates a frequency sweep (ascending or descending).
+'   startFreq = starting pitch
+'   endFreq   = ending pitch
+'   durMs     = duration in milliseconds
+'   vol       = loudness
+FUNCTION MakeChirp(startFreq AS INTEGER, endFreq AS INTEGER, durMs AS INTEGER, vol AS INTEGER) AS STRING
+    DIM rate AS INTEGER = 44100
+    DIM samples AS INTEGER = rate * durMs / 1000
+    DIM result AS STRING = ""
+    DIM i AS INTEGER
+    DIM val AS INTEGER
+    DIM uv AS INTEGER
+    DIM lo AS INTEGER
+    DIM hi AS INTEGER
+    DIM freq AS INTEGER
+    DIM period AS INTEGER
+    DIM half AS INTEGER
+
+    FOR i = 0 TO samples - 1
+        ' Interpolate frequency from start to end
+        freq = startFreq + (endFreq - startFreq) * i / samples
+        period = rate / freq
+        IF period < 1 THEN
+            period = 1
+        ENDIF
+        half = period / 2
+
+        val = vol
+        IF (i MOD period) >= half THEN
+            val = -vol
+        ENDIF
+        val = val * (samples - i) / samples
+
+        uv = val
+        IF uv < 0 THEN
+            uv = uv + 65536
+        ENDIF
+        lo = uv MOD 256
+        hi = uv / 256
+        result = result & Chr(lo) & Chr(hi) & Chr(lo) & Chr(hi)
+    NEXT
+    RETURN result
+END FUNCTION
+
+' MakePlayer: Helper that creates an audio player from a PCM data string.
+' Uses strings.NewReader (which implements io.ReadSeeker) to feed the data
+' to Ebitengine's audio system.
+FUNCTION MakePlayer(data AS STRING) AS POINTER TO audio.Player
+    DIM reader AS POINTER TO strings.Reader = strings.NewReader(data)
+    DIM player AS POINTER TO audio.Player
+    DIM err AS ERROR
+    player, err = GAudioCtx.NewPlayer(reader)
+    IF err <> NIL THEN
+        fmt.Println("Audio error:", err)
+    ENDIF
+    RETURN player
+END FUNCTION
+
+' InitSounds: Creates all the game's sound effects and stores them
+' as audio players in the Game struct, ready to play.
+SUB (g AS POINTER TO Game) InitSounds()
+    ' Waka: short blip when eating a dot (classic PacMan sound)
+    g.SndWaka = MakePlayer(MakeTone(440, 50, 3000))
+
+    ' Power pellet: dramatic descending sweep
+    g.SndPower = MakePlayer(MakeChirp(880, 220, 300, 4000))
+
+    ' Eating a ghost: bright ascending chirp
+    g.SndEatGh = MakePlayer(MakeChirp(330, 1200, 150, 3500))
+
+    ' Death: sad descending tone
+    g.SndDie = MakePlayer(MakeChirp(600, 100, 500, 4000))
+
+    ' Ready jingle: quick ascending beep
+    g.SndReady = MakePlayer(MakeChirp(330, 660, 200, 3000))
+
+    ' Level won: triumphant ascending sweep
+    g.SndWon = MakePlayer(MakeChirp(440, 1320, 400, 3500))
+
+    ' Menu select: short blip for navigating the menu
+    g.SndMenu = MakePlayer(MakeTone(660, 30, 2500))
+END SUB
+
+' PlaySound: Rewinds an audio player to the start and plays it.
+' This lets us replay the same sound effect multiple times.
+SUB PlaySound(snd AS POINTER TO audio.Player)
+    IF snd <> NIL THEN
+        snd.Rewind()
+        snd.Play()
+    ENDIF
+END SUB
+
+' ======================== PLAYER INITIALIZATION ========================
+' Creates a fresh Player struct with starting values.
+
+FUNCTION NewPlayer(colorIdx AS INTEGER) AS Player
+    DIM p AS Player
+    p.PX = T2P(PAC_SX)
+    p.PY = T2P(PAC_SY)
+    p.PDir = D_LEFT
+    p.PNext = D_LEFT
+    p.PMoveAcc = 0
+    p.Mouth = TRUE
+    p.MouthT = 0
+    p.Score = 0
+    p.Lives = 3
+    p.IFrames = 0
+    p.Alive = TRUE
+    p.Clr = colorIdx
+    RETURN p
+END FUNCTION
+
+' ======================== INITIALIZATION ========================
+' NewGame creates a brand-new game from scratch. It sets up the maze,
+' places PacMan and all 4 ghosts in their starting positions, and
+' initializes the score, lives, and timers.
+' The game starts on the INTRO (title/menu) screen.
+
+FUNCTION NewGame() AS Game
+    DIM g AS Game
+    g.Level = 1
+    g.State = S_INTRO
+    g.MenuSel = 0
+    g.GmMode = GM_SINGLE
+    g.NumPl = 1
+    g.CurPl = 0
+    g.GMode = M_SCATTER
+    g.MPhase = 0
+    g.MTimer = PhaseDuration(0)
+    g.GScore = 200
+
+    ' Load high scores from file
+    g.HiScores = LoadHiScores()
+
+    ' We still build the maze and place ghosts so the title screen
+    ' can show the maze in the background if we want.
+    ' --- PARSE THE MAZE ---
+    DIM layout AS []STRING = GetMazeLayout()
+    g.Total = 0
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+
+    FOR y = 0 TO MH - 1
+        FOR x = 0 TO MW - 1
+            DIM ch AS STRING = Mid(layout[y], x + 1, 1)
+            DIM cell AS INTEGER = C_EMPTY
+            IF ch = "#" THEN
+                cell = C_WALL
+            ELSEIF ch = "." THEN
+                cell = C_DOT
+                g.Total = g.Total + 1
+            ELSEIF ch = "o" THEN
+                cell = C_POWER
+                g.Total = g.Total + 1
+            ELSEIF ch = "-" THEN
+                cell = C_DOOR
+            ENDIF
+            g.Maze = APPEND(g.Maze, cell)
+        NEXT
+    NEXT
+
+    ' --- CREATE PLAYER(S) ---
+    ' Start with one player; we add the second when the player picks a mode.
+    DIM p1 AS Player = NewPlayer(0)
+    g.Pl = APPEND(g.Pl, p1)
+
+    ' --- CREATE THE 4 GHOSTS ---
+    ' Each ghost has a unique personality and starting position.
+    '
+    ' BLINKY (Red) - "Shadow"
+    '   Starts outside the house, ready to chase immediately.
+    '   Chase strategy: aims directly at PacMan's current tile.
+    '   Scatter corner: top-right.
+    DIM blinky AS Ghost
+    blinky.X = T2P(14)
+    blinky.Y = T2P(HOUSE_EXIT_Y)
+    blinky.Dir = D_LEFT
+    blinky.GType = 0
+    blinky.Mode = M_SCATTER
+    blinky.ScatX = MW - 3
+    blinky.ScatY = 0
+    g.Gh = APPEND(g.Gh, blinky)
+
+    ' PINKY (Pink) - "Speedy"
+    '   Starts inside the house, released almost immediately.
+    '   Chase strategy: aims 4 tiles AHEAD of where PacMan is facing.
+    '   Tries to ambush PacMan from the front!
+    '   Scatter corner: top-left.
+    DIM pinky AS Ghost
+    pinky.X = T2P(HOUSE_CENTER_X)
+    pinky.Y = T2P(HOUSE_CENTER_Y)
+    pinky.Dir = D_UP
+    pinky.GType = 1
+    pinky.Mode = M_HOUSE
+    pinky.ScatX = 2
+    pinky.ScatY = 0
+    g.Gh = APPEND(g.Gh, pinky)
+
+    ' INKY (Cyan) - "Bashful"
+    '   Starts inside the house, released after 30 dots eaten.
+    '   Chase strategy: uses both PacMan's AND Blinky's positions
+    '   to pick a target. This makes Inky unpredictable!
+    '   Scatter corner: bottom-right.
+    DIM inky AS Ghost
+    inky.X = T2P(12)
+    inky.Y = T2P(HOUSE_CENTER_Y)
+    inky.Dir = D_UP
+    inky.GType = 2
+    inky.Mode = M_HOUSE
+    inky.ScatX = MW - 1
+    inky.ScatY = MH - 1
+    g.Gh = APPEND(g.Gh, inky)
+
+    ' CLYDE (Orange) - "Pokey"
+    '   Starts inside the house, released after 60 dots eaten.
+    '   Chase strategy: chases PacMan when far away, but gets shy and
+    '   retreats to his corner when he gets close (within 8 tiles).
+    '   Scatter corner: bottom-left.
+    DIM clyde AS Ghost
+    clyde.X = T2P(16)
+    clyde.Y = T2P(HOUSE_CENTER_Y)
+    clyde.Dir = D_UP
+    clyde.GType = 3
+    clyde.Mode = M_HOUSE
+    clyde.ScatX = 0
+    clyde.ScatY = MH - 1
+    g.Gh = APPEND(g.Gh, clyde)
+
+    ' --- PRE-RENDER WALLS ---
+    g.WallImg = ebiten.NewImage(SCRW, SCRH)
+    g.RenderWalls()
+    g.InitSounds()
+
+    RETURN g
+END FUNCTION
+
+' StartPlay: Called when the player selects a mode from the menu.
+' Sets up the correct number of players and transitions to READY state.
+SUB (g AS POINTER TO Game) StartPlay()
+    g.GmMode = g.MenuSel
+    g.State = S_READY
+    g.STimer = T_READY
+    g.CurPl = 0
+
+    ' Reset player 1
+    g.Pl[0] = NewPlayer(0)
+
+    IF g.GmMode = GM_SINGLE THEN
+        g.NumPl = 1
+        ' Make sure we only have 1 player in the array
+        DIM onePl AS []Player
+        onePl = APPEND(onePl, g.Pl[0])
+        g.Pl = onePl
+    ELSE
+        g.NumPl = 2
+        DIM p2 AS Player = NewPlayer(1)
+        ' For alternating, P2 starts at same position (they take turns)
+        ' For co-op, P2 starts at a slightly different position
+        IF g.GmMode = GM_COOP THEN
+            p2.PX = T2P(14)
+            p2.PY = T2P(PAC_SY)
+        ENDIF
+        DIM twoPl AS []Player
+        twoPl = APPEND(twoPl, g.Pl[0])
+        twoPl = APPEND(twoPl, p2)
+        g.Pl = twoPl
+    ENDIF
+
+    ' Reset the maze (fresh dots)
+    g.RebuildMaze()
+    g.ResetPositions()
+
+    ' For alternating mode, save the initial maze for both players
+    IF g.GmMode = GM_ALTER THEN
+        g.SaveAltMaze(0)
+        g.SaveAltMaze(1)
+    ENDIF
+END SUB
+
+' RebuildMaze: Re-reads the maze layout and resets all dots.
+SUB (g AS POINTER TO Game) RebuildMaze()
+    DIM layout AS []STRING = GetMazeLayout()
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    g.Total = 0
+    g.Eaten = 0
+
+    ' Rebuild maze array from scratch
+    DIM newMaze AS []INTEGER
+    FOR y = 0 TO MH - 1
+        FOR x = 0 TO MW - 1
+            DIM ch AS STRING = Mid(layout[y], x + 1, 1)
+            DIM cell AS INTEGER = C_EMPTY
+            IF ch = "#" THEN
+                cell = C_WALL
+            ELSEIF ch = "." THEN
+                cell = C_DOT
+                g.Total = g.Total + 1
+            ELSEIF ch = "o" THEN
+                cell = C_POWER
+                g.Total = g.Total + 1
+            ELSEIF ch = "-" THEN
+                cell = C_DOOR
+            ENDIF
+            newMaze = APPEND(newMaze, cell)
+        NEXT
+    NEXT
+    g.Maze = newMaze
+
+    g.WallImg.Clear()
+    g.RenderWalls()
+END SUB
+
+' RenderWalls: Draws all the wall tiles and ghost house doors onto the
+' cached wall image. This only runs once (or when starting a new level).
+SUB (g AS POINTER TO Game) RenderWalls()
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    FOR y = 0 TO MH - 1
+        FOR x = 0 TO MW - 1
+            DIM cell AS INTEGER = g.Maze[y * MW + x]
+            DIM px AS INTEGER = x * TILE
+            DIM py AS INTEGER = y * TILE + HUD_TOP
+            IF cell = C_WALL THEN
+                ' Draw a blue rectangle (slightly smaller than the tile for a grid effect)
+                vector.DrawFilledRect(g.WallImg, Sng(px + 1), Sng(py + 1), Sng(TILE - 2), Sng(TILE - 2), color.RGBA{R: 33, G: 33, B: 255, A: 255}, FALSE)
+            ELSEIF cell = C_DOOR THEN
+                ' Draw a thin pink line for the ghost house door
+                vector.DrawFilledRect(g.WallImg, Sng(px), Sng(py + TILE / 2 - 1), Sng(TILE), Sng(3), color.RGBA{R: 255, G: 184, B: 255, A: 255}, FALSE)
+            ENDIF
+        NEXT
+    NEXT
+END SUB
+
+' ======================== ALTERNATING MODE HELPERS ========================
+' In alternating mode, each player has their own maze state (which dots
+' they've eaten). When we switch players, we save/restore the maze.
+
+' SaveAltMaze: Saves the current maze state for the given player index.
+SUB (g AS POINTER TO Game) SaveAltMaze(pIdx AS INTEGER)
+    DIM copy AS []INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(g.Maze) - 1
+        copy = APPEND(copy, g.Maze[i])
+    NEXT
+    IF pIdx = 0 THEN
+        g.AltMaze0 = copy
+        g.AltEaten0 = g.Eaten
+    ELSE
+        g.AltMaze1 = copy
+        g.AltEaten1 = g.Eaten
+    ENDIF
+END SUB
+
+' RestoreAltMaze: Restores the maze state for the given player index.
+SUB (g AS POINTER TO Game) RestoreAltMaze(pIdx AS INTEGER)
+    DIM src AS []INTEGER
+    IF pIdx = 0 THEN
+        src = g.AltMaze0
+        g.Eaten = g.AltEaten0
+    ELSE
+        src = g.AltMaze1
+        g.Eaten = g.AltEaten1
+    ENDIF
+    IF LEN(src) > 0 THEN
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(src) - 1
+            g.Maze[i] = src[i]
+        NEXT
+    ENDIF
+    ' Recount total dots from the restored maze
+    g.Total = 0
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(g.Maze) - 1
+        IF g.Maze[j] = C_DOT THEN
+            g.Total = g.Total + 1
+        ELSEIF g.Maze[j] = C_POWER THEN
+            g.Total = g.Total + 1
+        ENDIF
+    NEXT
+    g.Total = g.Eaten + (g.Total)
+    g.WallImg.Clear()
+    g.RenderWalls()
+END SUB
+
+' ResetPositions: Called after PacMan dies (but still has lives left).
+' Puts everyone back at their starting positions without resetting the
+' maze or score - the dots you already ate stay eaten.
+SUB (g AS POINTER TO Game) ResetPositions()
+    ' Reset all players to starting position
+    DIM pi AS INTEGER
+    FOR pi = 0 TO g.NumPl - 1
+        g.Pl[pi].PX = T2P(PAC_SX)
+        g.Pl[pi].PY = T2P(PAC_SY)
+        g.Pl[pi].PDir = D_LEFT
+        g.Pl[pi].PNext = D_LEFT
+        g.Pl[pi].PMoveAcc = 0
+        g.Pl[pi].Mouth = TRUE
+        g.Pl[pi].MouthT = 0
+        g.Pl[pi].Alive = TRUE
+    NEXT
+    g.EPause = 0
+
+    ' Blinky starts outside the house
+    g.Gh[0].X = T2P(14)
+    g.Gh[0].Y = T2P(HOUSE_EXIT_Y)
+    g.Gh[0].Dir = D_LEFT
+    g.Gh[0].Mode = M_SCATTER
+    g.Gh[0].MoveAcc = 0
+
+    ' Pinky, Inky, and Clyde start inside the house
+    g.Gh[1].X = T2P(HOUSE_CENTER_X)
+    g.Gh[1].Y = T2P(HOUSE_CENTER_Y)
+    g.Gh[1].Dir = D_UP
+    g.Gh[1].Mode = M_HOUSE
+    g.Gh[1].MoveAcc = 0
+
+    g.Gh[2].X = T2P(12)
+    g.Gh[2].Y = T2P(HOUSE_CENTER_Y)
+    g.Gh[2].Dir = D_UP
+    g.Gh[2].Mode = M_HOUSE
+    g.Gh[2].MoveAcc = 0
+
+    g.Gh[3].X = T2P(16)
+    g.Gh[3].Y = T2P(HOUSE_CENTER_Y)
+    g.Gh[3].Dir = D_UP
+    g.Gh[3].Mode = M_HOUSE
+    g.Gh[3].MoveAcc = 0
+
+    ' Reset the scatter/chase cycle
+    g.GMode = M_SCATTER
+    g.MPhase = 0
+    g.MTimer = PhaseDuration(0)
+    g.GScore = 200
+END SUB
+
+' NextLevel: Called when all dots are eaten. Refills the maze with
+' fresh dots, bumps the level counter, and resets everyone's positions.
+SUB (g AS POINTER TO Game) NextLevel()
+    g.Level = g.Level + 1
+    g.Eaten = 0
+
+    ' Rebuild the maze from scratch (re-read the layout and place all dots)
+    DIM layout AS []STRING = GetMazeLayout()
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    g.Total = 0
+    FOR y = 0 TO MH - 1
+        FOR x = 0 TO MW - 1
+            DIM ch AS STRING = Mid(layout[y], x + 1, 1)
+            DIM cell AS INTEGER = C_EMPTY
+            IF ch = "#" THEN
+                cell = C_WALL
+            ELSEIF ch = "." THEN
+                cell = C_DOT
+                g.Total = g.Total + 1
+            ELSEIF ch = "o" THEN
+                cell = C_POWER
+                g.Total = g.Total + 1
+            ELSEIF ch = "-" THEN
+                cell = C_DOOR
+            ENDIF
+            g.Maze[y * MW + x] = cell
+        NEXT
+    NEXT
+
+    ' Re-render walls and reset positions
+    g.WallImg.Clear()
+    g.RenderWalls()
+    g.ResetPositions()
+    g.State = S_READY
+    g.STimer = T_READY
+
+    ' For alternating mode, save both maze states
+    IF g.GmMode = GM_ALTER THEN
+        g.SaveAltMaze(0)
+        g.SaveAltMaze(1)
+    ENDIF
+END SUB
+
+' ======================== SPEED HELPERS ========================
+
+' GetPacSpeed: Returns PacMan's current speed percentage.
+' PacMan moves faster when ghosts are frightened (he's more confident!).
+FUNCTION (g AS POINTER TO Game) GetPacSpeed() AS INTEGER
+    DIM i AS INTEGER
+    DIM anyFright AS BOOLEAN = FALSE
+    FOR i = 0 TO 3
+        IF g.Gh[i].Mode = M_FRIGHT THEN
+            anyFright = TRUE
+        ENDIF
+    NEXT
+    IF anyFright THEN RETURN SPD_FRIGHT_PAC
+    RETURN SPD_PAC
+END FUNCTION
+
+' GetGhostSpeed: Returns a ghost's speed based on what it's doing.
+' - Eaten (eyes only): VERY fast (150%) - rushes back to the house
+' - Entering/leaving house: slow (30%)
+' - Waiting in house: 0 (frozen)
+' - Frightened: slow (50%) - easy for PacMan to catch
+' - In tunnel: slow (40%) - this is why tunnels are safe escape routes!
+' - Normal: 75% - slightly slower than PacMan
+FUNCTION (g AS POINTER TO Game) GetGhostSpeed(idx AS INTEGER) AS INTEGER
+    DIM mode AS INTEGER = g.Gh[idx].Mode
+    IF mode = M_EATEN THEN RETURN SPD_EYES
+    IF mode = M_ENTER THEN RETURN SPD_HOUSE
+    IF mode = M_LEAVE THEN RETURN SPD_HOUSE
+    IF mode = M_HOUSE THEN RETURN 0
+    IF mode = M_FRIGHT THEN RETURN SPD_FRIGHT_GHOST
+    DIM tx AS INTEGER = P2T(g.Gh[idx].X)
+    DIM ty AS INTEGER = P2T(g.Gh[idx].Y)
+    IF InTunnel(tx, ty) THEN RETURN SPD_TUNNEL
+    RETURN SPD_GHOST
+END FUNCTION
+
+' ======================== GAME LOGIC (Update) ========================
+' This is the HEART of the game. It runs 60 times per second and handles
+' ALL the game logic: input, movement, collisions, scoring, and state changes.
+'
+' The game engine (Ebitengine) calls Update() automatically every tick.
+' We must return NIL (no error) to keep the game running.
+
+FUNCTION (g AS POINTER TO Game) Update() AS ERROR
+    g.Frame = g.Frame + 1
+
+    ' --- GAME STATE MACHINE ---
+    ' The game can be in different states. We handle each one differently.
+    ' This is called a "state machine" - a very common pattern in games.
+    SELECT CASE g.State
+
+        CASE S_INTRO
+            ' Title/menu screen. Player picks a mode with Up/Down + Enter.
+            g.UpdateIntro()
+            RETURN NIL
+
+        CASE S_HISCORE
+            ' High score initials entry screen.
+            g.UpdateHiScore()
+            RETURN NIL
+
+        CASE S_READY
+            ' Show "READY!" for 2 seconds before the game starts
+            ' Play the ready jingle on the first tick
+            IF g.STimer = T_READY THEN
+                PlaySound(g.SndReady)
+            ENDIF
+            g.STimer = g.STimer - 1
+            IF g.STimer <= 0 THEN
+                g.State = S_PLAY
+            ENDIF
+            RETURN NIL
+
+        CASE S_DYING
+            ' PacMan's death animation (1 second of flashing)
+            g.STimer = g.STimer - 1
+            IF g.STimer <= 0 THEN
+                g.HandleDeath()
+            ENDIF
+            RETURN NIL
+
+        CASE S_OVER
+            ' Game Over - wait for player to press Enter to check high scores
+            IF inpututil.IsKeyJustPressed(ebiten.KeyEnter) THEN
+                g.TransitionFromGameOver()
+            ENDIF
+            RETURN NIL
+
+        CASE S_WON
+            ' Level complete! Short celebration, then load next level
+            g.STimer = g.STimer - 1
+            IF g.STimer <= 0 THEN
+                g.NextLevel()
+            ENDIF
+            RETURN NIL
+    END SELECT
+
+    ' --- PLAYING STATE ---
+    ' If we reach here, the game is actively being played.
+
+    ' Step 1: Check what keys the player(s) are pressing
+    g.HandleInput()
+
+    ' Step 2: "Eat pause" - when PacMan eats a dot, there's a tiny pause.
+    ' This is authentic to the original game and makes dot-eating feel satisfying.
+    ' During the pause, ghosts still move (giving them a slight advantage).
+    IF g.EPause > 0 THEN
+        g.EPause = g.EPause - 1
+        g.MoveGhosts()
+        g.UpdateMode()
+        RETURN NIL
+    ENDIF
+
+    ' Step 3: Move player(s) depending on game mode
+    IF g.GmMode = GM_COOP THEN
+        ' Co-op: move both players
+        DIM ci AS INTEGER
+        FOR ci = 0 TO g.NumPl - 1
+            IF g.Pl[ci].Alive THEN
+                g.MovePlayer(ci)
+            ENDIF
+        NEXT
+    ELSE
+        ' Single or alternating: move the current player
+        g.MovePlayer(g.CurPl)
+    ENDIF
+
+    g.MoveGhosts()
+
+    ' Step 4: Check for collisions (PacMan touching dots or ghosts)
+    IF g.GmMode = GM_COOP THEN
+        DIM di AS INTEGER
+        FOR di = 0 TO g.NumPl - 1
+            IF g.Pl[di].Alive THEN
+                g.CheckDotsFor(di)
+                g.CheckGhostsFor(di)
+            ENDIF
+        NEXT
+    ELSE
+        g.CheckDotsFor(g.CurPl)
+        g.CheckGhostsFor(g.CurPl)
+    ENDIF
+
+    ' Step 5: Update the scatter/chase timer
+    g.UpdateMode()
+
+    ' Step 6: Animate PacMan's mouth (open/close every 6 ticks) for all players
+    DIM mi AS INTEGER
+    FOR mi = 0 TO g.NumPl - 1
+        IF g.Pl[mi].Alive THEN
+            ' Mouth animation: cycle through 16 frames continuously
+            ' 0-3: closed, 4-7: half open, 8-11: full open, 12-15: half open
+            g.Pl[mi].MouthT = (g.Pl[mi].MouthT + 1) MOD 16
+        ENDIF
+    NEXT
+
+    RETURN NIL
+END FUNCTION
+
+' ======================== INTRO / MENU UPDATE ========================
+' The title screen shows the game name and a menu of game modes.
+' Player navigates with Up/Down arrows and presses Enter to select.
+
+SUB (g AS POINTER TO Game) UpdateIntro()
+    IF inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) THEN
+        g.MenuSel = g.MenuSel - 1
+        IF g.MenuSel < 0 THEN
+            g.MenuSel = 2
+        ENDIF
+        PlaySound(g.SndMenu)
+    ELSEIF inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) THEN
+        g.MenuSel = g.MenuSel + 1
+        IF g.MenuSel > 2 THEN
+            g.MenuSel = 0
+        ENDIF
+        PlaySound(g.SndMenu)
+    ENDIF
+
+    IF inpututil.IsKeyJustPressed(ebiten.KeyEnter) THEN
+        PlaySound(g.SndReady)
+        g.StartPlay()
+    ENDIF
+END SUB
+
+' ======================== HIGH SCORE ENTRY UPDATE ========================
+' After game over, if a player qualifies for the top 5, they enter 3-letter
+' initials. Up/Down changes the current letter, Left/Right moves between
+' the 3 letter positions, Enter confirms.
+
+SUB (g AS POINTER TO Game) UpdateHiScore()
+    ' Determine which player is currently entering initials
+    DIM activeP AS INTEGER = g.HiPlIdx
+
+    IF inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) THEN
+        g.HiName[g.HiCursor] = g.HiName[g.HiCursor] + 1
+        IF g.HiName[g.HiCursor] > 25 THEN
+            g.HiName[g.HiCursor] = 0
+        ENDIF
+        PlaySound(g.SndMenu)
+    ELSEIF inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) THEN
+        g.HiName[g.HiCursor] = g.HiName[g.HiCursor] - 1
+        IF g.HiName[g.HiCursor] < 0 THEN
+            g.HiName[g.HiCursor] = 25
+        ENDIF
+        PlaySound(g.SndMenu)
+    ENDIF
+
+    IF inpututil.IsKeyJustPressed(ebiten.KeyArrowRight) THEN
+        g.HiCursor = g.HiCursor + 1
+        IF g.HiCursor > 2 THEN
+            g.HiCursor = 2
+        ENDIF
+    ELSEIF inpututil.IsKeyJustPressed(ebiten.KeyArrowLeft) THEN
+        g.HiCursor = g.HiCursor - 1
+        IF g.HiCursor < 0 THEN
+            g.HiCursor = 0
+        ENDIF
+    ENDIF
+
+    IF inpututil.IsKeyJustPressed(ebiten.KeyEnter) THEN
+        ' Build the 3-letter string from the letter codes
+        DIM initials AS STRING = Chr(g.HiName[0] + 65) & Chr(g.HiName[1] + 65) & Chr(g.HiName[2] + 65)
+        DIM entry AS HiEntry
+        entry.Initials = initials
+        entry.Pts = g.Pl[activeP].Score
+        g.HiScores = InsertHiScore(g.HiScores, g.HiSlot, entry)
+        SaveHiScores(g.HiScores)
+        PlaySound(g.SndWon)
+
+        ' Mark this player as done
+        IF activeP = 0 THEN
+            g.HiDone0 = TRUE
+        ELSE
+            g.HiDone1 = TRUE
+        ENDIF
+
+        ' Check if the other player also qualifies (2-player modes)
+        IF g.NumPl > 1 THEN
+            DIM otherP AS INTEGER = 1 - activeP
+            DIM alreadyDone AS BOOLEAN = FALSE
+            IF otherP = 0 THEN
+                alreadyDone = g.HiDone0
+            ELSE
+                alreadyDone = g.HiDone1
+            ENDIF
+            IF NOT alreadyDone THEN
+                DIM slot2 AS INTEGER = CheckHiScore(g.HiScores, g.Pl[otherP].Score)
+                IF slot2 >= 0 THEN
+                    ' Other player qualifies too! Set up entry for them.
+                    g.HiPlIdx = otherP
+                    g.HiSlot = slot2
+                    g.HiCursor = 0
+                    g.HiName[0] = 0
+                    g.HiName[1] = 0
+                    g.HiName[2] = 0
+                    RETURN
+                ENDIF
+            ENDIF
+        ENDIF
+
+        ' All done - go back to intro
+        g.State = S_INTRO
+        g.MenuSel = 0
+    ENDIF
+END SUB
+
+' ======================== DEATH HANDLING ========================
+' When a player dies, different things happen based on game mode.
+
+SUB (g AS POINTER TO Game) HandleDeath()
+    IF g.GmMode = GM_SINGLE THEN
+        ' Single player: lose a life, game over if none left
+        g.Pl[0].Lives = g.Pl[0].Lives - 1
+        IF g.Pl[0].Lives <= 0 THEN
+            g.State = S_OVER
+        ELSE
+            g.ResetPositions()
+            g.State = S_READY
+            g.STimer = T_READY
+        ENDIF
+
+    ELSEIF g.GmMode = GM_ALTER THEN
+        ' Alternating: current player loses a life
+        DIM cp AS INTEGER = g.CurPl
+        g.Pl[cp].Lives = g.Pl[cp].Lives - 1
+
+        ' Save this player's maze state
+        g.SaveAltMaze(cp)
+
+        ' Check if both players are out of lives
+        DIM bothDead AS BOOLEAN = FALSE
+        IF g.Pl[0].Lives <= 0 THEN
+            IF g.Pl[1].Lives <= 0 THEN
+                bothDead = TRUE
+            ENDIF
+        ENDIF
+
+        IF bothDead THEN
+            g.State = S_OVER
+        ELSE
+            ' Switch to the other player if they have lives
+            DIM otherP AS INTEGER = 1 - cp
+            IF g.Pl[otherP].Lives > 0 THEN
+                g.CurPl = otherP
+                g.RestoreAltMaze(otherP)
+            ENDIF
+            ' If other player is also dead, stay with current
+            ' (they still have lives since bothDead was false)
+            g.ResetPositions()
+            g.State = S_READY
+            g.STimer = T_READY
+        ENDIF
+
+    ELSEIF g.GmMode = GM_COOP THEN
+        ' Co-op: the dying player loses a life
+        DIM dp AS INTEGER = g.AltDying
+        g.Pl[dp].Lives = g.Pl[dp].Lives - 1
+        IF g.Pl[dp].Lives <= 0 THEN
+            g.Pl[dp].Alive = FALSE
+        ENDIF
+
+        ' Check if ALL players are out of lives
+        DIM allDead AS BOOLEAN = TRUE
+        DIM ci AS INTEGER
+        FOR ci = 0 TO g.NumPl - 1
+            IF g.Pl[ci].Lives > 0 THEN
+                allDead = FALSE
+            ENDIF
+        NEXT
+
+        IF allDead THEN
+            g.State = S_OVER
+        ELSE
+            g.ResetPositions()
+            ' Mark dead players as not alive
+            DIM ri AS INTEGER
+            FOR ri = 0 TO g.NumPl - 1
+                IF g.Pl[ri].Lives <= 0 THEN
+                    g.Pl[ri].Alive = FALSE
+                ENDIF
+            NEXT
+            g.State = S_READY
+            g.STimer = T_READY
+        ENDIF
+    ENDIF
+END SUB
+
+' TransitionFromGameOver: Called when player presses Enter on Game Over screen.
+' Checks if any player qualifies for the high score table.
+SUB (g AS POINTER TO Game) TransitionFromGameOver()
+    g.HiDone0 = FALSE
+    g.HiDone1 = FALSE
+
+    ' Check each player's score against the high score table
+    DIM pi AS INTEGER
+    FOR pi = 0 TO g.NumPl - 1
+        DIM slot AS INTEGER = CheckHiScore(g.HiScores, g.Pl[pi].Score)
+        IF slot >= 0 THEN
+            ' This player qualifies! Enter initials.
+            g.State = S_HISCORE
+            g.HiPlIdx = pi
+            g.HiSlot = slot
+            g.HiCursor = 0
+            ' Initialize the 3 letter slots to 'A' (code 0)
+            DIM letters AS []INTEGER
+            letters = APPEND(letters, 0)
+            letters = APPEND(letters, 0)
+            letters = APPEND(letters, 0)
+            g.HiName = letters
+            IF pi = 0 THEN
+                g.HiDone0 = FALSE
+            ELSE
+                g.HiDone1 = FALSE
+            ENDIF
+            RETURN
+        ENDIF
+    NEXT
+
+    ' No one qualifies - go back to intro
+    g.State = S_INTRO
+    g.MenuSel = 0
+END SUB
+
+' HandleInput: Reads the keyboard and remembers what direction the player(s)
+' want PacMan to go. PacMan won't actually turn until he reaches a tile
+' center where that direction is valid (no wall in the way).
+'
+' In co-op: P1 uses WASD, P2 uses Arrow keys.
+' In single/alternating: both WASD and Arrows control the active player.
+SUB (g AS POINTER TO Game) HandleInput()
+    IF g.GmMode = GM_COOP THEN
+        ' --- CO-OP INPUT ---
+        ' Player 1: WASD
+        IF ebiten.IsKeyPressed(ebiten.KeyW) THEN
+            g.Pl[0].PNext = D_UP
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyS) THEN
+            g.Pl[0].PNext = D_DOWN
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyA) THEN
+            g.Pl[0].PNext = D_LEFT
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyD) THEN
+            g.Pl[0].PNext = D_RIGHT
+        ENDIF
+        ' Player 2: Arrow keys
+        IF ebiten.IsKeyPressed(ebiten.KeyArrowUp) THEN
+            g.Pl[1].PNext = D_UP
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyArrowDown) THEN
+            g.Pl[1].PNext = D_DOWN
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyArrowLeft) THEN
+            g.Pl[1].PNext = D_LEFT
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyArrowRight) THEN
+            g.Pl[1].PNext = D_RIGHT
+        ENDIF
+    ELSE
+        ' --- SINGLE / ALTERNATING INPUT ---
+        ' Both WASD and Arrows control the active player.
+        DIM cp AS INTEGER = g.CurPl
+        IF ebiten.IsKeyPressed(ebiten.KeyArrowUp) THEN
+            g.Pl[cp].PNext = D_UP
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyW) THEN
+            g.Pl[cp].PNext = D_UP
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyArrowDown) THEN
+            g.Pl[cp].PNext = D_DOWN
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyS) THEN
+            g.Pl[cp].PNext = D_DOWN
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyArrowLeft) THEN
+            g.Pl[cp].PNext = D_LEFT
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyA) THEN
+            g.Pl[cp].PNext = D_LEFT
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyArrowRight) THEN
+            g.Pl[cp].PNext = D_RIGHT
+        ELSEIF ebiten.IsKeyPressed(ebiten.KeyD) THEN
+            g.Pl[cp].PNext = D_RIGHT
+        ENDIF
+    ENDIF
+END SUB
+
+' MovePlayer: Handles movement for a single player using the accumulator
+' speed system. This replaces the old MovePacMan function.
+'
+' The movement logic:
+'   1. Add speed to accumulator. If under 100, skip this frame (no movement).
+'   2. If at a tile center, check if the player's desired direction is valid.
+'      If so, turn that way. If current direction hits a wall, stop.
+'   3. Move 2 pixels in the current direction.
+'   4. Handle tunnel wrapping (going off the left edge appears on the right).
+SUB (g AS POINTER TO Game) MovePlayer(pIdx AS INTEGER)
+    ' --- ACCUMULATOR SPEED CHECK ---
+    DIM spd AS INTEGER = g.GetPacSpeed()
+    g.Pl[pIdx].PMoveAcc = g.Pl[pIdx].PMoveAcc + spd
+    IF g.Pl[pIdx].PMoveAcc < 100 THEN RETURN
+    g.Pl[pIdx].PMoveAcc = g.Pl[pIdx].PMoveAcc - 100
+
+    ' --- DIRECTION DECISIONS (only at tile centers) ---
+    DIM tx AS INTEGER = P2T(g.Pl[pIdx].PX)
+    DIM ty AS INTEGER = P2T(g.Pl[pIdx].PY)
+
+    IF AtCenter(g.Pl[pIdx].PX, g.Pl[pIdx].PY) THEN
+        ' Try to turn in the direction the player wants
+        IF g.Pl[pIdx].PNext <> D_NONE THEN
+            IF g.CanGo(tx, ty, g.Pl[pIdx].PNext, TRUE) THEN
+                g.Pl[pIdx].PDir = g.Pl[pIdx].PNext
+            ENDIF
+        ENDIF
+        ' If current direction hits a wall, stop moving
+        DIM canContinue AS BOOLEAN = g.CanGo(tx, ty, g.Pl[pIdx].PDir, TRUE)
+        IF canContinue = FALSE THEN
+            g.Pl[pIdx].PDir = D_NONE
+        ENDIF
+    ENDIF
+
+    ' --- ACTUALLY MOVE ---
+    IF g.Pl[pIdx].PDir <> D_NONE THEN
+        g.Pl[pIdx].PX = g.Pl[pIdx].PX + DirDX(g.Pl[pIdx].PDir) * PX_STEP
+        g.Pl[pIdx].PY = g.Pl[pIdx].PY + DirDY(g.Pl[pIdx].PDir) * PX_STEP
+    ENDIF
+
+    ' --- TUNNEL WRAPPING ---
+    ' If PacMan goes off the left edge, appear on the right (and vice versa).
+    IF g.Pl[pIdx].PX < 0 THEN
+        g.Pl[pIdx].PX = g.Pl[pIdx].PX + MW * TILE
+    ELSEIF g.Pl[pIdx].PX >= MW * TILE THEN
+        g.Pl[pIdx].PX = g.Pl[pIdx].PX - MW * TILE
+    ENDIF
+END SUB
+
+' CheckDotsFor: When a specific player's PacMan is at a tile center,
+' check if there's a dot or power pellet on that tile. If so, eat it!
+SUB (g AS POINTER TO Game) CheckDotsFor(pIdx AS INTEGER)
+    IF NOT AtCenter(g.Pl[pIdx].PX, g.Pl[pIdx].PY) THEN RETURN
+
+    DIM tx AS INTEGER = P2T(g.Pl[pIdx].PX)
+    DIM ty AS INTEGER = P2T(g.Pl[pIdx].PY)
+    IF tx < 0 OR tx >= MW OR ty < 0 OR ty >= MH THEN RETURN
+
+    DIM cell AS INTEGER = g.Maze[ty * MW + tx]
+    IF cell = C_DOT THEN
+        ' Eat the dot: remove it from the maze, add 10 points
+        g.Maze[ty * MW + tx] = C_EMPTY
+        g.Pl[pIdx].Score = g.Pl[pIdx].Score + 10
+        g.Eaten = g.Eaten + 1
+        g.EPause = 1
+        g.ReleaseGhosts()
+        PlaySound(g.SndWaka)
+    ELSEIF cell = C_POWER THEN
+        ' Eat the power pellet: 50 points AND scare all the ghosts!
+        g.Maze[ty * MW + tx] = C_EMPTY
+        g.Pl[pIdx].Score = g.Pl[pIdx].Score + 50
+        g.Eaten = g.Eaten + 1
+        g.EPause = 3
+        g.FrightenAll()
+        g.ReleaseGhosts()
+        PlaySound(g.SndPower)
+    ENDIF
+
+    ' Check if all dots are eaten - level complete!
+    IF g.Eaten >= g.Total THEN
+        g.State = S_WON
+        g.STimer = 120
+        PlaySound(g.SndWon)
+    ENDIF
+END SUB
+
+' CheckGhostsFor: Check if a specific player's PacMan is touching any ghost.
+' Uses pixel-distance collision (not just tile matching) for accuracy.
+'
+' Three possible outcomes when PacMan touches a ghost:
+'   1. Ghost is FRIGHTENED -> PacMan eats the ghost! Score multiplies.
+'   2. Ghost is EATEN (eyes) -> Nothing happens, they pass through.
+'   3. Ghost is normal -> PacMan DIES!
+SUB (g AS POINTER TO Game) CheckGhostsFor(pIdx AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        ' Skip ghosts that are in the house or transitioning
+        IF g.Gh[i].Mode = M_HOUSE THEN
+            ' skip
+        ELSEIF g.Gh[i].Mode = M_ENTER THEN
+            ' skip
+        ELSEIF g.Gh[i].Mode = M_LEAVE THEN
+            ' skip
+        ELSE
+            ' Calculate pixel distance between PacMan and this ghost
+            DIM dx AS INTEGER = IAbs(g.Pl[pIdx].PX - g.Gh[i].X)
+            DIM dy AS INTEGER = IAbs(g.Pl[pIdx].PY - g.Gh[i].Y)
+            ' Account for tunnel wrap (if they're on opposite sides of the screen)
+            IF dx > MW * TILE / 2 THEN
+                dx = MW * TILE - dx
+            ENDIF
+            ' If within 12 pixels on both axes, they're touching
+            IF dx < TILE - 4 THEN
+                IF dy < TILE - 4 THEN
+                    IF g.Gh[i].Mode = M_FRIGHT THEN
+                        ' PacMan eats the ghost! The ghost becomes just eyes.
+                        g.Gh[i].Mode = M_EATEN
+                        g.Gh[i].MoveAcc = 0
+                        g.Pl[pIdx].Score = g.Pl[pIdx].Score + g.GScore
+                        ' Ghost score doubles: 200, 400, 800, 1600
+                        g.GScore = g.GScore * 2
+                        PlaySound(g.SndEatGh)
+                    ELSEIF g.Gh[i].Mode <> M_EATEN THEN
+                        ' PacMan touched a normal ghost - he dies!
+                        g.AltDying = pIdx
+                        g.State = S_DYING
+                        g.STimer = T_DYING
+                        PlaySound(g.SndDie)
+                        RETURN
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+END SUB
+
+' FrightenAll: Called when PacMan eats a power pellet.
+' All ghosts that are currently in scatter or chase mode become frightened.
+' They turn blue, slow down, and run in random directions.
+' PacMan can eat them for bonus points!
+SUB (g AS POINTER TO Game) FrightenAll()
+    ' Reset the ghost-eating score multiplier
+    g.GScore = 200
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        IF g.Gh[i].Mode = M_SCATTER OR g.Gh[i].Mode = M_CHASE THEN
+            g.Gh[i].Mode = M_FRIGHT
+            g.Gh[i].FTimer = T_FRIGHT
+            ' Ghosts immediately reverse direction when frightened!
+            g.Gh[i].Dir = Opposite(g.Gh[i].Dir)
+            g.Gh[i].MoveAcc = 0
+        ENDIF
+    NEXT
+END SUB
+
+' ReleaseGhosts: Check if any ghosts in the house should be released.
+' Each ghost has a dot threshold - once PacMan eats that many dots,
+' the ghost starts leaving the house.
+SUB (g AS POINTER TO Game) ReleaseGhosts()
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        IF g.Gh[i].Mode = M_HOUSE THEN
+            DIM thresh AS INTEGER = 999
+            IF g.Gh[i].GType = 1 THEN
+                thresh = REL_PINKY
+            ELSEIF g.Gh[i].GType = 2 THEN
+                thresh = REL_INKY
+            ELSEIF g.Gh[i].GType = 3 THEN
+                thresh = REL_CLYDE
+            ENDIF
+            IF g.Eaten >= thresh THEN
+                ' Time to leave! Ghost starts the exit procedure.
+                g.Gh[i].Mode = M_LEAVE
+                g.Gh[i].X = T2P(HOUSE_CENTER_X)
+                g.Gh[i].Dir = D_UP
+                g.Gh[i].MoveAcc = 0
+            ENDIF
+        ENDIF
+    NEXT
+END SUB
+
+' UpdateMode: Manages two timing systems:
+'   1. Individual ghost frighten timers (count down to un-frighten)
+'   2. The global scatter/chase cycle (alternates between the two modes)
+SUB (g AS POINTER TO Game) UpdateMode()
+    DIM i AS INTEGER
+
+    ' --- FRIGHTEN TIMERS ---
+    ' Each frightened ghost counts down. When the timer hits zero,
+    ' the ghost goes back to whatever the current global mode is.
+    FOR i = 0 TO 3
+        IF g.Gh[i].Mode = M_FRIGHT THEN
+            g.Gh[i].FTimer = g.Gh[i].FTimer - 1
+            IF g.Gh[i].FTimer <= 0 THEN
+                g.Gh[i].Mode = g.GMode
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' --- SCATTER/CHASE CYCLE ---
+    ' The game alternates between scatter and chase phases.
+    ' When the mode switches, all active ghosts reverse direction.
+    g.MTimer = g.MTimer - 1
+    IF g.MTimer <= 0 THEN
+        g.MPhase = g.MPhase + 1
+        g.GMode = PhaseMode(g.MPhase)
+        g.MTimer = PhaseDuration(g.MPhase)
+        ' All active ghosts switch to the new mode and turn around
+        FOR i = 0 TO 3
+            IF g.Gh[i].Mode = M_SCATTER OR g.Gh[i].Mode = M_CHASE THEN
+                g.Gh[i].Mode = g.GMode
+                g.Gh[i].Dir = Opposite(g.Gh[i].Dir)
+            ENDIF
+        NEXT
+    ENDIF
+END SUB
+
+' ======================== GHOST AI (Artificial Intelligence) ========================
+' This is the most complex part of the game! Each ghost has to decide
+' which direction to turn at every intersection.
+'
+' THE GHOST LIFECYCLE:
+'   1. Start in the HOUSE (jail), waiting to be released
+'   2. LEAVE the house (float up through the door)
+'   3. Alternate between SCATTER (go to corner) and CHASE (hunt PacMan)
+'   4. If PacMan eats a power pellet: become FRIGHTENED (run randomly)
+'   5. If PacMan eats you while frightened: become EATEN (eyes only)
+'   6. Race back to the house as eyes, ENTER the house, regenerate
+'   7. LEAVE the house again and go back to step 3
+
+' MoveGhosts: Main ghost movement handler. Routes each ghost to the
+' appropriate movement function based on its current mode.
+SUB (g AS POINTER TO Game) MoveGhosts()
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        IF g.Gh[i].Mode = M_HOUSE THEN
+            ' Ghost is sitting in the house, waiting to be released.
+            ' It doesn't move (just bobs in place visually).
+        ELSEIF g.Gh[i].Mode = M_ENTER THEN
+            ' Ghost eyes are floating DOWN into the house after being eaten
+            g.MoveGhostEntering(i)
+        ELSEIF g.Gh[i].Mode = M_LEAVE THEN
+            ' Ghost is floating UP out of the house to rejoin the game
+            g.MoveGhostLeaving(i)
+        ELSE
+            ' --- NORMAL GHOST MOVEMENT (scatter, chase, frightened, or eaten eyes) ---
+            ' Uses the same accumulator speed system as PacMan
+            DIM spd AS INTEGER = g.GetGhostSpeed(i)
+            g.Gh[i].MoveAcc = g.Gh[i].MoveAcc + spd
+            IF g.Gh[i].MoveAcc >= 100 THEN
+                g.Gh[i].MoveAcc = g.Gh[i].MoveAcc - 100
+
+                ' --- DIRECTION DECISION (at tile centers only) ---
+                IF AtCenter(g.Gh[i].X, g.Gh[i].Y) THEN
+                    DIM gtx AS INTEGER = P2T(g.Gh[i].X)
+                    DIM gty AS INTEGER = P2T(g.Gh[i].Y)
+
+                    ' If this ghost is just eyes (eaten), check if it reached
+                    ' the ghost house door. If so, start entering the house.
+                    IF g.Gh[i].Mode = M_EATEN THEN
+                        IF gtx >= 13 THEN
+                            IF gtx <= 15 THEN
+                                IF gty = HOUSE_DOOR_Y THEN
+                                    g.Gh[i].Mode = M_ENTER
+                                    g.Gh[i].X = T2P(HOUSE_CENTER_X)
+                                    g.Gh[i].Y = T2P(HOUSE_DOOR_Y)
+                                    g.Gh[i].Dir = D_DOWN
+                                    g.Gh[i].MoveAcc = 0
+                                ENDIF
+                            ENDIF
+                        ENDIF
+                    ENDIF
+
+                    ' Use AI to choose the best direction (unless entering house)
+                    IF g.Gh[i].Mode <> M_ENTER THEN
+                        g.ChooseDir(i)
+                    ENDIF
+                ENDIF
+
+                ' --- MOVE THE GHOST ---
+                IF g.Gh[i].Mode <> M_ENTER THEN
+                    g.Gh[i].X = g.Gh[i].X + DirDX(g.Gh[i].Dir) * PX_STEP
+                    g.Gh[i].Y = g.Gh[i].Y + DirDY(g.Gh[i].Dir) * PX_STEP
+                ENDIF
+
+                ' --- TUNNEL WRAPPING ---
+                IF g.Gh[i].X < 0 THEN
+                    g.Gh[i].X = g.Gh[i].X + MW * TILE
+                ELSEIF g.Gh[i].X >= MW * TILE THEN
+                    g.Gh[i].X = g.Gh[i].X - MW * TILE
+                ENDIF
+
+                ' Eyes move at 150% speed, so they might get two moves per tick.
+                ' This extra check handles that.
+                IF g.Gh[i].Mode = M_EATEN THEN
+                    IF g.Gh[i].MoveAcc >= 100 THEN
+                        g.Gh[i].MoveAcc = g.Gh[i].MoveAcc - 100
+                        g.Gh[i].X = g.Gh[i].X + DirDX(g.Gh[i].Dir) * PX_STEP
+                        g.Gh[i].Y = g.Gh[i].Y + DirDY(g.Gh[i].Dir) * PX_STEP
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+END SUB
+
+' MoveGhostEntering: After a ghost is eaten, its eyes travel back to the
+' ghost house. When they arrive at the door, this function takes over.
+' The eyes float DOWN into the center of the house, then the ghost
+' regenerates (gets its body back) after a brief pause.
+SUB (g AS POINTER TO Game) MoveGhostEntering(idx AS INTEGER)
+    DIM spd AS INTEGER = SPD_HOUSE
+    g.Gh[idx].MoveAcc = g.Gh[idx].MoveAcc + spd
+    IF g.Gh[idx].MoveAcc < 100 THEN RETURN
+    g.Gh[idx].MoveAcc = g.Gh[idx].MoveAcc - 100
+
+    ' Float down toward the center of the ghost house
+    g.Gh[idx].Y = g.Gh[idx].Y + PX_STEP
+
+    ' Did we reach the center? If so, regenerate and prepare to leave.
+    DIM targetY AS INTEGER = T2P(HOUSE_CENTER_Y)
+    IF g.Gh[idx].Y >= targetY THEN
+        g.Gh[idx].Y = targetY
+        ' Switch to LEAVE mode with a half-second pause to "regenerate"
+        g.Gh[idx].Mode = M_LEAVE
+        g.Gh[idx].Dir = D_UP
+        g.Gh[idx].HouseTimer = 30
+        g.Gh[idx].MoveAcc = 0
+    ENDIF
+END SUB
+
+' MoveGhostLeaving: Handles a ghost exiting the ghost house.
+' Three steps: 1) Wait out the house timer, 2) Slide to center X,
+' 3) Float up through the door. Once above the door, rejoin the game.
+SUB (g AS POINTER TO Game) MoveGhostLeaving(idx AS INTEGER)
+    ' Step 1: Wait if there's a pause timer (regeneration time)
+    IF g.Gh[idx].HouseTimer > 0 THEN
+        g.Gh[idx].HouseTimer = g.Gh[idx].HouseTimer - 1
+        RETURN
+    ENDIF
+
+    DIM spd AS INTEGER = SPD_HOUSE
+    g.Gh[idx].MoveAcc = g.Gh[idx].MoveAcc + spd
+    IF g.Gh[idx].MoveAcc < 100 THEN RETURN
+    g.Gh[idx].MoveAcc = g.Gh[idx].MoveAcc - 100
+
+    ' Step 2: Align horizontally with the door (center X of the house)
+    DIM centerX AS INTEGER = T2P(HOUSE_CENTER_X)
+    IF g.Gh[idx].X < centerX THEN
+        g.Gh[idx].X = g.Gh[idx].X + PX_STEP
+        IF g.Gh[idx].X > centerX THEN
+            g.Gh[idx].X = centerX
+        ENDIF
+        RETURN
+    ELSEIF g.Gh[idx].X > centerX THEN
+        g.Gh[idx].X = g.Gh[idx].X - PX_STEP
+        IF g.Gh[idx].X < centerX THEN
+            g.Gh[idx].X = centerX
+        ENDIF
+        RETURN
+    ENDIF
+
+    ' Step 3: Float upward through the door
+    g.Gh[idx].Y = g.Gh[idx].Y - PX_STEP
+
+    ' Once above the door, the ghost is free! Join the current game mode.
+    DIM exitY AS INTEGER = T2P(HOUSE_EXIT_Y)
+    IF g.Gh[idx].Y <= exitY THEN
+        g.Gh[idx].Y = exitY
+        g.Gh[idx].X = T2P(HOUSE_EXIT_X)
+        g.Gh[idx].Mode = g.GMode
+        g.Gh[idx].Dir = D_LEFT
+        g.Gh[idx].MoveAcc = 0
+    ENDIF
+END SUB
+
+' ChooseDir: The ghost's "brain." At each intersection, the ghost must
+' decide which way to turn. The decision depends on the ghost's mode:
+'
+' FRIGHTENED: Pick a random valid direction (run around aimlessly).
+'
+' ALL OTHER MODES: Use "target tile" navigation.
+'   1. Determine a target tile (different for each ghost and mode).
+'   2. Look at all possible directions (except reversing - ghosts can
+'      never do a U-turn unless forced by a mode change).
+'   3. Pick the direction that leads to the tile CLOSEST to the target.
+'   4. If tied, prefer: UP > LEFT > DOWN > RIGHT.
+'
+' In co-op mode, ghosts target the NEAREST alive player instead of
+' always targeting player 0. This makes co-op fairer and more fun!
+'
+' CHASE MODE TARGETS (this is what gives each ghost its personality!):
+'   Blinky (red):   Targets PacMan's exact tile. The straightforward hunter.
+'   Pinky (pink):   Targets 4 tiles AHEAD of PacMan. The ambusher.
+'   Inky (cyan):    Uses a weird formula involving Blinky's position.
+'                   The wildcard - unpredictable!
+'   Clyde (orange): Targets PacMan when far away, but runs to his corner
+'                   when within 8 tiles. The coward.
+'
+' SCATTER MODE: Each ghost targets its assigned corner of the maze.
+' EATEN MODE: Targets the ghost house door (to go home).
+SUB (g AS POINTER TO Game) ChooseDir(idx AS INTEGER)
+    DIM tx AS INTEGER = P2T(g.Gh[idx].X)
+    DIM ty AS INTEGER = P2T(g.Gh[idx].Y)
+    DIM targX AS INTEGER = 0
+    DIM targY AS INTEGER = 0
+    DIM d AS INTEGER
+
+    ' --- FRIGHTENED MODE: RANDOM DIRECTION ---
+    IF g.Gh[idx].Mode = M_FRIGHT THEN
+        DIM rev AS INTEGER = Opposite(g.Gh[idx].Dir)
+        DIM tries AS INTEGER = 0
+        DIM nd AS INTEGER = g.Gh[idx].Dir
+        ' Try random directions until we find a valid one
+        DO
+            DIM r AS INTEGER = RndInt(4) + 1
+            IF r <> rev THEN
+                IF g.CanGo(tx, ty, r, FALSE) THEN
+                    nd = r
+                    tries = 20
+                ENDIF
+            ENDIF
+            tries = tries + 1
+        LOOP UNTIL tries >= 20
+        ' Use the random direction if valid, otherwise fall back
+        IF g.CanGo(tx, ty, nd, FALSE) THEN
+            g.Gh[idx].Dir = nd
+        ELSEIF g.CanGo(tx, ty, g.Gh[idx].Dir, FALSE) THEN
+            ' keep going straight
+        ELSE
+            FOR d = 1 TO 4
+                IF d <> rev THEN
+                    IF g.CanGo(tx, ty, d, FALSE) THEN
+                        g.Gh[idx].Dir = d
+                    ENDIF
+                ENDIF
+            NEXT
+        ENDIF
+        RETURN
+    ENDIF
+
+    ' --- DETERMINE TARGET TILE based on mode and ghost type ---
+
+    ' Figure out which player to target.
+    ' In co-op, target the nearest alive player.
+    ' In other modes, target the current player.
+    DIM targetPl AS INTEGER = g.CurPl
+    IF g.GmMode = GM_COOP THEN
+        targetPl = g.NearestPl(g.Gh[idx].X, g.Gh[idx].Y)
+    ENDIF
+
+    IF g.Gh[idx].Mode = M_EATEN THEN
+        ' Eyes are heading back to the ghost house door
+        targX = HOUSE_DOOR_X
+        targY = HOUSE_DOOR_Y
+    ELSEIF g.Gh[idx].Mode = M_SCATTER THEN
+        ' Head to this ghost's assigned corner
+        targX = g.Gh[idx].ScatX
+        targY = g.Gh[idx].ScatY
+    ELSE
+        ' CHASE MODE - each ghost has a unique targeting strategy
+        DIM ptx AS INTEGER = P2T(g.Pl[targetPl].PX)
+        DIM pty AS INTEGER = P2T(g.Pl[targetPl].PY)
+
+        IF g.Gh[idx].GType = 0 THEN
+            ' BLINKY: Target PacMan's current tile (simple and aggressive)
+            targX = ptx
+            targY = pty
+        ELSEIF g.Gh[idx].GType = 1 THEN
+            ' PINKY: Target 4 tiles ahead of PacMan (tries to cut him off)
+            targX = ptx + DirDX(g.Pl[targetPl].PDir) * 4
+            targY = pty + DirDY(g.Pl[targetPl].PDir) * 4
+        ELSEIF g.Gh[idx].GType = 2 THEN
+            ' INKY: Complex targeting using Blinky's position
+            ' 1. Find the tile 2 spaces ahead of PacMan
+            ' 2. Draw a line from Blinky to that tile
+            ' 3. Double the length of that line - that's the target!
+            DIM ax AS INTEGER = ptx + DirDX(g.Pl[targetPl].PDir) * 2
+            DIM ay AS INTEGER = pty + DirDY(g.Pl[targetPl].PDir) * 2
+            DIM bx AS INTEGER = P2T(g.Gh[0].X)
+            DIM by AS INTEGER = P2T(g.Gh[0].Y)
+            targX = 2 * ax - bx
+            targY = 2 * ay - by
+        ELSE
+            ' CLYDE: Chase PacMan when far, flee to corner when close
+            DIM dist AS INTEGER = DistSq(tx, ty, ptx, pty)
+            IF dist > 64 THEN
+                ' More than 8 tiles away - chase PacMan
+                targX = ptx
+                targY = pty
+            ELSE
+                ' Too close! Run away to scatter corner
+                targX = g.Gh[idx].ScatX
+                targY = g.Gh[idx].ScatY
+            ENDIF
+        ENDIF
+    ENDIF
+
+    ' --- CHOOSE THE BEST DIRECTION ---
+    ' Try all 4 directions (except reverse). Pick the one that
+    ' gets closest to the target tile. Use squared distance for speed.
+    DIM bestDir AS INTEGER = g.Gh[idx].Dir
+    DIM bestDist AS INTEGER = 999999
+    DIM rev2 AS INTEGER = Opposite(g.Gh[idx].Dir)
+    DIM dd AS INTEGER = 0
+
+    ' Check directions in priority order: UP, LEFT, DOWN, RIGHT
+    ' (If two directions are equally close, the first one checked wins)
+    IF D_UP <> rev2 THEN
+        IF g.CanGo(tx, ty, D_UP, FALSE) THEN
+            dd = DistSq(tx + DirDX(D_UP), ty + DirDY(D_UP), targX, targY)
+            IF dd < bestDist THEN
+                bestDist = dd
+                bestDir = D_UP
+            ENDIF
+        ENDIF
+    ENDIF
+    IF D_LEFT <> rev2 THEN
+        IF g.CanGo(tx, ty, D_LEFT, FALSE) THEN
+            dd = DistSq(tx + DirDX(D_LEFT), ty + DirDY(D_LEFT), targX, targY)
+            IF dd < bestDist THEN
+                bestDist = dd
+                bestDir = D_LEFT
+            ENDIF
+        ENDIF
+    ENDIF
+    IF D_DOWN <> rev2 THEN
+        IF g.CanGo(tx, ty, D_DOWN, FALSE) THEN
+            dd = DistSq(tx + DirDX(D_DOWN), ty + DirDY(D_DOWN), targX, targY)
+            IF dd < bestDist THEN
+                bestDist = dd
+                bestDir = D_DOWN
+            ENDIF
+        ENDIF
+    ENDIF
+    IF D_RIGHT <> rev2 THEN
+        IF g.CanGo(tx, ty, D_RIGHT, FALSE) THEN
+            dd = DistSq(tx + DirDX(D_RIGHT), ty + DirDY(D_RIGHT), targX, targY)
+            IF dd < bestDist THEN
+                bestDist = dd
+                bestDir = D_RIGHT
+            ENDIF
+        ENDIF
+    ENDIF
+
+    g.Gh[idx].Dir = bestDir
+END SUB
+
+' ======================== DRAWING ========================
+' Everything below this point is about painting the game on screen.
+' The game engine calls Draw() automatically after each Update().
+' Draw() should NEVER modify game state - it only reads and renders.
+
+' Draw: The main drawing function. Routes to the appropriate drawing
+' method based on game state (intro, playing, game over, etc).
+SUB (g AS POINTER TO Game) Draw(screen AS POINTER TO ebiten.Image)
+    screen.Fill(color.RGBA{R: 0, G: 0, B: 0, A: 255})
+
+    IF g.State = S_INTRO THEN
+        g.DrawIntro(screen)
+        RETURN
+    ENDIF
+
+    IF g.State = S_HISCORE THEN
+        g.DrawHiScoreEntry(screen)
+        RETURN
+    ENDIF
+
+    g.DrawMaze(screen)
+
+    ' Draw all alive players. Flash during death animation.
+    DIM pi AS INTEGER
+    FOR pi = 0 TO g.NumPl - 1
+        IF g.Pl[pi].Alive THEN
+            DIM shouldDraw AS BOOLEAN = TRUE
+            IF g.State = S_DYING THEN
+                IF pi = g.AltDying THEN
+                    ' Dying player flashes on/off
+                    IF g.STimer MOD 10 >= 7 THEN
+                        shouldDraw = FALSE
+                    ENDIF
+                ENDIF
+            ENDIF
+            IF shouldDraw THEN
+                g.DrawPlayer(screen, pi)
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' Hide ghosts during death animation
+    IF g.State <> S_DYING THEN
+        g.DrawGhosts(screen)
+    ENDIF
+
+    g.DrawHUD(screen)
+END SUB
+
+' ======================== INTRO / TITLE SCREEN DRAWING ========================
+' Shows the game title, a PacMan logo, the menu, and the high score table.
+
+SUB (g AS POINTER TO Game) DrawIntro(screen AS POINTER TO ebiten.Image)
+    ' --- TITLE ---
+    DIM titleX AS INTEGER = SCRW / 2 - 60
+    ebitenutil.DebugPrintAt(screen, "PAC-MAN", titleX - 10, 40)
+    ebitenutil.DebugPrintAt(screen, "DBasic Edition", titleX - 25, 60)
+
+    ' Draw a decorative PacMan and ghost
+    vector.DrawFilledCircle(screen, Sng(SCRW / 2 - 50), Sng(110), Sng(20), color.RGBA{R: 255, G: 255, B: 0, A: 255}, FALSE)
+    ' Mouth
+    vector.DrawFilledRect(screen, Sng(SCRW / 2 - 50), Sng(106), Sng(20), Sng(2), color.RGBA{R: 0, G: 0, B: 0, A: 255}, FALSE)
+    vector.DrawFilledRect(screen, Sng(SCRW / 2 - 50), Sng(112), Sng(20), Sng(2), color.RGBA{R: 0, G: 0, B: 0, A: 255}, FALSE)
+    ' Decorative ghost
+    vector.DrawFilledCircle(screen, Sng(SCRW / 2 + 50), Sng(108), Sng(16), color.RGBA{R: 255, G: 0, B: 0, A: 255}, FALSE)
+    vector.DrawFilledRect(screen, Sng(SCRW / 2 + 34), Sng(108), Sng(32), Sng(16), color.RGBA{R: 255, G: 0, B: 0, A: 255}, FALSE)
+    ' Ghost eyes
+    vector.DrawFilledCircle(screen, Sng(SCRW / 2 + 44), Sng(105), Sng(4), color.RGBA{R: 255, G: 255, B: 255, A: 255}, FALSE)
+    vector.DrawFilledCircle(screen, Sng(SCRW / 2 + 56), Sng(105), Sng(4), color.RGBA{R: 255, G: 255, B: 255, A: 255}, FALSE)
+    vector.DrawFilledCircle(screen, Sng(SCRW / 2 + 43), Sng(105), Sng(2), color.RGBA{R: 33, G: 33, B: 255, A: 255}, FALSE)
+    vector.DrawFilledCircle(screen, Sng(SCRW / 2 + 55), Sng(105), Sng(2), color.RGBA{R: 33, G: 33, B: 255, A: 255}, FALSE)
+
+    ' --- MENU ---
+    DIM menuY AS INTEGER = 170
+    DIM menuX AS INTEGER = SCRW / 2 - 55
+
+    ' Menu option labels
+    DIM opt0 AS STRING = "  1 PLAYER"
+    DIM opt1 AS STRING = "  2P ALTERNATING"
+    DIM opt2 AS STRING = "  2P CO-OP"
+
+    ' Add arrow indicator to selected option
+    IF g.MenuSel = 0 THEN
+        opt0 = "> 1 PLAYER"
+    ELSEIF g.MenuSel = 1 THEN
+        opt1 = "> 2P ALTERNATING"
+    ELSE
+        opt2 = "> 2P CO-OP"
+    ENDIF
+
+    ebitenutil.DebugPrintAt(screen, opt0, menuX, menuY)
+    ebitenutil.DebugPrintAt(screen, opt1, menuX, menuY + 20)
+    ebitenutil.DebugPrintAt(screen, opt2, menuX, menuY + 40)
+
+    ebitenutil.DebugPrintAt(screen, "Up/Down to select, Enter to start", SCRW / 2 - 100, menuY + 70)
+
+    ' --- HIGH SCORES TABLE ---
+    DIM hsY AS INTEGER = 310
+    ebitenutil.DebugPrintAt(screen, "HIGH SCORES", SCRW / 2 - 35, hsY)
+    DIM si AS INTEGER
+    FOR si = 0 TO LEN(g.HiScores) - 1
+        IF si >= MAX_HISCORES THEN
+            RETURN
+        ENDIF
+        DIM rank AS STRING = Str(si + 1) & ". " & g.HiScores[si].Initials & "  " & Str(g.HiScores[si].Pts)
+        ebitenutil.DebugPrintAt(screen, rank, SCRW / 2 - 50, hsY + 20 + si * 18)
+    NEXT
+
+    ' --- CONTROLS HELP ---
+    ebitenutil.DebugPrintAt(screen, "1P: WASD or Arrows", SCRW / 2 - 60, 480)
+    ebitenutil.DebugPrintAt(screen, "Co-op: P1=WASD  P2=Arrows", SCRW / 2 - 80, 500)
+END SUB
+
+' ======================== HIGH SCORE ENTRY DRAWING ========================
+' Shows the current score and lets the player enter 3-letter initials.
+' Letters scroll with Up/Down, cursor moves with Left/Right.
+
+SUB (g AS POINTER TO Game) DrawHiScoreEntry(screen AS POINTER TO ebiten.Image)
+    DIM activeP AS INTEGER = g.HiPlIdx
+    DIM pLabel AS STRING = "PLAYER " & Str(activeP + 1)
+
+    ebitenutil.DebugPrintAt(screen, "NEW HIGH SCORE!", SCRW / 2 - 50, 80)
+    ebitenutil.DebugPrintAt(screen, pLabel, SCRW / 2 - 30, 110)
+    ebitenutil.DebugPrintAt(screen, "SCORE: " & Str(g.Pl[activeP].Score), SCRW / 2 - 40, 140)
+
+    ebitenutil.DebugPrintAt(screen, "ENTER YOUR INITIALS:", SCRW / 2 - 65, 200)
+
+    ' Draw the 3 letter slots
+    DIM baseX AS INTEGER = SCRW / 2 - 30
+    DIM baseY AS INTEGER = 240
+    DIM li AS INTEGER
+    FOR li = 0 TO 2
+        DIM letter AS STRING = Chr(g.HiName[li] + 65)
+        DIM lx AS INTEGER = baseX + li * 25
+
+        ' Draw box around each letter
+        IF li = g.HiCursor THEN
+            ' Highlighted cursor position - yellow box
+            vector.DrawFilledRect(screen, Sng(lx - 3), Sng(baseY - 3), Sng(20), Sng(20), color.RGBA{R: 255, G: 255, B: 0, A: 255}, FALSE)
+            ' Black background for the letter
+            vector.DrawFilledRect(screen, Sng(lx - 1), Sng(baseY - 1), Sng(16), Sng(16), color.RGBA{R: 0, G: 0, B: 0, A: 255}, FALSE)
+        ENDIF
+
+        ebitenutil.DebugPrintAt(screen, letter, lx, baseY)
+    NEXT
+
+    ' Draw up/down arrows on the cursor position
+    DIM cursorX AS INTEGER = baseX + g.HiCursor * 25
+    ebitenutil.DebugPrintAt(screen, "^", cursorX + 2, baseY - 20)
+    ebitenutil.DebugPrintAt(screen, "v", cursorX + 2, baseY + 20)
+
+    ebitenutil.DebugPrintAt(screen, "Up/Down: change letter", SCRW / 2 - 70, 320)
+    ebitenutil.DebugPrintAt(screen, "Left/Right: move cursor", SCRW / 2 - 70, 340)
+    ebitenutil.DebugPrintAt(screen, "Enter: confirm", SCRW / 2 - 45, 360)
+
+    ' Show current high score table
+    DIM hsY AS INTEGER = 410
+    ebitenutil.DebugPrintAt(screen, "HIGH SCORES", SCRW / 2 - 35, hsY)
+    DIM si AS INTEGER
+    FOR si = 0 TO LEN(g.HiScores) - 1
+        IF si >= MAX_HISCORES THEN
+            RETURN
+        ENDIF
+        DIM rank AS STRING = Str(si + 1) & ". " & g.HiScores[si].Initials & "  " & Str(g.HiScores[si].Pts)
+        ebitenutil.DebugPrintAt(screen, rank, SCRW / 2 - 50, hsY + 20 + si * 18)
+    NEXT
+END SUB
+
+' DrawMaze: First stamps the pre-rendered wall image, then draws dots
+' and power pellets on top. Power pellets blink by skipping some frames.
+SUB (g AS POINTER TO Game) DrawMaze(screen AS POINTER TO ebiten.Image)
+    ' Stamp the cached wall image (super fast - just one image copy)
+    screen.DrawImage(g.WallImg, NIL)
+
+    ' Draw dots and power pellets (these change as PacMan eats them)
+    DIM x AS INTEGER
+    DIM y AS INTEGER
+    FOR y = 0 TO MH - 1
+        FOR x = 0 TO MW - 1
+            DIM cell AS INTEGER = g.Maze[y * MW + x]
+            IF cell = C_DOT THEN
+                ' Small pink circle for regular dots
+                vector.DrawFilledCircle(screen, Sng(x * TILE + TILE / 2), Sng(y * TILE + HUD_TOP + TILE / 2), Sng(2), color.RGBA{R: 255, G: 183, B: 174, A: 255}, FALSE)
+            ELSEIF cell = C_POWER THEN
+                ' Larger blinking pink circle for power pellets
+                ' (visible 14 out of every 20 frames = blinking effect)
+                IF g.Frame MOD 20 < 14 THEN
+                    vector.DrawFilledCircle(screen, Sng(x * TILE + TILE / 2), Sng(y * TILE + HUD_TOP + TILE / 2), Sng(5), color.RGBA{R: 255, G: 183, B: 174, A: 255}, FALSE)
+                ENDIF
+            ENDIF
+        NEXT
+    NEXT
+END SUB
+
+' DrawPlayer: Draws PacMan with a proper pie-shaped wedge mouth that
+' opens and closes, just like the real arcade game!
+'
+' HOW THE MOUTH WORKS:
+'   1. Draw a full yellow circle (PacMan's body)
+'   2. Draw a black V-shaped wedge on top (the mouth opening)
+'   The wedge points in the direction PacMan is facing.
+'   The wedge width (mouthW) controls how wide the mouth opens.
+'   It cycles: closed -> half open -> full open -> half open -> closed...
+'
+' The wedge is drawn as a series of thin black lines fanning out from
+' PacMan's center toward the facing direction. At distance d from center,
+' the mouth is mouthW * d / radius pixels wide. This creates a perfect
+' V shape, just like a pizza slice!
+SUB (g AS POINTER TO Game) DrawPlayer(screen AS POINTER TO ebiten.Image, pIdx AS INTEGER)
+    DIM cx AS INTEGER = g.Pl[pIdx].PX
+    DIM cy AS INTEGER = g.Pl[pIdx].PY + HUD_TOP
+    DIM r AS INTEGER = TILE / 2 - 1
+    DIM dir AS INTEGER = g.Pl[pIdx].PDir
+
+    ' Compute mouth opening width from animation timer (0-15 cycle).
+    ' Phase 0: closed, Phase 1: half, Phase 2: full, Phase 3: half
+    DIM phase AS INTEGER = g.Pl[pIdx].MouthT / 4
+    DIM mouthW AS INTEGER = 0
+    IF phase = 1 THEN
+        mouthW = 3
+    ELSEIF phase = 2 THEN
+        mouthW = 6
+    ELSEIF phase = 3 THEN
+        mouthW = 3
+    ENDIF
+
+    ' When not moving, show closed mouth
+    IF dir = D_NONE THEN
+        mouthW = 0
+    ENDIF
+
+    ' Draw the body circle: P1=yellow, P2=green
+    IF g.Pl[pIdx].Clr = 0 THEN
+        vector.DrawFilledCircle(screen, Sng(cx), Sng(cy), Sng(r), color.RGBA{R: 255, G: 255, B: 0, A: 255}, FALSE)
+    ELSE
+        vector.DrawFilledCircle(screen, Sng(cx), Sng(cy), Sng(r), color.RGBA{R: 0, G: 255, B: 100, A: 255}, FALSE)
+    ENDIF
+
+    ' Draw the mouth wedge (V-shaped black cutout)
+    IF mouthW > 0 THEN
+        DIM d AS INTEGER
+        DIM spread AS INTEGER
+        IF dir = D_RIGHT THEN
+            ' Mouth opens to the right: draw vertical black slices
+            FOR d = 1 TO r
+                spread = mouthW * d / r
+                IF spread > 0 THEN
+                    vector.DrawFilledRect(screen, Sng(cx + d), Sng(cy - spread), Sng(1), Sng(spread * 2 + 1), color.RGBA{R: 0, G: 0, B: 0, A: 255}, FALSE)
+                ENDIF
+            NEXT
+        ELSEIF dir = D_LEFT THEN
+            ' Mouth opens to the left
+            FOR d = 1 TO r
+                spread = mouthW * d / r
+                IF spread > 0 THEN
+                    vector.DrawFilledRect(screen, Sng(cx - d), Sng(cy - spread), Sng(1), Sng(spread * 2 + 1), color.RGBA{R: 0, G: 0, B: 0, A: 255}, FALSE)
+                ENDIF
+            NEXT
+        ELSEIF dir = D_UP THEN
+            ' Mouth opens upward: draw horizontal black slices
+            FOR d = 1 TO r
+                spread = mouthW * d / r
+                IF spread > 0 THEN
+                    vector.DrawFilledRect(screen, Sng(cx - spread), Sng(cy - d), Sng(spread * 2 + 1), Sng(1), color.RGBA{R: 0, G: 0, B: 0, A: 255}, FALSE)
+                ENDIF
+            NEXT
+        ELSEIF dir = D_DOWN THEN
+            ' Mouth opens downward
+            FOR d = 1 TO r
+                spread = mouthW * d / r
+                IF spread > 0 THEN
+                    vector.DrawFilledRect(screen, Sng(cx - spread), Sng(cy + d), Sng(spread * 2 + 1), Sng(1), color.RGBA{R: 0, G: 0, B: 0, A: 255}, FALSE)
+                ENDIF
+            NEXT
+        ENDIF
+    ENDIF
+END SUB
+
+' DrawGhosts: Draws each ghost differently based on its mode:
+'   - EATEN: Just floating eyeballs (no body)
+'   - ENTERING HOUSE: Same as eaten (eyes moving into the house)
+'   - FRIGHTENED: Blue body (flashes white when about to wear off)
+'   - NORMAL: Colored body with eyes (Red, Pink, Cyan, or Orange)
+SUB (g AS POINTER TO Game) DrawGhosts(screen AS POINTER TO ebiten.Image)
+    DIM i AS INTEGER
+    FOR i = 0 TO 3
+        DIM gx AS SINGLE = Sng(g.Gh[i].X)
+        DIM gy AS SINGLE = Sng(g.Gh[i].Y + HUD_TOP)
+        DIM r AS SINGLE = Sng(TILE / 2 - 1)
+
+        IF g.Gh[i].Mode = M_EATEN THEN
+            ' Just the eyes - body has been eaten!
+            g.DrawEyes(screen, gx, gy, g.Gh[i].Dir)
+        ELSEIF g.Gh[i].Mode = M_ENTER THEN
+            ' Eyes entering the house
+            g.DrawEyes(screen, gx, gy, D_DOWN)
+        ELSEIF g.Gh[i].Mode = M_FRIGHT THEN
+            ' Frightened ghost: blue body that flashes white near the end
+            IF g.Gh[i].FTimer < T_FLASH THEN
+                IF g.Gh[i].FTimer MOD 20 < 10 THEN
+                    ' Flash WHITE to warn the player fright is ending
+                    vector.DrawFilledCircle(screen, gx, gy - Sng(2), r, color.RGBA{R: 255, G: 255, B: 255, A: 255}, FALSE)
+                    vector.DrawFilledRect(screen, gx - r, gy - Sng(2), r * Sng(2), r, color.RGBA{R: 255, G: 255, B: 255, A: 255}, FALSE)
+                ELSE
+                    vector.DrawFilledCircle(screen, gx, gy - Sng(2), r, color.RGBA{R: 33, G: 33, B: 222, A: 255}, FALSE)
+                    vector.DrawFilledRect(screen, gx - r, gy - Sng(2), r * Sng(2), r, color.RGBA{R: 33, G: 33, B: 222, A: 255}, FALSE)
+                ENDIF
+            ELSE
+                ' Solid BLUE body
+                vector.DrawFilledCircle(screen, gx, gy - Sng(2), r, color.RGBA{R: 33, G: 33, B: 222, A: 255}, FALSE)
+                vector.DrawFilledRect(screen, gx - r, gy - Sng(2), r * Sng(2), r, color.RGBA{R: 33, G: 33, B: 222, A: 255}, FALSE)
+            ENDIF
+        ELSE
+            ' Normal ghost: colored body (circle head + rectangle body) + eyes
+            DIM clr AS color.RGBA = g.GhostColor(g.Gh[i].GType)
+            vector.DrawFilledCircle(screen, gx, gy - Sng(2), r, clr, FALSE)
+            vector.DrawFilledRect(screen, gx - r, gy - Sng(2), r * Sng(2), r, clr, FALSE)
+            g.DrawEyes(screen, gx, gy, g.Gh[i].Dir)
+        ENDIF
+    NEXT
+END SUB
+
+' DrawEyes: Draws two googly eyes on a ghost. The pupils move to point
+' in the direction the ghost is traveling. This is especially fun to watch
+' when a ghost is eaten and only the eyes remain!
+SUB (g AS POINTER TO Game) DrawEyes(screen AS POINTER TO ebiten.Image, gx AS SINGLE, gy AS SINGLE, dir AS INTEGER)
+    ' White part of each eye
+    vector.DrawFilledCircle(screen, gx - Sng(3), gy - Sng(3), Sng(3), color.RGBA{R: 255, G: 255, B: 255, A: 255}, FALSE)
+    vector.DrawFilledCircle(screen, gx + Sng(3), gy - Sng(3), Sng(3), color.RGBA{R: 255, G: 255, B: 255, A: 255}, FALSE)
+
+    ' Blue pupils - offset based on direction (they "look" where they're going)
+    DIM pdx AS SINGLE = Sng(0)
+    DIM pdy AS SINGLE = Sng(0)
+    IF dir = D_LEFT THEN
+        pdx = Sng(-1)
+    ELSEIF dir = D_RIGHT THEN
+        pdx = Sng(1)
+    ELSEIF dir = D_UP THEN
+        pdy = Sng(-1)
+    ELSEIF dir = D_DOWN THEN
+        pdy = Sng(1)
+    ENDIF
+
+    vector.DrawFilledCircle(screen, gx - Sng(3) + pdx, gy - Sng(3) + pdy, Sng(1), color.RGBA{R: 33, G: 33, B: 255, A: 255}, FALSE)
+    vector.DrawFilledCircle(screen, gx + Sng(3) + pdx, gy - Sng(3) + pdy, Sng(1), color.RGBA{R: 33, G: 33, B: 255, A: 255}, FALSE)
+END SUB
+
+' GhostColor: Returns the signature color for each ghost type.
+'   0 = Blinky -> Red
+'   1 = Pinky  -> Pink
+'   2 = Inky   -> Cyan (light blue)
+'   3 = Clyde  -> Orange
+FUNCTION (g AS POINTER TO Game) GhostColor(gtype AS INTEGER) AS color.RGBA
+    IF gtype = 0 THEN
+        RETURN color.RGBA{R: 255, G: 0, B: 0, A: 255}
+    ELSEIF gtype = 1 THEN
+        RETURN color.RGBA{R: 255, G: 184, B: 255, A: 255}
+    ELSEIF gtype = 2 THEN
+        RETURN color.RGBA{R: 0, G: 255, B: 255, A: 255}
+    ENDIF
+    RETURN color.RGBA{R: 255, G: 184, B: 82, A: 255}
+END FUNCTION
+
+' DrawHUD: Draws the "heads-up display" - score, level number, remaining
+' lives (shown as small colored circles), and any status messages.
+' Adapts to show information for all players based on game mode.
+SUB (g AS POINTER TO Game) DrawHUD(screen AS POINTER TO ebiten.Image)
+    DIM i AS INTEGER
+
+    IF g.GmMode = GM_SINGLE THEN
+        ' Single player: score on left, level on right
+        ebitenutil.DebugPrintAt(screen, "SCORE: " & Str(g.Pl[0].Score), 10, 8)
+        ebitenutil.DebugPrintAt(screen, "LEVEL: " & Str(g.Level), SCRW / 2, 8)
+
+        ' Draw remaining lives as small PacMan icons at the bottom
+        FOR i = 0 TO g.Pl[0].Lives - 2
+            DIM lx AS SINGLE = Sng(20 + i * 20)
+            DIM ly AS SINGLE = Sng(MH * TILE + HUD_TOP + 14)
+            vector.DrawFilledCircle(screen, lx, ly, Sng(6), color.RGBA{R: 255, G: 255, B: 0, A: 255}, FALSE)
+        NEXT
+
+    ELSE
+        ' Multiplayer: P1 score on left, P2 score on right, level in center
+        ebitenutil.DebugPrintAt(screen, "P1:" & Str(g.Pl[0].Score), 5, 4)
+        IF g.NumPl > 1 THEN
+            ebitenutil.DebugPrintAt(screen, "P2:" & Str(g.Pl[1].Score), SCRW - 90, 4)
+        ENDIF
+        ebitenutil.DebugPrintAt(screen, "LV:" & Str(g.Level), SCRW / 2 - 15, 4)
+
+        ' Show whose turn it is in alternating mode
+        IF g.GmMode = GM_ALTER THEN
+            IF g.State = S_PLAY THEN
+                DIM turnLabel AS STRING = "P" & Str(g.CurPl + 1) & " TURN"
+                ebitenutil.DebugPrintAt(screen, turnLabel, SCRW / 2 - 20, 16)
+            ENDIF
+        ENDIF
+
+        ' Draw lives for P1 (yellow circles, bottom left)
+        FOR i = 0 TO g.Pl[0].Lives - 2
+            DIM lx1 AS SINGLE = Sng(20 + i * 16)
+            DIM ly1 AS SINGLE = Sng(MH * TILE + HUD_TOP + 14)
+            vector.DrawFilledCircle(screen, lx1, ly1, Sng(5), color.RGBA{R: 255, G: 255, B: 0, A: 255}, FALSE)
+        NEXT
+        ' Draw lives for P2 (green circles, bottom right)
+        IF g.NumPl > 1 THEN
+            DIM p2Lives AS INTEGER = g.Pl[1].Lives - 1
+            FOR i = 0 TO p2Lives - 1
+                DIM lx2 AS SINGLE = Sng(SCRW - 20 - i * 16)
+                DIM ly2 AS SINGLE = Sng(MH * TILE + HUD_TOP + 14)
+                vector.DrawFilledCircle(screen, lx2, ly2, Sng(5), color.RGBA{R: 0, G: 255, B: 100, A: 255}, FALSE)
+            NEXT
+        ENDIF
+    ENDIF
+
+    ' Status messages displayed in the center of the maze
+    DIM msgX AS INTEGER = SCRW / 2 - 40
+    DIM msgY AS INTEGER = 14 * TILE + HUD_TOP
+
+    IF g.State = S_READY THEN
+        ebitenutil.DebugPrintAt(screen, "READY!", msgX, msgY)
+    ELSEIF g.State = S_OVER THEN
+        ebitenutil.DebugPrintAt(screen, "GAME OVER", msgX - 10, msgY)
+        ebitenutil.DebugPrintAt(screen, "Press ENTER", msgX - 15, msgY + 20)
+    ELSEIF g.State = S_WON THEN
+        ebitenutil.DebugPrintAt(screen, "LEVEL CLEAR!", msgX - 15, msgY)
+    ENDIF
+END SUB
+
+' Layout: Tells the game engine what resolution to use for our game.
+' The window can be any size, and the engine will scale our game to fit.
+FUNCTION (g AS POINTER TO Game) Layout(ow AS INTEGER, oh AS INTEGER) AS (INTEGER, INTEGER)
+    RETURN SCRW, SCRH
+END FUNCTION
+
+' ======================== MAIN (Entry Point) ========================
+' This is where the program starts! It:
+'   1. Locks the game to 60 ticks per second (consistent speed everywhere)
+'   2. Creates a new game (starts on the title screen)
+'   3. Opens a window (2x scaled so it's not tiny)
+'   4. Starts the game loop (Update/Draw run automatically forever)
+SUB Main()
+    ebiten.SetTPS(60)
+    ' Create the audio context ONCE (Ebitengine only allows one).
+    ' 44100 Hz is CD-quality sample rate.
+    GAudioCtx = audio.NewContext(44100)
+    DIM g AS Game = NewGame()
+    ebiten.SetWindowSize(SCRW * 2, SCRH * 2)
+    ebiten.SetWindowTitle("DBasic PacMan")
+    DIM err AS ERROR = ebiten.RunGame(@g)
+    IF err <> NIL THEN
+        fmt.Println("Error:", err)
+    ENDIF
+END SUB

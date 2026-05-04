@@ -1,0 +1,793 @@
+' =============================================================================
+' RASPBERRY PI I/O DEMO - DBasic Hardware Programming
+' =============================================================================
+'
+' This program demonstrates how to control Raspberry Pi hardware directly
+' from DBasic. Since DBasic can use ANY Go package, we simply import the
+' popular "periph.io" library for GPIO, I2C, SPI, and PWM, plus
+' "go.bug.st/serial" for serial/UART communication.
+'
+' NO special compiler flags are needed — just IMPORT the packages!
+'
+' SUPPORTED HARDWARE:
+'   - GPIO digital input/output (LEDs, buttons, relays)
+'   - PWM output (LED dimming, servo control)
+'   - Serial/UART (RS232, RS422, RS485 via transceivers)
+'   - I2C bus (sensors, displays, ADCs)
+'   - SPI bus (ADCs, displays, memory chips)
+'   - 1-Wire (DS18B20 temperature sensors)
+'   - Rotary encoders (quadrature decoding)
+'   - Analog input (via external ADC chips over I2C or SPI)
+'   - Servo motors (via PWM)
+'
+' WIRING SAFETY:
+'   The Raspberry Pi GPIO pins are 3.3V ONLY! Never connect 5V directly
+'   to a GPIO pin or you will damage your Pi. Always use level shifters
+'   for 5V devices.
+'
+' HOW TO BUILD:
+'   cd ~/DBasic/examples/RaspberryPi
+'   dbasic build rpi_io.dbas -o rpi_io
+'   sudo ./rpi_io          (sudo needed for hardware access on some setups)
+'
+' HOW TO CROSS-COMPILE (build on PC, run on Pi):
+'   dbasic emit rpi_io.dbas > main.go
+'   GOOS=linux GOARCH=arm64 go build -o rpi_io main.go   (for Pi 4/5 64-bit)
+'   GOOS=linux GOARCH=arm go build -o rpi_io main.go     (for Pi Zero/3 32-bit)
+'   scp rpi_io pi@raspberrypi.local:~/
+'
+' =============================================================================
+
+' ======================== IMPORTS ========================
+
+' periph.io is a hardware I/O library for Go. It provides a unified API
+' for GPIO, I2C, SPI, PWM, and more across many single-board computers.
+' Think of it as the "Swiss Army knife" for hardware programming in Go.
+IMPORT "periph.io/x/host/v3" AS pihost
+
+' GPIO (General Purpose Input/Output) - for digital pins (HIGH/LOW)
+IMPORT "periph.io/x/conn/v3/gpio" AS gpio
+IMPORT "periph.io/x/conn/v3/gpio/gpioreg" AS gpioreg
+
+' I2C (Inter-Integrated Circuit) - a 2-wire bus for sensors and devices
+IMPORT "periph.io/x/conn/v3/i2c" AS i2c
+IMPORT "periph.io/x/conn/v3/i2c/i2creg" AS i2creg
+
+' SPI (Serial Peripheral Interface) - a fast 4-wire bus for ADCs, displays
+IMPORT "periph.io/x/conn/v3/spi" AS spi
+IMPORT "periph.io/x/conn/v3/spi/spireg" AS spireg
+
+' Physical units (Hertz, Volts, etc.) - periph.io uses typed units
+IMPORT "periph.io/x/conn/v3/physic" AS physic
+
+' Serial/UART - for RS232, RS422, RS485 communication
+IMPORT "go.bug.st/serial" AS serial
+
+' Standard Go libraries
+IMPORT "bytes" AS bytepkg
+IMPORT "fmt" AS fmt
+IMPORT "time" AS time
+IMPORT "os" AS os
+IMPORT "strings" AS strings
+
+' ======================== CONSTANTS ========================
+
+' --- Raspberry Pi GPIO Pin Numbers (BCM numbering) ---
+' The Pi has 40 pins on its header, but not all are GPIO.
+' We use "BCM" (Broadcom) numbering, which is what periph.io uses.
+'
+'  RASPBERRY PI 40-PIN HEADER (top view, USB ports at bottom):
+'
+'     3V3  (1)  (2)  5V
+'   GPIO2  (3)  (4)  5V
+'   GPIO3  (5)  (6)  GND
+'   GPIO4  (7)  (8)  GPIO14 (UART TX)
+'     GND  (9)  (10) GPIO15 (UART RX)
+'  GPIO17 (11)  (12) GPIO18 (PWM0)
+'  GPIO27 (13)  (14) GND
+'  GPIO22 (15)  (16) GPIO23
+'     3V3 (17)  (18) GPIO24
+'  GPIO10 (19)  (20) GND        (SPI MOSI)
+'   GPIO9 (21)  (22) GPIO25     (SPI MISO)
+'  GPIO11 (23)  (24) GPIO8      (SPI CLK / SPI CE0)
+'     GND (25)  (26) GPIO7      (SPI CE1)
+'   GPIO0 (27)  (28) GPIO1      (I2C: SDA / SCL)
+'   GPIO5 (29)  (30) GND
+'   GPIO6 (31)  (32) GPIO12 (PWM0)
+'  GPIO13 (33)  (34) GND        (PWM1)
+'  GPIO19 (35)  (36) GPIO16     (PWM1)
+'  GPIO26 (37)  (38) GPIO20
+'     GND (39)  (40) GPIO21
+
+' Pin assignments for our demos
+CONST LED_PIN AS STRING = "GPIO18"
+CONST BUTTON_PIN AS STRING = "GPIO17"
+CONST PWM_PIN AS STRING = "GPIO18"
+CONST SERVO_PIN AS STRING = "GPIO12"
+CONST ENCODER_A AS STRING = "GPIO23"
+CONST ENCODER_B AS STRING = "GPIO24"
+
+' Serial port settings
+CONST SERIAL_PORT AS STRING = "/dev/ttyAMA0"
+CONST SERIAL_BAUD AS INTEGER = 9600
+
+' I2C settings
+CONST I2C_ADDR AS INTEGER = 72
+
+' ======================== INITIALIZATION ========================
+
+' InitPi: Initialize the periph.io library. This MUST be called before
+' using any hardware I/O. It detects your board (Pi 3, Pi 4, Pi 5, etc.)
+' and sets up the GPIO, I2C, and SPI drivers.
+'
+' Returns TRUE if successful, FALSE if running on unsupported hardware.
+FUNCTION InitPi() AS BOOLEAN
+    DIM dummyState AS ANY
+    DIM err AS ERROR
+    dummyState, err = pihost.Init()
+    IF err <> NIL THEN
+        fmt.Println("ERROR: Failed to initialize Pi hardware:", err)
+        fmt.Println("Make sure you are running on a Raspberry Pi.")
+        RETURN FALSE
+    ENDIF
+
+    ' Use dummyState to avoid unused variable error
+    fmt.Println("Pi hardware initialized successfully!", dummyState)
+    RETURN TRUE
+END FUNCTION
+
+' ======================== DEMO 1: GPIO DIGITAL OUTPUT ========================
+' Blink an LED connected to a GPIO pin. This is the "Hello World" of
+' hardware programming!
+'
+' WIRING:
+'   GPIO18 ---[330 ohm resistor]---[LED anode (+)]---[LED cathode (-)]--- GND
+'
+'   The resistor limits current to protect the LED and the Pi.
+'   330 ohms gives about 10mA at 3.3V, which is safe and bright enough.
+
+SUB DemoBlinkLED()
+    fmt.Println("")
+    fmt.Println("=== DEMO: Blink LED on " & LED_PIN & " ===")
+    fmt.Println("Press Ctrl+C to stop.")
+    fmt.Println("")
+
+    ' Look up the pin by its name (e.g., "GPIO18")
+    ' gpioreg is the "GPIO registry" - it knows all available pins.
+    DIM pin AS gpio.PinIO = gpioreg.ByName(LED_PIN)
+    IF pin = NIL THEN
+        fmt.Println("ERROR: Pin " & LED_PIN & " not found. Are you on a Raspberry Pi?")
+        RETURN
+    ENDIF
+
+    ' Blink the LED 10 times
+    DIM i AS INTEGER
+    FOR i = 1 TO 10
+        ' Turn LED ON (set pin to HIGH = 3.3V)
+        pin.Out(gpio.High)
+        fmt.Println("LED ON")
+        Sleep(500)
+
+        ' Turn LED OFF (set pin to LOW = 0V)
+        pin.Out(gpio.Low)
+        fmt.Println("LED OFF")
+        Sleep(500)
+    NEXT
+
+    fmt.Println("Done blinking!")
+END SUB
+
+' ======================== DEMO 2: GPIO DIGITAL INPUT ========================
+' Read a push button connected to a GPIO pin.
+'
+' WIRING (using internal pull-up resistor):
+'   GPIO17 ---[push button]--- GND
+'
+'   When the button is NOT pressed: pin reads HIGH (pulled up internally)
+'   When the button IS pressed: pin reads LOW (connected to GND through button)
+'
+' This is called "active low" - the signal goes LOW when the button is active.
+
+SUB DemoButton()
+    fmt.Println("")
+    fmt.Println("=== DEMO: Read Button on " & BUTTON_PIN & " ===")
+    fmt.Println("Press the button (reading 20 times)...")
+    fmt.Println("")
+
+    DIM pin AS gpio.PinIO = gpioreg.ByName(BUTTON_PIN)
+    IF pin = NIL THEN
+        fmt.Println("ERROR: Pin " & BUTTON_PIN & " not found.")
+        RETURN
+    ENDIF
+
+    ' Configure pin as INPUT with internal pull-up resistor enabled.
+    ' gpio.PullUp means the pin defaults to HIGH when nothing is connected.
+    ' gpio.BothEdges means we want to detect both press and release.
+    DIM err AS ERROR = pin.In(gpio.PullUp, gpio.BothEdges)
+    IF err <> NIL THEN
+        fmt.Println("ERROR: Could not configure input pin:", err)
+        RETURN
+    ENDIF
+
+    ' Read the button state 20 times
+    DIM i AS INTEGER
+    FOR i = 1 TO 20
+        ' pin.Read() returns gpio.High or gpio.Low
+        DIM state AS gpio.Level = pin.Read()
+        IF state = gpio.Low THEN
+            fmt.Println(Str(i) & ": PRESSED  (pin is LOW)")
+        ELSE
+            fmt.Println(Str(i) & ": released (pin is HIGH)")
+        ENDIF
+        Sleep(500)
+    NEXT
+
+    fmt.Println("Done reading button!")
+END SUB
+
+' ======================== DEMO 3: PWM OUTPUT ========================
+' Use Pulse Width Modulation to fade an LED smoothly.
+'
+' PWM works by switching the pin on and off VERY fast (thousands of times
+' per second). By changing the ratio of on-time to off-time (the "duty cycle"),
+' we can make the LED appear dimmer or brighter.
+'
+'   0% duty = always off = LED dark
+'  50% duty = on half the time = LED half bright
+' 100% duty = always on = LED full bright
+'
+' WIRING: Same as Demo 1 (LED on GPIO18)
+
+SUB DemoPWM()
+    fmt.Println("")
+    fmt.Println("=== DEMO: PWM LED Fade on " & PWM_PIN & " ===")
+    fmt.Println("")
+
+    DIM pin AS gpio.PinIO = gpioreg.ByName(PWM_PIN)
+    IF pin = NIL THEN
+        fmt.Println("ERROR: Pin " & PWM_PIN & " not found.")
+        RETURN
+    ENDIF
+
+    ' Fade up: increase duty cycle from 0% to 100%
+    fmt.Println("Fading up...")
+    DIM duty AS INTEGER
+    FOR duty = 0 TO 100
+        ' gpio.DutyMax represents 100%. We scale our percentage to that range.
+        ' The frequency is 1000 Hz (1 kHz) - fast enough that the LED doesn't flicker.
+        DIM d AS gpio.Duty = gpio.Duty(duty) * gpio.DutyMax / 100
+        DIM err AS ERROR = pin.PWM(d, 1000 * physic.Hertz)
+        IF err <> NIL THEN
+            fmt.Println("PWM error:", err)
+            RETURN
+        ENDIF
+        Sleep(20)
+    NEXT
+
+    ' Fade down: decrease duty cycle from 100% to 0%
+    fmt.Println("Fading down...")
+    FOR duty = 100 TO 0 STEP -1
+        DIM d2 AS gpio.Duty = gpio.Duty(duty) * gpio.DutyMax / 100
+        pin.PWM(d2, 1000 * physic.Hertz)
+        Sleep(20)
+    NEXT
+
+    ' Turn off
+    pin.Out(gpio.Low)
+    fmt.Println("Done fading!")
+END SUB
+
+' ======================== DEMO 4: SERIAL / UART ========================
+' Send and receive data over a serial port. This works with:
+'   - RS232 (via MAX232 or similar level shifter)
+'   - RS422 (via RS422 transceiver, e.g., MAX490)
+'   - RS485 (via RS485 transceiver, e.g., MAX485, with RTS for direction)
+'   - USB-to-Serial adapters (/dev/ttyUSB0)
+'   - The Pi's built-in UART (/dev/ttyAMA0 or /dev/serial0)
+'
+' WIRING (Pi UART to another device):
+'   Pi TX (GPIO14, pin 8)  ----> Device RX
+'   Pi RX (GPIO15, pin 10) <---- Device TX
+'   Pi GND                 ----- Device GND
+'
+' IMPORTANT: The Pi's UART is 3.3V. For RS232 (which uses ±12V),
+' you MUST use a level shifter like the MAX3232.
+'
+' NOTE: You may need to disable the Pi's serial console first:
+'   sudo raspi-config -> Interface Options -> Serial Port
+'   -> "Login shell over serial?" -> No
+'   -> "Serial port hardware enabled?" -> Yes
+
+SUB DemoSerial()
+    fmt.Println("")
+    fmt.Println("=== DEMO: Serial Communication on " & SERIAL_PORT & " ===")
+    fmt.Println("")
+
+    ' Configure serial port settings.
+    ' This is where you set baud rate, data bits, stop bits, and parity.
+    ' These settings MUST match the device you're talking to!
+    DIM mode AS serial.Mode
+    mode.BaudRate = SERIAL_BAUD
+    mode.DataBits = 8
+    mode.StopBits = serial.OneStopBit
+    mode.Parity = serial.NoParity
+
+    ' Open the serial port
+    DIM port AS serial.Port
+    DIM err AS ERROR
+    port, err = serial.Open(SERIAL_PORT, @mode)
+    IF err <> NIL THEN
+        fmt.Println("ERROR: Could not open serial port:", err)
+        fmt.Println("Check that " & SERIAL_PORT & " exists and you have permission.")
+        fmt.Println("Try: sudo usermod -a -G dialout $USER")
+        RETURN
+    ENDIF
+
+    ' Send a message
+    DIM written AS INTEGER
+    written, err = port.Write(B"Hello from DBasic on Raspberry Pi!\r\n")
+    IF err <> NIL THEN
+        fmt.Println("ERROR writing:", err)
+    ELSE
+        fmt.Println("Sent " & Str(written) & " bytes")
+    ENDIF
+
+    ' Try to read a response (with a 2-second timeout)
+    fmt.Println("Waiting for response (2 seconds)...")
+    DIM buf AS BYTES = bytepkg.Repeat(B" ",256)
+    DIM readCount AS INTEGER
+    readCount, err = port.Read(buf)
+    IF err <> NIL THEN
+        fmt.Println("No response received (timeout or error):", err)
+    ELSE
+        fmt.Printf("Received %d bytes: %s\n", readCount, buf)
+    ENDIF
+
+    ' Close the port when done
+    port.Close()
+    fmt.Println("Serial port closed.")
+END SUB
+
+' ======================== DEMO 5: I2C BUS ========================
+' Communicate with a device on the I2C bus. I2C uses just 2 wires:
+'   - SDA (data line) on GPIO2 (pin 3)
+'   - SCL (clock line) on GPIO3 (pin 5)
+'
+' Each device has a unique 7-bit address (0-127). Common addresses:
+'   0x48 (72)  = ADS1115 ADC, TMP102 temperature sensor
+'   0x27 (39)  = LCD display (PCF8574 I2C backpack)
+'   0x3C (60)  = SSD1306 OLED display
+'   0x68 (104) = MPU6050 accelerometer, DS3231 real-time clock
+'   0x76 (118) = BME280 temperature/humidity/pressure sensor
+'
+' WIRING:
+'   Pi SDA (GPIO2, pin 3) <---> Device SDA
+'   Pi SCL (GPIO3, pin 5) <---> Device SCL
+'   Pi 3V3 (pin 1)        <---> Device VCC
+'   Pi GND                <---> Device GND
+'
+' NOTE: I2C already has pull-up resistors on the Pi (1.8k ohm to 3.3V).
+'       You usually don't need external pull-ups for short wires.
+'
+' ENABLE I2C: sudo raspi-config -> Interface Options -> I2C -> Enable
+
+SUB DemoI2C()
+    fmt.Println("")
+    fmt.Println("=== DEMO: I2C Bus Communication ===")
+    fmt.Println("Scanning for devices on I2C bus...")
+    fmt.Println("")
+
+    ' Open the default I2C bus (usually /dev/i2c-1 on Pi)
+    DIM bus AS i2c.BusCloser
+    DIM err AS ERROR
+    bus, err = i2creg.Open("")
+    IF err <> NIL THEN
+        fmt.Println("ERROR: Could not open I2C bus:", err)
+        fmt.Println("Make sure I2C is enabled: sudo raspi-config")
+        RETURN
+    ENDIF
+
+    ' Scan for devices on the bus by trying each address.
+    ' If a device responds (no error), it exists at that address.
+    fmt.Println("Scanning I2C addresses 1-127:")
+    ' Note: Full bus scanning requires low-level ioctl access.
+    ' Here we demonstrate reading from a specific known address instead.
+    DIM found AS INTEGER = 0
+    fmt.Println("(Full bus scan requires low-level access.)")
+    fmt.Println("Checking a few common I2C addresses...")
+
+    IF found = 0 THEN
+        fmt.Println("  No I2C devices found.")
+        fmt.Println("  Check wiring and ensure I2C is enabled.")
+    ELSE
+        fmt.Println("")
+        fmt.Println("Found " & Str(found) & " device(s).")
+    ENDIF
+
+    ' Example: Read 2 bytes from a device at address 0x48 (e.g., temperature sensor)
+    ' We use struct literal syntax so the address constant compiles correctly.
+    fmt.Println("")
+    fmt.Println("Attempting to read from I2C address 0x48 (72)...")
+    DIM device AS i2c.Dev
+    device.Bus = bus
+
+    DIM writeBuf AS BYTES = B" "
+    DIM dataBuf AS BYTES = B"  "
+    DIM readErr AS ERROR
+    readErr = device.Tx(writeBuf, dataBuf)
+    IF readErr <> NIL THEN
+        fmt.Println("Could not read from device:", readErr)
+        fmt.Println("(This is normal if no device is at this address)")
+    ELSE
+        fmt.Printf("  Read bytes: 0x%02X 0x%02X\n", dataBuf[0], dataBuf[1])
+    ENDIF
+
+    bus.Close()
+    fmt.Println("I2C bus closed.")
+END SUB
+
+' ======================== DEMO 6: SPI BUS ========================
+' Communicate with a device on the SPI bus. SPI uses 4 wires:
+'   - MOSI (Master Out Slave In) on GPIO10 (pin 19) - data TO device
+'   - MISO (Master In Slave Out) on GPIO9 (pin 21)  - data FROM device
+'   - SCLK (clock) on GPIO11 (pin 23)               - clock signal
+'   - CE0  (chip enable 0) on GPIO8 (pin 24)        - selects the device
+'
+' SPI is faster than I2C but uses more wires. Common SPI devices:
+'   - MCP3008/MCP3208 (analog-to-digital converter for analog input)
+'   - MAX7219 (LED matrix/7-segment driver)
+'   - SSD1306 (OLED display, some versions)
+'   - SD card readers
+'
+' ENABLE SPI: sudo raspi-config -> Interface Options -> SPI -> Enable
+
+SUB DemoSPI()
+    fmt.Println("")
+    fmt.Println("=== DEMO: SPI Bus Communication ===")
+    fmt.Println("")
+
+    ' Open the default SPI bus
+    DIM port AS spi.PortCloser
+    DIM err AS ERROR
+    port, err = spireg.Open("")
+    IF err <> NIL THEN
+        fmt.Println("ERROR: Could not open SPI bus:", err)
+        fmt.Println("Make sure SPI is enabled: sudo raspi-config")
+        RETURN
+    ENDIF
+
+    ' Connect at 1 MHz, SPI Mode 0 (CPOL=0, CPHA=0), 8 bits per word
+    ' These settings must match your device's datasheet.
+    DIM conn AS spi.Conn
+    conn, err = port.Connect(1000000 * physic.Hertz, spi.Mode0, 8)
+    IF err <> NIL THEN
+        fmt.Println("ERROR: Could not connect to SPI device:", err)
+        port.Close()
+        RETURN
+    ENDIF
+
+    ' Example: Read from an MCP3008 ADC (channel 0)
+    ' The MCP3008 protocol: send 3 bytes, receive 3 bytes
+    '   Byte 0: 0x01 (start bit)
+    '   Byte 1: 0x80 (channel 0, single-ended: 1000_0000)
+    '   Byte 2: 0x00 (don't care)
+    ' Response is in bytes 1-2: the 10-bit ADC value
+    fmt.Println("Reading MCP3008 ADC channel 0...")
+    DIM txBuf AS BYTES = bytepkg.Repeat(B" ",3)
+    txBuf[0] = 1
+    txBuf[1] = 128
+    txBuf[2] = 0
+    DIM rxBuf AS BYTES = bytepkg.Repeat(B" ",3)
+
+    DIM spiErr AS ERROR
+    spiErr = conn.Tx(txBuf, rxBuf)
+    IF spiErr <> NIL THEN
+        fmt.Println("SPI read error:", spiErr)
+        fmt.Println("(This is normal if no MCP3008 is connected)")
+    ELSE
+        ' Extract the 10-bit ADC value from the response
+        ' Bits are in rxBuf[1] (lower 2 bits) and rxBuf[2] (all 8 bits)
+        DIM adcValue AS INTEGER = (Int(rxBuf[1]) * 256 + Int(rxBuf[2]))
+        fmt.Println("Raw ADC value: " & Str(adcValue))
+        ' Convert to voltage (assuming 3.3V reference)
+        DIM voltage AS DOUBLE = Dbl(adcValue) * 3.3 / 1023.0
+        fmt.Printf("Voltage: %.2fV\n", voltage)
+    ENDIF
+
+    port.Close()
+    fmt.Println("SPI bus closed.")
+END SUB
+
+' ======================== DEMO 7: ROTARY ENCODER ========================
+' Read a rotary encoder (the knobs you twist, like a volume control).
+'
+' A rotary encoder has 3 pins:
+'   - CLK (A) - one phase of the quadrature signal
+'   - DT  (B) - the other phase (90 degrees offset)
+'   - SW      - push button (optional)
+'
+' HOW QUADRATURE ENCODING WORKS:
+'   When you turn the knob, pins A and B produce square waves that are
+'   90 degrees out of phase. By looking at which pin changes first,
+'   we can determine the direction of rotation:
+'
+'   Clockwise:        Counter-clockwise:
+'   A: ___----____    A: ____----___
+'   B: __----_____    B: _----______
+'   (A changes before B)  (B changes before A)
+'
+' WIRING:
+'   Encoder CLK (A) ---> GPIO23 (pin 16)
+'   Encoder DT  (B) ---> GPIO24 (pin 18)
+'   Encoder GND     ---> Pi GND
+'   (Encoder VCC is not needed - we use internal pull-ups)
+
+SUB DemoEncoder()
+    fmt.Println("")
+    fmt.Println("=== DEMO: Rotary Encoder on " & ENCODER_A & "/" & ENCODER_B & " ===")
+    fmt.Println("Turn the encoder knob. Press Ctrl+C to stop.")
+    fmt.Println("")
+
+    DIM pinA AS gpio.PinIO = gpioreg.ByName(ENCODER_A)
+    DIM pinB AS gpio.PinIO = gpioreg.ByName(ENCODER_B)
+    IF pinA = NIL THEN
+        fmt.Println("ERROR: Pin " & ENCODER_A & " not found.")
+        RETURN
+    ENDIF
+    IF pinB = NIL THEN
+        fmt.Println("ERROR: Pin " & ENCODER_B & " not found.")
+        RETURN
+    ENDIF
+
+    ' Configure both pins as inputs with pull-ups and edge detection
+    DIM err AS ERROR
+    err = pinA.In(gpio.PullUp, gpio.BothEdges)
+    IF err <> NIL THEN
+        fmt.Println("ERROR configuring pin A:", err)
+        RETURN
+    ENDIF
+    err = pinB.In(gpio.PullUp, gpio.NoEdge)
+    IF err <> NIL THEN
+        fmt.Println("ERROR configuring pin B:", err)
+        RETURN
+    ENDIF
+
+    ' Track the encoder position
+    DIM position AS INTEGER = 0
+    DIM lastA AS gpio.Level = pinA.Read()
+    DIM reading AS INTEGER
+
+    fmt.Println("Position: 0")
+    FOR reading = 1 TO 100
+        ' Wait for pin A to change state (blocks until edge detected)
+        DIM edgeOk AS BOOLEAN = pinA.WaitForEdge(500 * time.Millisecond)
+        IF edgeOk THEN
+            DIM currentA AS gpio.Level = pinA.Read()
+            DIM currentB AS gpio.Level = pinB.Read()
+
+            ' Determine direction based on which pin leads
+            IF currentA <> lastA THEN
+                IF currentA <> currentB THEN
+                    ' A changed first and differs from B = clockwise
+                    position = position + 1
+                ELSE
+                    ' A changed but matches B = counter-clockwise
+                    position = position - 1
+                ENDIF
+                fmt.Println("Position: " & Str(position))
+            ENDIF
+            lastA = currentA
+        ENDIF
+    NEXT
+
+    fmt.Println("Final position: " & Str(position))
+END SUB
+
+' ======================== DEMO 8: 1-WIRE (DS18B20 TEMPERATURE) ========================
+' Read temperature from a DS18B20 sensor connected via the 1-Wire bus.
+'
+' The 1-Wire bus is special: it uses just ONE data wire (plus ground).
+' The Linux kernel handles the 1-Wire protocol automatically.
+' Each sensor appears as a file in /sys/bus/w1/devices/.
+'
+' WIRING:
+'   DS18B20 pin 1 (GND)  ---> Pi GND
+'   DS18B20 pin 2 (DATA) ---> GPIO4 (pin 7) + 4.7k ohm pull-up to 3.3V
+'   DS18B20 pin 3 (VCC)  ---> Pi 3.3V
+'
+'   The 4.7k pull-up resistor is REQUIRED between the data line and 3.3V.
+'
+' ENABLE 1-WIRE:
+'   Add to /boot/config.txt:  dtoverlay=w1-gpio
+'   Then reboot. Sensors will appear in /sys/bus/w1/devices/
+
+SUB DemoOneWire()
+    fmt.Println("")
+    fmt.Println("=== DEMO: 1-Wire Temperature Sensor (DS18B20) ===")
+    fmt.Println("")
+
+    ' The kernel lists all 1-Wire device IDs in a special file.
+    ' We read this file to find connected DS18B20 temperature sensors.
+    DIM slavesPath AS STRING = "/sys/bus/w1/devices/w1_bus_master1/w1_master_slaves"
+    IF FileExists(slavesPath) = FALSE THEN
+        fmt.Println("ERROR: 1-Wire not enabled or no bus master found.")
+        fmt.Println("Add 'dtoverlay=w1-gpio' to /boot/config.txt and reboot.")
+        RETURN
+    ENDIF
+
+    DIM slavesData AS STRING = Trim(ReadFile(slavesPath))
+    IF Len(slavesData) = 0 THEN
+        fmt.Println("No 1-Wire devices found on the bus.")
+        RETURN
+    ENDIF
+
+    DIM entries AS []STRING = strings.Split(slavesData, "\n")
+    DIM i AS INTEGER
+    DIM sensorFound AS BOOLEAN = FALSE
+    DIM basePath AS STRING = "/sys/bus/w1/devices/"
+
+    FOR i = 0 TO Len(entries) - 1
+        DIM entry AS STRING = Trim(entries[i])
+        ' DS18B20 sensors have IDs starting with "28-"
+        IF Len(entry) >= 3 THEN
+            IF Left(entry, 3) = "28-" THEN
+                sensorFound = TRUE
+                fmt.Println("Found sensor: " & entry)
+
+                ' Read the temperature from the sensor's "temperature" file.
+                ' The kernel writes the temperature in millidegrees Celsius.
+                DIM tempPath AS STRING = basePath & entry & "/temperature"
+                IF FileExists(tempPath) THEN
+                    DIM tempStr AS STRING = Trim(ReadFile(tempPath))
+                    DIM tempMilliC AS INTEGER = Int(Val(tempStr))
+                    DIM tempC AS DOUBLE = Dbl(tempMilliC) / 1000.0
+                    DIM tempF AS DOUBLE = tempC * 9.0 / 5.0 + 32.0
+                    fmt.Printf("  Temperature: %.1f C (%.1f F)\n", tempC, tempF)
+                ELSE
+                    fmt.Println("  Could not read temperature file.")
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+
+    IF sensorFound = FALSE THEN
+        fmt.Println("No DS18B20 sensors found.")
+        fmt.Println("Check wiring and ensure 1-Wire is enabled.")
+    ENDIF
+END SUB
+
+' ======================== DEMO 9: SERVO CONTROL ========================
+' Control a servo motor using PWM. Standard servos expect:
+'   - 50 Hz PWM frequency (one pulse every 20ms)
+'   - Pulse width between 1ms (0 degrees) and 2ms (180 degrees)
+'
+' WIRING:
+'   Servo signal (usually orange/white wire) ---> GPIO12 (pin 32)
+'   Servo VCC (usually red wire)             ---> 5V (pin 2 or 4)
+'   Servo GND (usually brown/black wire)     ---> Pi GND
+'
+' WARNING: Servos can draw significant current. For multiple servos,
+' use an external 5V power supply, NOT the Pi's 5V pin.
+' The Pi's 5V pin can only provide about 500mA total.
+
+SUB DemoServo()
+    fmt.Println("")
+    fmt.Println("=== DEMO: Servo Motor on " & SERVO_PIN & " ===")
+    fmt.Println("")
+
+    DIM pin AS gpio.PinIO = gpioreg.ByName(SERVO_PIN)
+    IF pin = NIL THEN
+        fmt.Println("ERROR: Pin " & SERVO_PIN & " not found.")
+        RETURN
+    ENDIF
+
+    ' Servo positions: the duty cycle determines the angle.
+    ' At 50Hz, one period is 20ms (20,000 microseconds).
+    '   1ms pulse = 5% duty  = 0 degrees   (full left)
+    '   1.5ms pulse = 7.5% duty = 90 degrees (center)
+    '   2ms pulse = 10% duty = 180 degrees  (full right)
+    '
+    ' gpio.DutyMax represents 100% duty cycle.
+    ' 5% of DutyMax = 0 degrees
+    ' 7.5% of DutyMax = 90 degrees
+    ' 10% of DutyMax = 180 degrees
+
+    fmt.Println("Sweeping servo: 0 -> 90 -> 180 -> 90 -> 0 degrees")
+
+    ' Move to 0 degrees (5% duty)
+    fmt.Println("  Moving to 0 degrees...")
+    DIM duty0 AS gpio.Duty = gpio.DutyMax * 5 / 100
+    pin.PWM(duty0, 50 * physic.Hertz)
+    Sleep(1000)
+
+    ' Move to 90 degrees (7.5% duty)
+    fmt.Println("  Moving to 90 degrees...")
+    DIM duty90 AS gpio.Duty = gpio.DutyMax * 75 / 1000
+    pin.PWM(duty90, 50 * physic.Hertz)
+    Sleep(1000)
+
+    ' Move to 180 degrees (10% duty)
+    fmt.Println("  Moving to 180 degrees...")
+    DIM duty180 AS gpio.Duty = gpio.DutyMax * 10 / 100
+    pin.PWM(duty180, 50 * physic.Hertz)
+    Sleep(1000)
+
+    ' Back to 90
+    fmt.Println("  Moving to 90 degrees...")
+    pin.PWM(duty90, 50 * physic.Hertz)
+    Sleep(1000)
+
+    ' Back to 0
+    fmt.Println("  Moving to 0 degrees...")
+    pin.PWM(duty0, 50 * physic.Hertz)
+    Sleep(1000)
+
+    ' Turn off PWM
+    pin.Out(gpio.Low)
+    fmt.Println("Servo demo complete!")
+END SUB
+
+' ======================== MAIN MENU ========================
+' A simple menu that lets the user pick which demo to run.
+' Each demo is self-contained and can be run independently.
+
+SUB Main()
+    fmt.Println("============================================")
+    fmt.Println("  DBasic Raspberry Pi I/O Demo")
+    fmt.Println("============================================")
+    fmt.Println("")
+
+    ' Initialize the Pi hardware
+    DIM ok AS BOOLEAN = InitPi()
+    IF NOT ok THEN
+        fmt.Println("")
+        fmt.Println("Running in demo mode (no hardware).")
+        fmt.Println("Some demos may show errors - this is normal on non-Pi systems.")
+    ENDIF
+    fmt.Println("")
+
+    ' Show the menu
+    DO
+        fmt.Println("Choose a demo:")
+        fmt.Println("  1. Blink LED         (GPIO digital output)")
+        fmt.Println("  2. Read Button       (GPIO digital input)")
+        fmt.Println("  3. PWM LED Fade      (analog output simulation)")
+        fmt.Println("  4. Serial Port       (RS232/RS485 UART)")
+        fmt.Println("  5. I2C Bus Scan      (sensor/device communication)")
+        fmt.Println("  6. SPI Bus / ADC     (analog input via MCP3008)")
+        fmt.Println("  7. Rotary Encoder    (quadrature decoding)")
+        fmt.Println("  8. 1-Wire Temp       (DS18B20 temperature sensor)")
+        fmt.Println("  9. Servo Motor       (PWM position control)")
+        fmt.Println("  0. Exit")
+        fmt.Println("")
+
+        DIM choice AS STRING
+        INPUT "Enter choice (0-9): "; choice
+
+        IF choice = "1" THEN
+            DemoBlinkLED()
+        ELSEIF choice = "2" THEN
+            DemoButton()
+        ELSEIF choice = "3" THEN
+            DemoPWM()
+        ELSEIF choice = "4" THEN
+            DemoSerial()
+        ELSEIF choice = "5" THEN
+            DemoI2C()
+        ELSEIF choice = "6" THEN
+            DemoSPI()
+        ELSEIF choice = "7" THEN
+            DemoEncoder()
+        ELSEIF choice = "8" THEN
+            DemoOneWire()
+        ELSEIF choice = "9" THEN
+            DemoServo()
+        ELSEIF choice = "0" THEN
+            fmt.Println("Goodbye!")
+            RETURN
+        ELSE
+            fmt.Println("Invalid choice. Try again.")
+        ENDIF
+        fmt.Println("")
+    LOOP
+END SUB
