@@ -112,3 +112,65 @@ END SUB
 		t.Errorf("not idempotent:\nonce:\n%s\ntwice:\n%s", once, twice)
 	}
 }
+
+// TestFormatKeywordMethodNames covers the regression where reserved
+// words used as method names after `.` (e.g. .Error(), .String(),
+// .Bytes(), .Type()) were uppercased AND had a stray space inserted
+// before the call paren — both of which broke the resulting Go.
+func TestFormatKeywordMethodNames(t *testing.T) {
+	in := `SUB Demo(e AS ERROR)
+PRINT e.Error()
+PRINT e.String()
+DIM b AS BYTES
+PRINT b.Bytes()
+END SUB
+`
+	got, err := Format(in)
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	for _, want := range []string{
+		"e.Error()",
+		"e.String()",
+		"b.Bytes()",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in formatted output, got:\n%s", want, got)
+		}
+	}
+	// Negative checks: must not have uppercased the method name nor
+	// inserted a space before the paren.
+	for _, bad := range []string{"e.ERROR", "e.STRING", "b.BYTES", "Error ()", "String ()", "Bytes ()"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("unexpected %q in formatted output:\n%s", bad, got)
+		}
+	}
+}
+
+// TestFormatLabelAtColumnZero covers the regression where GOTO target
+// labels (e.g. `Bad:`) were indented along with surrounding code
+// instead of emitting flush-left.
+func TestFormatLabelAtColumnZero(t *testing.T) {
+	in := `SUB Demo()
+ONERR GOTO Bad
+PRINT "ok"
+RETURN
+Bad:
+PRINT "fail"
+END SUB
+`
+	got, err := Format(in)
+	if err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	if !strings.Contains(got, "\nBad:\n") {
+		t.Errorf("label `Bad:` not flush-left, got:\n%s", got)
+	}
+	// Make sure surrounding lines stayed indented.
+	if !strings.Contains(got, "    ONERR GOTO Bad") {
+		t.Errorf("surrounding ONERR line not indented, got:\n%s", got)
+	}
+	if !strings.Contains(got, "    RETURN") {
+		t.Errorf("surrounding RETURN not indented, got:\n%s", got)
+	}
+}

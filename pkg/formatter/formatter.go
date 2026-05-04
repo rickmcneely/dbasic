@@ -139,6 +139,15 @@ func formatTokens(tokens []lexer.Token) string {
 			}
 		}
 
+		// GOTO target labels — `Foo:` on its own line — emit at column 0.
+		// Go requires labels at any indent level to be syntactically valid,
+		// but BASIC convention (and the rest of the toolchain) places them
+		// flush-left so they read like landing pads outside the indented
+		// body, not statements within it.
+		if isLabelLine(line, leadIdx) {
+			renderIndent = 0
+		}
+
 		if pendingBlank && haveOutput {
 			out.WriteString("\n")
 			pendingBlank = false
@@ -186,6 +195,42 @@ func secondSig(line []lexer.Token, after int) lexer.TokenType {
 	return 0
 }
 
+// isLabelLine reports whether the line is a bare `IDENT:` label
+// statement (optionally followed by trailing comments). The leading
+// non-comment token at leadIdx must be IDENT, and the only other
+// significant token must be COLON.
+func isLabelLine(line []lexer.Token, leadIdx int) bool {
+	if leadIdx < 0 || leadIdx >= len(line) {
+		return false
+	}
+	if line[leadIdx].Type != lexer.TOKEN_IDENT {
+		return false
+	}
+	sigCount := 0
+	sawColon := false
+	for i := leadIdx; i < len(line); i++ {
+		if line[i].Type == lexer.TOKEN_COMMENT {
+			continue
+		}
+		sigCount++
+		switch sigCount {
+		case 1:
+			// must be the IDENT at leadIdx
+			if line[i].Type != lexer.TOKEN_IDENT {
+				return false
+			}
+		case 2:
+			if line[i].Type != lexer.TOKEN_COLON {
+				return false
+			}
+			sawColon = true
+		default:
+			return false
+		}
+	}
+	return sawColon
+}
+
 func endsWithThen(line []lexer.Token) bool {
 	for i := len(line) - 1; i >= 0; i-- {
 		if line[i].Type == lexer.TOKEN_COMMENT {
@@ -207,6 +252,7 @@ func renderTokens(line []lexer.Token) string {
 	var prev, prev2 lexer.Token
 	havePrev := false
 	havePrev2 := false
+	prevAfterDot := false // true if `prev` is the token immediately following a `.`
 	for _, t := range line {
 		if t.Type == lexer.TOKEN_COMMENT {
 			if havePrev {
@@ -217,7 +263,7 @@ func renderTokens(line []lexer.Token) string {
 			sb.WriteString(t.Literal)
 			continue
 		}
-		sep := separator(prev, t, havePrev)
+		sep := separator(prev, t, havePrev, prevAfterDot)
 		// Suppress the space after a unary minus: when the previous emitted
 		// token is MINUS and what came before MINUS is an operator-like
 		// context (`=`, `(`, `,`, return, etc.), the MINUS is unary and
@@ -226,11 +272,17 @@ func renderTokens(line []lexer.Token) string {
 			sep = ""
 		}
 		sb.WriteString(sep)
-		sb.WriteString(literal(t))
+		// Tokens that follow a `.` are member names — never keywords —
+		// even when the lexer reports them as TOKEN_ERROR/TOKEN_STRING_TYPE/
+		// TOKEN_BYTES/TOKEN_TYPE. Render the literal as-written instead of
+		// uppercasing it, so `e.Error()` stays `e.Error()` (not `e.ERROR`).
+		afterDot := havePrev && prev.Type == lexer.TOKEN_DOT
+		sb.WriteString(literal(t, afterDot))
 		prev2 = prev
 		prev = t
 		havePrev2 = havePrev
 		havePrev = true
+		prevAfterDot = afterDot
 	}
 	return sb.String()
 }
@@ -252,7 +304,7 @@ func isUnaryContext(t lexer.TokenType) bool {
 	return false
 }
 
-func separator(prev, curr lexer.Token, havePrev bool) string {
+func separator(prev, curr lexer.Token, havePrev, prevAfterDot bool) string {
 	if !havePrev {
 		return ""
 	}
@@ -271,10 +323,16 @@ func separator(prev, curr lexer.Token, havePrev bool) string {
 		return ""
 	}
 
-	// Function call / subscript: IDENT/RPAREN/RBRACKET/CARET followed by ( or [
+	// Function call / subscript: IDENT/RPAREN/RBRACKET/CARET followed by ( or [.
+	// Also treat any token directly following a `.` as a member name, since
+	// reserved words like ERROR/STRING/BYTES/TYPE are valid Go method names —
+	// `e.Error()` must not become `e.Error ()`.
 	if curr.Type == lexer.TOKEN_LPAREN || curr.Type == lexer.TOKEN_LBRACKET {
 		switch prev.Type {
 		case lexer.TOKEN_IDENT, lexer.TOKEN_RPAREN, lexer.TOKEN_RBRACKET, lexer.TOKEN_CARET:
+			return ""
+		}
+		if prevAfterDot {
 			return ""
 		}
 	}
@@ -290,12 +348,18 @@ func separator(prev, curr lexer.Token, havePrev bool) string {
 	return " "
 }
 
-func literal(t lexer.Token) string {
+func literal(t lexer.Token, afterDot bool) string {
 	switch t.Type {
 	case lexer.TOKEN_STRING:
 		return "\"" + escapeString(t.Literal) + "\""
 	case lexer.TOKEN_BYTE_STRING:
 		return "B\"" + escapeString(t.Literal) + "\""
+	}
+	// Tokens after a `.` are member names; preserve their original casing
+	// so `obj.Error`, `b.Bytes`, `s.String`, `v.Type` stay readable instead
+	// of becoming `obj.ERROR` etc.
+	if afterDot {
+		return t.Literal
 	}
 	if isKeywordType(t.Type) {
 		return strings.ToUpper(t.Literal)
