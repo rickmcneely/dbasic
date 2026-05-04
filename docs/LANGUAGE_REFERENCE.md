@@ -20,7 +20,7 @@ DBasic is a modern BASIC dialect that compiles to Go. It combines familiar BASIC
 10. [Maps](#maps)
 11. [Deferred Calls](#deferred-calls)
 12. [Pointers](#pointers)
-13. [Error Handling](#error-handling)
+13. [Error Handling](#error-handling) — explicit checks; `ONERR GOTO`/`GOFUNC` sugar (no try/catch)
 14. [Concurrency](#concurrency)
 15. [Go Package Integration](#go-package-integration) — IMPORT, generic instantiation
 16. [Built-in Functions](#built-in-functions)
@@ -861,6 +861,12 @@ DIM ptr AS POINTER TO Data = @d
 
 ## Error Handling
 
+DBasic does **not** have `TRY`/`CATCH`/`FINALLY` and does not throw
+exceptions. Errors are values of type `ERROR` (Go's `error` interface),
+returned alongside other values from a function. The two acceptable
+patterns are the canonical Go-style explicit check, and the `ONERR`
+sugar that auto-emits the same boilerplate.
+
 ### The Error Type
 
 ```basic
@@ -893,7 +899,7 @@ FUNCTION ReadData(path AS STRING) AS (STRING, ERROR)
     RETURN content, NIL
 END FUNCTION
 
-' Calling
+' Calling — canonical Go-idiomatic pattern.
 DIM data AS STRING
 DIM err AS ERROR
 data, err = ReadData("config.txt")
@@ -901,6 +907,111 @@ IF err <> NIL THEN
     PRINT "Error: " & fmt.Sprintf("%v", err)
 ENDIF
 ```
+
+### ONERR — automatic err-checks
+
+`ONERR` is a per-function compile-time directive that asks the compiler
+to emit `if err != nil { ... }` after each multi-return assignment whose
+final value is of type `ERROR`. There is no runtime mechanism — no
+`defer`/`recover`, no exceptions, no hidden control flow. The generated
+Go is exactly what a Go programmer would have written by hand.
+
+Three forms:
+
+| Form | Effect after each error-returning call |
+|---|---|
+| `ONERR GOTO Label`    | `if err != nil { goto Label }` |
+| `ONERR GOFUNC Func`   | `if err != nil { Func(err); return }` |
+| `ONERR GOTO 0`        | clear handler — back to manual checks |
+
+`ONERR` is **lexical** and **per-function**. It does not cross
+sub/function/method boundaries. Setting `ONERR` updates a per-function
+slot in the codegen; `ONERR GOTO 0` clears it. Each new function starts
+with no handler.
+
+#### `ONERR GOTO`
+
+```basic
+IMPORT "os"
+
+SUB Demo()
+    ONERR GOTO Bad
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile("config.toml")     ' auto: if err != nil { goto Bad }
+
+    DIM more AS STRING = "after the read"      ' DIMs after the protected
+    DIM count AS INTEGER = 7                   ' call are fine — codegen
+    PRINT more, count, " | bytes=", LEN(data)  ' hoists them to the top.
+    RETURN
+Bad:
+    PRINT "read failed: ", err.Error()
+END SUB
+```
+
+When a function contains `ONERR GOTO`, the compiler **automatically
+hoists every non-`STATIC` `DIM`** in the function body to the function
+top (with zero-value declarations) and rewrites the in-body `DIM`s as
+plain assignments. This sidesteps Go's "goto cannot jump over a
+declaration" rule transparently — you can write `DIM`s anywhere in the
+body.
+
+#### `ONERR GOFUNC`
+
+```basic
+SUB ReportErr(e AS ERROR)
+    PRINT "[handler] failed: ", e.Error()
+END SUB
+
+SUB Demo()
+    ONERR GOFUNC ReportErr
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile("nonexistent.txt") ' auto: if err != nil { ReportErr(err); return }
+    PRINT "read ", LEN(data), " bytes"         ' only reached on success
+END SUB
+```
+
+`ONERR GOFUNC` emits a bare `return` after the handler call — fine in
+SUBs and in FUNCTIONs whose signature accepts a bare return. For
+FUNCTIONs that must return concrete values, prefer `ONERR GOTO`.
+
+#### `ONERR GOTO 0` — clear
+
+```basic
+SUB Demo()
+    ONERR GOTO Bad
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile("a.txt")           ' guarded
+    ONERR GOTO 0
+    data, err = os.ReadFile("b.txt")           ' NOT auto-checked
+    IF err <> NIL THEN
+        PRINT "manual check caught: ", err.Error()
+    END IF
+    RETURN
+Bad:
+    PRINT "guarded read failed: ", err.Error()
+END SUB
+```
+
+#### How ONERR detects "this is an error return"
+
+The analyzer marks a multi-assignment as ONERR-eligible when its final
+target resolves to type `ERROR`. For DBasic-defined functions this is
+read directly from the function signature; for external Go calls
+(`os.ReadFile`, etc.), the marker is set when the last target was
+pre-declared with `DIM err AS ERROR` (or any `ERROR`-typed name). The
+canonical pattern of pre-DIMing the err variable is therefore both
+correct *and* what unlocks ONERR:
+
+```basic
+DIM data AS BYTES
+DIM err AS ERROR
+data, err = os.ReadFile("x")
+```
+
+A full demo lives at `examples/onerr.dbas`.
 
 ---
 
@@ -1420,6 +1531,9 @@ pid, err = ShellStart("python -m http.server 8080")
 
 ### Function Keywords
 `SUB`, `FUNCTION`, `BYREF`, `BYVAL`, `DECLARE`, `CALL`
+
+### Error-Handling Keywords
+`ONERR`, `GOFUNC` — see [Error Handling → ONERR](#onerr--automatic-err-checks). DBasic has no `TRY`/`CATCH`/`FINALLY`.
 
 ### Logical Keywords
 `AND`, `OR`, `NOT`, `XOR`, `MOD`

@@ -1111,6 +1111,9 @@ func (g *Generator) generateSubStatement(stmt *parser.SubStatement) {
 			Type: paramType,
 		})
 	}
+	if g.containsOnErrGoto(stmt.Body) {
+		g.hoistDimsForOnErrGoto(stmt.Body)
+	}
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
 	g.currentFunc = oldFunc
@@ -1141,6 +1144,9 @@ func (g *Generator) generateFunctionStatement(stmt *parser.FunctionStatement) {
 			Kind: analyzer.SymParameter,
 			Type: paramType,
 		})
+	}
+	if g.containsOnErrGoto(stmt.Body) {
+		g.hoistDimsForOnErrGoto(stmt.Body)
 	}
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
@@ -1195,6 +1201,9 @@ func (g *Generator) generateMethodStatement(stmt *parser.MethodStatement) {
 		})
 	}
 
+	if g.containsOnErrGoto(stmt.Body) {
+		g.hoistDimsForOnErrGoto(stmt.Body)
+	}
 	g.generateBlockStatement(stmt.Body)
 	g.currentScope = oldScope
 	g.currentFunc = oldFunc
@@ -1566,6 +1575,127 @@ func (g *Generator) generateMultiAssignment(stmt *parser.MultiAssignmentStatemen
 	if g.currentOnErr != nil && stmt.LastTargetIsError && len(targets) > 0 {
 		errVar := targets[len(targets)-1]
 		g.emitOnErrCheck(errVar)
+	}
+}
+
+// containsOnErrGoto walks a block and its nested blocks looking for an
+// ONERR GOTO directive. Used by sub/function/method codegen to decide
+// whether to hoist DIM declarations to the function top — Go's `goto`
+// cannot jump over a variable declaration, so when ONERR GOTO is in
+// play we move the declarations above any potential jump origin.
+func (g *Generator) containsOnErrGoto(block *parser.BlockStatement) bool {
+	if block == nil {
+		return false
+	}
+	for _, st := range block.Statements {
+		if g.stmtContainsOnErrGoto(st) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Generator) stmtContainsOnErrGoto(stmt parser.Statement) bool {
+	switch s := stmt.(type) {
+	case *parser.OnErrStatement:
+		return s.Action == parser.OnErrGoto
+	case *parser.IfStatement:
+		if g.containsOnErrGoto(s.Consequence) {
+			return true
+		}
+		for _, ei := range s.ElseIfs {
+			if g.containsOnErrGoto(ei.Consequence) {
+				return true
+			}
+		}
+		return g.containsOnErrGoto(s.Alternative)
+	case *parser.ForStatement:
+		return g.containsOnErrGoto(s.Body)
+	case *parser.WhileStatement:
+		return g.containsOnErrGoto(s.Body)
+	case *parser.DoLoopStatement:
+		return g.containsOnErrGoto(s.Body)
+	case *parser.SelectStatement:
+		for _, c := range s.Cases {
+			if g.containsOnErrGoto(c.Body) {
+				return true
+			}
+		}
+		return g.containsOnErrGoto(s.Default)
+	case *parser.WithStatement:
+		return g.containsOnErrGoto(s.Body)
+	}
+	return false
+}
+
+// hoistDimsForOnErrGoto pre-emits a `var name type` for every non-STATIC
+// DIM in the function body and pre-populates the codegen scope so the
+// existing generateLocalDim "rebind" path takes over: each DIM in the
+// body becomes an assignment-only emission. The net effect is identical
+// to writing declarations at the top of every BASIC sub by hand, which
+// is what classic BASIC programmers expect anyway. Without this, an
+// ONERR GOTO that jumps past a DIM would be rejected by Go.
+func (g *Generator) hoistDimsForOnErrGoto(block *parser.BlockStatement) {
+	seen := map[string]bool{}
+	g.collectAndEmitHoistedDims(block, seen)
+}
+
+func (g *Generator) collectAndEmitHoistedDims(block *parser.BlockStatement, seen map[string]bool) {
+	if block == nil {
+		return
+	}
+	for _, st := range block.Statements {
+		switch s := st.(type) {
+		case *parser.DimStatement:
+			if s == nil || s.IsStatic || s.Name == nil {
+				continue
+			}
+			if seen[s.Name.Value] {
+				continue
+			}
+			seen[s.Name.Value] = true
+			g.emitHoistedDim(s)
+		case *parser.IfStatement:
+			g.collectAndEmitHoistedDims(s.Consequence, seen)
+			for _, ei := range s.ElseIfs {
+				g.collectAndEmitHoistedDims(ei.Consequence, seen)
+			}
+			g.collectAndEmitHoistedDims(s.Alternative, seen)
+		case *parser.ForStatement:
+			g.collectAndEmitHoistedDims(s.Body, seen)
+		case *parser.WhileStatement:
+			g.collectAndEmitHoistedDims(s.Body, seen)
+		case *parser.DoLoopStatement:
+			g.collectAndEmitHoistedDims(s.Body, seen)
+		case *parser.SelectStatement:
+			for _, c := range s.Cases {
+				g.collectAndEmitHoistedDims(c.Body, seen)
+			}
+			g.collectAndEmitHoistedDims(s.Default, seen)
+		case *parser.WithStatement:
+			g.collectAndEmitHoistedDims(s.Body, seen)
+		}
+	}
+}
+
+// emitHoistedDim emits a single hoisted `var <name> <type>` and registers
+// the name in the current scope so the in-body DIM emission takes the
+// rebind path (assignment-only).
+func (g *Generator) emitHoistedDim(d *parser.DimStatement) {
+	name := g.toGoIdent(d.Name.Value)
+	var goType string
+	if d.ArraySize != nil {
+		goType = "[]" + g.typeSpecToGo(d.Type)
+	} else {
+		goType = g.typeSpecToGo(d.Type)
+	}
+	g.writeLine(fmt.Sprintf("var %s %s", name, goType))
+	if g.currentScope != nil {
+		g.currentScope.Define(&analyzer.Symbol{
+			Name: d.Name.Value,
+			Kind: analyzer.SymVariable,
+			Type: g.typeFromTypeSpec(d.Type),
+		})
 	}
 }
 
