@@ -617,5 +617,31 @@
       "${1:structVar} = JSONToStruct(${2:jsonData}, @${1:structVar})"
     ],
     "description": "Populate struct from JSON map"
+  },
+  "ONERR GOTO": {
+    "prefix": "onerrgoto",
+    "body": [
+      "ONERR GOTO ${1:Bad}",
+      "$0",
+      "RETURN",
+      "${1:Bad}:",
+      "\tPRINT \"failed: \", ${2:err}.Error()"
+    ],
+    "description": "Auto-emit `if err != nil { goto Label }` after error-returning calls"
+  },
+  "ONERR GOFUNC": {
+    "prefix": "onerrgofunc",
+    "body": [
+      "ONERR GOFUNC ${1:HandleErr}",
+      "$0"
+    ],
+    "description": "Auto-emit `if err != nil { Func(err); return }` after error-returning calls"
+  },
+  "ONERR Clear": {
+    "prefix": "onerr0",
+    "body": [
+      "ONERR GOTO 0"
+    ],
+    "description": "Clear the active ONERR handler"
   }
 }
