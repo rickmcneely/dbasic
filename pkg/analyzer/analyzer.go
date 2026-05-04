@@ -504,6 +504,12 @@ func (a *Analyzer) analyzeStatement(stmt parser.Statement) {
 
 func (a *Analyzer) analyzeDimStatement(stmt *parser.DimStatement) {
 	varType := a.resolveTypeSpec(stmt.Type)
+	// `DIM xs(N) AS T` declares a slice of T (codegen lowers it to
+	// `make([]T, N)`); without this wrap the analyzer would record xs
+	// as a scalar T and reject xs[i] with "cannot index type T".
+	if stmt.ArraySize != nil {
+		varType = NewSliceType(varType)
+	}
 
 	// Skip defining global variables (they're already defined in the earlier pass).
 	// Otherwise: try to define locally. If a same-name variable already exists in

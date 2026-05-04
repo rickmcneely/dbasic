@@ -567,3 +567,57 @@ END SUB`
 		t.Errorf("unexpected errors: %v", errors)
 	}
 }
+
+// TestAnalyzeDimArrayIndexing covers the regression where
+// `DIM xs(N) AS T` recorded xs as the scalar T instead of a slice of T,
+// causing later xs[i] reads/writes to fail with "cannot index type T".
+func TestAnalyzeDimArrayIndexing(t *testing.T) {
+	input := `SUB Main()
+    DIM xs(5) AS INTEGER
+    xs[0] = 42
+    PRINT xs[0]
+END SUB`
+
+	program := parse(input)
+	a := New()
+	_, errors := a.Analyze(program)
+
+	if len(errors) > 0 {
+		t.Errorf("unexpected errors for DIM xs(5) AS INTEGER + xs[i]: %v", errors)
+	}
+}
+
+// TestAnalyzeDimArrayWithStringElement makes sure the array-wrap works
+// for non-numeric element types too.
+func TestAnalyzeDimArrayWithStringElement(t *testing.T) {
+	input := `SUB Main()
+    DIM names(3) AS STRING
+    names[0] = "alice"
+    PRINT names[0]
+END SUB`
+
+	program := parse(input)
+	a := New()
+	_, errors := a.Analyze(program)
+
+	if len(errors) > 0 {
+		t.Errorf("unexpected errors for DIM names(3) AS STRING + names[i]: %v", errors)
+	}
+}
+
+// TestAnalyzeDimArrayElementTypeChecked confirms the array element type
+// is enforced — assigning a string into a slice-of-int slot must error.
+func TestAnalyzeDimArrayElementTypeChecked(t *testing.T) {
+	input := `SUB Main()
+    DIM xs(5) AS INTEGER
+    xs[0] = "not an int"
+END SUB`
+
+	program := parse(input)
+	a := New()
+	_, errors := a.Analyze(program)
+
+	if len(errors) == 0 {
+		t.Error("expected type-mismatch error assigning STRING into INTEGER slice element")
+	}
+}
