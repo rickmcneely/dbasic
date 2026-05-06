@@ -1,0 +1,367 @@
+' DBtui — internal/ui/menubar.dbas
+'
+' Top menu bar with VBDOS-style dropdowns. Direct port of
+' ~/vgtui/internal/ui/menubar.go in shape but trimmed to the parts
+' the minimal-boot phase exercises:
+'
+'   * MenuDef + DropdownItem TYPEs
+'   * NewMenuBar() — same five menus as vgtui (File/Edit/View/Run/Help)
+'   * SetWidth, Open/Close, CursorUp/Down, SelectedAction
+'   * Render() for the closed bar
+'   * RenderDropdown() for the open dropdown
+'
+' What's *not* here yet: Alt+key shortcuts inside menus, mouse
+' hit-testing (MenuIndexAt), and action dispatch — those land when
+' more panels are wired up.
+
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "image/color" AS color
+IMPORT "strings"
+
+' ----------------------------------------------------------------------
+' Data
+' ----------------------------------------------------------------------
+
+TYPE DropdownItem
+    DIM Label    AS STRING    ' display text, e.g. "(N)ew Project"
+    DIM Hotkey   AS STRING    ' key that triggers it when menu is open
+    DIM Action   AS STRING    ' action identifier, e.g. "file.new"
+    DIM IsSep    AS BOOLEAN   ' separator line
+    DIM Disabled AS BOOLEAN
+END TYPE
+
+TYPE MenuDef
+    DIM Label  AS STRING
+    DIM Hotkey AS STRING       ' Alt+key to open, e.g. "f" for Alt+F
+    DIM Items  AS []DropdownItem
+END TYPE
+
+TYPE MenuBar
+    DIM Menus       AS []MenuDef
+    DIM Active      AS INTEGER  ' which menu is highlighted (-1 = none)
+    DIM Open        AS BOOLEAN  ' whether the dropdown is showing
+    DIM DropCursor  AS INTEGER  ' cursor within the open dropdown
+    DIM Width       AS INTEGER
+    DIM ItemOffsets AS []INTEGER ' x-offset of each menu label
+END TYPE
+
+' ----------------------------------------------------------------------
+' Item / menu builders. DBasic doesn't support struct literals with
+' named fields the way Go does, so we build each value with helpers
+' to keep NewMenuBar() readable.
+' ----------------------------------------------------------------------
+
+FUNCTION mkItem(label AS STRING, hotkey AS STRING, action AS STRING) AS DropdownItem
+    DIM it AS DropdownItem
+    it.Label = label
+    it.Hotkey = hotkey
+    it.Action = action
+    it.IsSep = FALSE
+    it.Disabled = FALSE
+    RETURN it
+END FUNCTION
+
+FUNCTION mkSep() AS DropdownItem
+    DIM it AS DropdownItem
+    it.IsSep = TRUE
+    RETURN it
+END FUNCTION
+
+FUNCTION mkMenu(label AS STRING, hotkey AS STRING, items AS []DropdownItem) AS MenuDef
+    DIM md AS MenuDef
+    md.Label = label
+    md.Hotkey = hotkey
+    md.Items = items
+    RETURN md
+END FUNCTION
+
+FUNCTION NewMenuBar() AS MenuBar
+    DIM m AS MenuBar
+    m.Active = -1
+    m.Open = FALSE
+    m.DropCursor = 0
+    m.Width = 0
+
+    DIM fileItems AS []DropdownItem
+    APPEND(fileItems, mkItem("(N)ew Project   ", "n", "file.new"))
+    APPEND(fileItems, mkItem("(O)pen Project  ", "o", "file.open"))
+    APPEND(fileItems, mkItem("(S)ave Project Ctrl+S", "s", "file.save"))
+    APPEND(fileItems, mkItem("Save (A)s       ", "a", "file.saveas"))
+    APPEND(fileItems, mkSep())
+    APPEND(fileItems, mkItem("New (F)orm      ", "f", "file.newform"))
+    APPEND(fileItems, mkSep())
+    APPEND(fileItems, mkItem("(Q)uit       Ctrl+Q", "q", "file.quit"))
+
+    DIM editItems AS []DropdownItem
+    APPEND(editItems, mkItem("(U)ndo         Ctrl+Z", "u", "edit.undo"))
+    APPEND(editItems, mkItem("(R)edo         Ctrl+Y", "r", "edit.redo"))
+    APPEND(editItems, mkSep())
+    APPEND(editItems, mkItem("Cu(t)          Ctrl+X", "t", "edit.cut"))
+    APPEND(editItems, mkItem("(C)opy         Ctrl+C", "c", "edit.copy"))
+    APPEND(editItems, mkItem("(P)aste        Ctrl+V", "p", "edit.paste"))
+    APPEND(editItems, mkSep())
+    APPEND(editItems, mkItem("Select (A)ll   Ctrl+A", "a", "edit.selectall"))
+
+    DIM viewItems AS []DropdownItem
+    APPEND(viewItems, mkItem("(V)isual Editor    F7", "v", "view.visual"))
+    APPEND(viewItems, mkItem("(C)ode Editor      F7", "c", "view.code"))
+    APPEND(viewItems, mkItem("(O)utput Window    F8", "o", "view.statuswin"))
+    APPEND(viewItems, mkSep())
+    APPEND(viewItems, mkItem("(P)roject Tree     ", "p", "view.project"))
+    APPEND(viewItems, mkItem("(W)idgets          ", "w", "view.widgets"))
+    APPEND(viewItems, mkItem("P(r)operties       ", "r", "view.properties"))
+    APPEND(viewItems, mkItem("Packa(g)es         ", "g", "view.packages"))
+    APPEND(viewItems, mkSep())
+    APPEND(viewItems, mkItem("Go Package (R)epo  ", "r", "view.pkgrepo"))
+    APPEND(viewItems, mkItem("(A)wesome Go       ", "a", "view.awesomego"))
+
+    DIM runItems AS []DropdownItem
+    APPEND(runItems, mkItem("(R)un              F5", "r", "run.run"))
+    APPEND(runItems, mkItem("(S)top            ", "s", "run.stop"))
+    APPEND(runItems, mkSep())
+    APPEND(runItems, mkItem("(B)uild           ", "b", "run.build"))
+    APPEND(runItems, mkSep())
+    APPEND(runItems, mkItem("(V)S Code         ", "v", "run.vscode"))
+
+    DIM helpItems AS []DropdownItem
+    APPEND(helpItems, mkItem("(A)bout            ", "a", "help.about"))
+    APPEND(helpItems, mkItem("(K)ey Bindings     ", "k", "help.keys"))
+
+    m.Menus = APPEND(m.Menus, mkMenu("File", "f", fileItems))
+    m.Menus = APPEND(m.Menus, mkMenu("Edit", "e", editItems))
+    m.Menus = APPEND(m.Menus, mkMenu("View", "v", viewItems))
+    m.Menus = APPEND(m.Menus, mkMenu("Run", "r", runItems))
+    m.Menus = APPEND(m.Menus, mkMenu("Help", "h", helpItems))
+
+    RETURN m
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Layout helpers
+' ----------------------------------------------------------------------
+
+SUB (m AS POINTER TO MenuBar) SetWidth(w AS INTEGER)
+    m.Width = w
+    DIM offsets AS []INTEGER
+    DIM offset AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Menus) - 1
+        APPEND(offsets, offset)
+        offset = offset + LEN(m.Menus[i].Label) + 2  ' 1 padding each side
+    NEXT i
+    m.ItemOffsets = offsets
+END SUB
+
+' ----------------------------------------------------------------------
+' Mode transitions
+' ----------------------------------------------------------------------
+
+SUB (m AS POINTER TO MenuBar) OpenMenu(idx AS INTEGER)
+    IF idx < 0 OR idx >= LEN(m.Menus) THEN RETURN
+    m.Active = idx
+    m.Open = TRUE
+    m.DropCursor = 0
+    m.skipSepDown()
+END SUB
+
+SUB (m AS POINTER TO MenuBar) Close()
+    m.Active = -1
+    m.Open = FALSE
+    m.DropCursor = 0
+END SUB
+
+SUB (m AS POINTER TO MenuBar) NextMenu()
+    IF LEN(m.Menus) = 0 THEN RETURN
+    DIM nextIdx AS INTEGER = m.Active + 1
+    IF nextIdx >= LEN(m.Menus) THEN nextIdx = 0
+    m.OpenMenu(nextIdx)
+END SUB
+
+SUB (m AS POINTER TO MenuBar) PrevMenu()
+    IF LEN(m.Menus) = 0 THEN RETURN
+    DIM prevIdx AS INTEGER = m.Active - 1
+    IF prevIdx < 0 THEN prevIdx = LEN(m.Menus) - 1
+    m.OpenMenu(prevIdx)
+END SUB
+
+SUB (m AS POINTER TO MenuBar) CursorUp()
+    DIM items AS []DropdownItem = m.ActiveItems()
+    IF LEN(items) = 0 THEN RETURN
+    DO
+        m.DropCursor = m.DropCursor - 1
+        IF m.DropCursor < 0 THEN m.DropCursor = LEN(items) - 1
+        IF NOT items[m.DropCursor].IsSep THEN EXIT DO
+    LOOP
+END SUB
+
+SUB (m AS POINTER TO MenuBar) CursorDown()
+    DIM items AS []DropdownItem = m.ActiveItems()
+    IF LEN(items) = 0 THEN RETURN
+    DO
+        m.DropCursor = m.DropCursor + 1
+        IF m.DropCursor >= LEN(items) THEN m.DropCursor = 0
+        IF NOT items[m.DropCursor].IsSep THEN EXIT DO
+    LOOP
+END SUB
+
+SUB (m AS POINTER TO MenuBar) skipSepDown()
+    DIM items AS []DropdownItem = m.ActiveItems()
+    DO WHILE m.DropCursor < LEN(items) AND items[m.DropCursor].IsSep
+        m.DropCursor = m.DropCursor + 1
+    LOOP
+END SUB
+
+FUNCTION (m AS MenuBar) ActiveItems() AS []DropdownItem
+    DIM empty AS []DropdownItem
+    IF m.Active < 0 OR m.Active >= LEN(m.Menus) THEN RETURN empty
+    RETURN m.Menus[m.Active].Items
+END FUNCTION
+
+FUNCTION (m AS MenuBar) SelectedAction() AS STRING
+    DIM items AS []DropdownItem = m.ActiveItems()
+    IF m.DropCursor < 0 OR m.DropCursor >= LEN(items) THEN RETURN ""
+    IF items[m.DropCursor].IsSep THEN RETURN ""
+    RETURN items[m.DropCursor].Action
+END FUNCTION
+
+FUNCTION (m AS MenuBar) MenuXOffset(idx AS INTEGER) AS INTEGER
+    IF idx < 0 OR idx >= LEN(m.ItemOffsets) THEN RETURN 0
+    RETURN m.ItemOffsets[idx]
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Rendering helpers
+' ----------------------------------------------------------------------
+
+' visibleLabelWidth returns the display width of a dropdown label after
+' removing the parentheses around hotkey letters: "(N)ew" → "New" = 3.
+FUNCTION visibleLabelWidth(label AS STRING) AS INTEGER
+    DIM w AS INTEGER = 0
+    DIM i AS INTEGER = 0
+    DIM n AS INTEGER = LEN(label)
+    DO WHILE i < n
+        IF Mid(label, i + 1, 1) = "(" AND i + 2 < n AND Mid(label, i + 3, 1) = ")" THEN
+            w = w + 1
+            i = i + 3
+        ELSE
+            w = w + 1
+            i = i + 1
+        END IF
+    LOOP
+    RETURN w
+END FUNCTION
+
+' renderLabelWithHotkey highlights the first occurrence of `hotkey` in
+' `label` (case-insensitive) using the warm-peach hotkey colour.
+FUNCTION renderLabelWithHotkey(label AS STRING, hotkey AS STRING, bg AS color.Color, fg AS color.Color) AS STRING
+    DIM hkLower AS STRING = strings.ToLower(hotkey)
+    DIM hotkeyStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorHotkey()).Background(bg).Bold(TRUE).Underline(TRUE)
+    DIM normalStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(fg).Background(bg)
+    DIM result AS STRING = ""
+    DIM found AS BOOLEAN = FALSE
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(label)
+        DIM ch AS STRING = Mid(label, i, 1)
+        IF NOT found AND strings.ToLower(ch) = hkLower THEN
+            result = result + hotkeyStyle.Render(ch)
+            found = TRUE
+        ELSE
+            result = result + normalStyle.Render(ch)
+        END IF
+    NEXT i
+    RETURN result
+END FUNCTION
+
+' renderDropdownLabel highlights the letter inside parentheses
+' (e.g. "(N)ew" highlights "N") with the hotkey colour.
+FUNCTION renderDropdownLabel(label AS STRING, bg AS color.Color, fg AS color.Color) AS STRING
+    DIM hotkeyStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorHotkey()).Background(bg).Bold(TRUE)
+    DIM normalStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(fg).Background(bg)
+    DIM result AS STRING = ""
+    DIM i AS INTEGER = 0
+    DIM n AS INTEGER = LEN(label)
+    DO WHILE i < n
+        IF Mid(label, i + 1, 1) = "(" AND i + 2 < n AND Mid(label, i + 3, 1) = ")" THEN
+            result = result + hotkeyStyle.Render(Mid(label, i + 2, 1))
+            i = i + 3
+        ELSE
+            result = result + normalStyle.Render(Mid(label, i + 1, 1))
+            i = i + 1
+        END IF
+    LOOP
+    RETURN result
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Render
+' ----------------------------------------------------------------------
+
+FUNCTION (m AS MenuBar) Render() AS STRING
+    DIM bar AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Menus) - 1
+        DIM padStyle AS lipgloss.Style = MenuBarStyle()
+        DIM bg AS color.Color = ColorMenuBg()
+        DIM fg AS color.Color = ColorMenuFg()
+        IF i = m.Active THEN
+            bg = ColorBg()
+            fg = ColorFg()
+            padStyle = padStyle.Background(ColorBg()).Foreground(ColorFg())
+        END IF
+        DIM label AS STRING = renderLabelWithHotkey(m.Menus[i].Label, m.Menus[i].Hotkey, bg, fg)
+        bar = bar + padStyle.Render(" ") + label + padStyle.Render(" ")
+    NEXT i
+
+    DIM remaining AS INTEGER = m.Width - lipgloss.Width(bar)
+    IF remaining > 0 THEN
+        bar = bar + MenuBarStyle().Render(strings.Repeat(" ", remaining))
+    END IF
+    RETURN bar
+END FUNCTION
+
+FUNCTION (m AS MenuBar) RenderDropdown() AS STRING
+    IF NOT m.Open OR m.Active < 0 OR m.Active >= LEN(m.Menus) THEN RETURN ""
+
+    DIM items AS []DropdownItem = m.Menus[m.Active].Items
+    DIM maxW AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items) - 1
+        DIM visW AS INTEGER = visibleLabelWidth(items[i].Label)
+        IF visW > maxW THEN maxW = visW
+    NEXT i
+    DIM innerW AS INTEGER = maxW + 2  ' 1 padding each side
+
+    DIM menuStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorMenuFg()).Background(ColorMenuBg())
+    DIM hr AS STRING = menuStyle.Render(strings.Repeat("─", innerW))
+    DIM top AS STRING = menuStyle.Render("┌") + hr + menuStyle.Render("┐")
+    DIM bottom AS STRING = menuStyle.Render("└") + hr + menuStyle.Render("┘")
+
+    DIM rows AS []STRING
+    APPEND(rows, top)
+    FOR i = 0 TO LEN(items) - 1
+        IF items[i].IsSep THEN
+            APPEND(rows, menuStyle.Render("├") + hr + menuStyle.Render("┤"))
+        ELSE
+            DIM label AS STRING = " " + items[i].Label
+            DIM lblW AS INTEGER = 1 + visibleLabelWidth(items[i].Label)
+            DIM pad AS INTEGER = innerW - lblW
+            IF pad < 0 THEN pad = 0
+            label = label + strings.Repeat(" ", pad)
+
+            DIM bg AS color.Color
+            DIM fg AS color.Color
+            IF i = m.DropCursor THEN
+                bg = ColorBg()
+                fg = ColorFg()
+            ELSE
+                bg = ColorMenuBg()
+                fg = ColorMenuFg()
+            END IF
+            DIM text AS STRING = renderDropdownLabel(label, bg, fg)
+            APPEND(rows, menuStyle.Render("│") + text + menuStyle.Render("│"))
+        END IF
+    NEXT i
+    APPEND(rows, bottom)
+
+    RETURN strings.Join(rows, "\n")
+END FUNCTION

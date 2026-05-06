@@ -19,6 +19,8 @@ IMPORT "os"
 
 INCLUDE "internal/ui/layout.dbas"
 INCLUDE "internal/ui/theme.dbas"
+INCLUDE "internal/ui/statusbar.dbas"
+INCLUDE "internal/ui/menubar.dbas"
 INCLUDE "internal/app/app.dbas"
 
 SUB Main()

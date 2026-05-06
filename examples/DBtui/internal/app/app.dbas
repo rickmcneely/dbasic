@@ -1,10 +1,16 @@
 ' DBtui — internal/app/app.dbas
 '
-' Top-level bubbletea v2 model. This is the minimal-boot version: an
-' empty workspace painted in the VBDOS theme that responds to q /
-' Ctrl+C to quit and to window-resize events. Everything else (project
-' tree, widgets, editor, properties, browser, status) is intentionally
-' deferred to follow-on sessions.
+' Top-level bubbletea v2 model. Wires the MenuBar (top) and StatusBar
+' (bottom) around an empty workspace painted in the VBDOS theme.
+'
+' Keyboard:
+'   F10 / Alt+F  → open the File menu
+'   Esc          → close the menu, return to normal mode
+'   Left / Right → cycle menus (when one is open)
+'   Up / Down    → cursor through dropdown items
+'   Enter        → "select" — currently just echoes the action to the
+'                   status bar (action dispatch lands in a later pass)
+'   q / Ctrl+C   → quit (only when no menu is open)
 
 IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
@@ -14,11 +20,12 @@ IMPORT "charm.land/lipgloss/v2" AS lipgloss
 ' ----------------------------------------------------------------------
 
 TYPE Model
-    DIM Width   AS INTEGER
-    DIM Height  AS INTEGER
-    DIM Focus   AS INTEGER     ' currently-focused panel (see ui/layout.dbas)
-    DIM Mode    AS INTEGER     ' modal input mode (see ui/layout.dbas)
-    DIM Status  AS STRING      ' status-bar text
+    DIM Width        AS INTEGER
+    DIM Height       AS INTEGER
+    DIM Focus        AS INTEGER     ' currently-focused panel (see ui/layout.dbas)
+    DIM Mode         AS INTEGER     ' modal input mode (see ui/layout.dbas)
+    DIM MenuBar      AS MenuBar
+    DIM StatusBar    AS StatusBar
 END TYPE
 
 FUNCTION NewModel() AS Model
@@ -27,12 +34,14 @@ FUNCTION NewModel() AS Model
     m.Height = 0
     m.Focus = FocusVisual
     m.Mode = ModeNormal
-    m.Status = "DBtui — F10: Menu  |  q: Quit"
+    m.MenuBar = NewMenuBar()
+    m.StatusBar = NewStatusBar()
+    m.StatusBar.Message = "DBtui — F10: Menu  |  q: Quit"
     RETURN m
 END FUNCTION
 
 ' ----------------------------------------------------------------------
-' bubbletea v2 lifecycle methods
+' bubbletea v2 lifecycle
 ' ----------------------------------------------------------------------
 
 FUNCTION (m AS Model) Init() AS tea.Cmd
@@ -40,22 +49,74 @@ FUNCTION (m AS Model) Init() AS tea.Cmd
 END FUNCTION
 
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
-    ' WindowSizeMsg — record current terminal dimensions.
+    ' WindowSizeMsg — record dimensions and cascade to the menu/status bar.
     DIM sizeMsg AS tea.WindowSizeMsg
     DIM sizeOk AS BOOLEAN
     sizeMsg, sizeOk = msg.(tea.WindowSizeMsg)
     IF sizeOk THEN
         m.Width = sizeMsg.Width
         m.Height = sizeMsg.Height
+        m.MenuBar.SetWidth(m.Width)
+        m.StatusBar.SetWidth(m.Width)
         RETURN m, NIL
     END IF
 
-    ' KeyPressMsg — q / ctrl+c quit; everything else is a no-op for now.
+    ' KeyPressMsg — dispatch based on current mode.
     DIM keyMsg AS tea.KeyPressMsg
     DIM keyOk AS BOOLEAN
     keyMsg, keyOk = msg.(tea.KeyPressMsg)
     IF keyOk THEN
         DIM k AS STRING = keyMsg.String()
+
+        IF m.Mode = ModeMenuBar THEN
+            ' --- Menu mode --------------------------------------------------
+            IF k = "esc" THEN
+                m.MenuBar.Close()
+                m.Mode = ModeNormal
+                m.StatusBar.Message = "DBtui — F10: Menu  |  q: Quit"
+                RETURN m, NIL
+            END IF
+            IF k = "left" THEN
+                m.MenuBar.PrevMenu()
+                RETURN m, NIL
+            END IF
+            IF k = "right" THEN
+                m.MenuBar.NextMenu()
+                RETURN m, NIL
+            END IF
+            IF k = "up" THEN
+                m.MenuBar.CursorUp()
+                RETURN m, NIL
+            END IF
+            IF k = "down" THEN
+                m.MenuBar.CursorDown()
+                RETURN m, NIL
+            END IF
+            IF k = "enter" THEN
+                DIM action AS STRING = m.MenuBar.SelectedAction()
+                m.MenuBar.Close()
+                m.Mode = ModeNormal
+                IF action = "file.quit" THEN
+                    RETURN m, tea.Quit
+                END IF
+                IF action <> "" THEN
+                    m.StatusBar.Message = "selected: " + action + "  (action dispatch — TBD)"
+                ELSE
+                    m.StatusBar.Message = "DBtui — F10: Menu  |  q: Quit"
+                END IF
+                RETURN m, NIL
+            END IF
+            ' Swallow unhandled keys while a menu is open.
+            RETURN m, NIL
+        END IF
+
+        ' --- Normal mode --------------------------------------------------
+        IF k = "f10" THEN
+            m.MenuBar.OpenMenu(0)
+            m.Mode = ModeMenuBar
+            m.StatusBar.Message = "Menu — Esc: Close  ←/→: Menu  ↑/↓: Item  Enter: Select"
+            RETURN m, NIL
+        END IF
         IF k = "q" OR k = "ctrl+c" THEN
             RETURN m, tea.Quit
         END IF
@@ -78,21 +139,35 @@ END FUNCTION
 
 FUNCTION renderBody(m AS Model) AS STRING
     IF m.Width <= 0 OR m.Height <= 0 THEN
-        ' First frame before WindowSizeMsg arrives — render a tiny banner
-        ' so the user sees *something*.
+        ' First frame before WindowSizeMsg arrives.
         RETURN BgStyle().Render("DBtui — booting…")
     END IF
 
-    ' Top: title bar.
-    DIM titleBar AS STRING = TitleStyle().Width(m.Width).Align(lipgloss.Center).Render("DBtui")
+    DIM menuBar AS STRING = m.MenuBar.Render()
+    DIM statusBar AS STRING = m.StatusBar.Render()
 
-    ' Bottom: status bar.
-    DIM statusBar AS STRING = StatusBarStyle().Width(m.Width).Render(" " + m.Status)
-
-    ' Middle: empty workspace, padded to fill the remaining height.
+    ' When a dropdown is open, render it directly under the menu bar at
+    ' the current menu's x-offset. The dropdown itself eats the top of
+    ' the workspace area; the rest of the workspace stays painted in the
+    ' VBDOS background. This is the cheap-and-correct first pass — a
+    ' proper overlay (with the workspace still visible *behind* the
+    ' dropdown) lands when ScrollPanel does and we have a real
+    ' compositing helper to share.
     DIM workspaceH AS INTEGER = m.Height - 2
     IF workspaceH < 1 THEN workspaceH = 1
-    DIM workspace AS STRING = BgStyle().Width(m.Width).Height(workspaceH).Align(lipgloss.Center, lipgloss.Center).Render("(workspace)")
 
-    RETURN lipgloss.JoinVertical(lipgloss.Left, titleBar, workspace, statusBar)
+    IF m.MenuBar.Open THEN
+        DIM dropdown AS STRING = m.MenuBar.RenderDropdown()
+        DIM xOff AS INTEGER = m.MenuBar.MenuXOffset(m.MenuBar.Active)
+        DIM dropPadded AS STRING = lipgloss.NewStyle().PaddingLeft(xOff).Background(ColorBg()).Render(dropdown)
+        DIM dropH AS INTEGER = lipgloss.Height(dropPadded)
+        DIM remH AS INTEGER = workspaceH - dropH
+        IF remH < 0 THEN remH = 0
+        DIM rest AS STRING = BgStyle().Width(m.Width).Height(remH).Render("")
+        DIM withDropdown AS STRING = lipgloss.JoinVertical(lipgloss.Left, dropPadded, rest)
+        RETURN lipgloss.JoinVertical(lipgloss.Left, menuBar, withDropdown, statusBar)
+    END IF
+
+    DIM emptyWorkspace AS STRING = BgStyle().Width(m.Width).Height(workspaceH).Align(lipgloss.Center, lipgloss.Center).Render("(workspace)")
+    RETURN lipgloss.JoinVertical(lipgloss.Left, menuBar, emptyWorkspace, statusBar)
 END FUNCTION

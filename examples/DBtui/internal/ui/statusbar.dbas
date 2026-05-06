@@ -1,0 +1,32 @@
+' DBtui — internal/ui/statusbar.dbas
+'
+' Bottom status bar. Displays a single text message padded to the
+' configured width. Direct port of ~/vgtui/internal/ui/statusbar.go.
+
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "strings"
+
+TYPE StatusBar
+    DIM Message AS STRING
+    DIM Width   AS INTEGER
+END TYPE
+
+FUNCTION NewStatusBar() AS StatusBar
+    DIM s AS StatusBar
+    s.Message = "Ready"
+    s.Width = 0
+    RETURN s
+END FUNCTION
+
+SUB (s AS POINTER TO StatusBar) SetWidth(w AS INTEGER)
+    s.Width = w
+END SUB
+
+FUNCTION (s AS StatusBar) Render() AS STRING
+    DIM text AS STRING = StatusBarStyle().Padding(0, 1).Render(s.Message)
+    DIM remaining AS INTEGER = s.Width - lipgloss.Width(text)
+    IF remaining > 0 THEN
+        text = text + StatusBarStyle().Render(strings.Repeat(" ", remaining))
+    END IF
+    RETURN text
+END FUNCTION
