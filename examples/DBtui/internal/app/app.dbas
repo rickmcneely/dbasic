@@ -1,0 +1,98 @@
+' DBtui — internal/app/app.dbas
+'
+' Top-level bubbletea v2 model. This is the minimal-boot version: an
+' empty workspace painted in the VBDOS theme that responds to q /
+' Ctrl+C to quit and to window-resize events. Everything else (project
+' tree, widgets, editor, properties, browser, status) is intentionally
+' deferred to follow-on sessions.
+
+IMPORT "charm.land/bubbletea/v2" AS tea
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+
+' ----------------------------------------------------------------------
+' Model
+' ----------------------------------------------------------------------
+
+TYPE Model
+    DIM Width   AS INTEGER
+    DIM Height  AS INTEGER
+    DIM Focus   AS INTEGER     ' currently-focused panel (see ui/layout.dbas)
+    DIM Mode    AS INTEGER     ' modal input mode (see ui/layout.dbas)
+    DIM Status  AS STRING      ' status-bar text
+END TYPE
+
+FUNCTION NewModel() AS Model
+    DIM m AS Model
+    m.Width = 0
+    m.Height = 0
+    m.Focus = FocusVisual
+    m.Mode = ModeNormal
+    m.Status = "DBtui — F10: Menu  |  q: Quit"
+    RETURN m
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' bubbletea v2 lifecycle methods
+' ----------------------------------------------------------------------
+
+FUNCTION (m AS Model) Init() AS tea.Cmd
+    RETURN NIL
+END FUNCTION
+
+FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    ' WindowSizeMsg — record current terminal dimensions.
+    DIM sizeMsg AS tea.WindowSizeMsg
+    DIM sizeOk AS BOOLEAN
+    sizeMsg, sizeOk = msg.(tea.WindowSizeMsg)
+    IF sizeOk THEN
+        m.Width = sizeMsg.Width
+        m.Height = sizeMsg.Height
+        RETURN m, NIL
+    END IF
+
+    ' KeyPressMsg — q / ctrl+c quit; everything else is a no-op for now.
+    DIM keyMsg AS tea.KeyPressMsg
+    DIM keyOk AS BOOLEAN
+    keyMsg, keyOk = msg.(tea.KeyPressMsg)
+    IF keyOk THEN
+        DIM k AS STRING = keyMsg.String()
+        IF k = "q" OR k = "ctrl+c" THEN
+            RETURN m, tea.Quit
+        END IF
+    END IF
+
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION (m AS Model) View() AS tea.View
+    DIM body AS STRING = renderBody(m)
+    DIM v AS tea.View = tea.NewView(body)
+    v.AltScreen = TRUE
+    v.MouseMode = tea.MouseModeCellMotion
+    RETURN v
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Rendering
+' ----------------------------------------------------------------------
+
+FUNCTION renderBody(m AS Model) AS STRING
+    IF m.Width <= 0 OR m.Height <= 0 THEN
+        ' First frame before WindowSizeMsg arrives — render a tiny banner
+        ' so the user sees *something*.
+        RETURN BgStyle().Render("DBtui — booting…")
+    END IF
+
+    ' Top: title bar.
+    DIM titleBar AS STRING = TitleStyle().Width(m.Width).Align(lipgloss.Center).Render("DBtui")
+
+    ' Bottom: status bar.
+    DIM statusBar AS STRING = StatusBarStyle().Width(m.Width).Render(" " + m.Status)
+
+    ' Middle: empty workspace, padded to fill the remaining height.
+    DIM workspaceH AS INTEGER = m.Height - 2
+    IF workspaceH < 1 THEN workspaceH = 1
+    DIM workspace AS STRING = BgStyle().Width(m.Width).Height(workspaceH).Align(lipgloss.Center, lipgloss.Center).Render("(workspace)")
+
+    RETURN lipgloss.JoinVertical(lipgloss.Left, titleBar, workspace, statusBar)
+END FUNCTION

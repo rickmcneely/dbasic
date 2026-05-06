@@ -1,0 +1,25 @@
+' DBtui — internal/ui/layout.dbas
+'
+' Panel/focus enums shared across the app. Kept in a separate file so
+' the model in app/ can reference them without circular includes.
+
+' Focus area — which panel currently has focus.
+CONST FocusProjectTree AS INTEGER = 0
+CONST FocusWidgets     AS INTEGER = 1
+CONST FocusVisual      AS INTEGER = 2
+CONST FocusCode        AS INTEGER = 3
+CONST FocusProperties  AS INTEGER = 4
+CONST FocusBrowser     AS INTEGER = 5
+CONST FocusStatusWin   AS INTEGER = 6
+CONST FocusCount       AS INTEGER = 7
+
+' Modal input modes — what the next key press belongs to.
+CONST ModeNormal       AS INTEGER = 0
+CONST ModeContextMenu  AS INTEGER = 1
+CONST ModeRenameDialog AS INTEGER = 2
+CONST ModeMenuBar      AS INTEGER = 3
+CONST ModeFileDialog   AS INTEGER = 4
+CONST ModeColorPicker  AS INTEGER = 5
+CONST ModeHelpWindow   AS INTEGER = 6
+CONST ModeAboutWindow  AS INTEGER = 7
+CONST ModeWidgetHelp   AS INTEGER = 8

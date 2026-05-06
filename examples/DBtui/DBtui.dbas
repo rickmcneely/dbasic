@@ -1,0 +1,36 @@
+' DBtui — entrypoint.
+'
+' DBtui is a VBDOS-inspired visual TUI IDE for DBasic itself,
+' designed after ~/vgtui (the Go-targeting sibling) and written
+' entirely in DBasic on top of charm.land's bubbletea v2 / lipgloss v2.
+'
+' This file is the CLI entrypoint. The bubbletea Model lives in
+' internal/app/app.dbas; theming and layout enums live in
+' internal/ui/. Future sessions add: project tree, widget palette,
+' visual form designer, code editor, properties panel, package
+' browser, codegen subcommand.
+'
+' Build:   dbasic build DBtui.dbas -o DBtui
+' Run:     ./DBtui
+
+IMPORT "charm.land/bubbletea/v2" AS tea
+IMPORT "fmt"
+IMPORT "os"
+
+INCLUDE "internal/ui/layout.dbas"
+INCLUDE "internal/ui/theme.dbas"
+INCLUDE "internal/app/app.dbas"
+
+SUB Main()
+    DIM model AS Model = NewModel()
+    DIM prog AS POINTER TO tea.Program = tea.NewProgram(model, tea.WithoutSignalHandler())
+
+    DIM finalModel AS tea.Model
+    DIM err AS ERROR
+    finalModel, err = prog.Run()
+    IF err <> NIL THEN
+        fmt.Fprintf(os.Stderr, "DBtui error: %v\n", err)
+        os.Exit(1)
+    END IF
+    _ = finalModel
+END SUB

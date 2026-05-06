@@ -1,0 +1,97 @@
+' DBtui — internal/ui/theme.dbas
+'
+' VBDOS-inspired palette and shared lipgloss styles. Mirrors the
+' colour names from vgtui/internal/ui/theme.go so future ports of
+' vgtui's panels can drop straight in. All colours are hex strings
+' suitable for lipgloss.Color().
+
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "image/color" AS color
+
+' ----------------------------------------------------------------------
+' Core palette — VBDOS-inspired with a modern charm twist.
+' ----------------------------------------------------------------------
+
+CONST ColorBgHex          AS STRING = "#1a1b2e"   ' Deep indigo background
+CONST ColorFgHex          AS STRING = "#e0def4"   ' Soft lavender text
+CONST ColorAccentHex      AS STRING = "#7dcfff"   ' Bright sky blue accents
+CONST ColorBorderHex      AS STRING = "#3b3d5e"   ' Subtle muted border
+CONST ColorSelectionHex   AS STRING = "#2d4f67"   ' Muted teal selection
+CONST ColorMenuBgHex      AS STRING = "#24273a"   ' Slightly lighter than bg
+CONST ColorMenuFgHex      AS STRING = "#cad3f5"   ' Soft white menu text
+CONST ColorStatusBgHex    AS STRING = "#24273a"
+CONST ColorStatusFgHex    AS STRING = "#8087a2"   ' Dimmer status text
+CONST ColorHotkeyHex      AS STRING = "#f5a97f"   ' Warm peach for hotkeys
+CONST ColorFocusBorderHex AS STRING = "#7dcfff"   ' Matches accent
+
+' Wrappers so the rest of the app can use lipgloss.Color values without
+' re-typing the hex strings.
+
+FUNCTION ColorBg() AS color.Color
+    RETURN lipgloss.Color(ColorBgHex)
+END FUNCTION
+
+FUNCTION ColorFg() AS color.Color
+    RETURN lipgloss.Color(ColorFgHex)
+END FUNCTION
+
+FUNCTION ColorAccent() AS color.Color
+    RETURN lipgloss.Color(ColorAccentHex)
+END FUNCTION
+
+FUNCTION ColorBorder() AS color.Color
+    RETURN lipgloss.Color(ColorBorderHex)
+END FUNCTION
+
+FUNCTION ColorSelection() AS color.Color
+    RETURN lipgloss.Color(ColorSelectionHex)
+END FUNCTION
+
+FUNCTION ColorMenuBg() AS color.Color
+    RETURN lipgloss.Color(ColorMenuBgHex)
+END FUNCTION
+
+FUNCTION ColorMenuFg() AS color.Color
+    RETURN lipgloss.Color(ColorMenuFgHex)
+END FUNCTION
+
+FUNCTION ColorStatusBg() AS color.Color
+    RETURN lipgloss.Color(ColorStatusBgHex)
+END FUNCTION
+
+FUNCTION ColorStatusFg() AS color.Color
+    RETURN lipgloss.Color(ColorStatusFgHex)
+END FUNCTION
+
+FUNCTION ColorHotkey() AS color.Color
+    RETURN lipgloss.Color(ColorHotkeyHex)
+END FUNCTION
+
+FUNCTION ColorFocusBorder() AS color.Color
+    RETURN lipgloss.Color(ColorFocusBorderHex)
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Shared styles. Built lazily so the program doesn't construct lipgloss
+' values during package init.
+' ----------------------------------------------------------------------
+
+FUNCTION TitleStyle() AS lipgloss.Style
+    RETURN lipgloss.NewStyle().Bold(TRUE).Foreground(ColorAccent()).Background(ColorBg()).Italic(TRUE)
+END FUNCTION
+
+FUNCTION MenuBarStyle() AS lipgloss.Style
+    RETURN lipgloss.NewStyle().Background(ColorMenuBg()).Foreground(ColorMenuFg()).Bold(TRUE)
+END FUNCTION
+
+FUNCTION StatusBarStyle() AS lipgloss.Style
+    RETURN lipgloss.NewStyle().Background(ColorStatusBg()).Foreground(ColorStatusFg()).Italic(TRUE)
+END FUNCTION
+
+FUNCTION HotkeyStyle() AS lipgloss.Style
+    RETURN lipgloss.NewStyle().Foreground(ColorHotkey()).Bold(TRUE)
+END FUNCTION
+
+FUNCTION BgStyle() AS lipgloss.Style
+    RETURN lipgloss.NewStyle().Background(ColorBg()).Foreground(ColorFg())
+END FUNCTION
