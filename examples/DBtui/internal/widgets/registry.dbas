@@ -1,0 +1,51 @@
+' DBtui — internal/widgets/registry.dbas
+'
+' Widget registry — kind → factory routing. vgtui uses
+' `map[string]Factory` with sync.RWMutex; we don't need concurrent
+' access in DBtui (the bubbletea model is single-threaded), so we
+' keep just a sorted list of known kinds and dispatch through
+' switchable Create. A future extension point can add custom kinds
+' by editing this file (the user-defined widget plugin path).
+
+IMPORT "sort"
+
+TYPE Registry
+    DIM Kinds AS []STRING        ' sorted list of registered kinds
+END TYPE
+
+' DefaultRegistry returns a Registry pre-populated with the built-in
+' widget kinds (Button, Label, TextInput for now; more land as more
+' widgets are ported).
+FUNCTION DefaultRegistry() AS Registry
+    DIM r AS Registry
+    r.Kinds = APPEND(r.Kinds, WidgetKindButton)
+    r.Kinds = APPEND(r.Kinds, WidgetKindLabel)
+    r.Kinds = APPEND(r.Kinds, WidgetKindTextInput)
+    sort.Strings(r.Kinds)
+    RETURN r
+END FUNCTION
+
+' Has reports whether the given kind is registered.
+FUNCTION (r AS Registry) Has(kind AS STRING) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(r.Kinds) - 1
+        IF r.Kinds[i] = kind THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' Create instantiates a new widget of the given kind. Returns the
+' zero Widget and an error when the kind is unknown.
+FUNCTION (r AS Registry) Create(kind AS STRING, id AS STRING) AS (Widget, ERROR)
+    IF kind = WidgetKindButton THEN
+        RETURN NewButton(id), NIL
+    END IF
+    IF kind = WidgetKindLabel THEN
+        RETURN NewLabel(id), NIL
+    END IF
+    IF kind = WidgetKindTextInput THEN
+        RETURN NewTextInput(id), NIL
+    END IF
+    DIM zero AS Widget
+    RETURN zero, NewError("unknown widget kind: " + kind)
+END FUNCTION

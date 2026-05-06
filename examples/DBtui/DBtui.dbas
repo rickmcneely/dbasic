@@ -24,6 +24,11 @@ INCLUDE "internal/ui/statusbar.dbas"
 INCLUDE "internal/ui/menubar.dbas"
 INCLUDE "internal/project/format.dbas"
 INCLUDE "internal/project/tree.dbas"
+INCLUDE "internal/widget/widget.dbas"
+INCLUDE "internal/widgets/button.dbas"
+INCLUDE "internal/widgets/label.dbas"
+INCLUDE "internal/widgets/textinput.dbas"
+INCLUDE "internal/widgets/registry.dbas"
 INCLUDE "internal/app/app.dbas"
 
 SUB Main()

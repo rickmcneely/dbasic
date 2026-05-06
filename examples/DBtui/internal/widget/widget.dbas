@@ -1,0 +1,222 @@
+' DBtui — internal/widget/widget.dbas
+'
+' Widget core. vgtui (Go) defines widgets through a `Widget` interface
+' with ~25 methods that each concrete widget implements. DBasic
+' doesn't have first-class interface types in the same shape, so we
+' use a tagged-union: every widget is a `Widget` value with a `Kind`
+' discriminator and the union of all per-kind fields. Per-kind
+' Properties / SetProperty live in the matching files under
+' internal/widgets/, dispatched by Kind.
+'
+' This trades some elegance for predictable static typing: there are
+' no interface tables, no method-on-interface dispatch quirks, and
+' the codegen lowers everything to plain Go structs and switch
+' statements. It also matches what classic VB UserControls did —
+' tagged structs with discriminator-driven behaviour.
+
+' ----------------------------------------------------------------------
+' Property — describes one editable property surfaced to the
+' properties panel and the form-file serializer.
+' ----------------------------------------------------------------------
+
+TYPE Property
+    DIM Name    AS STRING
+    DIM Kind    AS STRING       ' "string" | "int" | "bool" | "color" | "enum"
+    DIM Value   AS ANY
+    DIM Options AS []STRING     ' for "enum"
+END TYPE
+
+FUNCTION StringProp(name AS STRING, value AS STRING) AS Property
+    DIM p AS Property
+    p.Name = name
+    p.Kind = "string"
+    p.Value = value
+    RETURN p
+END FUNCTION
+
+FUNCTION ColorProp(name AS STRING, value AS STRING) AS Property
+    DIM p AS Property
+    p.Name = name
+    p.Kind = "color"
+    p.Value = value
+    RETURN p
+END FUNCTION
+
+FUNCTION EnumProp(name AS STRING, value AS STRING, options AS []STRING) AS Property
+    DIM p AS Property
+    p.Name = name
+    p.Kind = "enum"
+    p.Value = value
+    p.Options = options
+    RETURN p
+END FUNCTION
+
+FUNCTION BoolProp(name AS STRING, value AS BOOLEAN) AS Property
+    DIM p AS Property
+    p.Name = name
+    p.Kind = "bool"
+    p.Value = value
+    RETURN p
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Style — visual common to every widget. Mirrors widget.Style in vgtui.
+' ----------------------------------------------------------------------
+
+TYPE Style
+    DIM BgColor AS STRING       ' hex
+    DIM FgColor AS STRING       ' hex
+    DIM BgHover AS STRING       ' hex
+    DIM FgHover AS STRING       ' hex
+    DIM Border  AS STRING       ' "normal" | "thick" | "double" | "none"
+    DIM Corner  AS STRING       ' "square" | "round"
+END TYPE
+
+FUNCTION DefaultStyle() AS Style
+    DIM s AS Style
+    s.Border = "normal"
+    s.Corner = "square"
+    RETURN s
+END FUNCTION
+
+' StyleProperties returns the style fields as Property entries. When
+' withBorder is FALSE the Border/Corner fields are omitted (used by
+' borderless widgets like Label).
+FUNCTION StyleProperties(s AS Style, withBorder AS BOOLEAN) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, ColorProp("BgColor", s.BgColor))
+    out = APPEND(out, ColorProp("FgColor", s.FgColor))
+    IF withBorder THEN
+        DIM borderOpts AS []STRING
+        borderOpts = APPEND(borderOpts, "normal")
+        borderOpts = APPEND(borderOpts, "thick")
+        borderOpts = APPEND(borderOpts, "double")
+        borderOpts = APPEND(borderOpts, "none")
+        out = APPEND(out, EnumProp("Border", s.Border, borderOpts))
+
+        DIM cornerOpts AS []STRING
+        cornerOpts = APPEND(cornerOpts, "square")
+        cornerOpts = APPEND(cornerOpts, "round")
+        out = APPEND(out, EnumProp("Corner", s.Corner, cornerOpts))
+    END IF
+    RETURN out
+END FUNCTION
+
+' SetStyleProperty sets a style property by name. Returns TRUE if it
+' handled the name; FALSE means the per-widget SetProperty should try.
+FUNCTION SetStyleProperty(s AS POINTER TO Style, name AS STRING, value AS ANY) AS BOOLEAN
+    DIM str AS STRING
+    DIM ok AS BOOLEAN
+    str, ok = value.(STRING)
+    IF NOT ok THEN RETURN FALSE
+    IF name = "BgColor" THEN
+        s.BgColor = str
+        RETURN TRUE
+    END IF
+    IF name = "FgColor" THEN
+        s.FgColor = str
+        RETURN TRUE
+    END IF
+    IF name = "BgHover" THEN
+        s.BgHover = str
+        RETURN TRUE
+    END IF
+    IF name = "FgHover" THEN
+        s.FgHover = str
+        RETURN TRUE
+    END IF
+    IF name = "Border" THEN
+        s.Border = str
+        RETURN TRUE
+    END IF
+    IF name = "Corner" THEN
+        s.Corner = str
+        RETURN TRUE
+    END IF
+    RETURN FALSE
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Widget — tagged union covering Button, Label, TextInput (initial set).
+' Per-kind extension fields are namespaced by prefix so the codegen
+' produces a single flat Go struct without nested anonymous structs.
+' ----------------------------------------------------------------------
+
+CONST WidgetKindButton    AS STRING = "Button"
+CONST WidgetKindLabel     AS STRING = "Label"
+CONST WidgetKindTextInput AS STRING = "TextInput"
+
+TYPE Widget
+    ' --- common ----------------------------------------------------
+    DIM Id        AS STRING
+    DIM Kind      AS STRING            ' WidgetKindXxx
+    DIM Visible   AS BOOLEAN
+    DIM ZOrder    AS INTEGER
+    DIM TabIndex  AS INTEGER
+    DIM TabStop   AS BOOLEAN
+    DIM Anchor    AS STRING
+    DIM X         AS INTEGER
+    DIM Y         AS INTEGER
+    DIM W         AS INTEGER           ' width
+    DIM H         AS INTEGER           ' height
+    DIM Style     AS Style
+
+    ' --- Button ----------------------------------------------------
+    DIM ButText    AS STRING
+    DIM ButBgPress AS STRING
+    DIM ButFgPress AS STRING
+
+    ' --- Label -----------------------------------------------------
+    DIM LblText  AS STRING
+    DIM LblAlign AS STRING            ' "left" | "center" | "right"
+
+    ' --- TextInput -------------------------------------------------
+    DIM TiPlaceholder AS STRING
+    DIM TiValue       AS STRING
+END TYPE
+
+' ----------------------------------------------------------------------
+' Common accessor / mutator helpers — these mirror the equivalent
+' Widget interface methods in vgtui and let the rest of DBtui talk to
+' a Widget without unpacking it manually each time.
+' ----------------------------------------------------------------------
+
+SUB SetWidgetPosition(w AS POINTER TO Widget, x AS INTEGER, y AS INTEGER)
+    w.X = x
+    w.Y = y
+END SUB
+
+SUB SetWidgetSize(w AS POINTER TO Widget, ww AS INTEGER, wh AS INTEGER)
+    w.W = ww
+    w.H = wh
+END SUB
+
+' Events returns the event names the kind supports. Used later by the
+' code editor's event-handler picker.
+FUNCTION WidgetEvents(w AS Widget) AS []STRING
+    DIM out AS []STRING
+    IF w.Kind = WidgetKindButton THEN
+        out = APPEND(out, "Click")
+        out = APPEND(out, "MouseDown")
+        out = APPEND(out, "MouseUp")
+        out = APPEND(out, "MouseEnter")
+        out = APPEND(out, "MouseLeave")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindLabel THEN
+        out = APPEND(out, "Click")
+        out = APPEND(out, "MouseEnter")
+        out = APPEND(out, "MouseLeave")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindTextInput THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        out = APPEND(out, "KeyPress")
+        RETURN out
+    END IF
+    RETURN out
+END FUNCTION

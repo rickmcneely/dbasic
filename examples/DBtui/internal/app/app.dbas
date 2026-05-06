@@ -30,8 +30,11 @@ TYPE Model
     DIM Mode      AS INTEGER     ' modal input mode (see ui/layout.dbas)
     DIM MenuBar   AS MenuBar
     DIM StatusBar AS StatusBar
-    DIM Tree      AS Tree        ' project tree sidebar
-    DIM SidebarW  AS INTEGER     ' configurable width of the left sidebar
+    DIM Tree      AS Tree        ' project tree (left sidebar)
+    DIM Registry  AS Registry    ' widget registry — feeds the palette
+    DIM Palette   AS ScrollPanel ' widget palette (right sidebar)
+    DIM LeftW     AS INTEGER     ' left sidebar width
+    DIM RightW    AS INTEGER     ' right sidebar width
 END TYPE
 
 FUNCTION NewModel() AS Model
@@ -40,17 +43,23 @@ FUNCTION NewModel() AS Model
     m.Height = 0
     m.Focus = FocusProjectTree
     m.Mode = ModeNormal
-    m.SidebarW = 28
+    m.LeftW = 28
+    m.RightW = 22
     m.MenuBar = NewMenuBar()
     m.StatusBar = NewStatusBar()
     m.StatusBar.Message = defaultStatus()
     m.Tree = NewTree()
     m.Tree.SetFocused(TRUE)
+    m.Registry = DefaultRegistry()
+    m.Palette = NewScrollPanel()
+    m.Palette.Title = "Widgets"
+    m.Palette.Cursor = 0
+    m.Palette.Lines = m.Registry.Kinds
     RETURN m
 END FUNCTION
 
 FUNCTION defaultStatus() AS STRING
-    RETURN "DBtui — F10: Menu  |  Tab: Focus  |  ↑/↓: Move  |  Space: Expand  |  q: Quit"
+    RETURN "DBtui — F10:Menu  |  Tab:Focus  |  ↑/↓:Move  |  Space:Expand  |  Enter:Pick  |  q:Quit"
 END FUNCTION
 
 ' ----------------------------------------------------------------------
@@ -71,9 +80,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Height = sizeMsg.Height
         m.MenuBar.SetWidth(m.Width)
         m.StatusBar.SetWidth(m.Width)
-        DIM treeH AS INTEGER = m.Height - 2
-        IF treeH < 3 THEN treeH = 3
-        m.Tree.SetSize(m.SidebarW, treeH)
+        DIM bodyH AS INTEGER = m.Height - 2
+        IF bodyH < 3 THEN bodyH = 3
+        m.Tree.SetSize(m.LeftW, bodyH)
+        m.Palette.Width = m.RightW
+        m.Palette.Height = bodyH
         RETURN m, NIL
     END IF
 
@@ -134,13 +145,19 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF k = "tab" THEN
-            ' Cycle Sidebar ↔ Workspace.
+            ' Cycle ProjectTree → Workspace → Widgets → ProjectTree.
             IF m.Focus = FocusProjectTree THEN
                 m.Focus = FocusVisual
                 m.Tree.SetFocused(FALSE)
+                m.Palette.Focused = FALSE
+            ELSEIF m.Focus = FocusVisual THEN
+                m.Focus = FocusWidgets
+                m.Tree.SetFocused(FALSE)
+                m.Palette.Focused = TRUE
             ELSE
                 m.Focus = FocusProjectTree
                 m.Tree.SetFocused(TRUE)
+                m.Palette.Focused = FALSE
             END IF
             RETURN m, NIL
         END IF
@@ -183,6 +200,23 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 RETURN m, NIL
             END IF
         END IF
+        IF m.Focus = FocusWidgets THEN
+            IF k = "up" THEN
+                m.Palette.CursorUp()
+                RETURN m, NIL
+            END IF
+            IF k = "down" THEN
+                m.Palette.CursorDown()
+                RETURN m, NIL
+            END IF
+            IF k = "enter" THEN
+                IF m.Palette.Cursor >= 0 AND m.Palette.Cursor < LEN(m.Palette.Lines) THEN
+                    DIM kind AS STRING = m.Palette.Lines[m.Palette.Cursor]
+                    m.StatusBar.Message = fmt.Sprintf("would create: %s  (designer — TBD)", kind)
+                END IF
+                RETURN m, NIL
+            END IF
+        END IF
         IF k = "q" OR k = "ctrl+c" THEN
             RETURN m, tea.Quit
         END IF
@@ -215,12 +249,13 @@ FUNCTION renderBody(m AS Model) AS STRING
     DIM bodyH AS INTEGER = m.Height - 2
     IF bodyH < 1 THEN bodyH = 1
 
-    ' Sidebar on the left, empty workspace on the right.
-    DIM sidebar AS STRING = m.Tree.Render()
-    DIM rightW AS INTEGER = m.Width - m.SidebarW
-    IF rightW < 1 THEN rightW = 1
-    DIM workspace AS STRING = BgStyle().Width(rightW).Height(bodyH).Align(lipgloss.Center, lipgloss.Center).Render("(workspace)")
-    DIM bodyRow AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, workspace)
+    ' Three-column layout: project tree | workspace | widget palette.
+    DIM leftPane AS STRING = m.Tree.Render()
+    DIM rightPane AS STRING = m.Palette.Render()
+    DIM centerW AS INTEGER = m.Width - m.LeftW - m.RightW
+    IF centerW < 1 THEN centerW = 1
+    DIM workspace AS STRING = BgStyle().Width(centerW).Height(bodyH).Align(lipgloss.Center, lipgloss.Center).Render("(workspace)")
+    DIM bodyRow AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, leftPane, workspace, rightPane)
 
     IF m.MenuBar.Open THEN
         DIM dropdown AS STRING = m.MenuBar.RenderDropdown()
