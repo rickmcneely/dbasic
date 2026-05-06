@@ -24,14 +24,14 @@ IMPORT "fmt"
 ' ----------------------------------------------------------------------
 
 TYPE Model
-    DIM Width        AS INTEGER
-    DIM Height       AS INTEGER
-    DIM Focus        AS INTEGER     ' which panel has focus (see ui/layout.dbas)
-    DIM Mode         AS INTEGER     ' modal input mode (see ui/layout.dbas)
-    DIM MenuBar      AS MenuBar
-    DIM StatusBar    AS StatusBar
-    DIM Sidebar      AS ScrollPanel
-    DIM SidebarW     AS INTEGER     ' configurable width of the left sidebar
+    DIM Width     AS INTEGER
+    DIM Height    AS INTEGER
+    DIM Focus     AS INTEGER     ' which panel has focus (see ui/layout.dbas)
+    DIM Mode      AS INTEGER     ' modal input mode (see ui/layout.dbas)
+    DIM MenuBar   AS MenuBar
+    DIM StatusBar AS StatusBar
+    DIM Tree      AS Tree        ' project tree sidebar
+    DIM SidebarW  AS INTEGER     ' configurable width of the left sidebar
 END TYPE
 
 FUNCTION NewModel() AS Model
@@ -44,41 +44,13 @@ FUNCTION NewModel() AS Model
     m.MenuBar = NewMenuBar()
     m.StatusBar = NewStatusBar()
     m.StatusBar.Message = defaultStatus()
-
-    m.Sidebar = NewScrollPanel()
-    m.Sidebar.Title = "Project"
-    m.Sidebar.Cursor = 0
-    m.Sidebar.Focused = TRUE
-    ' Placeholder project tree — real loader lands when project/tree.dbas does.
-    m.Sidebar.Lines = sampleProjectLines()
+    m.Tree = NewTree()
+    m.Tree.SetFocused(TRUE)
     RETURN m
 END FUNCTION
 
 FUNCTION defaultStatus() AS STRING
-    RETURN "DBtui — F10: Menu  |  Tab: Focus  |  ↑/↓: Move  |  q: Quit"
-END FUNCTION
-
-FUNCTION sampleProjectLines() AS []STRING
-    DIM xs AS []STRING
-    xs = APPEND(xs, "📁 default")
-    xs = APPEND(xs, "  📄 main.dbas")
-    xs = APPEND(xs, "  📂 forms")
-    xs = APPEND(xs, "    📄 Form1.frm")
-    xs = APPEND(xs, "    📄 Form2.frm")
-    xs = APPEND(xs, "    📄 frmAbout.frm")
-    xs = APPEND(xs, "  📂 modules")
-    xs = APPEND(xs, "    📄 utils.dbas")
-    xs = APPEND(xs, "    📄 db.dbas")
-    xs = APPEND(xs, "    📄 net.dbas")
-    xs = APPEND(xs, "  📂 widgets")
-    xs = APPEND(xs, "    📄 button.dbas")
-    xs = APPEND(xs, "    📄 list.dbas")
-    xs = APPEND(xs, "    📄 textinput.dbas")
-    xs = APPEND(xs, "    📄 progress.dbas")
-    xs = APPEND(xs, "    📄 spinner.dbas")
-    xs = APPEND(xs, "  📄 README.md")
-    xs = APPEND(xs, "  📄 project.dbproj")
-    RETURN xs
+    RETURN "DBtui — F10: Menu  |  Tab: Focus  |  ↑/↓: Move  |  Space: Expand  |  q: Quit"
 END FUNCTION
 
 ' ----------------------------------------------------------------------
@@ -99,9 +71,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Height = sizeMsg.Height
         m.MenuBar.SetWidth(m.Width)
         m.StatusBar.SetWidth(m.Width)
-        m.Sidebar.Width = m.SidebarW
-        m.Sidebar.Height = m.Height - 2  ' below menubar, above statusbar
-        IF m.Sidebar.Height < 3 THEN m.Sidebar.Height = 3
+        DIM treeH AS INTEGER = m.Height - 2
+        IF treeH < 3 THEN treeH = 3
+        m.Tree.SetSize(m.SidebarW, treeH)
         RETURN m, NIL
     END IF
 
@@ -162,43 +134,51 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF k = "tab" THEN
-            ' Cycle Sidebar ↔ Workspace; the workspace doesn't have its
-            ' own cursor yet, so we just toggle the sidebar focus flag.
+            ' Cycle Sidebar ↔ Workspace.
             IF m.Focus = FocusProjectTree THEN
                 m.Focus = FocusVisual
-                m.Sidebar.Focused = FALSE
+                m.Tree.SetFocused(FALSE)
             ELSE
                 m.Focus = FocusProjectTree
-                m.Sidebar.Focused = TRUE
+                m.Tree.SetFocused(TRUE)
             END IF
             RETURN m, NIL
         END IF
         IF m.Focus = FocusProjectTree THEN
             IF k = "up" THEN
-                m.Sidebar.CursorUp()
+                m.Tree.Panel.CursorUp()
                 RETURN m, NIL
             END IF
             IF k = "down" THEN
-                m.Sidebar.CursorDown()
+                m.Tree.Panel.CursorDown()
                 RETURN m, NIL
             END IF
             IF k = "pgup" THEN
-                m.Sidebar.ScrollUp()
-                m.Sidebar.ScrollUp()
-                m.Sidebar.ScrollUp()
-                m.Sidebar.ScrollUp()
+                m.Tree.Panel.ScrollUp()
+                m.Tree.Panel.ScrollUp()
+                m.Tree.Panel.ScrollUp()
+                m.Tree.Panel.ScrollUp()
                 RETURN m, NIL
             END IF
             IF k = "pgdown" THEN
-                m.Sidebar.ScrollDown()
-                m.Sidebar.ScrollDown()
-                m.Sidebar.ScrollDown()
-                m.Sidebar.ScrollDown()
+                m.Tree.Panel.ScrollDown()
+                m.Tree.Panel.ScrollDown()
+                m.Tree.Panel.ScrollDown()
+                m.Tree.Panel.ScrollDown()
+                RETURN m, NIL
+            END IF
+            IF k = "space" OR k = " " THEN
+                m.Tree.ToggleExpand()
                 RETURN m, NIL
             END IF
             IF k = "enter" THEN
-                IF m.Sidebar.Cursor >= 0 AND m.Sidebar.Cursor < LEN(m.Sidebar.Lines) THEN
-                    m.StatusBar.Message = fmt.Sprintf("opened: %s  (loader — TBD)", m.Sidebar.Lines[m.Sidebar.Cursor])
+                DIM node AS POINTER TO TreeNode = m.Tree.CursorNode()
+                IF node <> NIL THEN
+                    IF node.Kind = NodeFolder OR (node.Kind = NodeForm AND LEN(node.Children) > 0) THEN
+                        m.Tree.ToggleExpand()
+                    ELSE
+                        m.StatusBar.Message = fmt.Sprintf("opened: %s  (loader — TBD)", node.Name)
+                    END IF
                 END IF
                 RETURN m, NIL
             END IF
@@ -236,7 +216,7 @@ FUNCTION renderBody(m AS Model) AS STRING
     IF bodyH < 1 THEN bodyH = 1
 
     ' Sidebar on the left, empty workspace on the right.
-    DIM sidebar AS STRING = m.Sidebar.Render()
+    DIM sidebar AS STRING = m.Tree.Render()
     DIM rightW AS INTEGER = m.Width - m.SidebarW
     IF rightW < 1 THEN rightW = 1
     DIM workspace AS STRING = BgStyle().Width(rightW).Height(bodyH).Align(lipgloss.Center, lipgloss.Center).Render("(workspace)")

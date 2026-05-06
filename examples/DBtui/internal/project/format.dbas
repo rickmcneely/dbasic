@@ -1,0 +1,82 @@
+' DBtui — internal/project/format.dbas
+'
+' Project file format. Mirrors ~/vgtui/internal/project/format.go in
+' shape: a Project owns Forms and Modules; each Form owns WidgetEntry
+' instances. JSON marshalling will land alongside File→Open / Save in
+' a later session — for now these are pure data carriers used by the
+' tree builder and (eventually) the codegen.
+
+' WidgetEntry is a serialized widget instance on a form.
+TYPE WidgetEntry
+    DIM Id         AS STRING                       ' user-facing id, e.g. "btnOK"
+    DIM Kind       AS STRING                       ' widget type, e.g. "Button"
+    DIM X          AS INTEGER
+    DIM Y          AS INTEGER
+    DIM Width      AS INTEGER
+    DIM Height     AS INTEGER
+    DIM Visible    AS BOOLEAN
+    DIM ZOrder     AS INTEGER
+    DIM TabIndex   AS INTEGER
+    DIM TabStop    AS BOOLEAN
+    DIM Anchor     AS STRING                        ' "Top,Left" / "Top,Left,Right"
+    DIM Properties AS MAP OF STRING TO ANY
+END TYPE
+
+' Form represents a visual form with widgets and associated code.
+TYPE Form
+    DIM Name          AS STRING
+    DIM File          AS STRING                     ' e.g. "forms/Form1.dbf"
+    DIM Code          AS STRING                     ' e.g. "forms/Form1.dbas"
+    DIM Width         AS INTEGER
+    DIM Height        AS INTEGER
+    DIM Title         AS STRING                     ' window title text
+    DIM Modal         AS BOOLEAN
+    DIM ResizableX    AS BOOLEAN
+    DIM ResizableY    AS BOOLEAN
+    DIM Border        AS STRING                     ' "normal" | "thick" | "double" | "none"
+    DIM Corner        AS STRING                     ' "square" | "round"
+    DIM StartPos      AS STRING                     ' "center" | "topleft" | "manual"
+    DIM BgColor       AS STRING                     ' hex
+    DIM FgColor       AS STRING                     ' hex
+    DIM Visible       AS BOOLEAN
+    DIM ShowInTaskbar AS BOOLEAN
+    DIM ShowStatusBar AS BOOLEAN
+    DIM Widgets       AS []WidgetEntry
+END TYPE
+
+' Module represents a standalone DBasic source module.
+TYPE Module
+    DIM Name AS STRING
+    DIM File AS STRING                             ' e.g. "modules/utils.dbas"
+END TYPE
+
+' Project is the root of a .dbproj file.
+TYPE Project
+    DIM Name      AS STRING
+    DIM Version   AS STRING
+    DIM StartForm AS STRING                         ' name of the startup form
+    DIM Forms     AS []Form
+    DIM Modules   AS []Module
+END TYPE
+
+' FormDefaults returns sensible defaults for a freshly-created form.
+FUNCTION FormDefaults(name AS STRING) AS Form
+    DIM f AS Form
+    f.Name = name
+    f.File = "forms/" + name + ".dbf"
+    f.Code = "forms/" + name + ".dbas"
+    f.Width = 80
+    f.Height = 24
+    f.Title = name
+    f.Modal = FALSE
+    f.ResizableX = TRUE
+    f.ResizableY = TRUE
+    f.Border = "normal"
+    f.Corner = "round"
+    f.StartPos = "center"
+    f.BgColor = "#1a1b2e"
+    f.FgColor = "#e0def4"
+    f.Visible = TRUE
+    f.ShowInTaskbar = TRUE
+    RETURN f
+END FUNCTION

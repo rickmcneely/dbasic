@@ -1,0 +1,259 @@
+' DBtui — internal/project/tree.dbas
+'
+' Project tree panel — TreeNodes plus an embedded ScrollPanel. Direct
+' port of the build/flatten/expand subset of
+' ~/vgtui/internal/project/tree.go. JSON load/save and Delete/Rename
+' come back when File→Open and the context menu land.
+'
+' Surface:
+'   * NodeKind constants
+'   * TreeNode TYPE (recursive via []POINTER TO TreeNode)
+'   * Tree TYPE (Project + Nodes + Flat + Panel)
+'   * NewTree() — returns a Tree populated from DefaultProject()
+'   * DefaultProject() — minimal sample project (1 form, 1 module)
+'   * buildFromProject — re-derives Nodes from t.Project
+'   * rebuildLines / flattenNodes — flatten with indent + node icons
+'   * ToggleExpand / CursorNode
+'   * SetSize / SetFocused / Render — passthrough to the embedded panel
+
+IMPORT "strings"
+
+' ----------------------------------------------------------------------
+' Node kinds
+' ----------------------------------------------------------------------
+
+CONST NodeFolder AS INTEGER = 0
+CONST NodeForm   AS INTEGER = 1
+CONST NodeCode   AS INTEGER = 2
+CONST NodeWidget AS INTEGER = 3   ' widget entry under a form
+
+' ----------------------------------------------------------------------
+' TreeNode — recursive, so Children holds POINTERs.
+' ----------------------------------------------------------------------
+
+TYPE TreeNode
+    DIM Name     AS STRING
+    DIM Kind     AS INTEGER
+    DIM Path     AS STRING                ' file path for forms/modules
+    DIM CodePath AS STRING                ' associated code file (forms only)
+    DIM Expanded AS BOOLEAN
+    DIM Depth    AS INTEGER
+    DIM Children AS []POINTER TO TreeNode
+END TYPE
+
+' ----------------------------------------------------------------------
+' Tree
+' ----------------------------------------------------------------------
+
+TYPE Tree
+    DIM Panel   AS ScrollPanel
+    DIM Nodes   AS []POINTER TO TreeNode  ' top-level nodes (usually one root)
+    DIM Flat    AS []POINTER TO TreeNode  ' flattened visible nodes (mirrors Panel.Lines)
+    DIM Project AS Project
+END TYPE
+
+' NewTree creates a project tree using the in-code DefaultProject().
+' (Loading from disk lands when File→Open is wired.)
+FUNCTION NewTree() AS Tree
+    DIM t AS Tree
+    t.Panel = NewScrollPanel()
+    t.Panel.Title = "Project"
+    t.Panel.Cursor = 0
+    t.Project = DefaultProject()
+    t.buildFromProject()
+    t.rebuildLines()
+    RETURN t
+END FUNCTION
+
+' DefaultProject returns the minimal sample project DBtui shows on a
+' clean boot. vgtui ships a much heavier default with several pre-laid
+' widgets to demo the form designer; we keep ours small until the
+' designer lands.
+FUNCTION DefaultProject() AS Project
+    DIM p AS Project
+    p.Name = "myproject"
+    p.Version = "0.1.0"
+    p.StartForm = "frmStart"
+
+    DIM f AS Form = FormDefaults("frmStart")
+    f.Title = "My Application"
+    f.Width = 78
+    f.Height = 22
+    p.Forms = APPEND(p.Forms, f)
+
+    DIM m AS Module
+    m.Name = "main"
+    m.File = "main.dbas"
+    p.Modules = APPEND(p.Modules, m)
+    RETURN p
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Build / flatten
+' ----------------------------------------------------------------------
+
+' newNode is a tiny helper because DBasic doesn't have struct literals
+' with named fields and TreeNode has enough fields that an inline
+' constructor at every call site would bury the structure.
+FUNCTION newNode(name AS STRING, kind AS INTEGER, depth AS INTEGER) AS POINTER TO TreeNode
+    DIM n AS TreeNode
+    n.Name = name
+    n.Kind = kind
+    n.Depth = depth
+    n.Expanded = FALSE
+    RETURN @n
+END FUNCTION
+
+SUB (t AS POINTER TO Tree) buildFromProject()
+    DIM root AS POINTER TO TreeNode = newNode(t.Project.Name + "/", NodeFolder, 0)
+    root.Expanded = TRUE
+
+    ' forms/ folder
+    DIM formsDir AS POINTER TO TreeNode = newNode("forms/", NodeFolder, 1)
+    formsDir.Expanded = TRUE
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(t.Project.Forms) - 1
+        DIM f AS Form = t.Project.Forms[i]
+        DIM formNode AS POINTER TO TreeNode = newNode(f.Name + ".dbf", NodeForm, 2)
+        formNode.Path = f.File
+        formNode.CodePath = f.Code
+        ' Widgets become children of the form node.
+        DIM w AS INTEGER
+        FOR w = 0 TO LEN(f.Widgets) - 1
+            DIM widgetEntry AS WidgetEntry = f.Widgets[w]
+            DIM widgetNode AS POINTER TO TreeNode = newNode(widgetEntry.Id + " (" + widgetEntry.Kind + ")", NodeWidget, 3)
+            widgetNode.Path = f.File
+            formNode.Children = APPEND(formNode.Children, widgetNode)
+        NEXT w
+        DIM codeNode AS POINTER TO TreeNode = newNode(f.Name + ".dbas", NodeCode, 2)
+        codeNode.Path = f.Code
+        formsDir.Children = APPEND(formsDir.Children, formNode)
+        formsDir.Children = APPEND(formsDir.Children, codeNode)
+    NEXT i
+    root.Children = APPEND(root.Children, formsDir)
+
+    ' modules/ folder (only when there are standalone modules)
+    IF LEN(t.Project.Modules) > 0 THEN
+        DIM modsDir AS POINTER TO TreeNode = newNode("modules/", NodeFolder, 1)
+        modsDir.Expanded = TRUE
+        DIM j AS INTEGER
+        FOR j = 0 TO LEN(t.Project.Modules) - 1
+            DIM modEntry AS Module = t.Project.Modules[j]
+            DIM modNode AS POINTER TO TreeNode = newNode(baseName(modEntry.File), NodeCode, 2)
+            modNode.Path = modEntry.File
+            modsDir.Children = APPEND(modsDir.Children, modNode)
+        NEXT j
+        root.Children = APPEND(root.Children, modsDir)
+    END IF
+
+    DIM topLevel AS []POINTER TO TreeNode
+    topLevel = APPEND(topLevel, root)
+    t.Nodes = topLevel
+END SUB
+
+' baseName returns the last path component — strips everything up to
+' and including the final "/". Pure DBasic string ops; no filepath import.
+FUNCTION baseName(path AS STRING) AS STRING
+    DIM idx AS INTEGER = strings.LastIndex(path, "/")
+    IF idx < 0 THEN RETURN path
+    RETURN strings.TrimPrefix(path, Mid(path, 1, idx + 1))
+END FUNCTION
+
+SUB (t AS POINTER TO Tree) rebuildLines()
+    DIM emptyFlat AS []POINTER TO TreeNode
+    DIM emptyLines AS []STRING
+    t.Flat = emptyFlat
+    t.Panel.Lines = emptyLines
+    t.flattenNodes(t.Nodes)
+END SUB
+
+SUB (t AS POINTER TO Tree) flattenNodes(nodes AS []POINTER TO TreeNode)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(nodes) - 1
+        DIM n AS POINTER TO TreeNode = nodes[i]
+        DIM indent AS STRING = strings.Repeat("  ", n.Depth)
+        DIM icon AS STRING = "  "
+
+        IF n.Kind = NodeFolder THEN
+            IF n.Expanded THEN
+                icon = "▾ "
+            ELSE
+                icon = "▸ "
+            END IF
+        END IF
+
+        IF n.Kind = NodeForm THEN
+            DIM formName AS STRING = strings.TrimSuffix(n.Name, ".dbf")
+            DIM isStart AS BOOLEAN = (t.Project.StartForm = formName)
+            IF LEN(n.Children) > 0 THEN
+                IF n.Expanded THEN
+                    IF isStart THEN
+                        icon = "▾ ★ "
+                    ELSE
+                        icon = "▾ □ "
+                    END IF
+                ELSE
+                    IF isStart THEN
+                        icon = "▸ ★ "
+                    ELSE
+                        icon = "▸ □ "
+                    END IF
+                END IF
+            ELSE
+                IF isStart THEN
+                    icon = "★ "
+                ELSE
+                    icon = "□ "
+                END IF
+            END IF
+        END IF
+
+        IF n.Kind = NodeCode THEN icon = "◇ "
+        IF n.Kind = NodeWidget THEN icon = "▪ "
+
+        t.Panel.Lines = APPEND(t.Panel.Lines, indent + icon + n.Name)
+        t.Flat = APPEND(t.Flat, n)
+
+        IF (n.Kind = NodeFolder OR n.Kind = NodeForm) AND n.Expanded THEN
+            t.flattenNodes(n.Children)
+        END IF
+    NEXT i
+END SUB
+
+' ----------------------------------------------------------------------
+' Cursor + interaction
+' ----------------------------------------------------------------------
+
+FUNCTION (t AS Tree) CursorNode() AS POINTER TO TreeNode
+    IF t.Panel.Cursor < 0 OR t.Panel.Cursor >= LEN(t.Flat) THEN RETURN NIL
+    RETURN t.Flat[t.Panel.Cursor]
+END FUNCTION
+
+' ToggleExpand toggles the expand state of the node at the cursor and
+' re-flattens. No-op for non-folder/non-form nodes.
+SUB (t AS POINTER TO Tree) ToggleExpand()
+    IF t.Panel.Cursor < 0 OR t.Panel.Cursor >= LEN(t.Flat) THEN RETURN
+    DIM node AS POINTER TO TreeNode = t.Flat[t.Panel.Cursor]
+    DIM canToggle AS BOOLEAN = (node.Kind = NodeFolder)
+    IF node.Kind = NodeForm AND LEN(node.Children) > 0 THEN canToggle = TRUE
+    IF NOT canToggle THEN RETURN
+    node.Expanded = NOT node.Expanded
+    t.rebuildLines()
+END SUB
+
+' ----------------------------------------------------------------------
+' Panel passthroughs
+' ----------------------------------------------------------------------
+
+SUB (t AS POINTER TO Tree) SetSize(w AS INTEGER, h AS INTEGER)
+    t.Panel.Width = w
+    t.Panel.Height = h
+END SUB
+
+SUB (t AS POINTER TO Tree) SetFocused(f AS BOOLEAN)
+    t.Panel.Focused = f
+END SUB
+
+FUNCTION (t AS Tree) Render() AS STRING
+    RETURN t.Panel.Render()
+END FUNCTION

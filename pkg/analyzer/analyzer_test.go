@@ -621,3 +621,57 @@ END SUB`
 		t.Error("expected type-mismatch error assigning STRING into INTEGER slice element")
 	}
 }
+
+// TestAnalyzeRecursiveType covers the two-pass TYPE registration that
+// lets a struct field reference its own type via a pointer slice
+// (linked-list / tree-node shape). Before the predeclare pass, this
+// tripped "unknown type: NODE" because field resolution ran before
+// the type itself was registered.
+func TestAnalyzeRecursiveType(t *testing.T) {
+	input := `TYPE Node
+    DIM Name AS STRING
+    DIM Children AS []POINTER TO Node
+END TYPE
+
+SUB Main()
+    DIM n AS Node
+    n.Name = "root"
+    PRINT n.Name
+END SUB`
+
+	program := parse(input)
+	a := New()
+	_, errors := a.Analyze(program)
+
+	if len(errors) > 0 {
+		t.Errorf("unexpected errors for recursive TYPE: %v", errors)
+	}
+}
+
+// TestAnalyzeMutualRecursiveTypes covers two types that reference each
+// other — declaration order shouldn't matter once name predeclaration
+// is in place.
+func TestAnalyzeMutualRecursiveTypes(t *testing.T) {
+	input := `TYPE Listing
+    DIM Owner AS POINTER TO Person
+END TYPE
+
+TYPE Person
+    DIM Name     AS STRING
+    DIM Listings AS []POINTER TO Listing
+END TYPE
+
+SUB Main()
+    DIM p AS Person
+    p.Name = "alice"
+    PRINT p.Name
+END SUB`
+
+	program := parse(input)
+	a := New()
+	_, errors := a.Analyze(program)
+
+	if len(errors) > 0 {
+		t.Errorf("unexpected errors for mutually recursive TYPEs: %v", errors)
+	}
+}

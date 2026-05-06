@@ -191,7 +191,16 @@ func (a *Analyzer) Analyze(program *parser.Program) (*SymbolTable, []string) {
 		}
 	}
 
-	// Second pass: collect all type definitions
+	// Second pass: collect all type definitions.
+	// Split into two sub-passes so that types can reference each other
+	// (mutual recursion) and themselves (e.g. linked-list / tree nodes
+	// with `Children AS []POINTER TO Node`). Sub-pass A registers a
+	// name placeholder for every type; sub-pass B resolves fields.
+	for _, stmt := range program.Statements {
+		if ts, ok := stmt.(*parser.TypeStatement); ok {
+			a.predeclareType(ts)
+		}
+	}
 	for _, stmt := range program.Statements {
 		if ts, ok := stmt.(*parser.TypeStatement); ok {
 			a.declareType(ts)
@@ -280,6 +289,15 @@ func (a *Analyzer) errorWithHint(line int, format string, hint string, args ...i
 	a.errors = append(a.errors, sb.String())
 }
 
+// predeclareType registers a type's name with an empty struct so that
+// later types (and the type itself, in recursive cases) can reference
+// it. Fields are populated in declareType once every name is in scope.
+func (a *Analyzer) predeclareType(stmt *parser.TypeStatement) {
+	structType := NewStructType(stmt.Name.Value, nil)
+	structType.Implements = stmt.Implements
+	a.types.Register(stmt.Name.Value, structType)
+}
+
 func (a *Analyzer) declareType(stmt *parser.TypeStatement) {
 	var fields []*StructField
 	for _, f := range stmt.Fields {
@@ -290,8 +308,16 @@ func (a *Analyzer) declareType(stmt *parser.TypeStatement) {
 		})
 	}
 
+	// Mutate the placeholder registered in predeclareType so that any
+	// pointer types already constructed against the empty placeholder
+	// see the populated field list.
+	if existing := a.types.Lookup(stmt.Name.Value); existing != nil {
+		existing.Fields = fields
+		existing.Implements = stmt.Implements
+		return
+	}
 	structType := NewStructType(stmt.Name.Value, fields)
-	structType.Implements = stmt.Implements // Copy interface info
+	structType.Implements = stmt.Implements
 	a.types.Register(stmt.Name.Value, structType)
 }
 

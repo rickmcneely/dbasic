@@ -22,6 +22,8 @@ INCLUDE "internal/ui/theme.dbas"
 INCLUDE "internal/ui/scrollpanel.dbas"
 INCLUDE "internal/ui/statusbar.dbas"
 INCLUDE "internal/ui/menubar.dbas"
+INCLUDE "internal/project/format.dbas"
+INCLUDE "internal/project/tree.dbas"
 INCLUDE "internal/app/app.dbas"
 
 SUB Main()
