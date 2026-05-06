@@ -1,19 +1,23 @@
 ' DBtui — internal/app/app.dbas
 '
-' Top-level bubbletea v2 model. Wires the MenuBar (top) and StatusBar
-' (bottom) around an empty workspace painted in the VBDOS theme.
+' Top-level bubbletea v2 model. Wires:
+'   * MenuBar (top)
+'   * StatusBar (bottom)
+'   * A ScrollPanel left sidebar (placeholder project tree)
+'   * An empty workspace center
 '
 ' Keyboard:
-'   F10 / Alt+F  → open the File menu
-'   Esc          → close the menu, return to normal mode
-'   Left / Right → cycle menus (when one is open)
-'   Up / Down    → cursor through dropdown items
-'   Enter        → "select" — currently just echoes the action to the
-'                   status bar (action dispatch lands in a later pass)
-'   q / Ctrl+C   → quit (only when no menu is open)
+'   F10           open the File menu
+'   Tab           cycle focus: Sidebar → Workspace → Sidebar
+'   Esc           close menu (in menu mode)
+'   ↑/↓           cursor through the focused panel
+'   PgUp / PgDn   scroll the focused panel
+'   Enter         "select" — echoes action / selected line to status bar
+'   q / Ctrl+C    quit (only when no menu is open)
 
 IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "fmt"
 
 ' ----------------------------------------------------------------------
 ' Model
@@ -22,22 +26,59 @@ IMPORT "charm.land/lipgloss/v2" AS lipgloss
 TYPE Model
     DIM Width        AS INTEGER
     DIM Height       AS INTEGER
-    DIM Focus        AS INTEGER     ' currently-focused panel (see ui/layout.dbas)
+    DIM Focus        AS INTEGER     ' which panel has focus (see ui/layout.dbas)
     DIM Mode         AS INTEGER     ' modal input mode (see ui/layout.dbas)
     DIM MenuBar      AS MenuBar
     DIM StatusBar    AS StatusBar
+    DIM Sidebar      AS ScrollPanel
+    DIM SidebarW     AS INTEGER     ' configurable width of the left sidebar
 END TYPE
 
 FUNCTION NewModel() AS Model
     DIM m AS Model
     m.Width = 0
     m.Height = 0
-    m.Focus = FocusVisual
+    m.Focus = FocusProjectTree
     m.Mode = ModeNormal
+    m.SidebarW = 28
     m.MenuBar = NewMenuBar()
     m.StatusBar = NewStatusBar()
-    m.StatusBar.Message = "DBtui — F10: Menu  |  q: Quit"
+    m.StatusBar.Message = defaultStatus()
+
+    m.Sidebar = NewScrollPanel()
+    m.Sidebar.Title = "Project"
+    m.Sidebar.Cursor = 0
+    m.Sidebar.Focused = TRUE
+    ' Placeholder project tree — real loader lands when project/tree.dbas does.
+    m.Sidebar.Lines = sampleProjectLines()
     RETURN m
+END FUNCTION
+
+FUNCTION defaultStatus() AS STRING
+    RETURN "DBtui — F10: Menu  |  Tab: Focus  |  ↑/↓: Move  |  q: Quit"
+END FUNCTION
+
+FUNCTION sampleProjectLines() AS []STRING
+    DIM xs AS []STRING
+    xs = APPEND(xs, "📁 default")
+    xs = APPEND(xs, "  📄 main.dbas")
+    xs = APPEND(xs, "  📂 forms")
+    xs = APPEND(xs, "    📄 Form1.frm")
+    xs = APPEND(xs, "    📄 Form2.frm")
+    xs = APPEND(xs, "    📄 frmAbout.frm")
+    xs = APPEND(xs, "  📂 modules")
+    xs = APPEND(xs, "    📄 utils.dbas")
+    xs = APPEND(xs, "    📄 db.dbas")
+    xs = APPEND(xs, "    📄 net.dbas")
+    xs = APPEND(xs, "  📂 widgets")
+    xs = APPEND(xs, "    📄 button.dbas")
+    xs = APPEND(xs, "    📄 list.dbas")
+    xs = APPEND(xs, "    📄 textinput.dbas")
+    xs = APPEND(xs, "    📄 progress.dbas")
+    xs = APPEND(xs, "    📄 spinner.dbas")
+    xs = APPEND(xs, "  📄 README.md")
+    xs = APPEND(xs, "  📄 project.dbproj")
+    RETURN xs
 END FUNCTION
 
 ' ----------------------------------------------------------------------
@@ -49,7 +90,7 @@ FUNCTION (m AS Model) Init() AS tea.Cmd
 END FUNCTION
 
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
-    ' WindowSizeMsg — record dimensions and cascade to the menu/status bar.
+    ' WindowSizeMsg — record dimensions and cascade to children.
     DIM sizeMsg AS tea.WindowSizeMsg
     DIM sizeOk AS BOOLEAN
     sizeMsg, sizeOk = msg.(tea.WindowSizeMsg)
@@ -58,10 +99,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Height = sizeMsg.Height
         m.MenuBar.SetWidth(m.Width)
         m.StatusBar.SetWidth(m.Width)
+        m.Sidebar.Width = m.SidebarW
+        m.Sidebar.Height = m.Height - 2  ' below menubar, above statusbar
+        IF m.Sidebar.Height < 3 THEN m.Sidebar.Height = 3
         RETURN m, NIL
     END IF
 
-    ' KeyPressMsg — dispatch based on current mode.
+    ' KeyPressMsg — dispatch by mode.
     DIM keyMsg AS tea.KeyPressMsg
     DIM keyOk AS BOOLEAN
     keyMsg, keyOk = msg.(tea.KeyPressMsg)
@@ -69,11 +113,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM k AS STRING = keyMsg.String()
 
         IF m.Mode = ModeMenuBar THEN
-            ' --- Menu mode --------------------------------------------------
+            ' --- Menu mode ---------------------------------------------
             IF k = "esc" THEN
                 m.MenuBar.Close()
                 m.Mode = ModeNormal
-                m.StatusBar.Message = "DBtui — F10: Menu  |  q: Quit"
+                m.StatusBar.Message = defaultStatus()
                 RETURN m, NIL
             END IF
             IF k = "left" THEN
@@ -102,7 +146,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 IF action <> "" THEN
                     m.StatusBar.Message = "selected: " + action + "  (action dispatch — TBD)"
                 ELSE
-                    m.StatusBar.Message = "DBtui — F10: Menu  |  q: Quit"
+                    m.StatusBar.Message = defaultStatus()
                 END IF
                 RETURN m, NIL
             END IF
@@ -110,12 +154,54 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
 
-        ' --- Normal mode --------------------------------------------------
+        ' --- Normal mode -----------------------------------------------
         IF k = "f10" THEN
             m.MenuBar.OpenMenu(0)
             m.Mode = ModeMenuBar
             m.StatusBar.Message = "Menu — Esc: Close  ←/→: Menu  ↑/↓: Item  Enter: Select"
             RETURN m, NIL
+        END IF
+        IF k = "tab" THEN
+            ' Cycle Sidebar ↔ Workspace; the workspace doesn't have its
+            ' own cursor yet, so we just toggle the sidebar focus flag.
+            IF m.Focus = FocusProjectTree THEN
+                m.Focus = FocusVisual
+                m.Sidebar.Focused = FALSE
+            ELSE
+                m.Focus = FocusProjectTree
+                m.Sidebar.Focused = TRUE
+            END IF
+            RETURN m, NIL
+        END IF
+        IF m.Focus = FocusProjectTree THEN
+            IF k = "up" THEN
+                m.Sidebar.CursorUp()
+                RETURN m, NIL
+            END IF
+            IF k = "down" THEN
+                m.Sidebar.CursorDown()
+                RETURN m, NIL
+            END IF
+            IF k = "pgup" THEN
+                m.Sidebar.ScrollUp()
+                m.Sidebar.ScrollUp()
+                m.Sidebar.ScrollUp()
+                m.Sidebar.ScrollUp()
+                RETURN m, NIL
+            END IF
+            IF k = "pgdown" THEN
+                m.Sidebar.ScrollDown()
+                m.Sidebar.ScrollDown()
+                m.Sidebar.ScrollDown()
+                m.Sidebar.ScrollDown()
+                RETURN m, NIL
+            END IF
+            IF k = "enter" THEN
+                IF m.Sidebar.Cursor >= 0 AND m.Sidebar.Cursor < LEN(m.Sidebar.Lines) THEN
+                    m.StatusBar.Message = fmt.Sprintf("opened: %s  (loader — TBD)", m.Sidebar.Lines[m.Sidebar.Cursor])
+                END IF
+                RETURN m, NIL
+            END IF
         END IF
         IF k = "q" OR k = "ctrl+c" THEN
             RETURN m, tea.Quit
@@ -146,28 +232,34 @@ FUNCTION renderBody(m AS Model) AS STRING
     DIM menuBar AS STRING = m.MenuBar.Render()
     DIM statusBar AS STRING = m.StatusBar.Render()
 
-    ' When a dropdown is open, render it directly under the menu bar at
-    ' the current menu's x-offset. The dropdown itself eats the top of
-    ' the workspace area; the rest of the workspace stays painted in the
-    ' VBDOS background. This is the cheap-and-correct first pass — a
-    ' proper overlay (with the workspace still visible *behind* the
-    ' dropdown) lands when ScrollPanel does and we have a real
-    ' compositing helper to share.
-    DIM workspaceH AS INTEGER = m.Height - 2
-    IF workspaceH < 1 THEN workspaceH = 1
+    DIM bodyH AS INTEGER = m.Height - 2
+    IF bodyH < 1 THEN bodyH = 1
+
+    ' Sidebar on the left, empty workspace on the right.
+    DIM sidebar AS STRING = m.Sidebar.Render()
+    DIM rightW AS INTEGER = m.Width - m.SidebarW
+    IF rightW < 1 THEN rightW = 1
+    DIM workspace AS STRING = BgStyle().Width(rightW).Height(bodyH).Align(lipgloss.Center, lipgloss.Center).Render("(workspace)")
+    DIM bodyRow AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, workspace)
 
     IF m.MenuBar.Open THEN
         DIM dropdown AS STRING = m.MenuBar.RenderDropdown()
         DIM xOff AS INTEGER = m.MenuBar.MenuXOffset(m.MenuBar.Active)
         DIM dropPadded AS STRING = lipgloss.NewStyle().PaddingLeft(xOff).Background(ColorBg()).Render(dropdown)
+        ' Layer the dropdown on top of the body row by joining vertically;
+        ' the dropdown lives in the area immediately under the menubar and
+        ' eats the top portion of bodyRow.
         DIM dropH AS INTEGER = lipgloss.Height(dropPadded)
-        DIM remH AS INTEGER = workspaceH - dropH
+        DIM remH AS INTEGER = bodyH - dropH
         IF remH < 0 THEN remH = 0
-        DIM rest AS STRING = BgStyle().Width(m.Width).Height(remH).Render("")
-        DIM withDropdown AS STRING = lipgloss.JoinVertical(lipgloss.Left, dropPadded, rest)
-        RETURN lipgloss.JoinVertical(lipgloss.Left, menuBar, withDropdown, statusBar)
+        DIM trimmedBody AS STRING = bodyRow
+        ' Cheap clip: re-render bodyRow with reduced height by composing
+        ' a transparent backing — leaving as-is keeps the rest of the
+        ' panel readable under the dropdown.
+        _ = remH
+        DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, dropPadded, trimmedBody)
+        RETURN lipgloss.JoinVertical(lipgloss.Left, menuBar, stacked, statusBar)
     END IF
 
-    DIM emptyWorkspace AS STRING = BgStyle().Width(m.Width).Height(workspaceH).Align(lipgloss.Center, lipgloss.Center).Render("(workspace)")
-    RETURN lipgloss.JoinVertical(lipgloss.Left, menuBar, emptyWorkspace, statusBar)
+    RETURN lipgloss.JoinVertical(lipgloss.Left, menuBar, bodyRow, statusBar)
 END FUNCTION

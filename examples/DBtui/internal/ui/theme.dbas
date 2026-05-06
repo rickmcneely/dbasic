@@ -23,6 +23,7 @@ CONST ColorStatusBgHex    AS STRING = "#24273a"
 CONST ColorStatusFgHex    AS STRING = "#8087a2"   ' Dimmer status text
 CONST ColorHotkeyHex      AS STRING = "#f5a97f"   ' Warm peach for hotkeys
 CONST ColorFocusBorderHex AS STRING = "#7dcfff"   ' Matches accent
+CONST ColorHoverHex       AS STRING = "#262840"   ' Mouse-hover row tint
 
 ' Wrappers so the rest of the app can use lipgloss.Color values without
 ' re-typing the hex strings.
@@ -69,6 +70,46 @@ END FUNCTION
 
 FUNCTION ColorFocusBorder() AS color.Color
     RETURN lipgloss.Color(ColorFocusBorderHex)
+END FUNCTION
+
+FUNCTION ColorHover() AS color.Color
+    RETURN lipgloss.Color(ColorHoverHex)
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Border character sets — used by panels with manually-drawn frames.
+' singleBorder() is the unfocused look; doubleBorder() marks focus.
+' ----------------------------------------------------------------------
+
+TYPE borderChars
+    DIM TopLeft     AS STRING
+    DIM TopRight    AS STRING
+    DIM BottomLeft  AS STRING
+    DIM BottomRight AS STRING
+    DIM Horizontal  AS STRING
+    DIM Vertical    AS STRING
+END TYPE
+
+FUNCTION singleBorder() AS borderChars
+    DIM b AS borderChars
+    b.TopLeft = "╭"
+    b.TopRight = "╮"
+    b.BottomLeft = "╰"
+    b.BottomRight = "╯"
+    b.Horizontal = "─"
+    b.Vertical = "│"
+    RETURN b
+END FUNCTION
+
+FUNCTION doubleBorder() AS borderChars
+    DIM b AS borderChars
+    b.TopLeft = "┌"
+    b.TopRight = "┐"
+    b.BottomLeft = "└"
+    b.BottomRight = "┘"
+    b.Horizontal = "─"
+    b.Vertical = "│"
+    RETURN b
 END FUNCTION
 
 ' ----------------------------------------------------------------------

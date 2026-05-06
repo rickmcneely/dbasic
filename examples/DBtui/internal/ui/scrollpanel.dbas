@@ -1,0 +1,229 @@
+' DBtui — internal/ui/scrollpanel.dbas
+'
+' ScrollPanel — the bordered, scrollable, cursor-aware container that
+' every sidebar in DBtui (project tree, widget palette, properties,
+' package browser, status window) builds on. Direct port of
+' ~/vgtui/internal/ui/scrollpanel.go.
+'
+' Surface area:
+'   * Title (left of top border)
+'   * RightLabel (right of top border, optional)
+'   * Scroll indicator "N/total" on the top border when content overflows
+'   * BottomLabel (left of bottom border, optional — e.g. "[Copy] [Clear]")
+'   * Scrollbar track + thumb on the right inside edge
+'   * Cursor highlight (selected line) and Hover highlight (mouse over)
+'   * Single border when unfocused; double border when focused
+'
+' Methods:
+'   InnerHeight, ScrollUp, ScrollDown, CursorUp, CursorDown,
+'   EnsureCursorVisible, Render
+
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "fmt"
+IMPORT "strings"
+
+' ----------------------------------------------------------------------
+' Type
+' ----------------------------------------------------------------------
+
+TYPE ScrollPanel
+    DIM Title       AS STRING
+    DIM RightLabel  AS STRING        ' optional top-border right-side label
+    DIM BottomLabel AS STRING        ' optional bottom-border left-side label
+    DIM Lines       AS []STRING
+    DIM Offset      AS INTEGER
+    DIM Cursor      AS INTEGER       ' selected line index (-1 for none)
+    DIM Hover       AS INTEGER       ' mouseover line index (-1 for none)
+    DIM Focused     AS BOOLEAN
+    DIM Width       AS INTEGER
+    DIM Height      AS INTEGER       ' total outer height including border
+END TYPE
+
+FUNCTION NewScrollPanel() AS ScrollPanel
+    DIM s AS ScrollPanel
+    s.Cursor = -1
+    s.Hover = -1
+    RETURN s
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Geometry / scrolling
+' ----------------------------------------------------------------------
+
+FUNCTION (s AS ScrollPanel) InnerHeight() AS INTEGER
+    RETURN s.Height - 2
+END FUNCTION
+
+SUB (s AS POINTER TO ScrollPanel) ScrollDown()
+    DIM innerH AS INTEGER = s.InnerHeight()
+    DIM maxOffset AS INTEGER = LEN(s.Lines) - innerH
+    IF maxOffset < 0 THEN maxOffset = 0
+    IF s.Offset < maxOffset THEN s.Offset = s.Offset + 1
+END SUB
+
+SUB (s AS POINTER TO ScrollPanel) ScrollUp()
+    IF s.Offset > 0 THEN s.Offset = s.Offset - 1
+END SUB
+
+SUB (s AS POINTER TO ScrollPanel) CursorDown()
+    IF s.Cursor < LEN(s.Lines) - 1 THEN
+        s.Cursor = s.Cursor + 1
+        DIM innerH AS INTEGER = s.InnerHeight()
+        IF s.Cursor >= s.Offset + innerH THEN
+            s.Offset = s.Cursor - innerH + 1
+        END IF
+    END IF
+END SUB
+
+SUB (s AS POINTER TO ScrollPanel) CursorUp()
+    IF s.Cursor > 0 THEN
+        s.Cursor = s.Cursor - 1
+        IF s.Cursor < s.Offset THEN s.Offset = s.Cursor
+    END IF
+END SUB
+
+SUB (s AS POINTER TO ScrollPanel) EnsureCursorVisible()
+    DIM innerH AS INTEGER = s.InnerHeight()
+    IF innerH <= 0 THEN RETURN
+    IF s.Cursor < s.Offset THEN s.Offset = s.Cursor
+    IF s.Cursor >= s.Offset + innerH THEN
+        s.Offset = s.Cursor - innerH + 1
+    END IF
+END SUB
+
+' ----------------------------------------------------------------------
+' Render — produces exactly Width × Height characters (when those are
+' ≥ the minimum). Returns "" if the panel is too small to draw.
+' ----------------------------------------------------------------------
+
+FUNCTION (s AS ScrollPanel) Render() AS STRING
+    IF s.Width < 4 OR s.Height < 3 THEN RETURN ""
+
+    DIM innerH AS INTEGER = s.InnerHeight()
+    DIM totalLines AS INTEGER = LEN(s.Lines)
+    DIM canScroll AS BOOLEAN = totalLines > innerH
+
+    DIM contentW AS INTEGER = s.Width - 2
+    IF canScroll THEN contentW = contentW - 1
+    DIM innerW AS INTEGER = s.Width - 2
+
+    DIM bc AS borderChars = singleBorder()
+    DIM borderColor AS color.Color = ColorBorder()
+    IF s.Focused THEN
+        bc = doubleBorder()
+        borderColor = ColorFocusBorder()
+    END IF
+
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(borderColor).Background(ColorBg())
+    DIM bgStyle AS lipgloss.Style = lipgloss.NewStyle().Background(ColorBg()).Foreground(ColorFg())
+    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Background(ColorSelection()).Foreground(ColorFg()).Bold(TRUE)
+    DIM hoverStyle AS lipgloss.Style = lipgloss.NewStyle().Background(ColorHover()).Foreground(ColorFg())
+    DIM scrollTrack AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
+    DIM scrollThumb AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorBg())
+
+    ' ---- Top border: title (left) + indicator/right-label (right) -----
+    DIM rightPart AS STRING = ""
+    DIM rightPartLen AS INTEGER = 0
+    IF s.RightLabel <> "" THEN
+        rightPart = lipgloss.NewStyle().Foreground(ColorHotkey()).Background(ColorBg()).Render(s.RightLabel)
+        rightPartLen = LEN(s.RightLabel)
+    END IF
+    IF canScroll THEN
+        DIM indicator AS STRING = fmt.Sprintf(" %d/%d ", s.Offset + 1, totalLines)
+        rightPart = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorBg()).Render(indicator) + rightPart
+        rightPartLen = rightPartLen + LEN(indicator)
+    END IF
+
+    DIM topBar AS STRING = strings.Repeat(bc.Horizontal, innerW)
+    DIM titleVisW AS INTEGER = lipgloss.Width(s.Title)
+    IF s.Title <> "" AND titleVisW + 2 + rightPartLen < innerW THEN
+        DIM titleStr AS STRING = TitleStyle().Render(" " + s.Title + " ")
+        DIM titleLen AS INTEGER = titleVisW + 2
+        DIM fillLen AS INTEGER = innerW - titleLen - 1 - rightPartLen
+        IF fillLen < 0 THEN fillLen = 0
+        IF rightPartLen > 0 THEN
+            topBar = bc.Horizontal + titleStr + bStyle.Render(strings.Repeat(bc.Horizontal, fillLen)) + rightPart
+        ELSE
+            topBar = bc.Horizontal + titleStr + bStyle.Render(strings.Repeat(bc.Horizontal, fillLen))
+        END IF
+    ELSE
+        topBar = bStyle.Render(topBar)
+    END IF
+    DIM topLine AS STRING = bStyle.Render(bc.TopLeft) + topBar + bStyle.Render(bc.TopRight)
+
+    ' ---- Bottom border with optional left-side label ------------------
+    DIM bottomLine AS STRING
+    IF s.BottomLabel <> "" THEN
+        DIM labelStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorHotkey()).Background(ColorBg())
+        DIM labelStr AS STRING = labelStyle.Render(s.BottomLabel)
+        DIM labelLen AS INTEGER = lipgloss.Width(s.BottomLabel)
+        DIM fillLen2 AS INTEGER = innerW - labelLen - 1
+        IF fillLen2 < 0 THEN fillLen2 = 0
+        bottomLine = bStyle.Render(bc.BottomLeft) + bStyle.Render(bc.Horizontal) + labelStr + bStyle.Render(strings.Repeat(bc.Horizontal, fillLen2)) + bStyle.Render(bc.BottomRight)
+    ELSE
+        bottomLine = bStyle.Render(bc.BottomLeft + strings.Repeat(bc.Horizontal, innerW) + bc.BottomRight)
+    END IF
+
+    ' ---- Scrollbar thumb position -------------------------------------
+    DIM thumbPos AS INTEGER = -1
+    IF canScroll AND innerH > 0 THEN
+        DIM maxOffset AS INTEGER = totalLines - innerH
+        IF maxOffset > 0 THEN
+            thumbPos = s.Offset * (innerH - 1) / maxOffset
+        END IF
+    END IF
+
+    ' ---- Content rows -------------------------------------------------
+    DIM rows AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO innerH - 1
+        DIM lineIdx AS INTEGER = s.Offset + i
+        DIM text AS STRING = ""
+        IF lineIdx < totalLines THEN text = s.Lines[lineIdx]
+
+        ' Truncate / pad to contentW. lipgloss.Width is the display width
+        ' so this trims by characters from the right while we exceed.
+        DIM textW AS INTEGER = lipgloss.Width(text)
+        IF textW > contentW THEN
+            DO WHILE textW > contentW AND LEN(text) > 0
+                text = Mid(text, 1, LEN(text) - 1)
+                textW = lipgloss.Width(text)
+            LOOP
+        END IF
+        DIM pad AS INTEGER = contentW - textW
+        IF pad < 0 THEN pad = 0
+
+        DIM rendered AS STRING
+        IF lineIdx = s.Cursor AND s.Cursor >= 0 THEN
+            rendered = selStyle.Render(text + strings.Repeat(" ", pad))
+        ELSE
+            IF lineIdx = s.Hover AND s.Hover >= 0 AND s.Hover <> s.Cursor THEN
+                rendered = hoverStyle.Render(text + strings.Repeat(" ", pad))
+            ELSE
+                rendered = bgStyle.Render(text + strings.Repeat(" ", pad))
+            END IF
+        END IF
+
+        DIM scrollChar AS STRING = ""
+        IF canScroll THEN
+            IF i = thumbPos THEN
+                scrollChar = scrollThumb.Render("┃")
+            ELSE
+                scrollChar = scrollTrack.Render("╎")
+            END IF
+        END IF
+
+        rows = APPEND(rows, bStyle.Render(bc.Vertical) + rendered + scrollChar + bStyle.Render(bc.Vertical))
+    NEXT i
+
+    ' ---- Assemble ----------------------------------------------------
+    DIM all AS []STRING
+    all = APPEND(all, topLine)
+    DIM r AS INTEGER
+    FOR r = 0 TO LEN(rows) - 1
+        all = APPEND(all, rows[r])
+    NEXT r
+    all = APPEND(all, bottomLine)
+
+    RETURN strings.Join(all, "\n")
+END FUNCTION
