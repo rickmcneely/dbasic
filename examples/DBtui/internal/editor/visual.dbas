@@ -1,0 +1,324 @@
+' DBtui — internal/editor/visual.dbas
+'
+' Visual form designer. Minimal-boot phase: paints the form's outer
+' rectangle (with title) and stamps each Widget at its (X, Y, W, H)
+' inside. The selected widget gets a double-line border to distinguish
+' it. Surrounding workspace area is painted in the panel background.
+'
+' Deferred from vgtui's editor/visual.go (1k-plus lines):
+'   * Drag/resize handles (◆ glyphs at corners + edge midpoints)
+'   * Multi-select + form-as-selection toggle
+'   * Per-widget BgColor / FgColor sourcing from properties
+'   * Anchoring on form resize
+'   * Mouse hit-testing
+' These come back as additional commits once mouse support and the
+' properties panel exist to drive them.
+
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "strings"
+
+TYPE VisualEditor
+    DIM FormName    AS STRING
+    DIM FormTitle   AS STRING
+    DIM FormW       AS INTEGER       ' design-time form width  (cells)
+    DIM FormH       AS INTEGER       ' design-time form height (cells)
+    DIM FormBgColor AS STRING        ' hex
+    DIM FormFgColor AS STRING        ' hex
+    DIM Widgets     AS []Widget
+    DIM Selected    AS INTEGER       ' index in Widgets (-1 = none)
+    DIM Width       AS INTEGER       ' workspace area width
+    DIM Height      AS INTEGER       ' workspace area height
+    DIM Focused     AS BOOLEAN
+END TYPE
+
+FUNCTION NewVisualEditor() AS VisualEditor
+    DIM v AS VisualEditor
+    v.Selected = -1
+    RETURN v
+END FUNCTION
+
+' LoadForm copies form metadata into the editor and instantiates each
+' widget entry through the registry. Unknown kinds are silently skipped
+' (the user gets a warning later when the properties panel surfaces it).
+SUB (v AS POINTER TO VisualEditor) LoadForm(f AS Form, reg AS Registry)
+    v.FormName = f.Name
+    v.FormTitle = f.Title
+    v.FormW = f.Width
+    v.FormH = f.Height
+    v.FormBgColor = f.BgColor
+    v.FormFgColor = f.FgColor
+
+    DIM wx AS []Widget
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(f.Widgets) - 1
+        DIM entry AS WidgetEntry = f.Widgets[i]
+        DIM w AS Widget
+        DIM err AS ERROR
+        w, err = reg.Create(entry.Kind, entry.Id)
+        IF err <> NIL THEN
+            ' Skip unknown widget kinds. A future warning surface lives
+            ' in the properties / status pipeline.
+        ELSE
+            w.X = entry.X
+            w.Y = entry.Y
+            w.W = entry.Width
+            w.H = entry.Height
+            w.Visible = entry.Visible
+            w.ZOrder = entry.ZOrder
+            w.TabIndex = entry.TabIndex
+            w.TabStop = entry.TabStop
+            w.Anchor = entry.Anchor
+            wx = APPEND(wx, w)
+        END IF
+    NEXT i
+    v.Widgets = wx
+    IF LEN(wx) > 0 THEN
+        v.Selected = 0
+    ELSE
+        v.Selected = -1
+    END IF
+END SUB
+
+SUB (v AS POINTER TO VisualEditor) SetSize(w AS INTEGER, h AS INTEGER)
+    v.Width = w
+    v.Height = h
+END SUB
+
+SUB (v AS POINTER TO VisualEditor) SetFocused(f AS BOOLEAN)
+    v.Focused = f
+END SUB
+
+' SelectNext / SelectPrev cycle the selection forward/backward through
+' the widget list. No-op when there are no widgets.
+SUB (v AS POINTER TO VisualEditor) SelectNext()
+    IF LEN(v.Widgets) = 0 THEN RETURN
+    v.Selected = v.Selected + 1
+    IF v.Selected >= LEN(v.Widgets) THEN v.Selected = 0
+END SUB
+
+SUB (v AS POINTER TO VisualEditor) SelectPrev()
+    IF LEN(v.Widgets) = 0 THEN RETURN
+    v.Selected = v.Selected - 1
+    IF v.Selected < 0 THEN v.Selected = LEN(v.Widgets) - 1
+END SUB
+
+' SelectedWidget returns the currently-selected widget by value, plus
+' a flag indicating whether anything is selected.
+FUNCTION (v AS VisualEditor) SelectedWidget() AS (Widget, BOOLEAN)
+    DIM zero AS Widget
+    IF v.Selected < 0 OR v.Selected >= LEN(v.Widgets) THEN RETURN zero, FALSE
+    RETURN v.Widgets[v.Selected], TRUE
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Rendering
+'
+' Builds the canvas as a `[]STRING` per cell row. Each cell is decided
+' by walking widget rectangles; the visible-z-order is implicit in the
+' Widgets slice order (later widgets paint over earlier ones, matching
+' vgtui's behaviour without an explicit z-sort pass — vgtui sorts but
+' DBtui's first cut keeps slice order).
+' ----------------------------------------------------------------------
+
+' widgetCharAt returns the rune to paint at cell (x, y) within widget w.
+' Returns ("", FALSE) if the cell is outside the widget rectangle.
+FUNCTION widgetCharAt(w AS Widget, x AS INTEGER, y AS INTEGER, selected AS BOOLEAN) AS (STRING, BOOLEAN)
+    DIM dx AS INTEGER = x - w.X
+    DIM dy AS INTEGER = y - w.Y
+    IF dx < 0 OR dy < 0 OR dx >= w.W OR dy >= w.H THEN RETURN "", FALSE
+    IF NOT w.Visible THEN
+        ' Faint dashed outline.
+        IF dy = 0 OR dy = w.H - 1 OR dx = 0 OR dx = w.W - 1 THEN
+            IF (dx + dy) MOD 2 = 0 THEN RETURN "·", TRUE
+            RETURN " ", TRUE
+        END IF
+        RETURN " ", TRUE
+    END IF
+
+    DIM tl AS STRING = "┌"
+    DIM tr AS STRING = "┐"
+    DIM bl AS STRING = "└"
+    DIM br AS STRING = "┘"
+    DIM hz AS STRING = "─"
+    DIM vt AS STRING = "│"
+    IF selected THEN
+        tl = "╔"
+        tr = "╗"
+        bl = "╚"
+        br = "╝"
+        hz = "═"
+        vt = "║"
+    END IF
+
+    IF dy = 0 AND dx = 0 THEN RETURN tl, TRUE
+    IF dy = 0 AND dx = w.W - 1 THEN RETURN tr, TRUE
+    IF dy = w.H - 1 AND dx = 0 THEN RETURN bl, TRUE
+    IF dy = w.H - 1 AND dx = w.W - 1 THEN RETURN br, TRUE
+    IF dy = 0 OR dy = w.H - 1 THEN RETURN hz, TRUE
+    IF dx = 0 OR dx = w.W - 1 THEN RETURN vt, TRUE
+
+    ' Interior — paint the widget's primary text label centred on row 1
+    ' (or the middle row of taller widgets), trimmed to fit. Anything
+    ' else stays blank.
+    DIM label AS STRING = widgetLabel(w)
+    DIM midY AS INTEGER = w.H / 2
+    IF w.H = 1 THEN midY = 0
+    IF dy = midY THEN
+        DIM innerW AS INTEGER = w.W - 2
+        IF innerW < 1 THEN RETURN " ", TRUE
+        DIM trimmed AS STRING = label
+        IF lipgloss.Width(trimmed) > innerW THEN
+            DO WHILE lipgloss.Width(trimmed) > innerW AND LEN(trimmed) > 0
+                trimmed = Mid(trimmed, 1, LEN(trimmed) - 1)
+            LOOP
+        END IF
+        DIM textW AS INTEGER = lipgloss.Width(trimmed)
+        DIM startX AS INTEGER = (innerW - textW) / 2
+        IF dx >= 1 + startX AND dx < 1 + startX + textW THEN
+            DIM ch AS STRING = Mid(trimmed, dx - startX, 1)
+            RETURN ch, TRUE
+        END IF
+    END IF
+    RETURN " ", TRUE
+END FUNCTION
+
+' widgetLabel picks a sensible label for the widget body — text where
+' available, kind name otherwise.
+FUNCTION widgetLabel(w AS Widget) AS STRING
+    IF w.Kind = WidgetKindButton AND w.ButText <> "" THEN RETURN w.ButText
+    IF w.Kind = WidgetKindLabel AND w.LblText <> "" THEN RETURN w.LblText
+    IF w.Kind = WidgetKindTextInput THEN
+        IF w.TiValue <> "" THEN RETURN w.TiValue
+        IF w.TiPlaceholder <> "" THEN RETURN w.TiPlaceholder
+    END IF
+    RETURN w.Kind
+END FUNCTION
+
+FUNCTION (v AS VisualEditor) Render() AS STRING
+    IF v.Width <= 0 OR v.Height <= 0 THEN RETURN ""
+
+    DIM bgCol AS STRING = v.FormBgColor
+    DIM fgCol AS STRING = v.FormFgColor
+    IF bgCol = "" THEN bgCol = "#1a1b2e"
+    IF fgCol = "" THEN fgCol = "#e0def4"
+
+    ' Choose form-border characters. Single borders unfocused, double
+    ' when the editor itself is focused — matches the convention that
+    ' panels grow a thicker border when focused.
+    DIM ftl AS STRING = "┌"
+    DIM ftr AS STRING = "┐"
+    DIM fbl AS STRING = "└"
+    DIM fbr AS STRING = "┘"
+    DIM fhz AS STRING = "─"
+    DIM fvt AS STRING = "│"
+    IF v.Focused THEN
+        ftl = "╔"
+        ftr = "╗"
+        fbl = "╚"
+        fbr = "╝"
+        fhz = "═"
+        fvt = "║"
+    END IF
+
+    DIM formStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(fgCol)).Background(lipgloss.Color(bgCol))
+    DIM dotStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#3b3d5e")).Background(lipgloss.Color(bgCol))
+    DIM outsideStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
+
+    ' Clip the form to the workspace; leftover canvas is painted in the
+    ' workspace background.
+    DIM drawW AS INTEGER = v.FormW
+    DIM drawH AS INTEGER = v.FormH
+    IF drawW > v.Width THEN drawW = v.Width
+    IF drawH > v.Height THEN drawH = v.Height
+
+    ' Title (centred on the top border, truncated to fit).
+    DIM titleText AS STRING = v.FormTitle
+    IF titleText = "" THEN titleText = v.FormName
+    IF titleText = "" THEN titleText = "Visual Editor"
+    DIM titlePadded AS STRING = " " + titleText + " "
+    DIM titleW AS INTEGER = lipgloss.Width(titlePadded)
+    DIM titleStartX AS INTEGER = (drawW - titleW) / 2
+    IF titleStartX < 1 THEN titleStartX = 1
+
+    DIM lines AS []STRING
+    DIM y AS INTEGER
+    FOR y = 0 TO v.Height - 1
+        DIM rowSb AS STRING = ""
+        DIM x AS INTEGER
+        FOR x = 0 TO v.Width - 1
+            IF x >= drawW OR y >= drawH THEN
+                rowSb = rowSb + outsideStyle.Render(" ")
+            ELSE
+                DIM ch AS STRING = ""
+                DIM painted AS BOOLEAN = FALSE
+
+                ' Form border first.
+                IF y = 0 AND x = 0 THEN
+                    ch = ftl
+                    painted = TRUE
+                ELSEIF y = 0 AND x = drawW - 1 THEN
+                    ch = ftr
+                    painted = TRUE
+                ELSEIF y = drawH - 1 AND x = 0 THEN
+                    ch = fbl
+                    painted = TRUE
+                ELSEIF y = drawH - 1 AND x = drawW - 1 THEN
+                    ch = fbr
+                    painted = TRUE
+                ELSEIF y = 0 OR y = drawH - 1 THEN
+                    ch = fhz
+                    painted = TRUE
+                    ' Title overlay on the top border.
+                    IF y = 0 AND x >= titleStartX AND x < titleStartX + titleW THEN
+                        ch = Mid(titlePadded, x - titleStartX + 1, 1)
+                    END IF
+                ELSEIF x = 0 OR x = drawW - 1 THEN
+                    ch = fvt
+                    painted = TRUE
+                END IF
+
+                IF NOT painted THEN
+                    ' Inside the form. Look up widget ownership; later
+                    ' widgets in the slice paint over earlier ones.
+                    DIM ownerIdx AS INTEGER = -1
+                    DIM idx AS INTEGER
+                    FOR idx = 0 TO LEN(v.Widgets) - 1
+                        DIM w AS Widget = v.Widgets[idx]
+                        IF (x - 1) >= w.X AND (x - 1) < w.X + w.W AND (y - 1) >= w.Y AND (y - 1) < w.Y + w.H THEN
+                            ownerIdx = idx
+                        END IF
+                    NEXT idx
+
+                    IF ownerIdx >= 0 THEN
+                        DIM ow AS Widget = v.Widgets[ownerIdx]
+                        DIM cellCh AS STRING
+                        DIM cellOk AS BOOLEAN
+                        cellCh, cellOk = widgetCharAt(ow, x - 1, y - 1, ownerIdx = v.Selected)
+                        IF cellOk THEN
+                            ch = cellCh
+                            painted = TRUE
+                        END IF
+                    END IF
+
+                    IF NOT painted THEN
+                        ' Background dot grid for empty form cells.
+                        IF (x + y) MOD 2 = 0 THEN
+                            ch = "·"
+                        ELSE
+                            ch = " "
+                        END IF
+                    END IF
+                END IF
+
+                IF ch = "·" THEN
+                    rowSb = rowSb + dotStyle.Render(ch)
+                ELSE
+                    rowSb = rowSb + formStyle.Render(ch)
+                END IF
+            END IF
+        NEXT x
+        lines = APPEND(lines, rowSb)
+    NEXT y
+
+    RETURN strings.Join(lines, "\n")
+END FUNCTION

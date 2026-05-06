@@ -77,14 +77,61 @@ FUNCTION DefaultProject() AS Project
 
     DIM f AS Form = FormDefaults("frmStart")
     f.Title = "My Application"
-    f.Width = 78
-    f.Height = 22
+    f.Width = 70
+    f.Height = 20
+
+    ' A few hand-placed sample widgets so the visual editor has
+    ' something to draw out of the box.
+    DIM lblTitle AS WidgetEntry
+    lblTitle.Id = "lblTitle"
+    lblTitle.Kind = WidgetKindLabel
+    lblTitle.X = 2
+    lblTitle.Y = 1
+    lblTitle.Width = 32
+    lblTitle.Height = 1
+    lblTitle.Visible = TRUE
+    f.Widgets = APPEND(f.Widgets, lblTitle)
+
+    DIM lblName AS WidgetEntry
+    lblName.Id = "lblName"
+    lblName.Kind = WidgetKindLabel
+    lblName.X = 2
+    lblName.Y = 4
+    lblName.Width = 8
+    lblName.Height = 1
+    lblName.Visible = TRUE
+    f.Widgets = APPEND(f.Widgets, lblName)
+
+    DIM txtName AS WidgetEntry
+    txtName.Id = "txtName"
+    txtName.Kind = WidgetKindTextInput
+    txtName.X = 12
+    txtName.Y = 4
+    txtName.Width = 28
+    txtName.Height = 3
+    txtName.Visible = TRUE
+    txtName.TabStop = TRUE
+    txtName.TabIndex = 1
+    f.Widgets = APPEND(f.Widgets, txtName)
+
+    DIM btnOK AS WidgetEntry
+    btnOK.Id = "btnOK"
+    btnOK.Kind = WidgetKindButton
+    btnOK.X = 44
+    btnOK.Y = 4
+    btnOK.Width = 12
+    btnOK.Height = 3
+    btnOK.Visible = TRUE
+    btnOK.TabStop = TRUE
+    btnOK.TabIndex = 2
+    f.Widgets = APPEND(f.Widgets, btnOK)
+
     p.Forms = APPEND(p.Forms, f)
 
-    DIM m AS Module
-    m.Name = "main"
-    m.File = "main.dbas"
-    p.Modules = APPEND(p.Modules, m)
+    DIM modMain AS Module
+    modMain.Name = "main"
+    modMain.File = "main.dbas"
+    p.Modules = APPEND(p.Modules, modMain)
     RETURN p
 END FUNCTION
 

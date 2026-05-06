@@ -33,6 +33,7 @@ TYPE Model
     DIM Tree      AS Tree        ' project tree (left sidebar)
     DIM Registry  AS Registry    ' widget registry — feeds the palette
     DIM Palette   AS ScrollPanel ' widget palette (right sidebar)
+    DIM Visual    AS VisualEditor ' form designer canvas (centre)
     DIM LeftW     AS INTEGER     ' left sidebar width
     DIM RightW    AS INTEGER     ' right sidebar width
 END TYPE
@@ -55,6 +56,18 @@ FUNCTION NewModel() AS Model
     m.Palette.Title = "Widgets"
     m.Palette.Cursor = 0
     m.Palette.Lines = m.Registry.Kinds
+    m.Visual = NewVisualEditor()
+    ' Load the project's start form into the canvas. If the start
+    ' form name doesn't match anything, fall back to the first form.
+    DIM startIdx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].Name = m.Tree.Project.StartForm THEN startIdx = i
+    NEXT i
+    IF startIdx < 0 AND LEN(m.Tree.Project.Forms) > 0 THEN startIdx = 0
+    IF startIdx >= 0 THEN
+        m.Visual.LoadForm(m.Tree.Project.Forms[startIdx], m.Registry)
+    END IF
     RETURN m
 END FUNCTION
 
@@ -85,6 +98,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Tree.SetSize(m.LeftW, bodyH)
         m.Palette.Width = m.RightW
         m.Palette.Height = bodyH
+        DIM canvasW AS INTEGER = m.Width - m.LeftW - m.RightW
+        IF canvasW < 1 THEN canvasW = 1
+        m.Visual.SetSize(canvasW, bodyH)
         RETURN m, NIL
     END IF
 
@@ -145,18 +161,21 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF k = "tab" THEN
-            ' Cycle ProjectTree → Workspace → Widgets → ProjectTree.
+            ' Cycle ProjectTree → Visual → Widgets → ProjectTree.
             IF m.Focus = FocusProjectTree THEN
                 m.Focus = FocusVisual
                 m.Tree.SetFocused(FALSE)
+                m.Visual.SetFocused(TRUE)
                 m.Palette.Focused = FALSE
             ELSEIF m.Focus = FocusVisual THEN
                 m.Focus = FocusWidgets
                 m.Tree.SetFocused(FALSE)
+                m.Visual.SetFocused(FALSE)
                 m.Palette.Focused = TRUE
             ELSE
                 m.Focus = FocusProjectTree
                 m.Tree.SetFocused(TRUE)
+                m.Visual.SetFocused(FALSE)
                 m.Palette.Focused = FALSE
             END IF
             RETURN m, NIL
@@ -196,6 +215,30 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     ELSE
                         m.StatusBar.Message = fmt.Sprintf("opened: %s  (loader — TBD)", node.Name)
                     END IF
+                END IF
+                RETURN m, NIL
+            END IF
+        END IF
+        IF m.Focus = FocusVisual THEN
+            ' Arrow keys cycle widget selection forward / backward;
+            ' Enter echoes selection info to the status bar (full
+            ' drag/resize lands when mouse support arrives).
+            IF k = "right" OR k = "down" THEN
+                m.Visual.SelectNext()
+                RETURN m, NIL
+            END IF
+            IF k = "left" OR k = "up" THEN
+                m.Visual.SelectPrev()
+                RETURN m, NIL
+            END IF
+            IF k = "enter" THEN
+                DIM sw AS Widget
+                DIM swOk AS BOOLEAN
+                sw, swOk = m.Visual.SelectedWidget()
+                IF swOk THEN
+                    m.StatusBar.Message = fmt.Sprintf("selected %s (%s) at (%d,%d) %dx%d", sw.Id, sw.Kind, sw.X, sw.Y, sw.W, sw.H)
+                ELSE
+                    m.StatusBar.Message = "no widget selected on " + m.Visual.FormName
                 END IF
                 RETURN m, NIL
             END IF
@@ -249,13 +292,13 @@ FUNCTION renderBody(m AS Model) AS STRING
     DIM bodyH AS INTEGER = m.Height - 2
     IF bodyH < 1 THEN bodyH = 1
 
-    ' Three-column layout: project tree | workspace | widget palette.
+    ' Three-column layout: project tree | visual editor canvas | widget palette.
     DIM leftPane AS STRING = m.Tree.Render()
     DIM rightPane AS STRING = m.Palette.Render()
     DIM centerW AS INTEGER = m.Width - m.LeftW - m.RightW
     IF centerW < 1 THEN centerW = 1
-    DIM workspace AS STRING = BgStyle().Width(centerW).Height(bodyH).Align(lipgloss.Center, lipgloss.Center).Render("(workspace)")
-    DIM bodyRow AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, leftPane, workspace, rightPane)
+    DIM canvas AS STRING = m.Visual.Render()
+    DIM bodyRow AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, leftPane, canvas, rightPane)
 
     IF m.MenuBar.Open THEN
         DIM dropdown AS STRING = m.MenuBar.RenderDropdown()
