@@ -24,18 +24,20 @@ IMPORT "fmt"
 ' ----------------------------------------------------------------------
 
 TYPE Model
-    DIM Width     AS INTEGER
-    DIM Height    AS INTEGER
-    DIM Focus     AS INTEGER     ' which panel has focus (see ui/layout.dbas)
-    DIM Mode      AS INTEGER     ' modal input mode (see ui/layout.dbas)
-    DIM MenuBar   AS MenuBar
-    DIM StatusBar AS StatusBar
-    DIM Tree      AS Tree        ' project tree (left sidebar)
-    DIM Registry  AS Registry    ' widget registry — feeds the palette
-    DIM Palette   AS ScrollPanel ' widget palette (right sidebar)
-    DIM Visual    AS VisualEditor ' form designer canvas (centre)
-    DIM LeftW     AS INTEGER     ' left sidebar width
-    DIM RightW    AS INTEGER     ' right sidebar width
+    DIM Width      AS INTEGER
+    DIM Height     AS INTEGER
+    DIM Focus      AS INTEGER         ' which panel has focus (see ui/layout.dbas)
+    DIM Mode       AS INTEGER         ' modal input mode (see ui/layout.dbas)
+    DIM MenuBar    AS MenuBar
+    DIM StatusBar  AS StatusBar
+    DIM Tree       AS Tree            ' project tree (left sidebar)
+    DIM Registry   AS Registry        ' widget registry — feeds the palette
+    DIM Palette    AS ScrollPanel     ' widget palette (right column, top)
+    DIM Properties AS PropertiesPanel ' selected widget / form properties (right column, bottom)
+    DIM Visual     AS VisualEditor    ' form designer canvas (centre)
+    DIM LeftW      AS INTEGER         ' left sidebar width
+    DIM RightW     AS INTEGER         ' right sidebar width
+    DIM PaletteH   AS INTEGER         ' fixed height for the palette block
 END TYPE
 
 FUNCTION NewModel() AS Model
@@ -45,7 +47,8 @@ FUNCTION NewModel() AS Model
     m.Focus = FocusProjectTree
     m.Mode = ModeNormal
     m.LeftW = 28
-    m.RightW = 22
+    m.RightW = 32
+    m.PaletteH = 8
     m.MenuBar = NewMenuBar()
     m.StatusBar = NewStatusBar()
     m.StatusBar.Message = defaultStatus()
@@ -57,6 +60,7 @@ FUNCTION NewModel() AS Model
     m.Palette.Cursor = 0
     m.Palette.Lines = m.Registry.Kinds
     m.Visual = NewVisualEditor()
+    m.Properties = NewPropertiesPanel()
     ' Load the project's start form into the canvas. If the start
     ' form name doesn't match anything, fall back to the first form.
     DIM startIdx AS INTEGER = -1
@@ -67,9 +71,43 @@ FUNCTION NewModel() AS Model
     IF startIdx < 0 AND LEN(m.Tree.Project.Forms) > 0 THEN startIdx = 0
     IF startIdx >= 0 THEN
         m.Visual.LoadForm(m.Tree.Project.Forms[startIdx], m.Registry)
+        ' Sync the properties panel to whatever the visual editor
+        ' decided to select; if there are no widgets it shows the
+        ' form's own properties instead.
+        DIM sw AS Widget
+        DIM swOk AS BOOLEAN
+        sw, swOk = m.Visual.SelectedWidget()
+        IF swOk THEN
+            m.Properties.SetWidget(sw)
+        ELSE
+            m.Properties.SetForm(m.Tree.Project.Forms[startIdx])
+        END IF
     END IF
     RETURN m
 END FUNCTION
+
+' syncProperties refreshes the right-hand Properties panel from the
+' visual editor's current selection. Called whenever the selection
+' may have changed.
+SUB syncProperties(m AS POINTER TO Model)
+    DIM sw AS Widget
+    DIM swOk AS BOOLEAN
+    sw, swOk = m.Visual.SelectedWidget()
+    IF swOk THEN
+        m.Properties.SetWidget(sw)
+        RETURN
+    END IF
+    ' Fallback: show the loaded form's properties.
+    DIM fname AS STRING = m.Visual.FormName
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].Name = fname THEN
+            m.Properties.SetForm(m.Tree.Project.Forms[i])
+            RETURN
+        END IF
+    NEXT i
+    m.Properties.Clear()
+END SUB
 
 FUNCTION defaultStatus() AS STRING
     RETURN "DBtui — F10:Menu  |  Tab:Focus  |  ↑/↓:Move  |  Space:Expand  |  Enter:Pick  |  q:Quit"
@@ -96,8 +134,14 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM bodyH AS INTEGER = m.Height - 2
         IF bodyH < 3 THEN bodyH = 3
         m.Tree.SetSize(m.LeftW, bodyH)
+        DIM paletteH AS INTEGER = m.PaletteH
+        IF paletteH > bodyH - 5 THEN paletteH = bodyH - 5
+        IF paletteH < 4 THEN paletteH = 4
+        DIM propsH AS INTEGER = bodyH - paletteH
+        IF propsH < 3 THEN propsH = 3
         m.Palette.Width = m.RightW
-        m.Palette.Height = bodyH
+        m.Palette.Height = paletteH
+        m.Properties.SetSize(m.RightW, propsH)
         DIM canvasW AS INTEGER = m.Width - m.LeftW - m.RightW
         IF canvasW < 1 THEN canvasW = 1
         m.Visual.SetSize(canvasW, bodyH)
@@ -161,22 +205,31 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF k = "tab" THEN
-            ' Cycle ProjectTree → Visual → Widgets → ProjectTree.
+            ' Cycle ProjectTree → Visual → Widgets → Properties → ProjectTree.
             IF m.Focus = FocusProjectTree THEN
                 m.Focus = FocusVisual
                 m.Tree.SetFocused(FALSE)
                 m.Visual.SetFocused(TRUE)
                 m.Palette.Focused = FALSE
+                m.Properties.SetFocused(FALSE)
             ELSEIF m.Focus = FocusVisual THEN
                 m.Focus = FocusWidgets
                 m.Tree.SetFocused(FALSE)
                 m.Visual.SetFocused(FALSE)
                 m.Palette.Focused = TRUE
+                m.Properties.SetFocused(FALSE)
+            ELSEIF m.Focus = FocusWidgets THEN
+                m.Focus = FocusProperties
+                m.Tree.SetFocused(FALSE)
+                m.Visual.SetFocused(FALSE)
+                m.Palette.Focused = FALSE
+                m.Properties.SetFocused(TRUE)
             ELSE
                 m.Focus = FocusProjectTree
                 m.Tree.SetFocused(TRUE)
                 m.Visual.SetFocused(FALSE)
                 m.Palette.Focused = FALSE
+                m.Properties.SetFocused(FALSE)
             END IF
             RETURN m, NIL
         END IF
@@ -221,14 +274,15 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF m.Focus = FocusVisual THEN
             ' Arrow keys cycle widget selection forward / backward;
-            ' Enter echoes selection info to the status bar (full
-            ' drag/resize lands when mouse support arrives).
+            ' Enter echoes selection info to the status bar.
             IF k = "right" OR k = "down" THEN
                 m.Visual.SelectNext()
+                syncProperties(@m)
                 RETURN m, NIL
             END IF
             IF k = "left" OR k = "up" THEN
                 m.Visual.SelectPrev()
+                syncProperties(@m)
                 RETURN m, NIL
             END IF
             IF k = "enter" THEN
@@ -240,6 +294,16 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 ELSE
                     m.StatusBar.Message = "no widget selected on " + m.Visual.FormName
                 END IF
+                RETURN m, NIL
+            END IF
+        END IF
+        IF m.Focus = FocusProperties THEN
+            IF k = "up" THEN
+                m.Properties.CursorUp()
+                RETURN m, NIL
+            END IF
+            IF k = "down" THEN
+                m.Properties.CursorDown()
                 RETURN m, NIL
             END IF
         END IF
@@ -292,9 +356,10 @@ FUNCTION renderBody(m AS Model) AS STRING
     DIM bodyH AS INTEGER = m.Height - 2
     IF bodyH < 1 THEN bodyH = 1
 
-    ' Three-column layout: project tree | visual editor canvas | widget palette.
+    ' Three-column layout: project tree | visual editor canvas |
+    ' (palette stacked over properties) on the right.
     DIM leftPane AS STRING = m.Tree.Render()
-    DIM rightPane AS STRING = m.Palette.Render()
+    DIM rightPane AS STRING = lipgloss.JoinVertical(lipgloss.Left, m.Palette.Render(), m.Properties.Render())
     DIM centerW AS INTEGER = m.Width - m.LeftW - m.RightW
     IF centerW < 1 THEN centerW = 1
     DIM canvas AS STRING = m.Visual.Render()

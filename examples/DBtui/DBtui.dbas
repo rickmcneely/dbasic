@@ -30,6 +30,7 @@ INCLUDE "internal/widgets/registry.dbas"
 INCLUDE "internal/project/format.dbas"
 INCLUDE "internal/project/tree.dbas"
 INCLUDE "internal/editor/visual.dbas"
+INCLUDE "internal/properties/panel.dbas"
 INCLUDE "internal/app/app.dbas"
 
 SUB Main()

@@ -1,0 +1,474 @@
+' DBtui — internal/properties/panel.dbas
+'
+' Properties panel — two-column property table for the currently
+' selected widget (or the form, when nothing is selected). Direct
+' shape-port of ~/vgtui/internal/properties/panel.go, trimmed for the
+' minimal-boot phase.
+'
+' This commit ships a **read-only viewer** with cursor navigation and
+' type-aware value rendering (`[x]/[ ]` checkboxes for bool, swatch +
+' hex string for color, `◂ value ▸` for enum). Inline text editing,
+' dropdown picker, and color picker land alongside the dialog system
+' in a follow-on commit.
+
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "fmt"
+IMPORT "strings"
+
+' ----------------------------------------------------------------------
+' Row data
+' ----------------------------------------------------------------------
+
+TYPE PropRow
+    DIM Name     AS STRING
+    DIM Value    AS STRING
+    DIM Editable AS BOOLEAN
+    DIM IsBool   AS BOOLEAN     ' toggleable bool
+    DIM IsColor  AS BOOLEAN     ' show swatch + hex
+    DIM Options  AS []STRING    ' enum dropdown
+    DIM Category AS STRING      ' non-empty = section header
+END TYPE
+
+' Builders to keep rebuildRows() readable.
+FUNCTION cat(label AS STRING) AS PropRow
+    DIM r AS PropRow
+    r.Category = label
+    RETURN r
+END FUNCTION
+
+FUNCTION rowText(name AS STRING, value AS STRING) AS PropRow
+    DIM r AS PropRow
+    r.Name = name
+    r.Value = value
+    r.Editable = TRUE
+    RETURN r
+END FUNCTION
+
+FUNCTION rowReadOnly(name AS STRING, value AS STRING) AS PropRow
+    DIM r AS PropRow
+    r.Name = name
+    r.Value = value
+    r.Editable = FALSE
+    RETURN r
+END FUNCTION
+
+FUNCTION rowBool(name AS STRING, value AS BOOLEAN) AS PropRow
+    DIM r AS PropRow
+    r.Name = name
+    IF value THEN
+        r.Value = "true"
+    ELSE
+        r.Value = "false"
+    END IF
+    r.Editable = TRUE
+    r.IsBool = TRUE
+    RETURN r
+END FUNCTION
+
+FUNCTION rowEnum(name AS STRING, value AS STRING, options AS []STRING) AS PropRow
+    DIM r AS PropRow
+    r.Name = name
+    r.Value = value
+    r.Editable = TRUE
+    r.Options = options
+    RETURN r
+END FUNCTION
+
+FUNCTION rowColor(name AS STRING, value AS STRING) AS PropRow
+    DIM r AS PropRow
+    r.Name = name
+    r.Value = value
+    r.Editable = TRUE
+    r.IsColor = TRUE
+    RETURN r
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Panel
+' ----------------------------------------------------------------------
+
+TYPE PropertiesPanel
+    DIM Rows     AS []PropRow
+    DIM Cursor   AS INTEGER
+    DIM Hover    AS INTEGER          ' mouseover row (-1 for none)
+    DIM Width    AS INTEGER
+    DIM Height   AS INTEGER
+    DIM Offset   AS INTEGER
+    DIM Focused  AS BOOLEAN
+    DIM ShowForm AS BOOLEAN
+    DIM HasWidget AS BOOLEAN
+    DIM CurForm  AS Form             ' shown when ShowForm
+    DIM CurWidget AS Widget          ' shown when HasWidget
+END TYPE
+
+FUNCTION NewPropertiesPanel() AS PropertiesPanel
+    DIM p AS PropertiesPanel
+    p.Cursor = -1
+    p.Hover = -1
+    RETURN p
+END FUNCTION
+
+SUB (p AS POINTER TO PropertiesPanel) Clear()
+    DIM emptyRows AS []PropRow
+    p.Rows = emptyRows
+    p.Cursor = -1
+    p.Offset = 0
+    p.HasWidget = FALSE
+    p.ShowForm = FALSE
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) SetWidget(w AS Widget)
+    p.CurWidget = w
+    p.HasWidget = TRUE
+    p.ShowForm = FALSE
+    p.Cursor = 0
+    p.Offset = 0
+    p.rebuildRows()
+    p.skipCategoriesForward()
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) SetForm(f AS Form)
+    p.CurForm = f
+    p.ShowForm = TRUE
+    p.HasWidget = FALSE
+    p.Cursor = 0
+    p.Offset = 0
+    p.rebuildRows()
+    p.skipCategoriesForward()
+END SUB
+
+' rebuildRows flushes p.Rows and re-derives them from the current
+' widget or form. When neither is set the panel shows a placeholder.
+SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
+    DIM rows AS []PropRow
+
+    IF p.ShowForm THEN
+        DIM f AS Form = p.CurForm
+        rows = APPEND(rows, cat("▸ Form"))
+        rows = APPEND(rows, rowText("Name", f.Name))
+        rows = APPEND(rows, rowText("Title", f.Title))
+        rows = APPEND(rows, rowText("Width", fmt.Sprintf("%d", f.Width)))
+        rows = APPEND(rows, rowText("Height", fmt.Sprintf("%d", f.Height)))
+        rows = APPEND(rows, cat("▸ Behavior"))
+        rows = APPEND(rows, rowBool("Modal", f.Modal))
+        rows = APPEND(rows, rowBool("ResizableX", f.ResizableX))
+        rows = APPEND(rows, rowBool("ResizableY", f.ResizableY))
+        rows = APPEND(rows, rowBool("Visible", f.Visible))
+        rows = APPEND(rows, rowBool("Taskbar", f.ShowInTaskbar))
+        rows = APPEND(rows, rowBool("StatusBar", f.ShowStatusBar))
+        rows = APPEND(rows, cat("▸ Appearance"))
+        DIM borderOpts AS []STRING
+        borderOpts = APPEND(borderOpts, "normal")
+        borderOpts = APPEND(borderOpts, "thick")
+        borderOpts = APPEND(borderOpts, "double")
+        borderOpts = APPEND(borderOpts, "none")
+        rows = APPEND(rows, rowEnum("Border", f.Border, borderOpts))
+        DIM cornerOpts AS []STRING
+        cornerOpts = APPEND(cornerOpts, "square")
+        cornerOpts = APPEND(cornerOpts, "round")
+        rows = APPEND(rows, rowEnum("Corner", f.Corner, cornerOpts))
+        DIM startOpts AS []STRING
+        startOpts = APPEND(startOpts, "center")
+        startOpts = APPEND(startOpts, "topleft")
+        startOpts = APPEND(startOpts, "manual")
+        rows = APPEND(rows, rowEnum("StartPos", f.StartPos, startOpts))
+        rows = APPEND(rows, rowColor("BgColor", f.BgColor))
+        rows = APPEND(rows, rowColor("FgColor", f.FgColor))
+        rows = APPEND(rows, cat("▸ File Info"))
+        rows = APPEND(rows, rowReadOnly("File", f.File))
+        rows = APPEND(rows, rowReadOnly("Code", f.Code))
+        rows = APPEND(rows, rowReadOnly("Widgets", fmt.Sprintf("%d", LEN(f.Widgets))))
+        p.Rows = rows
+        RETURN
+    END IF
+
+    IF p.HasWidget THEN
+        DIM w AS Widget = p.CurWidget
+        rows = APPEND(rows, cat("▸ " + w.Kind))
+        rows = APPEND(rows, rowText("Name", w.Id))
+        rows = APPEND(rows, rowBool("Visible", w.Visible))
+        rows = APPEND(rows, rowText("ZOrder", fmt.Sprintf("%d", w.ZOrder)))
+        rows = APPEND(rows, rowText("TabIndex", fmt.Sprintf("%d", w.TabIndex)))
+        rows = APPEND(rows, rowBool("TabStop", w.TabStop))
+        rows = APPEND(rows, rowText("Anchor", w.Anchor))
+
+        ' Kind-specific properties (Text, Placeholder, Value, Align...).
+        ' Style props are sorted into their own section below.
+        DIM kindProps AS []Property
+        IF w.Kind = WidgetKindButton    THEN kindProps = ButtonProperties(w)
+        IF w.Kind = WidgetKindLabel     THEN kindProps = LabelProperties(w)
+        IF w.Kind = WidgetKindTextInput THEN kindProps = TextInputProperties(w)
+
+        DIM hasStyleProps AS BOOLEAN = FALSE
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(kindProps) - 1
+            DIM kp AS Property = kindProps[i]
+            DIM isStyle AS BOOLEAN = FALSE
+            IF kp.Kind = "color" THEN isStyle = TRUE
+            IF kp.Kind = "enum" AND (kp.Name = "Border" OR kp.Name = "Corner") THEN isStyle = TRUE
+            IF isStyle THEN
+                hasStyleProps = TRUE
+            ELSE
+                rows = APPEND(rows, propToRow(kp))
+            END IF
+        NEXT i
+
+        rows = APPEND(rows, cat("▸ Layout"))
+        rows = APPEND(rows, rowText("X",      fmt.Sprintf("%d", w.X)))
+        rows = APPEND(rows, rowText("Y",      fmt.Sprintf("%d", w.Y)))
+        rows = APPEND(rows, rowText("Width",  fmt.Sprintf("%d", w.W)))
+        rows = APPEND(rows, rowText("Height", fmt.Sprintf("%d", w.H)))
+
+        IF hasStyleProps THEN
+            rows = APPEND(rows, cat("▸ Style"))
+            DIM j AS INTEGER
+            FOR j = 0 TO LEN(kindProps) - 1
+                DIM kpStyle AS Property = kindProps[j]
+                DIM isStyleProp AS BOOLEAN = FALSE
+                IF kpStyle.Kind = "color" THEN isStyleProp = TRUE
+                IF kpStyle.Kind = "enum" AND (kpStyle.Name = "Border" OR kpStyle.Name = "Corner") THEN isStyleProp = TRUE
+                IF isStyleProp THEN rows = APPEND(rows, propToRow(kpStyle))
+            NEXT j
+        END IF
+
+        p.Rows = rows
+        RETURN
+    END IF
+
+    rows = APPEND(rows, cat("  (no selection)"))
+    p.Rows = rows
+END SUB
+
+' propToRow translates a widget Property into a PropRow with the right
+' display flags (bool/color/enum/text).
+FUNCTION propToRow(p AS Property) AS PropRow
+    DIM r AS PropRow
+    r.Name = p.Name
+    r.Editable = TRUE
+    IF p.Kind = "bool" THEN
+        r.IsBool = TRUE
+        DIM b AS BOOLEAN
+        DIM ok AS BOOLEAN
+        b, ok = p.Value.(BOOLEAN)
+        IF ok AND b THEN
+            r.Value = "true"
+        ELSE
+            r.Value = "false"
+        END IF
+        RETURN r
+    END IF
+    IF p.Kind = "color" THEN
+        r.IsColor = TRUE
+        DIM s AS STRING
+        DIM cok AS BOOLEAN
+        s, cok = p.Value.(STRING)
+        IF cok THEN r.Value = s
+        RETURN r
+    END IF
+    IF p.Kind = "enum" THEN
+        r.Options = p.Options
+        DIM s2 AS STRING
+        DIM eok AS BOOLEAN
+        s2, eok = p.Value.(STRING)
+        IF eok THEN r.Value = s2
+        RETURN r
+    END IF
+    DIM s3 AS STRING
+    DIM sok AS BOOLEAN
+    s3, sok = p.Value.(STRING)
+    IF sok THEN r.Value = s3
+    RETURN r
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Geometry / cursor
+' ----------------------------------------------------------------------
+
+FUNCTION (p AS PropertiesPanel) InnerHeight() AS INTEGER
+    RETURN p.Height - 2
+END FUNCTION
+
+SUB (p AS POINTER TO PropertiesPanel) SetSize(w AS INTEGER, h AS INTEGER)
+    p.Width = w
+    p.Height = h
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) SetFocused(f AS BOOLEAN)
+    p.Focused = f
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) skipCategoriesForward()
+    DO WHILE p.Cursor >= 0 AND p.Cursor < LEN(p.Rows) AND p.Rows[p.Cursor].Category <> ""
+        p.Cursor = p.Cursor + 1
+    LOOP
+    IF p.Cursor >= LEN(p.Rows) THEN p.Cursor = LEN(p.Rows) - 1
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) CursorUp()
+    DO
+        p.Cursor = p.Cursor - 1
+        IF p.Cursor < 0 THEN
+            p.Cursor = 0
+            EXIT DO
+        END IF
+        IF p.Rows[p.Cursor].Category = "" THEN EXIT DO
+    LOOP
+    p.ensureVisible()
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) CursorDown()
+    DO
+        p.Cursor = p.Cursor + 1
+        IF p.Cursor >= LEN(p.Rows) THEN
+            p.Cursor = LEN(p.Rows) - 1
+            EXIT DO
+        END IF
+        IF p.Rows[p.Cursor].Category = "" THEN EXIT DO
+    LOOP
+    p.ensureVisible()
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) ensureVisible()
+    DIM innerH AS INTEGER = p.InnerHeight()
+    IF innerH <= 0 THEN RETURN
+    IF p.Cursor < p.Offset THEN p.Offset = p.Cursor
+    IF p.Cursor >= p.Offset + innerH THEN p.Offset = p.Cursor - innerH + 1
+END SUB
+
+' ----------------------------------------------------------------------
+' Render
+' ----------------------------------------------------------------------
+
+FUNCTION (p AS PropertiesPanel) Render() AS STRING
+    IF p.Width < 4 OR p.Height < 3 THEN RETURN ""
+
+    DIM innerW AS INTEGER = p.Width - 2
+    DIM innerH AS INTEGER = p.InnerHeight()
+
+    ' Borders — single unfocused, double when focused.
+    DIM bc AS borderChars = singleBorder()
+    DIM borderColor AS color.Color = ColorBorder()
+    IF p.Focused THEN
+        bc = doubleBorder()
+        borderColor = ColorFocusBorder()
+    END IF
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(borderColor).Background(ColorBg())
+
+    DIM nameW AS INTEGER = innerW / 2
+    IF nameW < 6 THEN nameW = 6
+    DIM valW AS INTEGER = innerW - nameW - 1   ' 1 for the centre separator
+    IF valW < 1 THEN valW = 1
+
+    DIM nameStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorBg())
+    DIM valStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorBg())
+    DIM catStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorHotkey()).Background(ColorBg()).Bold(TRUE)
+    DIM catLineStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
+    DIM selNameStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorSelection()).Bold(TRUE)
+    DIM selValStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorSelection())
+    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
+
+    ' Top + bottom borders. Title centred on top.
+    DIM title AS STRING = "Properties"
+    DIM titlePadded AS STRING = " " + title + " "
+    DIM titleVisW AS INTEGER = lipgloss.Width(titlePadded)
+    DIM topBar AS STRING = strings.Repeat(bc.Horizontal, innerW)
+    IF titleVisW + 2 < innerW THEN
+        DIM titleStr AS STRING = TitleStyle().Render(titlePadded)
+        DIM fillLen AS INTEGER = innerW - titleVisW - 1
+        IF fillLen < 0 THEN fillLen = 0
+        topBar = bc.Horizontal + titleStr + bStyle.Render(strings.Repeat(bc.Horizontal, fillLen))
+    ELSE
+        topBar = bStyle.Render(topBar)
+    END IF
+    DIM topLine AS STRING = bStyle.Render(bc.TopLeft) + topBar + bStyle.Render(bc.TopRight)
+    DIM bottomLine AS STRING = bStyle.Render(bc.BottomLeft + strings.Repeat(bc.Horizontal, innerW) + bc.BottomRight)
+
+    ' Body rows.
+    DIM rows AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO innerH - 1
+        DIM rowIdx AS INTEGER = p.Offset + i
+        IF rowIdx >= LEN(p.Rows) THEN
+            rows = APPEND(rows, bStyle.Render(bc.Vertical) + valStyle.Render(strings.Repeat(" ", innerW)) + bStyle.Render(bc.Vertical))
+        ELSE
+            DIM row AS PropRow = p.Rows[rowIdx]
+            DIM isCursor AS BOOLEAN = (rowIdx = p.Cursor)
+            DIM body AS STRING
+
+            IF row.Category <> "" THEN
+                DIM catText AS STRING = row.Category
+                DIM textLen AS INTEGER = lipgloss.Width(catText)
+                IF textLen > innerW THEN
+                    catText = Mid(catText, 1, innerW)
+                    textLen = innerW
+                END IF
+                DIM catFillLen AS INTEGER = innerW - textLen
+                IF catFillLen < 0 THEN catFillLen = 0
+                body = catStyle.Render(catText) + catLineStyle.Render(strings.Repeat("─", catFillLen))
+            ELSE
+                DIM nameText AS STRING = row.Name
+                IF LEN(nameText) > nameW THEN nameText = Mid(nameText, 1, nameW)
+                DIM namePad AS INTEGER = nameW - LEN(nameText)
+                IF namePad < 0 THEN namePad = 0
+
+                DIM displayVal AS STRING = row.Value
+                IF row.IsBool THEN
+                    IF row.Value = "true" THEN
+                        displayVal = "[x] true"
+                    ELSE
+                        displayVal = "[ ] false"
+                    END IF
+                END IF
+                DIM swatch AS STRING = ""
+                DIM displayVisW AS INTEGER
+                IF row.IsColor AND row.Value <> "" THEN
+                    swatch = lipgloss.NewStyle().Background(lipgloss.Color(row.Value)).Render("  ")
+                    displayVal = swatch + " " + row.Value
+                    displayVisW = 3 + lipgloss.Width(row.Value)
+                ELSEIF LEN(row.Options) > 0 THEN
+                    displayVal = "◂ " + row.Value + " ▸"
+                    displayVisW = lipgloss.Width(displayVal)
+                ELSE
+                    displayVisW = lipgloss.Width(displayVal)
+                END IF
+
+                IF displayVisW > valW AND NOT row.IsColor THEN
+                    DO WHILE displayVisW > valW AND LEN(displayVal) > 0
+                        displayVal = Mid(displayVal, 1, LEN(displayVal) - 1)
+                        displayVisW = lipgloss.Width(displayVal)
+                    LOOP
+                END IF
+                DIM valPad AS INTEGER = valW - displayVisW
+                IF valPad < 0 THEN valPad = 0
+
+                DIM sep AS STRING = sepStyle.Render("│")
+                IF isCursor THEN
+                    DIM nPart AS STRING = selNameStyle.Render(nameText + strings.Repeat(" ", namePad))
+                    IF row.IsColor THEN
+                        body = nPart + sep + displayVal + selValStyle.Render(strings.Repeat(" ", valPad))
+                    ELSE
+                        body = nPart + sep + selValStyle.Render(displayVal + strings.Repeat(" ", valPad))
+                    END IF
+                ELSE
+                    DIM nPart2 AS STRING = nameStyle.Render(nameText + strings.Repeat(" ", namePad))
+                    IF row.IsColor THEN
+                        body = nPart2 + sep + displayVal + valStyle.Render(strings.Repeat(" ", valPad))
+                    ELSE
+                        body = nPart2 + sep + valStyle.Render(displayVal + strings.Repeat(" ", valPad))
+                    END IF
+                END IF
+            END IF
+
+            rows = APPEND(rows, bStyle.Render(bc.Vertical) + body + bStyle.Render(bc.Vertical))
+        END IF
+    NEXT i
+
+    DIM all AS []STRING
+    all = APPEND(all, topLine)
+    DIM r AS INTEGER
+    FOR r = 0 TO LEN(rows) - 1
+        all = APPEND(all, rows[r])
+    NEXT r
+    all = APPEND(all, bottomLine)
+    RETURN strings.Join(all, "\n")
+END FUNCTION
