@@ -56,6 +56,11 @@ examples/pacman/pacman.exe
 examples/pacman/main.go
 examples/tictactoe/tictactoe
 
+# DBtui sample-project artifacts — recreated on first run / `DBtui gen`.
+examples/DBtui/myproject
+examples/DBtui/myproject.dbas
+examples/DBtui/forms/
+
 # Database files
 *.db
 

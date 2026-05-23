@@ -1,0 +1,60 @@
+' DBtui — internal/widgets/textarea.dbas
+'
+' TextArea — multi-line text editor. Mirrors TextInput but uses bubbles
+' textarea.Model under the hood at runtime; the editor surface accepts
+' newlines, supports word-wrapping, cursor navigation, etc.
+'
+' Storage: TiValue + TiPlaceholder are reused (the on-disk shape is
+' the same — just text content). Runtime state in the generated
+' program lives in a textarea.Model per widget; routed through the
+' Update keystroke handler just like TextInput.
+
+FUNCTION NewTextArea(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindTextArea
+    w.Visible = TRUE
+    w.TabStop = TRUE
+    w.W = 40
+    w.H = 8
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#e0def4"
+    w.Style.Border = "normal"
+    w.Style.Corner = "round"
+    w.TiValue = ""
+    w.TiPlaceholder = "Type here..."
+    RETURN w
+END FUNCTION
+
+FUNCTION TextAreaProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Value", w.TiValue))
+    out = APPEND(out, StringProp("Placeholder", w.TiPlaceholder))
+    DIM stylePs AS []Property = StyleProperties(w.Style, TRUE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetTextAreaProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Value" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.TiValue = s
+        RETURN NIL
+    END IF
+    IF name = "Placeholder" THEN
+        DIM s2 AS STRING
+        DIM err2 AS ERROR
+        s2, err2 = coerceString(name, value)
+        IF err2 <> NIL THEN RETURN err2
+        w.TiPlaceholder = s2
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown TextArea property: " + name)
+END FUNCTION

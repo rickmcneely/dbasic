@@ -1,0 +1,120 @@
+{
+  "Name": "myproject",
+  "Version": "0.1.0",
+  "StartForm": "frmStart",
+  "Forms": [
+    {
+      "Name": "frmStart",
+      "File": "forms/frmStart.dbf",
+      "Code": "forms/frmStart.dbas",
+      "Width": 70,
+      "Height": 20,
+      "Title": "My Application",
+      "Modal": false,
+      "ResizableX": true,
+      "ResizableY": true,
+      "Border": "normal",
+      "Corner": "round",
+      "StartPos": "center",
+      "BgColor": "#1a1b2e",
+      "FgColor": "#e0def4",
+      "Visible": true,
+      "ShowInTaskbar": true,
+      "ShowStatusBar": false,
+      "Widgets": [
+        {
+          "Id": "lblTitle",
+          "Kind": "Label",
+          "X": 2,
+          "Y": 1,
+          "Width": 32,
+          "Height": 1,
+          "Visible": true,
+          "ZOrder": 0,
+          "TabIndex": 0,
+          "TabStop": false,
+          "Anchor": "",
+          "Properties": {
+            "Align": "left",
+            "BgColor": "",
+            "Border": "none",
+            "Corner": "square",
+            "FgColor": "#e0def4",
+            "Text": "Label"
+          }
+        },
+        {
+          "Id": "lblName",
+          "Kind": "Label",
+          "X": 2,
+          "Y": 4,
+          "Width": 8,
+          "Height": 1,
+          "Visible": true,
+          "ZOrder": 0,
+          "TabIndex": 0,
+          "TabStop": false,
+          "Anchor": "",
+          "Properties": {
+            "Align": "left",
+            "BgColor": "",
+            "Border": "none",
+            "Corner": "square",
+            "FgColor": "#e0def4",
+            "Text": "Label"
+          }
+        },
+        {
+          "Id": "txtName",
+          "Kind": "TextInput",
+          "X": 12,
+          "Y": 4,
+          "Width": 28,
+          "Height": 3,
+          "Visible": true,
+          "ZOrder": 0,
+          "TabIndex": 1,
+          "TabStop": true,
+          "Anchor": "",
+          "Properties": {
+            "BgColor": "#FFFFFF",
+            "Border": "normal",
+            "Corner": "square",
+            "FgColor": "#000000",
+            "Placeholder": "",
+            "Value": ""
+          }
+        },
+        {
+          "Id": "btnOK",
+          "Kind": "Button",
+          "X": 44,
+          "Y": 4,
+          "Width": 12,
+          "Height": 3,
+          "Visible": true,
+          "ZOrder": 0,
+          "TabIndex": 2,
+          "TabStop": true,
+          "Anchor": "",
+          "Properties": {
+            "BgColor": "#C0C0C0",
+            "BgPress": "#808080",
+            "Border": "normal",
+            "Corner": "round",
+            "FgColor": "#000000",
+            "FgPress": "#FFFFFF",
+            "Text": "Button"
+          }
+        }
+      ]
+    }
+  ],
+  "Modules": [
+    {
+      "Name": "main",
+      "File": "main.dbas"
+    }
+  ],
+  "Path": "myproject.dbproj"
+}

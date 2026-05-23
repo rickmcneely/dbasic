@@ -1,0 +1,79 @@
+' DBtui — internal/widgets/menubar.dbas
+'
+' MenuBar — a top-of-form menu bar with VBDOS-style dropdowns. Menus
+' are stored in the shared LstItems field as encoded text:
+'
+'   "MenuLabel|item1Lbl:item1Act,item2Lbl:item2Act,-,item3Lbl:item3Act;NextMenu|..."
+'
+' Where:
+'   ;   separates menus
+'   |   between a menu's label and its item list
+'   ,   separates items within a menu
+'   :   between an item's label and its action identifier
+'   -   alone as an item is a separator line
+'
+' Runtime state reuses existing WState fields:
+'   LstIdx   — active menu (-1 = none)
+'   Checked  — dropdown open?
+'   Offset   — dropdown cursor row (when open)
+'
+' When the user picks an item, the generated program calls the user's
+' SUB <menubar-id>_Action(action AS STRING) — typical pattern:
+'
+'   SUB mb1_Action(action AS STRING)
+'       IF action = "file.new"  THEN ...
+'       IF action = "file.exit" THEN os.Exit(0)
+'   END SUB
+
+FUNCTION NewMenuBarWidget(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindMenuBar
+    w.Visible = TRUE
+    w.TabStop = TRUE
+    w.X = 0
+    w.Y = 0
+    w.W = 60
+    w.H = 1
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#e0def4"
+    w.Style.Border = "none"
+    w.Style.Corner = "square"
+    w.LstItems = "File|New:file.new,Open:file.open,-,Exit:file.exit;Edit|Undo:edit.undo,Redo:edit.redo;Help|About:help.about"
+    w.LstIdx = -1
+    w.Offset = 0
+    RETURN w
+END FUNCTION
+
+FUNCTION MenuBarProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Menus", w.LstItems))
+    out = APPEND(out, StringProp("Active", fmt.Sprintf("%d", w.LstIdx)))
+    DIM stylePs AS []Property = StyleProperties(w.Style, FALSE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetMenuBarProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Menus" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.LstItems = s
+        RETURN NIL
+    END IF
+    IF name = "Active" THEN
+        DIM iv AS INTEGER
+        DIM ierr AS ERROR
+        iv, ierr = coerceInt(name, value)
+        IF ierr <> NIL THEN RETURN ierr
+        w.LstIdx = iv
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown MenuBar property: " + name)
+END FUNCTION

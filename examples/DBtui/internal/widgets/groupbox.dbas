@@ -1,0 +1,49 @@
+' DBtui — internal/widgets/groupbox.dbas
+'
+' GroupBox — a labeled rounded-border frame, used to visually group
+' related widgets on a form. The Title is rendered embedded in the top
+' border (vgtui-style). Not interactive: TabStop is FALSE, no events.
+'
+' GroupBox does not own its children (DBtui forms are flat); it is a
+' purely cosmetic frame. Widgets that happen to fall inside its bounds
+' render on top of it (Z-ordering handles overlap).
+
+FUNCTION NewGroupBox(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindGroupBox
+    w.Visible = TRUE
+    w.TabStop = FALSE
+    w.W = 30
+    w.H = 8
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#e0def4"
+    w.Style.Border = "normal"
+    w.Style.Corner = "round"
+    w.Title = "Group"
+    RETURN w
+END FUNCTION
+
+FUNCTION GroupBoxProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Title", w.Title))
+    DIM stylePs AS []Property = StyleProperties(w.Style, TRUE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetGroupBoxProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Title" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.Title = s
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown GroupBox property: " + name)
+END FUNCTION

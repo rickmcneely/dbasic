@@ -1,0 +1,75 @@
+' DBtui — internal/widgets/tools.dbas
+'
+' Tool registry — non-visual components a form can use. Mirror shape
+' of Registry but for tools. FileDialog is the first; SerialConnection,
+' Timer, TcpClient, HttpClient will follow.
+'
+' A tool has no geometry. It lives in form.Tools, appears in the project
+' tree under a tools/ subfolder, and is invoked at runtime via the
+' generated `<id>_Show()` SUB from inside user event handlers.
+
+CONST ToolKindFileDialog AS STRING = "FileDialog"
+
+TYPE ToolRegistry
+    DIM Kinds AS []STRING
+END TYPE
+
+FUNCTION DefaultToolRegistry() AS ToolRegistry
+    DIM r AS ToolRegistry
+    r.Kinds = APPEND(r.Kinds, ToolKindFileDialog)
+    sort.Strings(r.Kinds)
+    RETURN r
+END FUNCTION
+
+FUNCTION (r AS ToolRegistry) Has(kind AS STRING) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(r.Kinds) - 1
+        IF r.Kinds[i] = kind THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' Create returns a new ToolEntry with default properties for the kind.
+FUNCTION (r AS ToolRegistry) Create(kind AS STRING, id AS STRING) AS (ToolEntry, ERROR)
+    IF kind = ToolKindFileDialog THEN
+        DIM t AS ToolEntry
+        t.Id = id
+        t.Kind = kind
+        DIM props AS MAP OF STRING TO ANY
+        props["Mode"]        = "open"
+        props["Mask"]        = "*"
+        props["Title"]       = "Open File"
+        props["Placeholder"] = "Choose a file..."
+        props["ButtonText"]  = "..."
+        t.Properties = props
+        RETURN t, NIL
+    END IF
+    DIM zero AS ToolEntry
+    RETURN zero, NewError("unknown tool kind: " + kind)
+END FUNCTION
+
+' ToolToWidget builds a synthetic Widget from a ToolEntry so the
+' existing kind-specific Properties/SetProperty plumbing (which is
+' typed against Widget) can drive tool editing too.
+FUNCTION ToolToWidget(t AS ToolEntry) AS Widget
+    DIM w AS Widget
+    w.Id = t.Id
+    w.Kind = t.Kind
+    DIM e AS WidgetEntry
+    e.Id = t.Id
+    e.Kind = t.Kind
+    e.Properties = t.Properties
+    ApplyEntryProperties(@w, e)
+    RETURN w
+END FUNCTION
+
+' WidgetToToolEntry inverts ToolToWidget — used to commit edits back
+' into the form's Tools array after the user changes a property.
+FUNCTION WidgetToToolEntry(w AS Widget) AS ToolEntry
+    DIM t AS ToolEntry
+    t.Id = w.Id
+    t.Kind = w.Kind
+    DIM e AS WidgetEntry = WidgetToEntry(w)
+    t.Properties = e.Properties
+    RETURN t
+END FUNCTION

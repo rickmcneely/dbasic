@@ -1,0 +1,71 @@
+' DBtui — internal/widgets/splitpanel.dbas
+'
+' SplitPanel — a draggable divider bar. Renders just the thin line —
+' widgets placed on either side handle their own content. Mouse drag on
+' the divider updates Position (0..100, as a percent of the widget's
+' span). DBtui forms are flat, so SplitPanel does not *own* children;
+' it's a visual+interactive divider.
+'
+' Storage:
+'   LstItems — orientation ("horizontal" = a horizontal divider line
+'              that the user drags up/down; "vertical" = a vertical
+'              divider line that the user drags left/right).
+'   LstIdx   — current Position (0..100).
+'
+' For a vertical orientation: W is the divider's width (usually 1),
+' H is its draggable span. Vice versa for horizontal.
+
+FUNCTION NewSplitPanel(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindSplitPanel
+    w.Visible = TRUE
+    w.TabStop = FALSE
+    w.W = 1
+    w.H = 16
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#7dcfff"
+    w.Style.Border = "none"
+    w.Style.Corner = "square"
+    w.LstItems = "vertical"
+    w.LstIdx = 50
+    RETURN w
+END FUNCTION
+
+FUNCTION SplitPanelProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Orientation", w.LstItems))
+    out = APPEND(out, StringProp("Position", fmt.Sprintf("%d", w.LstIdx)))
+    DIM stylePs AS []Property = StyleProperties(w.Style, FALSE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetSplitPanelProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Orientation" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        IF s <> "vertical" AND s <> "horizontal" THEN
+            RETURN NewError("Orientation must be 'vertical' or 'horizontal'")
+        END IF
+        w.LstItems = s
+        RETURN NIL
+    END IF
+    IF name = "Position" THEN
+        DIM iv AS INTEGER
+        DIM ierr AS ERROR
+        iv, ierr = coerceInt(name, value)
+        IF ierr <> NIL THEN RETURN ierr
+        IF iv < 0 THEN iv = 0
+        IF iv > 100 THEN iv = 100
+        w.LstIdx = iv
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown SplitPanel property: " + name)
+END FUNCTION

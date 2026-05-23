@@ -1,0 +1,594 @@
+' DBtui — internal/runtime/filedialog.dbas
+'
+' Self-contained file-dialog runtime emitted into DBtui-generated
+' programs. Mirrors the dialog DBtui itself uses for File→Open/Save:
+' editable path field, side-by-side Folders/Files lists with mask
+' filter, OK/Cancel buttons. Keyboard:
+'   Tab/Shift+Tab     cycle focus areas
+'   ↑/↓/PgUp/PgDn     navigate the focused list
+'   Enter (folders)   cd into selected folder
+'   Enter (files)     commit selected file
+'   Enter (path)      commit typed path
+'   Enter (OK)        commit
+'   Enter (Cancel)    cancel
+'   Esc               cancel
+'
+' The host model embeds a FileDialog field; activation goes through
+' Open() and the host's Update routes keystrokes via HandleKey() while
+' Dialog.Active is TRUE. HandleKey returns (committed, path, cancelled).
+
+' Focus areas for FileDialog.
+CONST FdFocusPath    AS INTEGER = 0
+CONST FdFocusFolders AS INTEGER = 1
+CONST FdFocusFiles   AS INTEGER = 2
+CONST FdFocusOK      AS INTEGER = 3
+CONST FdFocusCancel  AS INTEGER = 4
+CONST FdFocusCount   AS INTEGER = 5
+
+TYPE FileDialog
+    DIM Active   AS BOOLEAN
+    DIM Title    AS STRING
+    DIM Mode     AS STRING        ' "open" | "save"
+    DIM Mask     AS STRING        ' glob, e.g. "*.dbproj"
+    DIM CurDir   AS STRING
+    DIM Folders  AS []STRING
+    DIM Files    AS []STRING
+    DIM PathBuf  AS STRING
+    DIM PathPos  AS INTEGER
+    DIM Focus    AS INTEGER
+    DIM FoldCur  AS INTEGER
+    DIM FoldOff  AS INTEGER
+    DIM FileCur  AS INTEGER
+    DIM FileOff  AS INTEGER
+    DIM X        AS INTEGER
+    DIM Y        AS INTEGER
+    DIM Width    AS INTEGER
+    DIM Height   AS INTEGER
+END TYPE
+
+' ----------------------------------------------------------------------
+' Helpers
+' ----------------------------------------------------------------------
+
+FUNCTION fdDirOf(p AS STRING) AS STRING
+    DIM dd AS STRING = filepath.Dir(p)
+    IF dd = "" THEN RETURN "."
+    RETURN dd
+END FUNCTION
+
+FUNCTION fdTruncR(s AS STRING, w AS INTEGER) AS STRING
+    IF lipgloss.Width(s) <= w THEN RETURN s
+    IF w <= 1 THEN RETURN "…"
+    DIM out AS STRING = s
+    DO WHILE lipgloss.Width(out + "…") > w AND LEN(out) > 0
+        out = Mid(out, 1, LEN(out) - 1)
+    LOOP
+    RETURN out + "…"
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Directory scanning
+' ----------------------------------------------------------------------
+
+SUB (d AS POINTER TO FileDialog) ReadDir()
+    DIM folders AS []STRING
+    DIM files   AS []STRING
+    IF d.CurDir <> "/" THEN folders = APPEND(folders, "..")
+    DIM entries AS []os.DirEntry
+    DIM err AS ERROR
+    entries, err = os.ReadDir(d.CurDir)
+    IF err = NIL THEN
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(entries) - 1
+            DIM e AS os.DirEntry = entries[i]
+            DIM nm AS STRING = e.Name()
+            IF strings.HasPrefix(nm, ".") THEN
+                ' skip dotfiles
+            ELSEIF e.IsDir() THEN
+                folders = APPEND(folders, nm)
+            ELSE
+                DIM matched AS BOOLEAN = TRUE
+                IF d.Mask <> "" AND d.Mask <> "*" THEN
+                    DIM matchErr AS ERROR
+                    matched, matchErr = filepath.Match(d.Mask, nm)
+                    _ = matchErr
+                END IF
+                IF matched THEN files = APPEND(files, nm)
+            END IF
+        NEXT i
+        sort.Strings(folders)
+        sort.Strings(files)
+    END IF
+    d.Folders = folders
+    d.Files = files
+    IF d.FoldCur >= LEN(folders) THEN d.FoldCur = LEN(folders) - 1
+    IF d.FoldCur < 0 THEN d.FoldCur = 0
+    IF d.FileCur >= LEN(files) THEN d.FileCur = LEN(files) - 1
+    IF d.FileCur < 0 THEN d.FileCur = 0
+    d.FoldOff = 0
+    d.FileOff = 0
+END SUB
+
+' ----------------------------------------------------------------------
+' Lifecycle
+' ----------------------------------------------------------------------
+
+SUB (d AS POINTER TO FileDialog) Open(title AS STRING, mode AS STRING, mask AS STRING, initialPath AS STRING, screenW AS INTEGER, screenH AS INTEGER)
+    d.Active = TRUE
+    d.Title = title
+    d.Mode = mode
+    d.Mask = mask
+    d.Focus = FdFocusPath
+    d.FoldCur = 0
+    d.FoldOff = 0
+    d.FileCur = 0
+    d.FileOff = 0
+
+    DIM startPath AS STRING = initialPath
+    IF startPath = "" THEN
+        DIM wd AS STRING
+        DIM wdErr AS ERROR
+        wd, wdErr = os.Getwd()
+        IF wdErr = NIL THEN startPath = wd + "/"
+    END IF
+    DIM startDir AS STRING = fdDirOf(startPath)
+    IF NOT filepath.IsAbs(startDir) THEN
+        DIM wd2 AS STRING
+        DIM wdErr2 AS ERROR
+        wd2, wdErr2 = os.Getwd()
+        IF wdErr2 = NIL THEN startDir = filepath.Join(wd2, startDir)
+    END IF
+    d.CurDir = startDir
+    d.PathBuf = startPath
+    d.PathPos = LEN(startPath)
+    d.ReadDir()
+
+    DIM dw AS INTEGER = 72
+    DIM dh AS INTEGER = 20
+    IF dw > screenW - 2 THEN dw = screenW - 2
+    IF dh > screenH - 2 THEN dh = screenH - 2
+    IF dw < 40 THEN dw = 40
+    IF dh < 12 THEN dh = 12
+    d.Width = dw
+    d.Height = dh
+    d.X = (screenW - dw) / 2
+    d.Y = (screenH - dh) / 2
+    IF d.X < 0 THEN d.X = 0
+    IF d.Y < 0 THEN d.Y = 0
+END SUB
+
+SUB (d AS POINTER TO FileDialog) Close()
+    d.Active = FALSE
+END SUB
+
+SUB (d AS POINTER TO FileDialog) CdInto(folderName AS STRING)
+    DIM newDir AS STRING
+    IF folderName = ".." THEN
+        newDir = filepath.Dir(d.CurDir)
+    ELSE
+        newDir = filepath.Join(d.CurDir, folderName)
+    END IF
+    d.CurDir = newDir
+    d.PathBuf = newDir + "/"
+    d.PathPos = LEN(d.PathBuf)
+    d.ReadDir()
+END SUB
+
+FUNCTION (d AS POINTER TO FileDialog) ListH() AS INTEGER
+    DIM n AS INTEGER = d.Height - 8
+    IF n < 3 THEN n = 3
+    RETURN n
+END FUNCTION
+
+SUB (d AS POINTER TO FileDialog) ListMove(listIdx AS INTEGER, delta AS INTEGER)
+    DIM lh AS INTEGER = d.ListH()
+    IF listIdx = 0 THEN
+        DIM n AS INTEGER = LEN(d.Folders)
+        IF n = 0 THEN RETURN
+        d.FoldCur = d.FoldCur + delta
+        IF d.FoldCur < 0 THEN d.FoldCur = 0
+        IF d.FoldCur >= n THEN d.FoldCur = n - 1
+        IF d.FoldCur < d.FoldOff THEN d.FoldOff = d.FoldCur
+        IF d.FoldCur >= d.FoldOff + lh THEN d.FoldOff = d.FoldCur - lh + 1
+        RETURN
+    END IF
+    DIM nf AS INTEGER = LEN(d.Files)
+    IF nf = 0 THEN RETURN
+    d.FileCur = d.FileCur + delta
+    IF d.FileCur < 0 THEN d.FileCur = 0
+    IF d.FileCur >= nf THEN d.FileCur = nf - 1
+    IF d.FileCur < d.FileOff THEN d.FileOff = d.FileCur
+    IF d.FileCur >= d.FileOff + lh THEN d.FileOff = d.FileCur - lh + 1
+END SUB
+
+SUB (d AS POINTER TO FileDialog) PathEdit(k AS STRING)
+    IF k = "backspace" THEN
+        IF d.PathPos > 0 THEN
+            DIM before AS STRING = Mid(d.PathBuf, 1, d.PathPos - 1)
+            DIM after AS STRING = ""
+            IF d.PathPos < LEN(d.PathBuf) THEN
+                after = Mid(d.PathBuf, d.PathPos + 1, LEN(d.PathBuf) - d.PathPos)
+            END IF
+            d.PathBuf = before + after
+            d.PathPos = d.PathPos - 1
+        END IF
+        RETURN
+    END IF
+    IF k = "delete" THEN
+        IF d.PathPos < LEN(d.PathBuf) THEN
+            DIM before2 AS STRING = Mid(d.PathBuf, 1, d.PathPos)
+            DIM after2 AS STRING = ""
+            IF d.PathPos + 1 < LEN(d.PathBuf) THEN
+                after2 = Mid(d.PathBuf, d.PathPos + 2, LEN(d.PathBuf) - d.PathPos - 1)
+            END IF
+            d.PathBuf = before2 + after2
+        END IF
+        RETURN
+    END IF
+    IF k = "left" THEN
+        IF d.PathPos > 0 THEN d.PathPos = d.PathPos - 1
+        RETURN
+    END IF
+    IF k = "right" THEN
+        IF d.PathPos < LEN(d.PathBuf) THEN d.PathPos = d.PathPos + 1
+        RETURN
+    END IF
+    IF k = "home" OR k = "ctrl+a" THEN
+        d.PathPos = 0
+        RETURN
+    END IF
+    IF k = "end" OR k = "ctrl+e" THEN
+        d.PathPos = LEN(d.PathBuf)
+        RETURN
+    END IF
+    IF k = "ctrl+u" THEN
+        d.PathBuf = Mid(d.PathBuf, d.PathPos + 1, LEN(d.PathBuf) - d.PathPos)
+        d.PathPos = 0
+        RETURN
+    END IF
+    IF k = "ctrl+k" THEN
+        d.PathBuf = Mid(d.PathBuf, 1, d.PathPos)
+        RETURN
+    END IF
+    IF LEN(k) = 1 THEN
+        DIM b AS STRING = Mid(d.PathBuf, 1, d.PathPos)
+        DIM a AS STRING = ""
+        IF d.PathPos < LEN(d.PathBuf) THEN
+            a = Mid(d.PathBuf, d.PathPos + 1, LEN(d.PathBuf) - d.PathPos)
+        END IF
+        d.PathBuf = b + k + a
+        d.PathPos = d.PathPos + 1
+    END IF
+END SUB
+
+' HandleKey returns (committed, path, cancelled). committed=TRUE
+' indicates the user has finalized a selection; cancelled=TRUE means
+' Esc/Cancel; both FALSE means the keystroke was consumed without
+' resolving the dialog.
+FUNCTION (d AS POINTER TO FileDialog) HandleKey(k AS STRING) AS (BOOLEAN, STRING, BOOLEAN)
+    IF k = "esc" THEN RETURN FALSE, "", TRUE
+    IF k = "tab" THEN
+        d.Focus = (d.Focus + 1) MOD FdFocusCount
+        RETURN FALSE, "", FALSE
+    END IF
+    IF k = "shift+tab" THEN
+        d.Focus = d.Focus - 1
+        IF d.Focus < 0 THEN d.Focus = FdFocusCount - 1
+        RETURN FALSE, "", FALSE
+    END IF
+
+    IF d.Focus = FdFocusFolders THEN
+        IF k = "up" THEN
+            d.ListMove(0, -1)
+            RETURN FALSE, "", FALSE
+        END IF
+        IF k = "down" THEN
+            d.ListMove(0, 1)
+            RETURN FALSE, "", FALSE
+        END IF
+        IF k = "pgup" THEN
+            d.ListMove(0, 0 - d.ListH())
+            RETURN FALSE, "", FALSE
+        END IF
+        IF k = "pgdown" THEN
+            d.ListMove(0, d.ListH())
+            RETURN FALSE, "", FALSE
+        END IF
+        IF k = "enter" THEN
+            IF d.FoldCur >= 0 AND d.FoldCur < LEN(d.Folders) THEN
+                d.CdInto(d.Folders[d.FoldCur])
+            END IF
+            RETURN FALSE, "", FALSE
+        END IF
+        RETURN FALSE, "", FALSE
+    END IF
+
+    IF d.Focus = FdFocusFiles THEN
+        IF k = "up" THEN
+            d.ListMove(1, -1)
+            RETURN FALSE, "", FALSE
+        END IF
+        IF k = "down" THEN
+            d.ListMove(1, 1)
+            RETURN FALSE, "", FALSE
+        END IF
+        IF k = "pgup" THEN
+            d.ListMove(1, 0 - d.ListH())
+            RETURN FALSE, "", FALSE
+        END IF
+        IF k = "pgdown" THEN
+            d.ListMove(1, d.ListH())
+            RETURN FALSE, "", FALSE
+        END IF
+        IF k = "enter" THEN
+            IF d.FileCur >= 0 AND d.FileCur < LEN(d.Files) THEN
+                d.PathBuf = filepath.Join(d.CurDir, d.Files[d.FileCur])
+                d.PathPos = LEN(d.PathBuf)
+                RETURN TRUE, d.PathBuf, FALSE
+            END IF
+            RETURN FALSE, "", FALSE
+        END IF
+        RETURN FALSE, "", FALSE
+    END IF
+
+    IF d.Focus = FdFocusOK THEN
+        IF k = "enter" OR k = "space" THEN RETURN TRUE, d.PathBuf, FALSE
+        RETURN FALSE, "", FALSE
+    END IF
+
+    IF d.Focus = FdFocusCancel THEN
+        IF k = "enter" OR k = "space" THEN RETURN FALSE, "", TRUE
+        RETURN FALSE, "", FALSE
+    END IF
+
+    ' Path field
+    IF k = "enter" THEN RETURN TRUE, d.PathBuf, FALSE
+    d.PathEdit(k)
+    RETURN FALSE, "", FALSE
+END FUNCTION
+
+' HandleClick processes a mouse click at screen coords (x, y). Same
+' return shape as HandleKey. Clicks outside the dialog rect are
+' swallowed (returns all-FALSE) so they don't dismiss it.
+FUNCTION (d AS POINTER TO FileDialog) HandleClick(x AS INTEGER, y AS INTEGER) AS (BOOLEAN, STRING, BOOLEAN)
+    DIM lx AS INTEGER = x - d.X
+    DIM ly AS INTEGER = y - d.Y
+    IF lx < 0 OR ly < 0 OR lx >= d.Width OR ly >= d.Height THEN
+        RETURN FALSE, "", FALSE
+    END IF
+    DIM innerW AS INTEGER = d.Width - 2
+    DIM listH AS INTEGER = d.ListH()
+
+    ' Path field (row 2).
+    IF ly = 2 THEN
+        d.Focus = FdFocusPath
+        DIM fieldStart AS INTEGER = 1 + 7 + 1
+        DIM caret AS INTEGER = lx - fieldStart
+        IF caret < 0 THEN caret = 0
+        IF caret > LEN(d.PathBuf) THEN caret = LEN(d.PathBuf)
+        d.PathPos = caret
+        RETURN FALSE, "", FALSE
+    END IF
+
+    ' List header (row 4) — focus only.
+    IF ly = 4 THEN
+        DIM colW AS INTEGER = (innerW - 1) / 2
+        IF colW > 25 THEN colW = 25
+        IF lx >= 1 AND lx < 1 + colW THEN
+            d.Focus = FdFocusFolders
+        ELSEIF lx > 1 + colW AND lx <= innerW THEN
+            d.Focus = FdFocusFiles
+        END IF
+        RETURN FALSE, "", FALSE
+    END IF
+
+    ' List rows (rows 5..4+listH).
+    IF ly >= 5 AND ly < 5 + listH THEN
+        DIM rowIdx AS INTEGER = ly - 5
+        DIM colW2 AS INTEGER = (innerW - 1) / 2
+        IF colW2 > 25 THEN colW2 = 25
+        IF lx >= 1 AND lx < 1 + colW2 THEN
+            d.Focus = FdFocusFolders
+            DIM fIdx AS INTEGER = d.FoldOff + rowIdx
+            IF fIdx < 0 OR fIdx >= LEN(d.Folders) THEN RETURN FALSE, "", FALSE
+            d.FoldCur = fIdx
+            ' Single-click cd's into folder for ergonomics.
+            d.CdInto(d.Folders[fIdx])
+            RETURN FALSE, "", FALSE
+        END IF
+        IF lx > 1 + colW2 AND lx <= innerW THEN
+            d.Focus = FdFocusFiles
+            DIM fileIdx AS INTEGER = d.FileOff + rowIdx
+            IF fileIdx < 0 OR fileIdx >= LEN(d.Files) THEN RETURN FALSE, "", FALSE
+            d.FileCur = fileIdx
+            d.PathBuf = filepath.Join(d.CurDir, d.Files[fileIdx])
+            d.PathPos = LEN(d.PathBuf)
+            RETURN FALSE, "", FALSE
+        END IF
+        RETURN FALSE, "", FALSE
+    END IF
+
+    ' Buttons row (row 6+listH).
+    IF ly = 6 + listH THEN
+        DIM pad AS INTEGER = innerW - 20
+        IF pad < 0 THEN pad = 0
+        DIM okStart AS INTEGER = 1 + pad
+        DIM okEnd AS INTEGER = okStart + 6
+        DIM cnStart AS INTEGER = okEnd + 3
+        DIM cnEnd AS INTEGER = cnStart + 10
+        IF lx >= okStart AND lx < okEnd THEN
+            RETURN TRUE, d.PathBuf, FALSE
+        END IF
+        IF lx >= cnStart AND lx < cnEnd THEN
+            RETURN FALSE, "", TRUE
+        END IF
+        RETURN FALSE, "", FALSE
+    END IF
+    RETURN FALSE, "", FALSE
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Render
+' ----------------------------------------------------------------------
+
+FUNCTION fdPathRow(d AS FileDialog, innerW AS INTEGER) AS STRING
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Background(lipgloss.Color("#24273a"))
+    DIM labelStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Background(lipgloss.Color("#24273a")).Bold(TRUE)
+    DIM textStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#e0def4")).Background(lipgloss.Color("#1a1b2e"))
+    DIM textFocused AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#e0def4")).Background(lipgloss.Color("#2d4f67"))
+
+    DIM tStyle AS lipgloss.Style = textStyle
+    IF d.Focus = FdFocusPath THEN tStyle = textFocused
+    DIM label AS STRING = " Path: "
+    DIM labelW AS INTEGER = lipgloss.Width(label)
+    DIM fieldW AS INTEGER = innerW - labelW
+
+    DIM pre AS STRING = ""
+    DIM post AS STRING = ""
+    IF d.PathPos > 0 THEN pre = Mid(d.PathBuf, 1, d.PathPos)
+    IF d.PathPos < LEN(d.PathBuf) THEN post = Mid(d.PathBuf, d.PathPos + 1, LEN(d.PathBuf) - d.PathPos)
+    DIM caret AS STRING = "▎"
+    IF d.Focus <> FdFocusPath THEN caret = ""
+    DIM content AS STRING = pre + caret + post
+    content = fdTruncR(content, fieldW - 1)
+    DIM pad AS INTEGER = fieldW - lipgloss.Width(content) - 1
+    IF pad < 0 THEN pad = 0
+    RETURN bStyle.Render("║") + labelStyle.Render(label) + tStyle.Render(" " + content + strings.Repeat(" ", pad)) + bStyle.Render("║")
+END FUNCTION
+
+FUNCTION fdListsRows(d AS FileDialog, innerW AS INTEGER) AS []STRING
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Background(lipgloss.Color("#24273a"))
+    DIM headStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Background(lipgloss.Color("#24273a")).Bold(TRUE)
+    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#4e5276")).Background(lipgloss.Color("#24273a"))
+    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#e0def4")).Background(lipgloss.Color("#1a1b2e"))
+    DIM cursorStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#e0def4")).Background(lipgloss.Color("#2d4f67")).Bold(TRUE)
+    DIM dimStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#4e5276")).Background(lipgloss.Color("#1a1b2e"))
+
+    DIM colW AS INTEGER = (innerW - 1) / 2
+    IF colW > 25 THEN colW = 25
+    DIM colWR AS INTEGER = innerW - 1 - colW
+
+    DIM foldHead AS STRING = " Folders"
+    DIM fileHead AS STRING = " Files"
+    IF d.Mask <> "" AND d.Mask <> "*" THEN fileHead = fileHead + " (" + d.Mask + ")"
+    DIM foldHeadPad AS INTEGER = colW - lipgloss.Width(foldHead)
+    IF foldHeadPad < 0 THEN foldHeadPad = 0
+    DIM fileHeadPad AS INTEGER = colWR - lipgloss.Width(fileHead)
+    IF fileHeadPad < 0 THEN fileHeadPad = 0
+    DIM headRow AS STRING = bStyle.Render("║") + headStyle.Render(foldHead + strings.Repeat(" ", foldHeadPad)) + sepStyle.Render("│") + headStyle.Render(fileHead + strings.Repeat(" ", fileHeadPad)) + bStyle.Render("║")
+
+    DIM rows AS []STRING
+    rows = APPEND(rows, headRow)
+    DIM listH AS INTEGER = d.ListH()
+    DIM r AS INTEGER
+    FOR r = 0 TO listH - 1
+        DIM foldIdx AS INTEGER = d.FoldOff + r
+        DIM fileIdx AS INTEGER = d.FileOff + r
+
+        DIM foldText AS STRING = ""
+        DIM foldDim AS BOOLEAN = TRUE
+        IF foldIdx >= 0 AND foldIdx < LEN(d.Folders) THEN
+            foldText = d.Folders[foldIdx] + "/"
+            foldDim = FALSE
+        END IF
+        DIM foldVis AS STRING = " " + fdTruncR(foldText, colW - 1)
+        DIM foldPad AS INTEGER = colW - lipgloss.Width(foldVis)
+        IF foldPad < 0 THEN foldPad = 0
+        DIM foldRendered AS STRING
+        IF foldDim THEN
+            foldRendered = dimStyle.Render(foldVis + strings.Repeat(" ", foldPad))
+        ELSEIF foldIdx = d.FoldCur AND d.Focus = FdFocusFolders THEN
+            foldRendered = cursorStyle.Render(foldVis + strings.Repeat(" ", foldPad))
+        ELSE
+            foldRendered = rowStyle.Render(foldVis + strings.Repeat(" ", foldPad))
+        END IF
+
+        DIM fileText AS STRING = ""
+        DIM fileDim AS BOOLEAN = TRUE
+        IF fileIdx >= 0 AND fileIdx < LEN(d.Files) THEN
+            fileText = d.Files[fileIdx]
+            fileDim = FALSE
+        END IF
+        DIM fileVis AS STRING = " " + fdTruncR(fileText, colWR - 1)
+        DIM filePad AS INTEGER = colWR - lipgloss.Width(fileVis)
+        IF filePad < 0 THEN filePad = 0
+        DIM fileRendered AS STRING
+        IF fileDim THEN
+            fileRendered = dimStyle.Render(fileVis + strings.Repeat(" ", filePad))
+        ELSEIF fileIdx = d.FileCur AND d.Focus = FdFocusFiles THEN
+            fileRendered = cursorStyle.Render(fileVis + strings.Repeat(" ", filePad))
+        ELSE
+            fileRendered = rowStyle.Render(fileVis + strings.Repeat(" ", filePad))
+        END IF
+
+        rows = APPEND(rows, bStyle.Render("║") + foldRendered + sepStyle.Render("│") + fileRendered + bStyle.Render("║"))
+    NEXT r
+    RETURN rows
+END FUNCTION
+
+FUNCTION fdButtonsRow(d AS FileDialog, innerW AS INTEGER) AS STRING
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Background(lipgloss.Color("#24273a"))
+    DIM bg AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#24273a"))
+    DIM btnStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cad3f5")).Background(lipgloss.Color("#24273a"))
+    DIM btnFocused AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#e0def4")).Background(lipgloss.Color("#2d4f67")).Bold(TRUE)
+
+    DIM okLabel AS STRING = "[ OK ]"
+    DIM cnLabel AS STRING = "[ Cancel ]"
+    DIM okText AS STRING
+    IF d.Focus = FdFocusOK THEN
+        okText = btnFocused.Render(okLabel)
+    ELSE
+        okText = btnStyle.Render(okLabel)
+    END IF
+    DIM cnText AS STRING
+    IF d.Focus = FdFocusCancel THEN
+        cnText = btnFocused.Render(cnLabel)
+    ELSE
+        cnText = btnStyle.Render(cnLabel)
+    END IF
+    DIM rightW AS INTEGER = lipgloss.Width(okLabel) + 3 + lipgloss.Width(cnLabel) + 1
+    DIM pad AS INTEGER = innerW - rightW
+    IF pad < 0 THEN pad = 0
+    RETURN bStyle.Render("║") + bg.Render(strings.Repeat(" ", pad)) + okText + bg.Render("   ") + cnText + bg.Render(" ") + bStyle.Render("║")
+END FUNCTION
+
+' Render returns (overlay-string, x, y). Empty string if dialog not active.
+FUNCTION (d AS FileDialog) Render() AS (STRING, INTEGER, INTEGER)
+    IF NOT d.Active THEN RETURN "", 0, 0
+    DIM innerW AS INTEGER = d.Width - 2
+    IF innerW < 30 THEN innerW = 30
+
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Background(lipgloss.Color("#24273a"))
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Background(lipgloss.Color("#24273a")).Bold(TRUE)
+    DIM bg AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#24273a")).Foreground(lipgloss.Color("#e0def4"))
+
+    DIM hr AS STRING = strings.Repeat("═", innerW)
+    DIM top AS STRING = bStyle.Render("╔") + bStyle.Render(hr) + bStyle.Render("╗")
+    DIM bottom AS STRING = bStyle.Render("╚") + bStyle.Render(hr) + bStyle.Render("╝")
+    DIM hrLight AS STRING = bStyle.Render("║") + bg.Render(strings.Repeat("─", innerW)) + bStyle.Render("║")
+
+    DIM titleW AS INTEGER = lipgloss.Width(d.Title)
+    DIM titlePad AS INTEGER = (innerW - titleW) / 2
+    IF titlePad < 0 THEN titlePad = 0
+    DIM titlePadR AS INTEGER = innerW - titlePad - titleW
+    IF titlePadR < 0 THEN titlePadR = 0
+    DIM titleRow AS STRING = bStyle.Render("║") + bg.Render(strings.Repeat(" ", titlePad)) + titleStyle.Render(d.Title) + bg.Render(strings.Repeat(" ", titlePadR)) + bStyle.Render("║")
+
+    DIM pathRow AS STRING = fdPathRow(d, innerW)
+    DIM listRows AS []STRING = fdListsRows(d, innerW)
+    DIM buttonsRow AS STRING = fdButtonsRow(d, innerW)
+
+    DIM lines AS []STRING
+    lines = APPEND(lines, top)
+    lines = APPEND(lines, titleRow)
+    lines = APPEND(lines, pathRow)
+    lines = APPEND(lines, hrLight)
+    DIM li AS INTEGER
+    FOR li = 0 TO LEN(listRows) - 1
+        lines = APPEND(lines, listRows[li])
+    NEXT li
+    lines = APPEND(lines, hrLight)
+    lines = APPEND(lines, buttonsRow)
+    lines = APPEND(lines, bottom)
+    RETURN strings.Join(lines, "\n"), d.X, d.Y
+END FUNCTION

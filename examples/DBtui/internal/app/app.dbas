@@ -17,7 +17,14 @@
 
 IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "charm.land/bubbles/v2/textarea" AS textarea
 IMPORT "fmt"
+IMPORT "os"
+IMPORT "os/exec" AS osexec
+IMPORT "path/filepath"
+IMPORT "sort"
+IMPORT "strings"
+IMPORT "time"
 
 ' ----------------------------------------------------------------------
 ' Model
@@ -31,13 +38,83 @@ TYPE Model
     DIM MenuBar    AS MenuBar
     DIM StatusBar  AS StatusBar
     DIM Tree       AS Tree            ' project tree (left sidebar)
-    DIM Registry   AS Registry        ' widget registry — feeds the palette
-    DIM Palette    AS ScrollPanel     ' widget palette (right column, top)
+    DIM Registry   AS Registry        ' widget registry — feeds the Widgets tab
+    DIM ToolReg    AS ToolRegistry    ' tool registry — feeds the Tools tab
+    DIM PaletteTab AS INTEGER         ' 0 = Widgets, 1 = Tools
+    DIM Palette    AS ScrollPanel     ' palette scroll panel (under the tabs)
     DIM Properties AS PropertiesPanel ' selected widget / form properties (right column, bottom)
     DIM Visual     AS VisualEditor    ' form designer canvas (centre)
     DIM LeftW      AS INTEGER         ' left sidebar width
     DIM RightW     AS INTEGER         ' right sidebar width
     DIM PaletteH   AS INTEGER         ' fixed height for the palette block
+
+    ' Panel screen rectangles — recomputed on each WindowSizeMsg so the
+    ' mouse dispatcher can route a click to the panel under the cursor.
+    DIM MenuRect    AS Rect
+    DIM StatusRect  AS Rect
+    DIM TreeRect    AS Rect
+    DIM VisualRect  AS Rect
+    DIM PaletteRect AS Rect
+    DIM PropsRect   AS Rect
+
+    ' Drag tracking (canvas widget move / resize).
+    DIM DragMode      AS INTEGER       ' DragNone / DragMove / DragResize
+    DIM DragWidgetIdx AS INTEGER
+    DIM DragResizeX   AS BOOLEAN
+    DIM DragResizeY   AS BOOLEAN
+    DIM DragOrigX     AS INTEGER
+    DIM DragOrigY     AS INTEGER
+    DIM DragOrigW     AS INTEGER
+    DIM DragOrigH     AS INTEGER
+    DIM DragStartMx   AS INTEGER        ' mouse X at drag start (global)
+    DIM DragStartMy   AS INTEGER        ' mouse Y at drag start (global)
+
+    ' Double-click tracking — used by the palette to place a widget on
+    ' the canvas when the same row is clicked twice in quick succession.
+    DIM LastClickPanel AS INTEGER
+    DIM LastClickRow   AS INTEGER
+    DIM LastClickAt    AS time.Time
+
+    ' Modal text-input dialog (file picker / SaveAs prompt). One at a
+    ' time; ModeFileDialog gates keyboard input while DialogActive.
+    DIM DialogActive AS BOOLEAN
+    DIM DialogTitle     AS STRING
+    DIM DialogMode      AS STRING        ' "open" or "save"
+    DIM DialogAction    AS STRING        ' action ID dispatched on OK (file.open / file.saveas)
+    DIM DialogCurDir    AS STRING        ' currently-shown directory
+    DIM DialogMask      AS STRING        ' glob filter (e.g. "*.dbproj"); empty = all
+    DIM DialogFolders   AS []STRING
+    DIM DialogFiles     AS []STRING
+    DIM DialogPathBuf   AS STRING        ' editable full-path
+    DIM DialogPathPos   AS INTEGER       ' caret offset in PathBuf
+    DIM DialogFocus     AS INTEGER       ' DialogFocusPath / Folders / Files / OK / Cancel
+    DIM DialogFoldCur   AS INTEGER
+    DIM DialogFoldOff   AS INTEGER
+    DIM DialogFileCur   AS INTEGER
+    DIM DialogFileOff   AS INTEGER
+    DIM DialogError     AS STRING        ' last commit-error, shown in red
+
+    ' Dialog geometry — stored on Model so the user can drag the box's
+    ' bottom-right corner to resize. Recomputed on openDialog and on
+    ' the first WindowSizeMsg if previously zeroed.
+    DIM DialogX      AS INTEGER
+    DIM DialogY      AS INTEGER
+    DIM DialogWidth  AS INTEGER
+    DIM DialogHeight AS INTEGER
+
+    ' Code editor pane — swapped in for the Visual canvas when F7
+    ' toggles CodeMode. Editor is a charm bubbles textarea.
+    DIM CodeMode    AS BOOLEAN
+    DIM Editor      AS textarea.Model
+    DIM CodePath    AS STRING        ' path of file currently in Editor
+
+    ' Bottom pane (Console + Shell tabs) — F12 toggles visibility.
+    ' BottomHeight defaults to ~12 rows; later we can drag-resize.
+    DIM BottomVisible AS BOOLEAN
+    DIM BottomTab     AS INTEGER
+    DIM BottomHeight  AS INTEGER
+    DIM BottomRect    AS Rect
+    DIM ConsoleBuf    AS []STRING        ' captured stdout/stderr lines
 END TYPE
 
 FUNCTION NewModel() AS Model
@@ -49,14 +126,24 @@ FUNCTION NewModel() AS Model
     m.LeftW = 28
     m.RightW = 32
     m.PaletteH = 8
+    m.CodeMode = FALSE
+    m.Editor = textarea.New()
+    m.Editor.ShowLineNumbers = TRUE
+    m.Editor.Prompt = ""
+    m.Editor.Placeholder = "' Event handlers for this form — F7 returns to the canvas."
+    m.BottomVisible = FALSE
+    m.BottomTab = BottomTabConsole
+    m.BottomHeight = 12
     m.MenuBar = NewMenuBar()
     m.StatusBar = NewStatusBar()
     m.StatusBar.Message = defaultStatus()
     m.Tree = NewTree()
     m.Tree.SetFocused(TRUE)
     m.Registry = DefaultRegistry()
+    m.ToolReg = DefaultToolRegistry()
+    m.PaletteTab = 0
     m.Palette = NewScrollPanel()
-    m.Palette.Title = "Widgets"
+    m.Palette.Title = ""           ' tab strip renders the title now
     m.Palette.Cursor = 0
     m.Palette.Lines = m.Registry.Kinds
     m.Visual = NewVisualEditor()
@@ -110,7 +197,1900 @@ SUB syncProperties(m AS POINTER TO Model)
 END SUB
 
 FUNCTION defaultStatus() AS STRING
-    RETURN "DBtui — F10:Menu  |  Tab:Focus  |  ↑/↓:Move  |  Space:Expand  |  Enter:Pick  |  q:Quit"
+    RETURN "DBtui — F10:Menu  F5:Run  F7:Code  F12:Console  |  Tab:Focus  ↑/↓:Move  Enter:Pick  q:Quit"
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Properties-panel edit application
+'
+' These three helpers route a property edit (initiated by Space, ←/→,
+' or Enter on the Properties panel) to the right source of truth:
+' the selected widget in m.Visual.Widgets, or the form lookup'd by
+' name out of m.Tree.Project.Forms. They never refresh the panel
+' themselves — the caller does that via refreshPropertiesFromSource
+' so the same path handles bool, enum, and text/int/color commits.
+' ----------------------------------------------------------------------
+
+FUNCTION applyWidgetEdit(m AS POINTER TO Model, name AS STRING, value AS ANY) AS ERROR
+    IF m.Visual.Selected < 0 OR m.Visual.Selected >= LEN(m.Visual.Widgets) THEN
+        RETURN NewError("no widget selected")
+    END IF
+    RETURN SetWidgetProperty(@m.Visual.Widgets[m.Visual.Selected], name, value)
+END FUNCTION
+
+FUNCTION applyFormEdit(m AS POINTER TO Model, name AS STRING, value AS ANY) AS ERROR
+    DIM idx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].Name = m.Visual.FormName THEN idx = i
+    NEXT i
+    IF idx < 0 THEN RETURN NewError("no current form")
+    DIM err AS ERROR = SetFormProperty(@m.Tree.Project.Forms[idx], name, value)
+    IF err <> NIL THEN RETURN err
+    ' Sync display-relevant fields in the visual editor so the canvas
+    ' reflects the change next paint. Non-visual props (Modal, Resizable*,
+    ' StartPos, ShowInTaskbar, ShowStatusBar, Border, Corner) don't need
+    ' a sync — the form file is the source of truth and a future save
+    ' will persist them.
+    IF name = "Name" THEN m.Visual.FormName = m.Tree.Project.Forms[idx].Name
+    IF name = "Title" THEN m.Visual.FormTitle = m.Tree.Project.Forms[idx].Title
+    IF name = "Width" THEN m.Visual.FormW = m.Tree.Project.Forms[idx].Width
+    IF name = "Height" THEN m.Visual.FormH = m.Tree.Project.Forms[idx].Height
+    IF name = "BgColor" THEN m.Visual.FormBgColor = m.Tree.Project.Forms[idx].BgColor
+    IF name = "FgColor" THEN m.Visual.FormFgColor = m.Tree.Project.Forms[idx].FgColor
+    RETURN NIL
+END FUNCTION
+
+' focusPanel — single chokepoint for transitioning focus. Mirrors the
+' inline blocks in the Tab handler but consolidated so the mouse
+' dispatcher doesn't re-derive the four panel SetFocused calls.
+SUB focusPanel(m AS POINTER TO Model, target AS INTEGER)
+    m.Focus = target
+    m.Tree.SetFocused(target = FocusProjectTree)
+    m.Visual.SetFocused(target = FocusVisual)
+    m.Palette.Focused = (target = FocusWidgets)
+    m.Properties.SetFocused(target = FocusProperties)
+END SUB
+
+' setPaletteTab — switches between Widgets and Tools and reloads the
+' ScrollPanel's Lines from the active registry.
+SUB setPaletteTab(m AS POINTER TO Model, tab AS INTEGER)
+    m.PaletteTab = tab
+    IF tab = 1 THEN
+        m.Palette.Lines = m.ToolReg.Kinds
+    ELSE
+        m.Palette.Lines = m.Registry.Kinds
+    END IF
+    m.Palette.Cursor = 0
+    m.Palette.Offset = 0
+END SUB
+
+' renderPaletteTabs — one-row strip with [ Widgets ] [ Tools ].
+FUNCTION renderPaletteTabs(m AS Model, width AS INTEGER) AS STRING
+    DIM activeStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorSelection()).Bold(TRUE)
+    DIM inactiveStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorMenuFg()).Background(ColorMenuBg())
+    DIM bracketActive AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFocusBorder()).Background(ColorSelection()).Bold(TRUE)
+    DIM bracketInactive AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorHotkey()).Background(ColorMenuBg())
+    DIM gapStyle AS lipgloss.Style = lipgloss.NewStyle().Background(ColorMenuBg())
+
+    DIM wTab AS STRING
+    DIM tTab AS STRING
+    IF m.PaletteTab = 0 THEN
+        wTab = bracketActive.Render("[ ") + activeStyle.Render("Widgets") + bracketActive.Render(" ]")
+        tTab = bracketInactive.Render("[ ") + inactiveStyle.Render("Tools") + bracketInactive.Render(" ]")
+    ELSE
+        wTab = bracketInactive.Render("[ ") + inactiveStyle.Render("Widgets") + bracketInactive.Render(" ]")
+        tTab = bracketActive.Render("[ ") + activeStyle.Render("Tools") + bracketActive.Render(" ]")
+    END IF
+    DIM tabs AS STRING = wTab + gapStyle.Render(" ") + tTab
+    DIM tabsW AS INTEGER = lipgloss.Width(tabs)
+    DIM gap AS INTEGER = width - tabsW
+    IF gap < 0 THEN gap = 0
+    RETURN tabs + gapStyle.Render(strings.Repeat(" ", gap))
+END FUNCTION
+
+' placePaletteTool — adds a new ToolEntry to the active form's Tools
+' array from the currently-selected tool kind in the palette.
+FUNCTION placePaletteTool(m AS POINTER TO Model) AS ERROR
+    IF m.Palette.Cursor < 0 OR m.Palette.Cursor >= LEN(m.Palette.Lines) THEN
+        RETURN NewError("no tool selected")
+    END IF
+    DIM kind AS STRING = m.Palette.Lines[m.Palette.Cursor]
+    ' Find the active form.
+    DIM fIdx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].Name = m.Visual.FormName THEN fIdx = i
+    NEXT i
+    IF fIdx < 0 THEN RETURN NewError("no current form")
+    DIM id AS STRING = fmt.Sprintf("%s%d", strings.ToLower(Mid(kind, 1, 1)) + Mid(kind, 2, LEN(kind) - 1), LEN(m.Tree.Project.Forms[fIdx].Tools) + 1)
+    DIM t AS ToolEntry
+    DIM err AS ERROR
+    t, err = m.ToolReg.Create(kind, id)
+    IF err <> NIL THEN RETURN err
+    m.Tree.Project.Forms[fIdx].Tools = APPEND(m.Tree.Project.Forms[fIdx].Tools, t)
+    m.Tree.buildFromProject()
+    m.Tree.rebuildLines()
+    m.Properties.SetTool(t)
+    RETURN NIL
+END FUNCTION
+
+' placePaletteWidget — palette double-click handler. Creates a new
+' instance of the cursor's kind via the registry and drops it at the
+' centre of the form. Returns NIL on success or an error from
+' Registry.Create.
+FUNCTION placePaletteWidget(m AS POINTER TO Model) AS ERROR
+    IF m.Palette.Cursor < 0 OR m.Palette.Cursor >= LEN(m.Palette.Lines) THEN
+        RETURN NewError("no palette item selected")
+    END IF
+    DIM kind AS STRING = m.Palette.Lines[m.Palette.Cursor]
+    DIM id AS STRING = fmt.Sprintf("%s%d", kind, LEN(m.Visual.Widgets) + 1)
+    DIM w AS Widget
+    DIM err AS ERROR
+    w, err = m.Registry.Create(kind, id)
+    IF err <> NIL THEN RETURN err
+    w.X = (m.Visual.FormW - w.W) / 2
+    IF w.X < 1 THEN w.X = 1
+    w.Y = (m.Visual.FormH - w.H) / 2
+    IF w.Y < 1 THEN w.Y = 1
+    m.Visual.Widgets = APPEND(m.Visual.Widgets, w)
+    m.Visual.Selected = LEN(m.Visual.Widgets) - 1
+    RETURN NIL
+END FUNCTION
+
+' syncProjectFromVisual — push the visual editor's mutated Widgets back
+' into the matching form's Widgets slice. Called before any Save so
+' drags/resizes/property edits are reflected in the .dbproj output.
+SUB syncProjectFromVisual(m AS POINTER TO Model)
+    IF m.Visual.FormName = "" THEN RETURN
+    DIM idx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].Name = m.Visual.FormName THEN idx = i
+    NEXT i
+    IF idx < 0 THEN RETURN
+    DIM entries AS []WidgetEntry
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(m.Visual.Widgets) - 1
+        entries = APPEND(entries, WidgetToEntry(m.Visual.Widgets[j]))
+    NEXT j
+    m.Tree.Project.Forms[idx].Widgets = entries
+END SUB
+
+' loadStartForm — after a fresh project is set on m.Tree.Project, load
+' the start form into the visual editor and seed the Properties panel
+' from the first widget (or the form itself).
+SUB loadStartForm(m AS POINTER TO Model)
+    DIM startIdx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].Name = m.Tree.Project.StartForm THEN startIdx = i
+    NEXT i
+    IF startIdx < 0 AND LEN(m.Tree.Project.Forms) > 0 THEN startIdx = 0
+    IF startIdx < 0 THEN RETURN
+    m.Visual.LoadForm(m.Tree.Project.Forms[startIdx], m.Registry)
+    DIM sw AS Widget
+    DIM swOk AS BOOLEAN
+    sw, swOk = m.Visual.SelectedWidget()
+    IF swOk THEN
+        m.Properties.SetWidget(sw)
+    ELSE
+        m.Properties.SetForm(m.Tree.Project.Forms[startIdx])
+    END IF
+END SUB
+
+' ----------------------------------------------------------------------
+' Bottom pane (Console + Shell tabs) — F12 toggles visibility.
+' Console captures Build/Run output; Shell is a stub for now.
+' ----------------------------------------------------------------------
+
+SUB toggleBottomPane(m AS POINTER TO Model)
+    m.BottomVisible = NOT m.BottomVisible
+    IF m.BottomVisible THEN
+        m.StatusBar.Message = "Console open — F12 to hide  |  Tabs: Console / Shell"
+    ELSE
+        m.StatusBar.Message = defaultStatus()
+    END IF
+END SUB
+
+' consoleAppend pushes a line into the captured console buffer.
+SUB consoleAppend(m AS POINTER TO Model, line AS STRING)
+    m.ConsoleBuf = APPEND(m.ConsoleBuf, line)
+    ' Cap the buffer at 2000 lines so it doesn't grow forever.
+    IF LEN(m.ConsoleBuf) > 2000 THEN
+        DIM trimmed AS []STRING
+        DIM i AS INTEGER
+        FOR i = LEN(m.ConsoleBuf) - 2000 TO LEN(m.ConsoleBuf) - 1
+            trimmed = APPEND(trimmed, m.ConsoleBuf[i])
+        NEXT i
+        m.ConsoleBuf = trimmed
+    END IF
+END SUB
+
+' runBuild — Run→Build menu handler. Codegens the project to disk,
+' shells out to `dbasic build` against the result, streams stdout +
+' stderr into the console buffer. Pops the console pane open so the
+' user sees the output. Returns TRUE on success, FALSE on failure.
+FUNCTION runBuild(m AS POINTER TO Model) AS BOOLEAN
+    syncProjectFromVisual(m)
+    ' Ensure each form's code file exists. If a form has never been
+    ' opened in the code editor, generate the wired stub now so the
+    ' codegen has handlers to call (otherwise buttons fire empty
+    ' auto-stubs and nothing happens at runtime).
+    DIM fi AS INTEGER
+    FOR fi = 0 TO LEN(m.Tree.Project.Forms) - 1
+        DIM cp AS STRING = m.Tree.Project.Forms[fi].Code
+        IF cp = "" THEN
+            cp = "forms/" + m.Tree.Project.Forms[fi].Name + ".dbas"
+            m.Tree.Project.Forms[fi].Code = cp
+        END IF
+        DIM probe AS BYTES
+        DIM probeErr AS ERROR
+        probe, probeErr = os.ReadFile(cp)
+        _ = probe
+        IF probeErr <> NIL THEN
+            DIM parentDir AS STRING = filepath.Dir(cp)
+            IF parentDir <> "" AND parentDir <> "." THEN
+                DIM mkErr AS ERROR = os.MkdirAll(parentDir, 0755)
+                _ = mkErr
+            END IF
+            WriteFile(cp, codeStubFor(m.Tree.Project.Forms[fi]))
+            consoleAppend(m, "auto-created: " + cp)
+        END IF
+    NEXT fi
+    DIM projName AS STRING = m.Tree.Project.Name
+    IF projName = "" THEN projName = "untitled"
+    DIM outDbas AS STRING = projName + ".dbas"
+    DIM outBin  AS STRING = projName
+    DIM code AS STRING = GenerateProgram(m.Tree.Project)
+    WriteFile(outDbas, code)
+    consoleAppend(m, "$ dbasic build " + outDbas + " -o " + outBin)
+
+    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command("dbasic", "build", outDbas, "-o", outBin)
+    DIM outBytes AS BYTES
+    DIM err AS ERROR
+    outBytes, err = cmd.CombinedOutput()
+    DIM outStr AS STRING = string(outBytes)
+    DIM lines AS []STRING = strings.Split(outStr, "\n")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        IF lines[i] <> "" OR i < LEN(lines) - 1 THEN consoleAppend(m, lines[i])
+    NEXT i
+    m.BottomVisible = TRUE
+    m.BottomTab = BottomTabConsole
+    IF err <> NIL THEN
+        consoleAppend(m, "[build failed] " + err.Error())
+        m.StatusBar.Message = "⚠ build failed — see console"
+        RETURN FALSE
+    END IF
+    consoleAppend(m, "[build ok] " + outBin)
+    m.StatusBar.Message = "build ok: " + outBin
+    RETURN TRUE
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Project-tree loader — wires the "(loader — TBD)" stubs to real
+' actions. Form node → load form into canvas. Code node → open editor
+' on that file. Widget node → load parent form + select that widget.
+' ----------------------------------------------------------------------
+
+SUB loadFormByPath(m AS POINTER TO Model, formPath AS STRING)
+    DIM idx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].File = formPath THEN idx = i
+    NEXT i
+    IF idx < 0 THEN RETURN
+    m.Visual.LoadForm(m.Tree.Project.Forms[idx], m.Registry)
+    DIM sw AS Widget
+    DIM swOk AS BOOLEAN
+    sw, swOk = m.Visual.SelectedWidget()
+    IF swOk THEN
+        m.Properties.SetWidget(sw)
+    ELSE
+        m.Properties.SetForm(m.Tree.Project.Forms[idx])
+    END IF
+    IF m.CodeMode THEN exitCodeMode(m)
+    m.StatusBar.Message = "loaded form: " + m.Tree.Project.Forms[idx].Name
+END SUB
+
+SUB selectWidgetByName(m AS POINTER TO Model, formPath AS STRING, nodeName AS STRING)
+    loadFormByPath(m, formPath)
+    DIM idx AS INTEGER = strings.Index(nodeName, " (")
+    DIM widgetId AS STRING = nodeName
+    IF idx > 0 THEN widgetId = Mid(nodeName, 1, idx)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Visual.Widgets) - 1
+        IF m.Visual.Widgets[i].Id = widgetId THEN
+            m.Visual.Selected = i
+            m.Properties.SetWidget(m.Visual.Widgets[i])
+            m.StatusBar.Message = "selected: " + widgetId
+            RETURN
+        END IF
+    NEXT i
+END SUB
+
+SUB openCodeForFormPath(m AS POINTER TO Model, codePath AS STRING)
+    DIM idx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].Code = codePath THEN idx = i
+    NEXT i
+    IF idx < 0 THEN
+        m.StatusBar.Message = "⚠ no form for " + codePath
+        RETURN
+    END IF
+    loadFormByPath(m, m.Tree.Project.Forms[idx].File)
+    enterCodeMode(m)
+END SUB
+
+SUB selectToolByName(m AS POINTER TO Model, formPath AS STRING, nodeName AS STRING)
+    loadFormByPath(m, formPath)
+    DIM idx AS INTEGER = strings.Index(nodeName, " (")
+    DIM toolId AS STRING = nodeName
+    IF idx > 0 THEN toolId = Mid(nodeName, 1, idx)
+    DIM fIdx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].File = formPath THEN fIdx = i
+    NEXT i
+    IF fIdx < 0 THEN RETURN
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(m.Tree.Project.Forms[fIdx].Tools) - 1
+        IF m.Tree.Project.Forms[fIdx].Tools[j].Id = toolId THEN
+            m.Properties.SetTool(m.Tree.Project.Forms[fIdx].Tools[j])
+            m.StatusBar.Message = "selected tool: " + toolId
+            RETURN
+        END IF
+    NEXT j
+END SUB
+
+' dispatchTreeOpen — single chokepoint used by both the mouse double-
+' click handler and the keyboard Enter handler.
+SUB dispatchTreeOpen(m AS POINTER TO Model, node AS POINTER TO TreeNode)
+    IF node = NIL THEN RETURN
+    IF node.Kind = NodeForm THEN
+        loadFormByPath(m, node.Path)
+        RETURN
+    END IF
+    IF node.Kind = NodeCode THEN
+        openCodeForFormPath(m, node.Path)
+        RETURN
+    END IF
+    IF node.Kind = NodeWidget THEN
+        selectWidgetByName(m, node.Path, node.Name)
+        RETURN
+    END IF
+    IF node.Kind = NodeTool THEN
+        selectToolByName(m, node.Path, node.Name)
+        RETURN
+    END IF
+END SUB
+
+' runRun — Run→Run menu handler. Builds the project; on success,
+' returns a tea.Cmd that suspends bubbletea, executes the generated
+' binary with the terminal attached, then resumes. The user sees the
+' running program full-screen until it exits.
+FUNCTION runRun(m AS POINTER TO Model) AS tea.Cmd
+    IF NOT runBuild(m) THEN RETURN NIL
+    DIM projName AS STRING = m.Tree.Project.Name
+    IF projName = "" THEN projName = "untitled"
+    DIM binPath AS STRING = "./" + projName
+    consoleAppend(m, "$ " + binPath)
+    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command(binPath)
+    RETURN tea.ExecProcess(cmd, NIL)
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Code editor pane — F7 toggles canvas ↔ code editor for the currently-
+' loaded form. Editor buffer is backed by the form's Code path
+' (form.Code, e.g. "forms/frmStart.dbas"). Loading auto-stubs a tiny
+' template if the file doesn't exist yet.
+' ----------------------------------------------------------------------
+
+' renderBottomPane builds the Console / Shell tabbed strip + body.
+' Tab strip at row 0 of the pane, content fills the rest.
+FUNCTION renderBottomPane(m AS Model) AS STRING
+    DIM w AS INTEGER = m.BottomRect.W
+    DIM h AS INTEGER = m.BottomRect.H
+    IF w < 1 THEN w = 1
+    IF h < 2 THEN h = 2
+
+    ' --- Tab strip (2 rows: labels + horizontal rule) ---------------
+    DIM activeStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorSelection()).Bold(TRUE)
+    DIM inactiveStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorMenuFg()).Background(ColorMenuBg())
+    DIM bracketActive AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFocusBorder()).Background(ColorSelection()).Bold(TRUE)
+    DIM bracketInactive AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorHotkey()).Background(ColorMenuBg())
+    DIM gapStyle AS lipgloss.Style = lipgloss.NewStyle().Background(ColorMenuBg())
+    DIM ruleStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFocusBorder()).Background(ColorBg())
+
+    DIM consoleLbl AS STRING = "Console"
+    DIM shellLbl AS STRING = "Shell"
+    DIM consoleTab AS STRING
+    DIM shellTab AS STRING
+    IF m.BottomTab = BottomTabConsole THEN
+        consoleTab = bracketActive.Render("[ ") + activeStyle.Render(consoleLbl) + bracketActive.Render(" ]")
+        shellTab   = bracketInactive.Render("[ ") + inactiveStyle.Render(shellLbl) + bracketInactive.Render(" ]")
+    ELSE
+        consoleTab = bracketInactive.Render("[ ") + inactiveStyle.Render(consoleLbl) + bracketInactive.Render(" ]")
+        shellTab   = bracketActive.Render("[ ") + activeStyle.Render(shellLbl) + bracketActive.Render(" ]")
+    END IF
+    DIM tabs AS STRING = consoleTab + gapStyle.Render(" ") + shellTab
+    DIM tabsW AS INTEGER = lipgloss.Width(tabs)
+    DIM gap AS INTEGER = w - tabsW
+    IF gap < 0 THEN gap = 0
+    DIM tabRow AS STRING = tabs + gapStyle.Render(strings.Repeat(" ", gap))
+    DIM ruleRow AS STRING = ruleStyle.Render(strings.Repeat("─", w))
+
+    ' --- Content -----------------------------------------------------
+    DIM contentH AS INTEGER = h - 2
+    IF contentH < 1 THEN contentH = 1
+    DIM contentStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorBg()).Width(w)
+    DIM lines AS []STRING
+    lines = APPEND(lines, tabRow)
+    lines = APPEND(lines, ruleRow)
+    IF m.BottomTab = BottomTabConsole THEN
+        ' Show the last contentH lines of the console buffer.
+        DIM start AS INTEGER = LEN(m.ConsoleBuf) - contentH
+        IF start < 0 THEN start = 0
+        DIM i AS INTEGER
+        FOR i = 0 TO contentH - 1
+            DIM bufIdx AS INTEGER = start + i
+            DIM line AS STRING = ""
+            IF bufIdx < LEN(m.ConsoleBuf) THEN line = m.ConsoleBuf[bufIdx]
+            ' Trim to fit w cells (lipgloss .Width does the padding).
+            IF lipgloss.Width(line) > w THEN
+                DO WHILE lipgloss.Width(line) > w AND LEN(line) > 0
+                    line = Mid(line, 1, LEN(line) - 1)
+                LOOP
+            END IF
+            lines = APPEND(lines, contentStyle.Render(line))
+        NEXT i
+    ELSE
+        ' Shell tab — TBD placeholder.
+        DIM hintLines AS []STRING
+        hintLines = APPEND(hintLines, "")
+        hintLines = APPEND(hintLines, "  Shell — not yet implemented.")
+        hintLines = APPEND(hintLines, "  Run → Build (or wire run.run) sends output to the Console tab.")
+        DIM j AS INTEGER
+        FOR j = 0 TO contentH - 1
+            DIM hl AS STRING = ""
+            IF j < LEN(hintLines) THEN hl = hintLines[j]
+            lines = APPEND(lines, contentStyle.Render(hl))
+        NEXT j
+    END IF
+    RETURN strings.Join(lines, "\n")
+END FUNCTION
+
+' renderCanvasCaption builds the one-row title bar above the
+' Visual canvas / Code editor. Styled as ─[ Title ]──────── filling the
+' full canvas width, so the center column stays aligned with the
+' sidebars and no cells are wasted on a full border.
+FUNCTION renderCanvasCaption(text AS STRING, width AS INTEGER) AS STRING
+    DIM ruleStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFocusBorder()).Background(ColorBg())
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorBg()).Bold(TRUE)
+    DIM label AS STRING = "[ " + text + " ]"
+    DIM maxLabelW AS INTEGER = width - 4
+    IF maxLabelW < 1 THEN maxLabelW = 1
+    IF lipgloss.Width(label) > maxLabelW THEN
+        DO WHILE lipgloss.Width(label) > maxLabelW AND LEN(label) > 0
+            label = Mid(label, 1, LEN(label) - 1)
+        LOOP
+    END IF
+    DIM labelW AS INTEGER = lipgloss.Width(label)
+    DIM fillW AS INTEGER = width - 1 - labelW - 1
+    IF fillW < 0 THEN fillW = 0
+    RETURN ruleStyle.Render("─") + titleStyle.Render(label) + ruleStyle.Render(strings.Repeat("─", fillW)) + ruleStyle.Render("─")
+END FUNCTION
+
+' codeStubFor returns the stub body written when a form's code file
+' is opened for the first time. Seeds sample handlers for each Button
+' and FileDialog so the user starts with something concrete; if the
+' form has both, wires the first Button → first FileDialog's Show().
+FUNCTION codeStubFor(form AS Form) AS STRING
+    DIM s AS STRING = ""
+    s = s + "' Event handlers for " + form.Name + ".\n"
+    s = s + "' DBtui wires these to the form's widgets at codegen time.\n"
+    s = s + "\n"
+    s = s + "IMPORT \"fmt\"\n"
+    s = s + "IMPORT \"os\"\n"
+    s = s + "\n"
+    s = s + "SUB FormLoad()\n"
+    s = s + "    ' Called once when the form is shown.\n"
+    s = s + "END SUB\n\n"
+
+    ' Pick the first FileDialog tool (if any) to wire buttons to.
+    DIM firstDlg AS STRING = ""
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(form.Tools) - 1
+        IF firstDlg = "" AND form.Tools[ti].Kind = "FileDialog" THEN firstDlg = form.Tools[ti].Id
+    NEXT ti
+
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(form.Widgets) - 1
+        DIM w AS WidgetEntry = form.Widgets[i]
+        IF w.Kind = WidgetKindButton THEN
+            s = s + "SUB " + w.Id + "_Click()\n"
+            IF firstDlg <> "" THEN
+                s = s + "    ' Open the file dialog — result arrives via " + firstDlg + "_FileSelected.\n"
+                s = s + "    " + firstDlg + "_Show()\n"
+            ELSE
+                s = s + "    ' Button click handler — fill in.\n"
+            END IF
+            s = s + "END SUB\n\n"
+        END IF
+    NEXT i
+
+    ' Sample _Change handlers for interactive non-Button widgets.
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(form.Widgets) - 1
+        DIM ww AS WidgetEntry = form.Widgets[j]
+        DIM hasChange AS BOOLEAN = FALSE
+        IF ww.Kind = WidgetKindTextInput   THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindCheckbox    THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindRadioButton THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindComboBox    THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindListBox     THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindScrollBar   THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindTabStrip    THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindScrollPane  THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindTreeView    THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindTextArea    THEN hasChange = TRUE
+        IF ww.Kind = WidgetKindPropertyGrid THEN hasChange = TRUE
+        IF hasChange THEN
+            s = s + "SUB " + ww.Id + "_Change()\n"
+            s = s + "    fmt.Fprintln(os.Stderr, \"" + ww.Id + " changed\")\n"
+            s = s + "END SUB\n\n"
+        END IF
+        IF ww.Kind = WidgetKindMenuBar THEN
+            s = s + "SUB " + ww.Id + "_Action(action AS STRING)\n"
+            s = s + "    SELECT CASE action\n"
+            s = s + "        CASE \"file.exit\"\n"
+            s = s + "            os.Exit(0)\n"
+            s = s + "        CASE ELSE\n"
+            s = s + "            fmt.Fprintln(os.Stderr, \"menu action:\", action)\n"
+            s = s + "    END SELECT\n"
+            s = s + "END SUB\n\n"
+        END IF
+    NEXT j
+
+    FOR i = 0 TO LEN(form.Tools) - 1
+        DIM t AS ToolEntry = form.Tools[i]
+        IF t.Kind = "FileDialog" THEN
+            s = s + "SUB " + t.Id + "_FileSelected(path AS STRING)\n"
+            s = s + "    fmt.Fprintln(os.Stderr, \"selected:\", path)\n"
+            s = s + "END SUB\n\n"
+        END IF
+    NEXT i
+
+    RETURN s
+END FUNCTION
+
+' enterCodeMode reads the active form's code file into the editor and
+' switches the view. If the file doesn't exist yet, a stub is written
+' first so the user has something to edit.
+SUB enterCodeMode(m AS POINTER TO Model)
+    DIM idx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[i].Name = m.Visual.FormName THEN idx = i
+    NEXT i
+    IF idx < 0 THEN
+        m.StatusBar.Message = "⚠ no current form"
+        RETURN
+    END IF
+
+    DIM codePath AS STRING = m.Tree.Project.Forms[idx].Code
+    IF codePath = "" THEN
+        codePath = "forms/" + m.Tree.Project.Forms[idx].Name + ".dbas"
+        m.Tree.Project.Forms[idx].Code = codePath
+    END IF
+
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile(codePath)
+    DIM body AS STRING
+    IF err <> NIL THEN
+        body = codeStubFor(m.Tree.Project.Forms[idx])
+        ' Best-effort write; ignore errors (project might be unsaved).
+        WriteFile(codePath, body)
+    ELSE
+        body = string(data)
+    END IF
+
+    m.Editor.Reset()
+    m.Editor.SetValue(body)
+    DIM eCmd AS tea.Cmd = m.Editor.Focus()
+    _ = eCmd
+    m.CodePath = codePath
+    m.CodeMode = TRUE
+    m.StatusBar.Message = "Code: " + codePath + "  —  F7: back to canvas  Ctrl+S: save"
+END SUB
+
+' exitCodeMode writes the buffer back to disk and switches back to the
+' visual canvas.
+SUB exitCodeMode(m AS POINTER TO Model)
+    IF m.CodePath <> "" THEN
+        WriteFile(m.CodePath, m.Editor.Value())
+    END IF
+    m.Editor.Blur()
+    m.CodeMode = FALSE
+    m.StatusBar.Message = defaultStatus()
+END SUB
+
+' saveCodeBuffer flushes the editor buffer to disk without changing
+' view mode. Used by Ctrl+S in code mode.
+SUB saveCodeBuffer(m AS POINTER TO Model)
+    IF m.CodePath = "" THEN RETURN
+    WriteFile(m.CodePath, m.Editor.Value())
+    m.StatusBar.Message = "saved: " + m.CodePath
+END SUB
+
+' dispatchFileAction — the chokepoint for File→… menu actions. Returns
+' a tea.Cmd to chain (e.g., tea.Quit for File→Quit). The Cmd is NIL
+' for actions that just mutate state.
+FUNCTION dispatchFileAction(m AS POINTER TO Model, action AS STRING) AS tea.Cmd
+    IF action = "file.quit" THEN RETURN tea.Quit
+    IF action = "file.new" THEN
+        m.Tree.Project = DefaultProject()
+        m.Tree.buildFromProject()
+        m.Tree.rebuildLines()
+        loadStartForm(m)
+        m.StatusBar.Message = "new project"
+        RETURN NIL
+    END IF
+    IF action = "file.open" THEN
+        openDialog(m, "Open Project", "open", "file.open", "*.dbproj", m.Tree.Project.Path)
+        RETURN NIL
+    END IF
+    IF action = "file.save" THEN
+        IF m.Tree.Project.Path = "" THEN
+            openDialog(m, "Save Project As", "save", "file.saveas", "*.dbproj", m.Tree.Project.Name + ".dbproj")
+            RETURN NIL
+        END IF
+        syncProjectFromVisual(m)
+        DIM serr AS ERROR = SaveProject(m.Tree.Project, m.Tree.Project.Path)
+        IF serr <> NIL THEN
+            m.StatusBar.Message = "save: " + serr.Error()
+        ELSE
+            m.StatusBar.Message = "saved: " + m.Tree.Project.Path
+        END IF
+        RETURN NIL
+    END IF
+    IF action = "file.saveas" THEN
+        DIM initial AS STRING = m.Tree.Project.Path
+        IF initial = "" THEN initial = m.Tree.Project.Name + ".dbproj"
+        openDialog(m, "Save Project As", "save", "file.saveas", "*.dbproj", initial)
+        RETURN NIL
+    END IF
+    IF action = "run.build" THEN
+        _ = runBuild(m)
+        RETURN NIL
+    END IF
+    IF action = "run.run" THEN
+        RETURN runRun(m)
+    END IF
+    IF action = "file.newform" THEN
+        DIM nm AS STRING = fmt.Sprintf("frmNew%d", LEN(m.Tree.Project.Forms) + 1)
+        DIM f AS Form = FormDefaults(nm)
+        m.Tree.Project.Forms = APPEND(m.Tree.Project.Forms, f)
+        m.Tree.buildFromProject()
+        m.Tree.rebuildLines()
+        m.StatusBar.Message = "new form: " + nm
+        RETURN NIL
+    END IF
+    m.StatusBar.Message = "selected: " + action + "  (action dispatch — TBD)"
+    RETURN NIL
+END FUNCTION
+
+SUB refreshPropertiesFromSource(m AS POINTER TO Model)
+    IF m.Properties.HasWidget THEN
+        IF m.Visual.Selected >= 0 AND m.Visual.Selected < LEN(m.Visual.Widgets) THEN
+            m.Properties.RefreshFromWidget(m.Visual.Widgets[m.Visual.Selected])
+        END IF
+        RETURN
+    END IF
+    IF m.Properties.ShowForm THEN
+        DIM j AS INTEGER
+        FOR j = 0 TO LEN(m.Tree.Project.Forms) - 1
+            IF m.Tree.Project.Forms[j].Name = m.Visual.FormName THEN
+                m.Properties.RefreshFromForm(m.Tree.Project.Forms[j])
+                RETURN
+            END IF
+        NEXT j
+    END IF
+END SUB
+
+' ----------------------------------------------------------------------
+' Mouse dispatch
+' ----------------------------------------------------------------------
+
+' dialogRect returns the file-dialog's outer screen rectangle.
+FUNCTION dialogRect(m AS POINTER TO Model) AS Rect
+    DIM r AS Rect
+    r.X = m.DialogX
+    r.Y = m.DialogY
+    r.W = m.DialogWidth
+    r.H = m.DialogHeight
+    RETURN r
+END FUNCTION
+
+' handleDialogClick dispatches a click that has been confirmed to land
+' inside the dialog. Returns a tea.Cmd if the click resolves to a
+' deferred bubbletea action (none today; reserved for future).
+FUNCTION handleDialogClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER) AS tea.Cmd
+    DIM lx AS INTEGER = x - m.DialogX
+    DIM ly AS INTEGER = y - m.DialogY
+    DIM innerW AS INTEGER = m.DialogWidth - 2
+    DIM listH AS INTEGER = dialogListVisibleRows(m)
+
+    ' Resize handle — the bottom-right corner cell.
+    IF lx = m.DialogWidth - 1 AND ly = m.DialogHeight - 1 THEN
+        m.DragMode = DragDialogResize
+        m.DragOrigW = m.DialogWidth
+        m.DragOrigH = m.DialogHeight
+        m.DragStartMx = x
+        m.DragStartMy = y
+        RETURN NIL
+    END IF
+
+    ' Path field — row 2 (counting from 0 at the top border).
+    IF ly = 2 THEN
+        m.DialogFocus = DialogFocusPath
+        DIM fieldStartX AS INTEGER = 1 + 7 + 1  ' border + " Path: " (7) + " " leading
+        DIM caret AS INTEGER = lx - fieldStartX
+        IF caret < 0 THEN caret = 0
+        IF caret > LEN(m.DialogPathBuf) THEN caret = LEN(m.DialogPathBuf)
+        m.DialogPathPos = caret
+        m.DialogError = ""
+        RETURN NIL
+    END IF
+
+    ' List header row (4) — give focus but no action.
+    IF ly = 4 THEN
+        DIM colW AS INTEGER = (innerW - 1) / 2
+            IF colW > 25 THEN colW = 25
+        IF lx >= 1 AND lx < 1 + colW THEN
+            m.DialogFocus = DialogFocusFolders
+        ELSEIF lx > 1 + colW AND lx <= innerW THEN
+            m.DialogFocus = DialogFocusFiles
+        END IF
+        RETURN NIL
+    END IF
+
+    ' List rows — indices 5 to 4+listH, inclusive.
+    IF ly >= 5 AND ly < 5 + listH THEN
+        DIM rowIdx AS INTEGER = ly - 5
+        DIM colW2 AS INTEGER = (innerW - 1) / 2
+        IF colW2 > 25 THEN colW2 = 25
+        IF lx >= 1 AND lx < 1 + colW2 THEN
+            ' Folders column.
+            m.DialogFocus = DialogFocusFolders
+            DIM idx AS INTEGER = m.DialogFoldOff + rowIdx
+            IF idx < 0 OR idx >= LEN(m.DialogFolders) THEN RETURN NIL
+            DIM wasCur AS BOOLEAN = (idx = m.DialogFoldCur)
+            m.DialogFoldCur = idx
+            DIM dbl AS BOOLEAN = isDoubleClick(m, 1000, idx)
+            IF dbl OR wasCur THEN
+                cdInto(m, m.DialogFolders[idx])
+            END IF
+            RETURN NIL
+        END IF
+        IF lx > 1 + colW2 AND lx <= innerW THEN
+            ' Files column.
+            m.DialogFocus = DialogFocusFiles
+            DIM fidx AS INTEGER = m.DialogFileOff + rowIdx
+            IF fidx < 0 OR fidx >= LEN(m.DialogFiles) THEN RETURN NIL
+            m.DialogFileCur = fidx
+            m.DialogPathBuf = filepath.Join(m.DialogCurDir, m.DialogFiles[fidx])
+            m.DialogPathPos = LEN(m.DialogPathBuf)
+            DIM dbl2 AS BOOLEAN = isDoubleClick(m, 1001, fidx)
+            IF dbl2 THEN
+                IF dispatchDialogAction(m) THEN closeDialog(m)
+            END IF
+            RETURN NIL
+        END IF
+        RETURN NIL
+    END IF
+
+    ' Buttons row — listH + 6 (top:0, title:1, path:2, hr:3,
+    ' header:4, list rows 5..4+listH, hr:5+listH, buttons:6+listH,
+    ' bottom:7+listH).
+    IF ly = 6 + listH THEN
+        DIM pad AS INTEGER = innerW - 20
+        IF pad < 0 THEN pad = 0
+        DIM okStart AS INTEGER = 1 + pad
+        DIM okEnd AS INTEGER = okStart + 6
+        DIM cnStart AS INTEGER = okEnd + 3
+        DIM cnEnd AS INTEGER = cnStart + 10
+        IF lx >= okStart AND lx < okEnd THEN
+            m.DialogFocus = DialogFocusOK
+            IF dispatchDialogAction(m) THEN closeDialog(m)
+            RETURN NIL
+        END IF
+        IF lx >= cnStart AND lx < cnEnd THEN
+            closeDialog(m)
+            RETURN NIL
+        END IF
+        RETURN NIL
+    END IF
+
+    RETURN NIL
+END FUNCTION
+
+' handleMouseClick routes a left-button click to the panel under (x, y)
+' and triggers the appropriate selection / drag / placement. Returns a
+' tea.Cmd if the click resolves to a deferred bubbletea action (today
+' that's just File→Quit); NIL otherwise.
+FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER) AS tea.Cmd
+    ' --- Modal file dialog (highest priority while active) -----------
+    IF m.DialogActive THEN
+        IF pointInRect(x, y, dialogRect(m)) THEN
+            RETURN handleDialogClick(m, x, y)
+        END IF
+        ' Clicks outside the dialog are swallowed — the user must use
+        ' Cancel/Esc to dismiss; we don't want stray clicks closing it.
+        RETURN NIL
+    END IF
+
+    ' --- Pane split bars — drag handles between resizable regions ----
+    DIM bodyTop AS INTEGER = m.TreeRect.Y
+    DIM bodyBot AS INTEGER = bodyTop + m.TreeRect.H - 1
+    ' Vertical split between tree and canvas — column at TreeRect's
+    ' right border (x = LeftW - 1).
+    IF y >= bodyTop AND y <= bodyBot AND x = m.TreeRect.X + m.TreeRect.W - 1 THEN
+        m.DragMode = DragSplitLeft
+        m.DragOrigW = m.LeftW
+        m.DragStartMx = x
+        m.DragStartMy = y
+        m.StatusBar.Message = "Drag to resize left sidebar — release to commit"
+        RETURN NIL
+    END IF
+    ' Vertical split between canvas and palette/properties — column at
+    ' PaletteRect's left edge (x = LeftW + canvasW).
+    IF y >= bodyTop AND y <= bodyBot AND x = m.PaletteRect.X THEN
+        m.DragMode = DragSplitRight
+        m.DragOrigW = m.RightW
+        m.DragStartMx = x
+        m.DragStartMy = y
+        m.StatusBar.Message = "Drag to resize right sidebar — release to commit"
+        RETURN NIL
+    END IF
+    ' Horizontal split between palette and properties — row at the
+    ' bottom edge of the palette (y = 1 + PaletteH - 1).
+    IF x >= m.PaletteRect.X AND x < m.PaletteRect.X + m.PaletteRect.W AND y = m.PaletteRect.Y + m.PaletteRect.H - 1 THEN
+        m.DragMode = DragSplitPalette
+        m.DragOrigH = m.PaletteH
+        m.DragStartMx = x
+        m.DragStartMy = y
+        m.StatusBar.Message = "Drag to resize palette/properties split — release to commit"
+        RETURN NIL
+    END IF
+    ' Horizontal split between body and bottom pane — only when bottom
+    ' pane is visible. Row at BottomRect's top edge.
+    IF m.BottomVisible AND y = m.BottomRect.Y THEN
+        m.DragMode = DragSplitBottom
+        m.DragOrigH = m.BottomHeight
+        m.DragStartMx = x
+        m.DragStartMy = y
+        m.StatusBar.Message = "Drag to resize bottom pane — release to commit"
+        RETURN NIL
+    END IF
+
+    ' --- Menu mode (a menu is open) ----------------------------------
+    IF m.Mode = ModeMenuBar THEN
+        ' Click on the menubar — switch to that menu (or close if same).
+        IF y = 0 THEN
+            DIM hitMenu AS INTEGER = m.MenuBar.MenuIndexAt(x)
+            IF hitMenu < 0 THEN
+                m.MenuBar.Close()
+                m.MenuBar.ClearHover()
+                m.Mode = ModeNormal
+                m.StatusBar.Message = defaultStatus()
+                RETURN NIL
+            END IF
+            IF hitMenu = m.MenuBar.Active THEN
+                m.MenuBar.Close()
+                m.MenuBar.ClearHover()
+                m.Mode = ModeNormal
+                m.StatusBar.Message = defaultStatus()
+                RETURN NIL
+            END IF
+            m.MenuBar.OpenMenu(hitMenu)
+            RETURN NIL
+        END IF
+        ' Click on the open dropdown — select the item if it's a row.
+        DIM hitItem AS INTEGER = m.MenuBar.DropdownItemAt(x, y)
+        IF hitItem >= 0 THEN
+            m.MenuBar.DropCursor = hitItem
+            DIM menuAction AS STRING = m.MenuBar.SelectedAction()
+            m.MenuBar.Close()
+            m.MenuBar.ClearHover()
+            m.Mode = ModeNormal
+            IF menuAction = "" THEN
+                m.StatusBar.Message = defaultStatus()
+                RETURN NIL
+            END IF
+            ' Most actions mutate state inline and return NIL; for
+            ' file.quit dispatchFileAction returns tea.Quit which we
+            ' bubble back to bubbletea via Update().
+            RETURN dispatchFileAction(m, menuAction)
+        END IF
+        ' Click outside the menubar or any dropdown row — dismiss.
+        m.MenuBar.Close()
+        m.MenuBar.ClearHover()
+        m.Mode = ModeNormal
+        m.StatusBar.Message = defaultStatus()
+        RETURN NIL
+    END IF
+
+    ' --- Bottom pane tabs (when visible) ----------------------------
+    IF m.BottomVisible AND pointInRect(x, y, m.BottomRect) THEN
+        ' Tab strip is the top row of the bottom pane. Tabs render as
+        ' "[ Console ] [ Shell ]" (11 chars + 1 gap + 9 chars).
+        IF y = m.BottomRect.Y THEN
+            DIM consoleEnd AS INTEGER = lipgloss.Width("[ Console ]")
+            DIM gapEnd AS INTEGER = consoleEnd + 1
+            DIM shellEnd AS INTEGER = gapEnd + lipgloss.Width("[ Shell ]")
+            IF x < consoleEnd THEN
+                m.BottomTab = BottomTabConsole
+            ELSEIF x >= gapEnd AND x < shellEnd THEN
+                m.BottomTab = BottomTabShell
+            END IF
+            RETURN NIL
+        END IF
+        RETURN NIL
+    END IF
+
+    ' --- Menubar (closed) — open the menu under the cursor -----------
+    IF pointInRect(x, y, m.MenuRect) THEN
+        DIM hitMenu2 AS INTEGER = m.MenuBar.MenuIndexAt(x)
+        IF hitMenu2 < 0 THEN RETURN NIL
+        m.MenuBar.OpenMenu(hitMenu2)
+        m.Mode = ModeMenuBar
+        m.StatusBar.Message = "Menu — Esc: Close  ←/→: Menu  ↑/↓: Item  Enter: Select"
+        RETURN NIL
+    END IF
+
+    ' --- Project tree ------------------------------------------------
+    IF pointInRect(x, y, m.TreeRect) THEN
+        focusPanel(m, FocusProjectTree)
+        DIM lx AS INTEGER = x - m.TreeRect.X
+        DIM ly AS INTEGER = y - m.TreeRect.Y
+        DIM node AS POINTER TO TreeNode = m.Tree.ClickAt(lx, ly)
+        IF node = NIL THEN RETURN NIL
+        ' Double-click on a folder/expandable form node toggles expand;
+        ' double-click on a code node / form leaf opens it (future).
+        DIM isDouble AS BOOLEAN = isDoubleClick(m, FocusProjectTree, m.Tree.Panel.Cursor)
+        IF isDouble THEN
+            IF node.Kind = NodeFolder OR (node.Kind = NodeForm AND LEN(node.Children) > 0) THEN
+                m.Tree.ToggleExpand()
+            ELSE
+                dispatchTreeOpen(m, node)
+            END IF
+        END IF
+        RETURN NIL
+    END IF
+
+    ' --- Visual canvas -----------------------------------------------
+    IF pointInRect(x, y, m.VisualRect) THEN
+        focusPanel(m, FocusVisual)
+        DIM lx2 AS INTEGER = x - m.VisualRect.X
+        DIM ly2 AS INTEGER = y - m.VisualRect.Y
+        DIM wIdx AS INTEGER
+        DIM rx AS BOOLEAN
+        DIM ry AS BOOLEAN
+        DIM dragOk AS BOOLEAN
+        wIdx, rx, ry, dragOk = m.Visual.BeginDragAt(lx2, ly2)
+        IF dragOk THEN
+            ' Start a drag — Move by default, Resize on edge/corner.
+            DIM w AS Widget = m.Visual.Widgets[wIdx]
+            m.DragWidgetIdx = wIdx
+            m.DragOrigX = w.X
+            m.DragOrigY = w.Y
+            m.DragOrigW = w.W
+            m.DragOrigH = w.H
+            m.DragStartMx = x
+            m.DragStartMy = y
+            IF rx OR ry THEN
+                m.DragMode = DragResize
+                m.DragResizeX = rx
+                m.DragResizeY = ry
+                m.StatusBar.Message = fmt.Sprintf("resizing %s — drag, release to drop", w.Id)
+            ELSE
+                m.DragMode = DragMove
+                m.DragResizeX = FALSE
+                m.DragResizeY = FALSE
+                m.StatusBar.Message = fmt.Sprintf("moving %s — drag, release to drop", w.Id)
+            END IF
+            ' Switch the Properties panel to the newly-selected widget
+            ' (not refresh — selection may have changed since last paint).
+            m.Properties.SetWidget(w)
+        ELSE
+            ' Click on form interior outside any widget — focus only.
+            ' Refresh the properties panel to show the form, since the
+            ' selection effectively cleared.
+            m.Visual.Selected = -1
+            DIM kk AS INTEGER
+            FOR kk = 0 TO LEN(m.Tree.Project.Forms) - 1
+                IF m.Tree.Project.Forms[kk].Name = m.Visual.FormName THEN
+                    m.Properties.SetForm(m.Tree.Project.Forms[kk])
+                END IF
+            NEXT kk
+        END IF
+        RETURN NIL
+    END IF
+
+    ' --- Widget palette ----------------------------------------------
+    IF pointInRect(x, y, m.PaletteRect) THEN
+        focusPanel(m, FocusWidgets)
+        DIM lx3 AS INTEGER = x - m.PaletteRect.X
+        DIM ly3 AS INTEGER = y - m.PaletteRect.Y
+        ' Top row (ly3=0) is the tab strip — click switches tab.
+        IF ly3 = 0 THEN
+            DIM widEnd AS INTEGER = lipgloss.Width("[ Widgets ]")
+            DIM gapEndW AS INTEGER = widEnd + 1
+            DIM tlEnd AS INTEGER = gapEndW + lipgloss.Width("[ Tools ]")
+            IF lx3 < widEnd THEN
+                setPaletteTab(m, 0)
+            ELSEIF lx3 >= gapEndW AND lx3 < tlEnd THEN
+                setPaletteTab(m, 1)
+            END IF
+            RETURN NIL
+        END IF
+        ' Below the tab strip — route to the ScrollPanel.
+        DIM idx AS INTEGER
+        DIM pok AS BOOLEAN
+        idx, pok = m.Palette.ClickAt(lx3, ly3 - 1)
+        IF NOT pok THEN RETURN NIL
+        IF isDoubleClick(m, FocusWidgets, idx) THEN
+            DIM perr AS ERROR
+            IF m.PaletteTab = 1 THEN
+                perr = placePaletteTool(m)
+            ELSE
+                perr = placePaletteWidget(m)
+            END IF
+            IF perr <> NIL THEN
+                m.StatusBar.Message = "place: " + perr.Error()
+            ELSE
+                IF m.PaletteTab = 0 THEN refreshPropertiesFromSource(m)
+                m.StatusBar.Message = fmt.Sprintf("placed: %s", m.Palette.Lines[idx])
+            END IF
+        END IF
+        RETURN NIL
+    END IF
+
+    ' --- Properties panel --------------------------------------------
+    IF pointInRect(x, y, m.PropsRect) THEN
+        focusPanel(m, FocusProperties)
+        DIM lx4 AS INTEGER = x - m.PropsRect.X
+        DIM ly4 AS INTEGER = y - m.PropsRect.Y
+        DIM action AS INTEGER = m.Properties.ClickAt(lx4, ly4)
+        applyPropClickAction(m, action)
+        RETURN NIL
+    END IF
+    RETURN NIL
+END FUNCTION
+
+' applyPropClickAction performs the cross-panel effects of a property
+' click (bool toggle, enum cycle, begin-edit). Cursor positioning was
+' already applied by PropertiesPanel.ClickAt.
+SUB applyPropClickAction(m AS POINTER TO Model, action AS INTEGER)
+    IF action = PropClickToggle THEN
+        DIM tname AS STRING
+        DIM tnewVal AS BOOLEAN
+        DIM tok AS BOOLEAN
+        tname, tnewVal, tok = m.Properties.ToggleBool()
+        IF tok THEN
+            DIM terr AS ERROR
+            IF m.Properties.HasWidget THEN
+                terr = applyWidgetEdit(m, tname, tnewVal)
+            ELSE
+                terr = applyFormEdit(m, tname, tnewVal)
+            END IF
+            IF terr <> NIL THEN
+                m.StatusBar.Message = tname + ": " + terr.Error()
+            ELSE
+                refreshPropertiesFromSource(m)
+                IF tnewVal THEN
+                    m.StatusBar.Message = "set " + tname + " = true"
+                ELSE
+                    m.StatusBar.Message = "set " + tname + " = false"
+                END IF
+            END IF
+        END IF
+        RETURN
+    END IF
+    IF action = PropClickEnumPrev OR action = PropClickEnumNext THEN
+        DIM cdir AS INTEGER = 1
+        IF action = PropClickEnumPrev THEN cdir = -1
+        DIM cname AS STRING
+        DIM cnew AS STRING
+        DIM cok AS BOOLEAN
+        cname, cnew, cok = m.Properties.CycleEnum(cdir)
+        IF cok THEN
+            DIM cerr AS ERROR
+            IF m.Properties.HasWidget THEN
+                cerr = applyWidgetEdit(m, cname, cnew)
+            ELSE
+                cerr = applyFormEdit(m, cname, cnew)
+            END IF
+            IF cerr <> NIL THEN
+                m.StatusBar.Message = cname + ": " + cerr.Error()
+            ELSE
+                refreshPropertiesFromSource(m)
+                m.StatusBar.Message = "set " + cname + " = " + cnew
+            END IF
+        END IF
+        RETURN
+    END IF
+    IF action = PropClickBeginEdit THEN
+        IF m.Properties.BeginEdit() THEN
+            DIM crow AS PropRow
+            DIM crowOk AS BOOLEAN
+            crow, crowOk = m.Properties.CurrentRow()
+            IF crowOk THEN
+                m.Mode = ModePropEdit
+                m.StatusBar.Message = "Editing " + crow.Name + " — Enter: commit  Esc: cancel"
+            END IF
+        END IF
+        RETURN
+    END IF
+    IF action = PropClickReadOnly THEN
+        DIM crow2 AS PropRow
+        DIM crowOk2 AS BOOLEAN
+        crow2, crowOk2 = m.Properties.CurrentRow()
+        IF crowOk2 THEN m.StatusBar.Message = crow2.Name + ": read-only"
+        RETURN
+    END IF
+END SUB
+
+' handleMouseDrag applies a mouse-motion event to the in-progress
+' canvas drag. Recomputes the dragged widget's position or size from
+' the original snapshot plus the (current − start) delta.
+SUB handleMouseDrag(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER)
+    DIM dx AS INTEGER = x - m.DragStartMx
+    DIM dy AS INTEGER = y - m.DragStartMy
+    IF m.DragMode = DragMove THEN
+        m.Visual.MoveWidget(m.DragWidgetIdx, m.DragOrigX + dx, m.DragOrigY + dy)
+        refreshPropertiesFromSource(m)
+        RETURN
+    END IF
+    IF m.DragMode = DragResize THEN
+        DIM newW AS INTEGER = m.DragOrigW
+        DIM newH AS INTEGER = m.DragOrigH
+        IF m.DragResizeX THEN newW = m.DragOrigW + dx
+        IF m.DragResizeY THEN newH = m.DragOrigH + dy
+        m.Visual.ResizeWidget(m.DragWidgetIdx, newW, newH)
+        refreshPropertiesFromSource(m)
+        RETURN
+    END IF
+    IF m.DragMode = DragDialogResize THEN
+        DIM dw AS INTEGER = m.DragOrigW + dx
+        DIM dh AS INTEGER = m.DragOrigH + dy
+        IF dw < 40 THEN dw = 40
+        IF dh < 12 THEN dh = 12
+        IF dw > m.Width - m.DialogX THEN dw = m.Width - m.DialogX
+        IF dh > m.Height - m.DialogY THEN dh = m.Height - m.DialogY
+        m.DialogWidth = dw
+        m.DialogHeight = dh
+        RETURN
+    END IF
+    IF m.DragMode = DragSplitLeft THEN
+        DIM newL AS INTEGER = m.DragOrigW + dx
+        IF newL < 12 THEN newL = 12
+        IF newL > m.Width - m.RightW - 10 THEN newL = m.Width - m.RightW - 10
+        m.LeftW = newL
+        applyLayout(m)
+        RETURN
+    END IF
+    IF m.DragMode = DragSplitRight THEN
+        ' Right boundary X grew by dx → RightW shrank by dx.
+        DIM newR AS INTEGER = m.DragOrigW - dx
+        IF newR < 16 THEN newR = 16
+        IF newR > m.Width - m.LeftW - 10 THEN newR = m.Width - m.LeftW - 10
+        m.RightW = newR
+        applyLayout(m)
+        RETURN
+    END IF
+    IF m.DragMode = DragSplitPalette THEN
+        DIM newPH AS INTEGER = m.DragOrigH + dy
+        DIM bodyH AS INTEGER = m.Height - 2
+        DIM topH AS INTEGER = bodyH
+        IF m.BottomVisible THEN topH = bodyH - m.BottomHeight
+        IF newPH < 4 THEN newPH = 4
+        IF newPH > topH - 5 THEN newPH = topH - 5
+        m.PaletteH = newPH
+        applyLayout(m)
+        RETURN
+    END IF
+    IF m.DragMode = DragSplitBottom THEN
+        ' Bottom-pane top edge moved by dy → BottomHeight shrank by dy.
+        DIM newBH AS INTEGER = m.DragOrigH - dy
+        DIM bodyH2 AS INTEGER = m.Height - 2
+        IF newBH < 4 THEN newBH = 4
+        IF newBH > bodyH2 - 5 THEN newBH = bodyH2 - 5
+        m.BottomHeight = newBH
+        applyLayout(m)
+        RETURN
+    END IF
+END SUB
+
+' handleMouseMotion drives mouseover/hover state when no drag is in
+' progress. Currently feeds the menubar (which uses HoverIdx + HoverItem
+' for label/row highlight, and auto-switches the active menu when the
+' mouse moves across menubar labels while a menu is open).
+SUB handleMouseMotion(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER)
+    ' Menubar / dropdown hover.
+    IF y = 0 THEN
+        m.MenuBar.SetHover(x, y)
+        RETURN
+    END IF
+    IF m.MenuBar.Open THEN
+        ' Inside dropdown? — let the menubar decide.
+        DIM hitItem AS INTEGER = m.MenuBar.DropdownItemAt(x, y)
+        IF hitItem >= 0 THEN
+            m.MenuBar.SetHover(x, y)
+            RETURN
+        END IF
+    END IF
+    ' Mouse is somewhere else — clear any stale menubar hover.
+    m.MenuBar.ClearHover()
+END SUB
+
+' handleMouseWheel scrolls the panel under (x, y).
+SUB handleMouseWheel(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER, up AS BOOLEAN)
+    ' Dialog wheel routing — when the file dialog is open and the
+    ' cursor is over one of its lists, scroll the list.
+    IF m.DialogActive AND pointInRect(x, y, dialogRect(m)) THEN
+        DIM ly AS INTEGER = y - m.DialogY
+        DIM listH AS INTEGER = dialogListVisibleRows(m)
+        IF ly >= 5 AND ly < 5 + listH THEN
+            DIM innerW AS INTEGER = m.DialogWidth - 2
+            DIM colW AS INTEGER = (innerW - 1) / 2
+            IF colW > 25 THEN colW = 25
+            DIM lx AS INTEGER = x - m.DialogX
+            DIM whichList AS INTEGER = 0
+            IF lx > 1 + colW THEN whichList = 1
+            DIM delta AS INTEGER = 1
+            IF up THEN delta = -1
+            dialogListMove(m, whichList, delta)
+        END IF
+        RETURN
+    END IF
+    IF pointInRect(x, y, m.TreeRect) THEN
+        IF up THEN
+            m.Tree.WheelUp()
+        ELSE
+            m.Tree.WheelDown()
+        END IF
+        RETURN
+    END IF
+    IF pointInRect(x, y, m.PaletteRect) THEN
+        IF up THEN
+            m.Palette.WheelUp()
+        ELSE
+            m.Palette.WheelDown()
+        END IF
+        RETURN
+    END IF
+    IF pointInRect(x, y, m.PropsRect) THEN
+        IF up THEN
+            m.Properties.WheelUp()
+        ELSE
+            m.Properties.WheelDown()
+        END IF
+        RETURN
+    END IF
+    ' Visual canvas wheel is reserved for future pan/zoom — no-op for
+    ' now so it doesn't interfere with widget selection.
+END SUB
+
+' ----------------------------------------------------------------------
+' Modal text-input dialog
+'
+' Used by File→Open / File→SaveAs to pick a path. The dialog is a
+' full file picker: editable path field on top, two scrollable lists
+' (folders left, mask-filtered files right), OK + Cancel buttons.
+'
+' Tab cycles focus: Path → Folders → Files → OK → Cancel → Path.
+' Inside the Path field, the existing readline-style keys work
+' (Left/Right/Home/End/Ctrl+A/Ctrl+E/Ctrl+K/Ctrl+U/Backspace/Delete).
+' In the lists, ↑/↓ moves, Enter on a folder cd's in, Enter on a file
+' commits the dialog.
+' ----------------------------------------------------------------------
+
+' dirOf splits a path into its directory component. Empty string for a
+' bare filename returns ".".
+FUNCTION dirOf(p AS STRING) AS STRING
+    DIM d AS STRING = filepath.Dir(p)
+    IF d = "" THEN RETURN "."
+    RETURN d
+END FUNCTION
+
+' readDialogDir scans m.DialogCurDir, sorts folders + files (files
+' filtered by m.DialogMask), and writes them into m.DialogFolders /
+' m.DialogFiles. A ".." folder is always prepended unless we're at /.
+SUB readDialogDir(m AS POINTER TO Model)
+    DIM folders AS []STRING
+    DIM files   AS []STRING
+
+    ' "../" is always available (except at the filesystem root).
+    IF m.DialogCurDir <> "/" THEN folders = APPEND(folders, "..")
+
+    DIM entries AS []os.DirEntry
+    DIM err AS ERROR
+    entries, err = os.ReadDir(m.DialogCurDir)
+    IF err <> NIL THEN
+        m.DialogError = err.Error()
+        m.DialogFolders = folders
+        m.DialogFiles = files
+        RETURN
+    END IF
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(entries) - 1
+        DIM e AS os.DirEntry = entries[i]
+        DIM nm AS STRING = e.Name()
+        IF strings.HasPrefix(nm, ".") THEN
+            ' skip dotfiles for now — too noisy at $HOME
+        ELSEIF e.IsDir() THEN
+            folders = APPEND(folders, nm)
+        ELSE
+            DIM matched AS BOOLEAN = TRUE
+            IF m.DialogMask <> "" AND m.DialogMask <> "*" THEN
+                DIM matchErr AS ERROR
+                matched, matchErr = filepath.Match(m.DialogMask, nm)
+                _ = matchErr
+            END IF
+            IF matched THEN files = APPEND(files, nm)
+        END IF
+    NEXT i
+    sort.Strings(folders)
+    sort.Strings(files)
+    m.DialogFolders = folders
+    m.DialogFiles = files
+    IF m.DialogFoldCur >= LEN(folders) THEN m.DialogFoldCur = LEN(folders) - 1
+    IF m.DialogFoldCur < 0 THEN m.DialogFoldCur = 0
+    IF m.DialogFileCur >= LEN(files) THEN m.DialogFileCur = LEN(files) - 1
+    IF m.DialogFileCur < 0 THEN m.DialogFileCur = 0
+    m.DialogFoldOff = 0
+    m.DialogFileOff = 0
+    m.DialogError = ""
+END SUB
+
+' openDialog opens the file picker. mode is "open" or "save". For save
+' the initial filename seeds the path buffer; for open the user usually
+' clicks a file to populate it.
+SUB openDialog(m AS POINTER TO Model, title AS STRING, mode AS STRING, action AS STRING, mask AS STRING, initialPath AS STRING)
+    m.DialogActive = TRUE
+    m.DialogTitle = title
+    m.DialogMode = mode
+    m.DialogAction = action
+    m.DialogMask = mask
+    m.DialogError = ""
+    m.DialogFocus = DialogFocusPath
+    m.DialogFoldCur = 0
+    m.DialogFoldOff = 0
+    m.DialogFileCur = 0
+    m.DialogFileOff = 0
+
+    ' Default size: 72 cols × 20 rows (or smaller if the screen is). The
+    ' user can drag the bottom-right corner ⤡ to resize.
+    DIM dw AS INTEGER = 72
+    DIM dh AS INTEGER = 20
+    IF dw > m.Width - 2 THEN dw = m.Width - 2
+    IF dh > m.Height - 2 THEN dh = m.Height - 2
+    IF dw < 40 THEN dw = 40
+    IF dh < 12 THEN dh = 12
+    m.DialogWidth = dw
+    m.DialogHeight = dh
+    m.DialogX = (m.Width - dw) / 2
+    m.DialogY = (m.Height - dh) / 2
+    IF m.DialogX < 0 THEN m.DialogX = 0
+    IF m.DialogY < 0 THEN m.DialogY = 0
+
+    ' Seed CurDir + PathBuf from initialPath. If it's a relative path or
+    ' bare name, anchor to the current working directory.
+    DIM startPath AS STRING = initialPath
+    IF startPath = "" THEN
+        DIM wd AS STRING
+        DIM wdErr AS ERROR
+        wd, wdErr = os.Getwd()
+        IF wdErr = NIL THEN startPath = wd + "/"
+    END IF
+    DIM startDir AS STRING = dirOf(startPath)
+    IF NOT filepath.IsAbs(startDir) THEN
+        DIM wd2 AS STRING
+        DIM wdErr2 AS ERROR
+        wd2, wdErr2 = os.Getwd()
+        IF wdErr2 = NIL THEN
+            startDir = filepath.Join(wd2, startDir)
+        END IF
+    END IF
+    m.DialogCurDir = startDir
+    m.DialogPathBuf = startPath
+    m.DialogPathPos = LEN(startPath)
+    readDialogDir(m)
+
+    m.Mode = ModeFileDialog
+END SUB
+
+SUB closeDialog(m AS POINTER TO Model)
+    m.DialogActive = FALSE
+    m.DialogTitle = ""
+    m.DialogMode = ""
+    m.DialogAction = ""
+    m.DialogCurDir = ""
+    m.DialogMask = ""
+    DIM emptyF AS []STRING
+    m.DialogFolders = emptyF
+    DIM emptyFi AS []STRING
+    m.DialogFiles = emptyFi
+    m.DialogPathBuf = ""
+    m.DialogPathPos = 0
+    m.DialogFocus = DialogFocusPath
+    m.DialogFoldCur = 0
+    m.DialogFoldOff = 0
+    m.DialogFileCur = 0
+    m.DialogFileOff = 0
+    m.DialogError = ""
+    m.Mode = ModeNormal
+END SUB
+
+' cdInto changes the dialog's currently-shown directory and refreshes
+' the lists. Used by Enter on a folder row and by ".." navigation.
+SUB cdInto(m AS POINTER TO Model, folderName AS STRING)
+    DIM newDir AS STRING
+    IF folderName = ".." THEN
+        newDir = filepath.Dir(m.DialogCurDir)
+    ELSE
+        newDir = filepath.Join(m.DialogCurDir, folderName)
+    END IF
+    m.DialogCurDir = newDir
+    m.DialogPathBuf = newDir + "/"
+    m.DialogPathPos = LEN(m.DialogPathBuf)
+    readDialogDir(m)
+END SUB
+
+' dispatchDialogAction commits the dialog's current PathBuf. Returns
+' TRUE if the action succeeded (dialog closes); FALSE leaves the dialog
+' open with DialogError set.
+FUNCTION dispatchDialogAction(m AS POINTER TO Model) AS BOOLEAN
+    DIM path AS STRING = m.DialogPathBuf
+    IF path = "" THEN
+        m.StatusBar.Message = "⚠ path required"
+        RETURN FALSE
+    END IF
+    IF m.DialogAction = "file.open" THEN
+        DIM p AS Project
+        DIM err AS ERROR
+        p, err = LoadProject(path)
+        IF err <> NIL THEN
+            m.StatusBar.Message = "⚠ open: " + err.Error()
+            RETURN FALSE
+        END IF
+        m.Tree.Project = p
+        m.Tree.buildFromProject()
+        m.Tree.rebuildLines()
+        loadStartForm(m)
+        m.StatusBar.Message = "opened: " + path
+        RETURN TRUE
+    END IF
+    IF m.DialogAction = "file.saveas" THEN
+        syncProjectFromVisual(m)
+        m.Tree.Project.Path = path
+        DIM serr AS ERROR = SaveProject(m.Tree.Project, path)
+        IF serr <> NIL THEN
+            m.StatusBar.Message = "⚠ save: " + serr.Error()
+            RETURN FALSE
+        END IF
+        m.StatusBar.Message = "saved: " + path
+        RETURN TRUE
+    END IF
+    m.StatusBar.Message = "⚠ unknown dialog action: " + m.DialogAction
+    RETURN FALSE
+END FUNCTION
+
+' dialogPathEdit handles one keystroke while the path field has focus.
+SUB dialogPathEdit(m AS POINTER TO Model, k AS STRING)
+    IF k = "backspace" THEN
+        IF m.DialogPathPos > 0 THEN
+            DIM before AS STRING = Mid(m.DialogPathBuf, 1, m.DialogPathPos - 1)
+            DIM after AS STRING = ""
+            IF m.DialogPathPos < LEN(m.DialogPathBuf) THEN
+                after = Mid(m.DialogPathBuf, m.DialogPathPos + 1, LEN(m.DialogPathBuf) - m.DialogPathPos)
+            END IF
+            m.DialogPathBuf = before + after
+            m.DialogPathPos = m.DialogPathPos - 1
+            m.DialogError = ""
+        END IF
+        RETURN
+    END IF
+    IF k = "delete" THEN
+        IF m.DialogPathPos < LEN(m.DialogPathBuf) THEN
+            DIM before2 AS STRING = Mid(m.DialogPathBuf, 1, m.DialogPathPos)
+            DIM after2 AS STRING = ""
+            IF m.DialogPathPos + 1 < LEN(m.DialogPathBuf) THEN
+                after2 = Mid(m.DialogPathBuf, m.DialogPathPos + 2, LEN(m.DialogPathBuf) - m.DialogPathPos - 1)
+            END IF
+            m.DialogPathBuf = before2 + after2
+            m.DialogError = ""
+        END IF
+        RETURN
+    END IF
+    IF k = "left" THEN
+        IF m.DialogPathPos > 0 THEN m.DialogPathPos = m.DialogPathPos - 1
+        RETURN
+    END IF
+    IF k = "right" THEN
+        IF m.DialogPathPos < LEN(m.DialogPathBuf) THEN m.DialogPathPos = m.DialogPathPos + 1
+        RETURN
+    END IF
+    IF k = "home" OR k = "ctrl+a" THEN
+        m.DialogPathPos = 0
+        RETURN
+    END IF
+    IF k = "end" OR k = "ctrl+e" THEN
+        m.DialogPathPos = LEN(m.DialogPathBuf)
+        RETURN
+    END IF
+    IF k = "ctrl+u" THEN
+        m.DialogPathBuf = Mid(m.DialogPathBuf, m.DialogPathPos + 1, LEN(m.DialogPathBuf) - m.DialogPathPos)
+        m.DialogPathPos = 0
+        m.DialogError = ""
+        RETURN
+    END IF
+    IF k = "ctrl+k" THEN
+        m.DialogPathBuf = Mid(m.DialogPathBuf, 1, m.DialogPathPos)
+        m.DialogError = ""
+        RETURN
+    END IF
+    IF LEN(k) = 1 THEN
+        DIM b AS STRING = Mid(m.DialogPathBuf, 1, m.DialogPathPos)
+        DIM a AS STRING = ""
+        IF m.DialogPathPos < LEN(m.DialogPathBuf) THEN
+            a = Mid(m.DialogPathBuf, m.DialogPathPos + 1, LEN(m.DialogPathBuf) - m.DialogPathPos)
+        END IF
+        m.DialogPathBuf = b + k + a
+        m.DialogPathPos = m.DialogPathPos + 1
+        m.DialogError = ""
+    END IF
+END SUB
+
+' dialogListMove advances a list cursor by delta, clamps, and adjusts
+' the offset to keep the cursor on-screen. listIdx 0 = folders, 1 = files.
+SUB dialogListMove(m AS POINTER TO Model, listIdx AS INTEGER, delta AS INTEGER)
+    IF listIdx = 0 THEN
+        DIM n AS INTEGER = LEN(m.DialogFolders)
+        IF n = 0 THEN RETURN
+        m.DialogFoldCur = m.DialogFoldCur + delta
+        IF m.DialogFoldCur < 0 THEN m.DialogFoldCur = 0
+        IF m.DialogFoldCur >= n THEN m.DialogFoldCur = n - 1
+        IF m.DialogFoldCur < m.DialogFoldOff THEN m.DialogFoldOff = m.DialogFoldCur
+        IF m.DialogFoldCur >= m.DialogFoldOff + dialogListVisibleRows(m) THEN
+            m.DialogFoldOff = m.DialogFoldCur - dialogListVisibleRows(m) + 1
+        END IF
+        RETURN
+    END IF
+    DIM nf AS INTEGER = LEN(m.DialogFiles)
+    IF nf = 0 THEN RETURN
+    m.DialogFileCur = m.DialogFileCur + delta
+    IF m.DialogFileCur < 0 THEN m.DialogFileCur = 0
+    IF m.DialogFileCur >= nf THEN m.DialogFileCur = nf - 1
+    IF m.DialogFileCur < m.DialogFileOff THEN m.DialogFileOff = m.DialogFileCur
+    IF m.DialogFileCur >= m.DialogFileOff + dialogListVisibleRows(m) THEN
+        m.DialogFileOff = m.DialogFileCur - dialogListVisibleRows(m) + 1
+    END IF
+END SUB
+
+' handleDialogKey routes a keypress to the focused area. Returns TRUE
+' if the dialog should close (Esc or successful commit), FALSE to stay.
+FUNCTION handleDialogKey(m AS POINTER TO Model, k AS STRING) AS BOOLEAN
+    IF k = "esc" THEN RETURN TRUE
+    IF k = "tab" THEN
+        m.DialogFocus = (m.DialogFocus + 1) MOD DialogFocusCount
+        RETURN FALSE
+    END IF
+    IF k = "shift+tab" THEN
+        m.DialogFocus = m.DialogFocus - 1
+        IF m.DialogFocus < 0 THEN m.DialogFocus = DialogFocusCount - 1
+        RETURN FALSE
+    END IF
+
+    ' Per-focus dispatch.
+    IF m.DialogFocus = DialogFocusFolders THEN
+        IF k = "up" THEN
+            dialogListMove(m, 0, -1)
+            RETURN FALSE
+        END IF
+        IF k = "down" THEN
+            dialogListMove(m, 0, 1)
+            RETURN FALSE
+        END IF
+        IF k = "pgup" THEN
+            dialogListMove(m, 0, -dialogListVisibleRows(m))
+            RETURN FALSE
+        END IF
+        IF k = "pgdown" THEN
+            dialogListMove(m, 0, dialogListVisibleRows(m))
+            RETURN FALSE
+        END IF
+        IF k = "enter" THEN
+            IF m.DialogFoldCur >= 0 AND m.DialogFoldCur < LEN(m.DialogFolders) THEN
+                cdInto(m, m.DialogFolders[m.DialogFoldCur])
+            END IF
+            RETURN FALSE
+        END IF
+        RETURN FALSE
+    END IF
+
+    IF m.DialogFocus = DialogFocusFiles THEN
+        IF k = "up" THEN
+            dialogListMove(m, 1, -1)
+            RETURN FALSE
+        END IF
+        IF k = "down" THEN
+            dialogListMove(m, 1, 1)
+            RETURN FALSE
+        END IF
+        IF k = "pgup" THEN
+            dialogListMove(m, 1, -dialogListVisibleRows(m))
+            RETURN FALSE
+        END IF
+        IF k = "pgdown" THEN
+            dialogListMove(m, 1, dialogListVisibleRows(m))
+            RETURN FALSE
+        END IF
+        IF k = "enter" THEN
+            IF m.DialogFileCur >= 0 AND m.DialogFileCur < LEN(m.DialogFiles) THEN
+                m.DialogPathBuf = filepath.Join(m.DialogCurDir, m.DialogFiles[m.DialogFileCur])
+                m.DialogPathPos = LEN(m.DialogPathBuf)
+                DIM ok AS BOOLEAN = dispatchDialogAction(m)
+                RETURN ok
+            END IF
+            RETURN FALSE
+        END IF
+        RETURN FALSE
+    END IF
+
+    IF m.DialogFocus = DialogFocusOK THEN
+        IF k = "enter" OR k = "space" THEN
+            DIM ok2 AS BOOLEAN = dispatchDialogAction(m)
+            RETURN ok2
+        END IF
+        RETURN FALSE
+    END IF
+
+    IF m.DialogFocus = DialogFocusCancel THEN
+        IF k = "enter" OR k = "space" THEN RETURN TRUE
+        RETURN FALSE
+    END IF
+
+    ' Path field — also handles Enter (commit) and the readline keys.
+    IF k = "enter" THEN
+        DIM ok3 AS BOOLEAN = dispatchDialogAction(m)
+        RETURN ok3
+    END IF
+    dialogPathEdit(m, k)
+    RETURN FALSE
+END FUNCTION
+
+' truncR — right-trim by visible-width; appends "…" if cut.
+FUNCTION truncR(s AS STRING, w AS INTEGER) AS STRING
+    IF lipgloss.Width(s) <= w THEN RETURN s
+    IF w <= 1 THEN RETURN "…"
+    DIM out AS STRING = s
+    DO WHILE lipgloss.Width(out + "…") > w AND LEN(out) > 0
+        out = Mid(out, 1, LEN(out) - 1)
+    LOOP
+    RETURN out + "…"
+END FUNCTION
+
+' renderDialogPathRow builds the editable path-field row.
+FUNCTION renderDialogPathRow(m AS Model, innerW AS INTEGER) AS STRING
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFocusBorder()).Background(ColorMenuBg())
+    DIM labelStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorMenuBg()).Bold(TRUE)
+    DIM textStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorBg())
+    DIM textFocused AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorSelection())
+
+    DIM tStyle AS lipgloss.Style = textStyle
+    IF m.DialogFocus = DialogFocusPath THEN tStyle = textFocused
+
+    DIM label AS STRING = " Path: "
+    DIM labelW AS INTEGER = lipgloss.Width(label)
+    DIM fieldW AS INTEGER = innerW - labelW
+
+    DIM pre AS STRING = ""
+    DIM post AS STRING = ""
+    IF m.DialogPathPos > 0 THEN pre = Mid(m.DialogPathBuf, 1, m.DialogPathPos)
+    IF m.DialogPathPos < LEN(m.DialogPathBuf) THEN
+        post = Mid(m.DialogPathBuf, m.DialogPathPos + 1, LEN(m.DialogPathBuf) - m.DialogPathPos)
+    END IF
+    DIM caret AS STRING = "▎"
+    IF m.DialogFocus <> DialogFocusPath THEN caret = ""
+    DIM content AS STRING = pre + caret + post
+    content = truncR(content, fieldW - 1)
+    DIM pad AS INTEGER = fieldW - lipgloss.Width(content) - 1
+    IF pad < 0 THEN pad = 0
+    RETURN bStyle.Render("║") + labelStyle.Render(label) + tStyle.Render(" " + content + strings.Repeat(" ", pad)) + bStyle.Render("║")
+END FUNCTION
+
+' dialogListVisibleRows — visible rows in each list, derived from the
+' current dialog height. Total chrome (top border, title, cwd, path,
+' separator, header, separator, footer, buttons, bottom border) = 10.
+FUNCTION dialogListVisibleRows(m AS POINTER TO Model) AS INTEGER
+    DIM n AS INTEGER = m.DialogHeight - 8
+    IF n < 3 THEN n = 3
+    RETURN n
+END FUNCTION
+
+' renderDialogListsRow builds the side-by-side Folders / Files lists
+' as a list of cell rows.
+FUNCTION renderDialogListsRows(m AS Model, innerW AS INTEGER) AS []STRING
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFocusBorder()).Background(ColorMenuBg())
+    DIM headStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorMenuBg()).Bold(TRUE)
+    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorMenuBg())
+    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorBg())
+    DIM cursorStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorSelection()).Bold(TRUE)
+    DIM dimStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
+
+    DIM colW AS INTEGER = (innerW - 1) / 2
+    IF colW > 25 THEN colW = 25
+    DIM colWR AS INTEGER = innerW - 1 - colW
+
+    ' Header row.
+    DIM foldHead AS STRING = " Folders"
+    DIM fileHead AS STRING = " Files"
+    IF m.DialogMask <> "" AND m.DialogMask <> "*" THEN fileHead = fileHead + " (" + m.DialogMask + ")"
+    DIM foldHeadPad AS INTEGER = colW - lipgloss.Width(foldHead)
+    IF foldHeadPad < 0 THEN foldHeadPad = 0
+    DIM fileHeadPad AS INTEGER = colWR - lipgloss.Width(fileHead)
+    IF fileHeadPad < 0 THEN fileHeadPad = 0
+    DIM headRow AS STRING = bStyle.Render("║") + headStyle.Render(foldHead + strings.Repeat(" ", foldHeadPad)) + sepStyle.Render("│") + headStyle.Render(fileHead + strings.Repeat(" ", fileHeadPad)) + bStyle.Render("║")
+
+    DIM rows AS []STRING
+    rows = APPEND(rows, headRow)
+
+    DIM listH AS INTEGER = dialogListVisibleRows(@m)
+    DIM r AS INTEGER
+    FOR r = 0 TO listH - 1
+        DIM foldIdx AS INTEGER = m.DialogFoldOff + r
+        DIM fileIdx AS INTEGER = m.DialogFileOff + r
+
+        DIM foldText AS STRING = ""
+        DIM foldDim AS BOOLEAN = TRUE
+        IF foldIdx >= 0 AND foldIdx < LEN(m.DialogFolders) THEN
+            foldText = m.DialogFolders[foldIdx] + "/"
+            foldDim = FALSE
+        END IF
+        DIM foldVis AS STRING = " " + truncR(foldText, colW - 1)
+        DIM foldPad AS INTEGER = colW - lipgloss.Width(foldVis)
+        IF foldPad < 0 THEN foldPad = 0
+        DIM foldRendered AS STRING
+        IF foldDim THEN
+            foldRendered = dimStyle.Render(foldVis + strings.Repeat(" ", foldPad))
+        ELSEIF foldIdx = m.DialogFoldCur AND m.DialogFocus = DialogFocusFolders THEN
+            foldRendered = cursorStyle.Render(foldVis + strings.Repeat(" ", foldPad))
+        ELSE
+            foldRendered = rowStyle.Render(foldVis + strings.Repeat(" ", foldPad))
+        END IF
+
+        DIM fileText AS STRING = ""
+        DIM fileDim AS BOOLEAN = TRUE
+        IF fileIdx >= 0 AND fileIdx < LEN(m.DialogFiles) THEN
+            fileText = m.DialogFiles[fileIdx]
+            fileDim = FALSE
+        END IF
+        DIM fileVis AS STRING = " " + truncR(fileText, colWR - 1)
+        DIM filePad AS INTEGER = colWR - lipgloss.Width(fileVis)
+        IF filePad < 0 THEN filePad = 0
+        DIM fileRendered AS STRING
+        IF fileDim THEN
+            fileRendered = dimStyle.Render(fileVis + strings.Repeat(" ", filePad))
+        ELSEIF fileIdx = m.DialogFileCur AND m.DialogFocus = DialogFocusFiles THEN
+            fileRendered = cursorStyle.Render(fileVis + strings.Repeat(" ", filePad))
+        ELSE
+            fileRendered = rowStyle.Render(fileVis + strings.Repeat(" ", filePad))
+        END IF
+
+        rows = APPEND(rows, bStyle.Render("║") + foldRendered + sepStyle.Render("│") + fileRendered + bStyle.Render("║"))
+    NEXT r
+    RETURN rows
+END FUNCTION
+
+' renderDialogButtonsRow — right-aligned [ OK ]   [ Cancel ].
+FUNCTION renderDialogButtonsRow(m AS Model, innerW AS INTEGER) AS STRING
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFocusBorder()).Background(ColorMenuBg())
+    DIM bg AS lipgloss.Style = lipgloss.NewStyle().Background(ColorMenuBg())
+    DIM btnStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorMenuFg()).Background(ColorMenuBg())
+    DIM btnFocused AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorSelection()).Bold(TRUE)
+
+    DIM okLabel AS STRING = "[ OK ]"
+    DIM cnLabel AS STRING = "[ Cancel ]"
+    DIM okText AS STRING
+    IF m.DialogFocus = DialogFocusOK THEN
+        okText = btnFocused.Render(okLabel)
+    ELSE
+        okText = btnStyle.Render(okLabel)
+    END IF
+    DIM cnText AS STRING
+    IF m.DialogFocus = DialogFocusCancel THEN
+        cnText = btnFocused.Render(cnLabel)
+    ELSE
+        cnText = btnStyle.Render(cnLabel)
+    END IF
+    DIM rightW AS INTEGER = lipgloss.Width(okLabel) + 3 + lipgloss.Width(cnLabel) + 1
+    DIM pad AS INTEGER = innerW - rightW
+    IF pad < 0 THEN pad = 0
+    RETURN bStyle.Render("║") + bg.Render(strings.Repeat(" ", pad)) + okText + bg.Render("   ") + cnText + bg.Render(" ") + bStyle.Render("║")
+END FUNCTION
+
+' renderDialog produces the overlay box at (DialogX, DialogY) with size
+' (DialogWidth, DialogHeight). Returns ("", 0, 0) if the dialog isn't
+' active.
+FUNCTION renderDialog(m AS Model) AS (STRING, INTEGER, INTEGER)
+    IF NOT m.DialogActive THEN RETURN "", 0, 0
+    DIM innerW AS INTEGER = m.DialogWidth - 2
+    IF innerW < 30 THEN innerW = 30
+
+    DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFocusBorder()).Background(ColorMenuBg())
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorMenuBg()).Bold(TRUE)
+    DIM bg AS lipgloss.Style = lipgloss.NewStyle().Background(ColorMenuBg()).Foreground(ColorFg())
+    DIM handleStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorMenuBg()).Bold(TRUE)
+
+    DIM hr AS STRING = strings.Repeat("═", innerW)
+    DIM top AS STRING = bStyle.Render("╔") + bStyle.Render(hr) + bStyle.Render("╗")
+    ' Bottom border ends with a resize handle ⤡ in place of the corner.
+    DIM bottom AS STRING = bStyle.Render("╚") + bStyle.Render(hr) + handleStyle.Render("⤡")
+    DIM hrLight AS STRING = bStyle.Render("║") + bg.Render(strings.Repeat("─", innerW)) + bStyle.Render("║")
+
+    ' Title row (centred).
+    DIM titleW AS INTEGER = lipgloss.Width(m.DialogTitle)
+    DIM titlePad AS INTEGER = (innerW - titleW) / 2
+    IF titlePad < 0 THEN titlePad = 0
+    DIM titlePadR AS INTEGER = innerW - titlePad - titleW
+    IF titlePadR < 0 THEN titlePadR = 0
+    DIM titleRow AS STRING = bStyle.Render("║") + bg.Render(strings.Repeat(" ", titlePad)) + titleStyle.Render(m.DialogTitle) + bg.Render(strings.Repeat(" ", titlePadR)) + bStyle.Render("║")
+
+    ' Path field row.
+    DIM pathRow AS STRING = renderDialogPathRow(m, innerW)
+
+    ' Lists.
+    DIM listRows AS []STRING = renderDialogListsRows(m, innerW)
+
+    ' Buttons row.
+    DIM buttonsRow AS STRING = renderDialogButtonsRow(m, innerW)
+
+    DIM lines AS []STRING
+    lines = APPEND(lines, top)
+    lines = APPEND(lines, titleRow)
+    lines = APPEND(lines, pathRow)
+    lines = APPEND(lines, hrLight)
+    DIM li AS INTEGER
+    FOR li = 0 TO LEN(listRows) - 1
+        lines = APPEND(lines, listRows[li])
+    NEXT li
+    lines = APPEND(lines, hrLight)
+    lines = APPEND(lines, buttonsRow)
+    lines = APPEND(lines, bottom)
+    DIM dlg AS STRING = strings.Join(lines, "\n")
+    RETURN dlg, m.DialogX, m.DialogY
+END FUNCTION
+
+' isDoubleClick — TRUE when this click is within 500ms of a previous
+' click on the same panel + row. Records this click as "last" either
+' way so two slow clicks count as two singles.
+FUNCTION isDoubleClick(m AS POINTER TO Model, panel AS INTEGER, row AS INTEGER) AS BOOLEAN
+    DIM now AS time.Time = time.Now()
+    DIM result AS BOOLEAN = FALSE
+    IF m.LastClickPanel = panel AND m.LastClickRow = row THEN
+        DIM dur AS time.Duration = now.Sub(m.LastClickAt)
+        IF dur < 500 * time.Millisecond THEN result = TRUE
+    END IF
+    m.LastClickPanel = panel
+    m.LastClickRow = row
+    m.LastClickAt = now
+    RETURN result
 END FUNCTION
 
 ' ----------------------------------------------------------------------
@@ -121,6 +2101,86 @@ FUNCTION (m AS Model) Init() AS tea.Cmd
     RETURN NIL
 END FUNCTION
 
+' applyLayout recomputes panel rectangles + cascades sizes to children
+' based on m.Width/m.Height/m.LeftW/m.RightW/m.PaletteH/m.BottomHeight.
+' Clamps each tunable to its safe range. Called from the WindowSizeMsg
+' handler AND from split-bar drag motion so resizing happens live.
+SUB applyLayout(m AS POINTER TO Model)
+    m.MenuBar.SetWidth(m.Width)
+    m.StatusBar.SetWidth(m.Width)
+    DIM bodyH AS INTEGER = m.Height - 2
+    IF bodyH < 3 THEN bodyH = 3
+    DIM bottomH AS INTEGER = 0
+    IF m.BottomVisible THEN
+        bottomH = m.BottomHeight
+        IF bottomH > bodyH - 5 THEN bottomH = bodyH - 5
+        IF bottomH < 4 THEN bottomH = 4
+        m.BottomHeight = bottomH
+    END IF
+    DIM topH AS INTEGER = bodyH - bottomH
+    IF topH < 3 THEN topH = 3
+
+    ' Sidebar widths — clamp so neither overruns the canvas budget.
+    IF m.LeftW < 12 THEN m.LeftW = 12
+    IF m.RightW < 16 THEN m.RightW = 16
+    DIM maxCanvas AS INTEGER = m.Width - m.LeftW - m.RightW
+    IF maxCanvas < 10 THEN
+        ' Squeeze proportionally if the terminal is too narrow.
+        DIM need AS INTEGER = 10 - maxCanvas
+        DIM trimL AS INTEGER = need / 2
+        DIM trimR AS INTEGER = need - trimL
+        IF m.LeftW - trimL >= 12 THEN m.LeftW = m.LeftW - trimL
+        IF m.RightW - trimR >= 16 THEN m.RightW = m.RightW - trimR
+    END IF
+    DIM canvasW AS INTEGER = m.Width - m.LeftW - m.RightW
+    IF canvasW < 1 THEN canvasW = 1
+
+    m.Tree.SetSize(m.LeftW, topH)
+    DIM paletteH AS INTEGER = m.PaletteH
+    IF paletteH > topH - 5 THEN paletteH = topH - 5
+    IF paletteH < 4 THEN paletteH = 4
+    m.PaletteH = paletteH
+    DIM propsH AS INTEGER = topH - paletteH
+    IF propsH < 3 THEN propsH = 3
+    m.Palette.Width = m.RightW
+    m.Palette.Height = paletteH - 1
+    m.Properties.SetSize(m.RightW, propsH)
+    DIM centerInnerH AS INTEGER = topH - 1
+    IF centerInnerH < 1 THEN centerInnerH = 1
+    m.Visual.SetSize(canvasW, centerInnerH)
+    m.Editor.SetWidth(canvasW)
+    m.Editor.SetHeight(centerInnerH)
+
+    m.MenuRect.X = 0
+    m.MenuRect.Y = 0
+    m.MenuRect.W = m.Width
+    m.MenuRect.H = 1
+    m.TreeRect.X = 0
+    m.TreeRect.Y = 1
+    m.TreeRect.W = m.LeftW
+    m.TreeRect.H = topH
+    m.VisualRect.X = m.LeftW
+    m.VisualRect.Y = 2
+    m.VisualRect.W = canvasW
+    m.VisualRect.H = centerInnerH
+    m.PaletteRect.X = m.LeftW + canvasW
+    m.PaletteRect.Y = 1
+    m.PaletteRect.W = m.RightW
+    m.PaletteRect.H = paletteH
+    m.PropsRect.X = m.LeftW + canvasW
+    m.PropsRect.Y = 1 + paletteH
+    m.PropsRect.W = m.RightW
+    m.PropsRect.H = propsH
+    m.BottomRect.X = 0
+    m.BottomRect.Y = 1 + topH
+    m.BottomRect.W = m.Width
+    m.BottomRect.H = bottomH
+    m.StatusRect.X = 0
+    m.StatusRect.Y = m.Height - 1
+    m.StatusRect.W = m.Width
+    m.StatusRect.H = 1
+END SUB
+
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     ' WindowSizeMsg — record dimensions and cascade to children.
     DIM sizeMsg AS tea.WindowSizeMsg
@@ -129,22 +2189,63 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF sizeOk THEN
         m.Width = sizeMsg.Width
         m.Height = sizeMsg.Height
-        m.MenuBar.SetWidth(m.Width)
-        m.StatusBar.SetWidth(m.Width)
-        DIM bodyH AS INTEGER = m.Height - 2
-        IF bodyH < 3 THEN bodyH = 3
-        m.Tree.SetSize(m.LeftW, bodyH)
-        DIM paletteH AS INTEGER = m.PaletteH
-        IF paletteH > bodyH - 5 THEN paletteH = bodyH - 5
-        IF paletteH < 4 THEN paletteH = 4
-        DIM propsH AS INTEGER = bodyH - paletteH
-        IF propsH < 3 THEN propsH = 3
-        m.Palette.Width = m.RightW
-        m.Palette.Height = paletteH
-        m.Properties.SetSize(m.RightW, propsH)
-        DIM canvasW AS INTEGER = m.Width - m.LeftW - m.RightW
-        IF canvasW < 1 THEN canvasW = 1
-        m.Visual.SetSize(canvasW, bodyH)
+        applyLayout(@m)
+        RETURN m, NIL
+    END IF
+
+    ' MouseClickMsg — route to panel under cursor.
+    DIM mcMsg AS tea.MouseClickMsg
+    DIM mcOk AS BOOLEAN
+    mcMsg, mcOk = msg.(tea.MouseClickMsg)
+    IF mcOk THEN
+        ' In code mode, clicks inside the canvas area go to the textarea
+        ' (which handles cursor positioning + selection itself).
+        IF m.CodeMode AND pointInRect(mcMsg.X, mcMsg.Y, m.VisualRect) THEN
+            DIM eMc AS textarea.Model
+            DIM eCmdMc AS tea.Cmd
+            eMc, eCmdMc = m.Editor.Update(msg)
+            m.Editor = eMc
+            RETURN m, eCmdMc
+        END IF
+        DIM clickCmd AS tea.Cmd = NIL
+        IF mcMsg.Button = tea.MouseLeft THEN
+            clickCmd = handleMouseClick(@m, mcMsg.X, mcMsg.Y)
+        END IF
+        RETURN m, clickCmd
+    END IF
+
+    ' MouseReleaseMsg — finalize any in-progress drag.
+    DIM mrMsg AS tea.MouseReleaseMsg
+    DIM mrOk AS BOOLEAN
+    mrMsg, mrOk = msg.(tea.MouseReleaseMsg)
+    _ = mrMsg
+    IF mrOk THEN
+        IF m.DragMode <> DragNone THEN
+            m.DragMode = DragNone
+            refreshPropertiesFromSource(@m)
+        END IF
+        RETURN m, NIL
+    END IF
+
+    ' MouseMotionMsg — drive hover state, and apply any in-progress drag.
+    DIM mmMsg AS tea.MouseMotionMsg
+    DIM mmOk AS BOOLEAN
+    mmMsg, mmOk = msg.(tea.MouseMotionMsg)
+    IF mmOk THEN
+        IF m.DragMode <> DragNone THEN
+            handleMouseDrag(@m, mmMsg.X, mmMsg.Y)
+        ELSE
+            handleMouseMotion(@m, mmMsg.X, mmMsg.Y)
+        END IF
+        RETURN m, NIL
+    END IF
+
+    ' MouseWheelMsg — scroll the panel under the cursor.
+    DIM mwMsg AS tea.MouseWheelMsg
+    DIM mwOk AS BOOLEAN
+    mwMsg, mwOk = msg.(tea.MouseWheelMsg)
+    IF mwOk THEN
+        handleMouseWheel(@m, mwMsg.X, mwMsg.Y, mwMsg.Button = tea.MouseWheelUp)
         RETURN m, NIL
     END IF
 
@@ -154,6 +2255,103 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     keyMsg, keyOk = msg.(tea.KeyPressMsg)
     IF keyOk THEN
         DIM k AS STRING = keyMsg.String()
+
+        IF m.Mode = ModeFileDialog THEN
+            DIM done AS BOOLEAN = handleDialogKey(@m, k)
+            IF done THEN closeDialog(@m)
+            RETURN m, NIL
+        END IF
+
+        IF m.Mode = ModePropEdit THEN
+            ' --- Property edit mode ------------------------------------
+            IF k = "esc" THEN
+                m.Properties.CancelEdit()
+                m.Mode = ModeNormal
+                m.StatusBar.Message = defaultStatus()
+                RETURN m, NIL
+            END IF
+            IF k = "enter" THEN
+                DIM pname AS STRING
+                DIM pbuf AS STRING
+                DIM pok AS BOOLEAN
+                pname, pbuf, pok = m.Properties.CommitEdit()
+                IF NOT pok THEN
+                    m.Properties.CancelEdit()
+                    m.Mode = ModeNormal
+                    m.StatusBar.Message = defaultStatus()
+                    RETURN m, NIL
+                END IF
+                DIM aerr AS ERROR
+                IF m.Properties.HasWidget THEN
+                    aerr = applyWidgetEdit(@m, pname, pbuf)
+                ELSE
+                    aerr = applyFormEdit(@m, pname, pbuf)
+                END IF
+                IF aerr <> NIL THEN
+                    m.Properties.SetEditError(aerr.Error())
+                    m.StatusBar.Message = pname + ": " + aerr.Error()
+                    RETURN m, NIL
+                END IF
+                m.Properties.FinishEdit()
+                refreshPropertiesFromSource(@m)
+                m.Mode = ModeNormal
+                m.StatusBar.Message = "set " + pname + " = " + pbuf
+                RETURN m, NIL
+            END IF
+            IF k = "backspace" THEN
+                m.Properties.EditBackspace()
+                RETURN m, NIL
+            END IF
+            IF k = "delete" THEN
+                m.Properties.EditDelete()
+                RETURN m, NIL
+            END IF
+            IF k = "left" THEN
+                m.Properties.EditCursorLeft()
+                RETURN m, NIL
+            END IF
+            IF k = "right" THEN
+                m.Properties.EditCursorRight()
+                RETURN m, NIL
+            END IF
+            IF k = "home" OR k = "ctrl+a" THEN
+                m.Properties.EditCursorHome()
+                RETURN m, NIL
+            END IF
+            IF k = "end" OR k = "ctrl+e" THEN
+                m.Properties.EditCursorEnd()
+                RETURN m, NIL
+            END IF
+            IF k = "ctrl+left" OR k = "alt+left" OR k = "alt+b" THEN
+                m.Properties.EditCursorWordLeft()
+                RETURN m, NIL
+            END IF
+            IF k = "ctrl+right" OR k = "alt+right" OR k = "alt+f" THEN
+                m.Properties.EditCursorWordRight()
+                RETURN m, NIL
+            END IF
+            IF k = "ctrl+k" THEN
+                m.Properties.EditKillToEnd()
+                RETURN m, NIL
+            END IF
+            IF k = "ctrl+u" THEN
+                m.Properties.EditKillToStart()
+                RETURN m, NIL
+            END IF
+            IF k = "ctrl+w" OR k = "ctrl+backspace" THEN
+                m.Properties.EditKillWordLeft()
+                RETURN m, NIL
+            END IF
+            ' Single-character keys append to the edit buffer. Anything
+            ' longer is a control key (arrow, fn key, etc.) and is
+            ' swallowed so it doesn't leak through to normal-mode
+            ' dispatch.
+            IF LEN(k) = 1 THEN
+                m.Properties.EditChar(k)
+                RETURN m, NIL
+            END IF
+            RETURN m, NIL
+        END IF
 
         IF m.Mode = ModeMenuBar THEN
             ' --- Menu mode ---------------------------------------------
@@ -180,21 +2378,42 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 RETURN m, NIL
             END IF
             IF k = "enter" THEN
-                DIM action AS STRING = m.MenuBar.SelectedAction()
+                DIM kbAction AS STRING = m.MenuBar.SelectedAction()
                 m.MenuBar.Close()
+                m.MenuBar.ClearHover()
                 m.Mode = ModeNormal
-                IF action = "file.quit" THEN
-                    RETURN m, tea.Quit
-                END IF
-                IF action <> "" THEN
-                    m.StatusBar.Message = "selected: " + action + "  (action dispatch — TBD)"
-                ELSE
+                IF kbAction = "" THEN
                     m.StatusBar.Message = defaultStatus()
+                    RETURN m, NIL
                 END IF
-                RETURN m, NIL
+                DIM kbCmd AS tea.Cmd = dispatchFileAction(@m, kbAction)
+                RETURN m, kbCmd
             END IF
             ' Swallow unhandled keys while a menu is open.
             RETURN m, NIL
+        END IF
+
+        ' --- Code-editor mode (parallel to focus, but suppresses normal
+        '     keybinds while the textarea has the keyboard).
+        IF m.CodeMode THEN
+            IF k = "f7" OR k = "esc" THEN
+                exitCodeMode(@m)
+                RETURN m, NIL
+            END IF
+            IF k = "ctrl+s" THEN
+                saveCodeBuffer(@m)
+                RETURN m, NIL
+            END IF
+            IF k = "f5" THEN
+                ' Save buffer so codegen picks up the latest edits, then run.
+                saveCodeBuffer(@m)
+                RETURN m, dispatchFileAction(@m, "run.run")
+            END IF
+            DIM newEditor AS textarea.Model
+            DIM eCmd AS tea.Cmd
+            newEditor, eCmd = m.Editor.Update(msg)
+            m.Editor = newEditor
+            RETURN m, eCmd
         END IF
 
         ' --- Normal mode -----------------------------------------------
@@ -202,6 +2421,17 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.MenuBar.OpenMenu(0)
             m.Mode = ModeMenuBar
             m.StatusBar.Message = "Menu — Esc: Close  ←/→: Menu  ↑/↓: Item  Enter: Select"
+            RETURN m, NIL
+        END IF
+        IF k = "f5" THEN
+            RETURN m, dispatchFileAction(@m, "run.run")
+        END IF
+        IF k = "f7" THEN
+            enterCodeMode(@m)
+            RETURN m, NIL
+        END IF
+        IF k = "f12" THEN
+            toggleBottomPane(@m)
             RETURN m, NIL
         END IF
         IF k = "tab" THEN
@@ -266,7 +2496,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     IF node.Kind = NodeFolder OR (node.Kind = NodeForm AND LEN(node.Children) > 0) THEN
                         m.Tree.ToggleExpand()
                     ELSE
-                        m.StatusBar.Message = fmt.Sprintf("opened: %s  (loader — TBD)", node.Name)
+                        dispatchTreeOpen(@m, node)
                     END IF
                 END IF
                 RETURN m, NIL
@@ -306,6 +2536,68 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 m.Properties.CursorDown()
                 RETURN m, NIL
             END IF
+            IF k = "space" OR k = " " THEN
+                DIM tname AS STRING
+                DIM tnewVal AS BOOLEAN
+                DIM tok AS BOOLEAN
+                tname, tnewVal, tok = m.Properties.ToggleBool()
+                IF tok THEN
+                    DIM terr AS ERROR
+                    IF m.Properties.HasWidget THEN
+                        terr = applyWidgetEdit(@m, tname, tnewVal)
+                    ELSE
+                        terr = applyFormEdit(@m, tname, tnewVal)
+                    END IF
+                    IF terr <> NIL THEN
+                        m.StatusBar.Message = tname + ": " + terr.Error()
+                    ELSE
+                        refreshPropertiesFromSource(@m)
+                        IF tnewVal THEN
+                            m.StatusBar.Message = "set " + tname + " = true"
+                        ELSE
+                            m.StatusBar.Message = "set " + tname + " = false"
+                        END IF
+                    END IF
+                END IF
+                RETURN m, NIL
+            END IF
+            IF k = "left" OR k = "right" THEN
+                DIM cdir AS INTEGER = 1
+                IF k = "left" THEN cdir = -1
+                DIM cname AS STRING
+                DIM cnew AS STRING
+                DIM cok AS BOOLEAN
+                cname, cnew, cok = m.Properties.CycleEnum(cdir)
+                IF cok THEN
+                    DIM cerr AS ERROR
+                    IF m.Properties.HasWidget THEN
+                        cerr = applyWidgetEdit(@m, cname, cnew)
+                    ELSE
+                        cerr = applyFormEdit(@m, cname, cnew)
+                    END IF
+                    IF cerr <> NIL THEN
+                        m.StatusBar.Message = cname + ": " + cerr.Error()
+                    ELSE
+                        refreshPropertiesFromSource(@m)
+                        m.StatusBar.Message = "set " + cname + " = " + cnew
+                    END IF
+                END IF
+                RETURN m, NIL
+            END IF
+            IF k = "enter" THEN
+                DIM crow AS PropRow
+                DIM crowOk AS BOOLEAN
+                crow, crowOk = m.Properties.CurrentRow()
+                IF crowOk AND crow.Category = "" AND NOT crow.Editable THEN
+                    m.StatusBar.Message = crow.Name + ": read-only"
+                    RETURN m, NIL
+                END IF
+                IF m.Properties.BeginEdit() THEN
+                    m.Mode = ModePropEdit
+                    m.StatusBar.Message = "Editing " + crow.Name + " — Enter: commit  Esc: cancel"
+                END IF
+                RETURN m, NIL
+            END IF
         END IF
         IF m.Focus = FocusWidgets THEN
             IF k = "up" THEN
@@ -316,10 +2608,29 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 m.Palette.CursorDown()
                 RETURN m, NIL
             END IF
+            IF k = "tab" OR k = "left" OR k = "right" THEN
+                ' Swap between Widgets/Tools tabs in addition to Tab's
+                ' normal focus cycle.
+                IF k = "left" OR k = "right" THEN
+                    setPaletteTab(@m, 1 - m.PaletteTab)
+                    RETURN m, NIL
+                END IF
+            END IF
             IF k = "enter" THEN
                 IF m.Palette.Cursor >= 0 AND m.Palette.Cursor < LEN(m.Palette.Lines) THEN
                     DIM kind AS STRING = m.Palette.Lines[m.Palette.Cursor]
-                    m.StatusBar.Message = fmt.Sprintf("would create: %s  (designer — TBD)", kind)
+                    DIM kperr AS ERROR
+                    IF m.PaletteTab = 1 THEN
+                        kperr = placePaletteTool(@m)
+                    ELSE
+                        kperr = placePaletteWidget(@m)
+                    END IF
+                    IF kperr <> NIL THEN
+                        m.StatusBar.Message = "place: " + kperr.Error()
+                    ELSE
+                        IF m.PaletteTab = 0 THEN refreshPropertiesFromSource(@m)
+                        m.StatusBar.Message = "placed: " + kind
+                    END IF
                 END IF
                 RETURN m, NIL
             END IF
@@ -336,7 +2647,7 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM body AS STRING = renderBody(m)
     DIM v AS tea.View = tea.NewView(body)
     v.AltScreen = TRUE
-    v.MouseMode = tea.MouseModeCellMotion
+    v.MouseMode = tea.MouseModeAllMotion
     RETURN v
 END FUNCTION
 
@@ -359,30 +2670,68 @@ FUNCTION renderBody(m AS Model) AS STRING
     ' Three-column layout: project tree | visual editor canvas |
     ' (palette stacked over properties) on the right.
     DIM leftPane AS STRING = m.Tree.Render()
-    DIM rightPane AS STRING = lipgloss.JoinVertical(lipgloss.Left, m.Palette.Render(), m.Properties.Render())
-    DIM centerW AS INTEGER = m.Width - m.LeftW - m.RightW
-    IF centerW < 1 THEN centerW = 1
-    DIM canvas AS STRING = m.Visual.Render()
+    DIM paletteTabs AS STRING = renderPaletteTabs(m, m.RightW)
+    DIM rightPane AS STRING = lipgloss.JoinVertical(lipgloss.Left, paletteTabs, m.Palette.Render(), m.Properties.Render())
+    DIM canvasW AS INTEGER = m.Width - m.LeftW - m.RightW
+    IF canvasW < 1 THEN canvasW = 1
+    DIM captionText AS STRING
+    DIM canvasBody AS STRING
+    IF m.CodeMode THEN
+        captionText = "Code Editor"
+        IF m.CodePath <> "" THEN captionText = "Code Editor — " + m.CodePath
+        canvasBody = m.Editor.View()
+    ELSE
+        captionText = "Form Designer"
+        IF m.Visual.FormName <> "" THEN captionText = "Form Designer — " + m.Visual.FormName
+        canvasBody = m.Visual.Render()
+    END IF
+    DIM caption AS STRING = renderCanvasCaption(captionText, canvasW)
+    DIM canvas AS STRING = lipgloss.JoinVertical(lipgloss.Left, caption, canvasBody)
     DIM bodyRow AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, leftPane, canvas, rightPane)
+
+    DIM fullScreen AS STRING
+    IF m.BottomVisible THEN
+        DIM bottomPane AS STRING = renderBottomPane(m)
+        fullScreen = lipgloss.JoinVertical(lipgloss.Left, menuBar, bodyRow, bottomPane, statusBar)
+    ELSE
+        fullScreen = lipgloss.JoinVertical(lipgloss.Left, menuBar, bodyRow, statusBar)
+    END IF
+
+    ' Layer overlays on top: menu dropdown first (Z=1), modal dialog
+    ' second (Z=2). Both go through lipgloss v2's Compositor so the
+    ' underlying body content stays in place.
+    DIM bgLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullScreen)
+    DIM hasOverlay AS BOOLEAN = FALSE
+    DIM stack AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer)
 
     IF m.MenuBar.Open THEN
         DIM dropdown AS STRING = m.MenuBar.RenderDropdown()
         DIM xOff AS INTEGER = m.MenuBar.MenuXOffset(m.MenuBar.Active)
-        DIM dropPadded AS STRING = lipgloss.NewStyle().PaddingLeft(xOff).Background(ColorBg()).Render(dropdown)
-        ' Layer the dropdown on top of the body row by joining vertically;
-        ' the dropdown lives in the area immediately under the menubar and
-        ' eats the top portion of bodyRow.
-        DIM dropH AS INTEGER = lipgloss.Height(dropPadded)
-        DIM remH AS INTEGER = bodyH - dropH
-        IF remH < 0 THEN remH = 0
-        DIM trimmedBody AS STRING = bodyRow
-        ' Cheap clip: re-render bodyRow with reduced height by composing
-        ' a transparent backing — leaving as-is keeps the rest of the
-        ' panel readable under the dropdown.
-        _ = remH
-        DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, dropPadded, trimmedBody)
-        RETURN lipgloss.JoinVertical(lipgloss.Left, menuBar, stacked, statusBar)
+        DIM ddLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dropdown).X(xOff).Y(1).Z(1)
+        stack = lipgloss.NewCompositor(bgLayer, ddLayer)
+        hasOverlay = TRUE
     END IF
 
-    RETURN lipgloss.JoinVertical(lipgloss.Left, menuBar, bodyRow, statusBar)
+    IF m.DialogActive THEN
+        DIM dlgStr AS STRING
+        DIM dlgX AS INTEGER
+        DIM dlgY AS INTEGER
+        dlgStr, dlgX, dlgY = renderDialog(m)
+        IF dlgStr <> "" THEN
+            DIM dlgLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dlgStr).X(dlgX).Y(dlgY).Z(2)
+            IF m.MenuBar.Open THEN
+                ' Already composed with dropdown — rebuild with the dialog too.
+                DIM dropdown2 AS STRING = m.MenuBar.RenderDropdown()
+                DIM xOff2 AS INTEGER = m.MenuBar.MenuXOffset(m.MenuBar.Active)
+                DIM ddLayer2 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dropdown2).X(xOff2).Y(1).Z(1)
+                stack = lipgloss.NewCompositor(bgLayer, ddLayer2, dlgLayer)
+            ELSE
+                stack = lipgloss.NewCompositor(bgLayer, dlgLayer)
+            END IF
+            hasOverlay = TRUE
+        END IF
+    END IF
+
+    IF hasOverlay THEN RETURN stack.Render()
+    RETURN fullScreen
 END FUNCTION

@@ -43,6 +43,8 @@ TYPE MenuBar
     DIM DropCursor  AS INTEGER  ' cursor within the open dropdown
     DIM Width       AS INTEGER
     DIM ItemOffsets AS []INTEGER ' x-offset of each menu label
+    DIM HoverIdx    AS INTEGER   ' menubar label under the mouse (-1 = none)
+    DIM HoverItem   AS INTEGER   ' dropdown row under the mouse (-1 = none)
 END TYPE
 
 ' ----------------------------------------------------------------------
@@ -81,6 +83,8 @@ FUNCTION NewMenuBar() AS MenuBar
     m.Open = FALSE
     m.DropCursor = 0
     m.Width = 0
+    m.HoverIdx = -1
+    m.HoverItem = -1
 
     DIM fileItems AS []DropdownItem
     APPEND(fileItems, mkItem("(N)ew Project   ", "n", "file.new"))
@@ -229,6 +233,83 @@ FUNCTION (m AS MenuBar) MenuXOffset(idx AS INTEGER) AS INTEGER
     RETURN m.ItemOffsets[idx]
 END FUNCTION
 
+' MenuIndexAt — return the index of the menubar label whose " Label "
+' span contains screen-X `x`. Returns -1 if x falls between/after the
+' menu labels.
+FUNCTION (m AS MenuBar) MenuIndexAt(x AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Menus) - 1
+        DIM startX AS INTEGER = m.ItemOffsets[i]
+        DIM endX AS INTEGER = startX + LEN(m.Menus[i].Label) + 2
+        IF x >= startX AND x < endX THEN RETURN i
+    NEXT i
+    RETURN -1
+END FUNCTION
+
+' dropdownInnerW computes the dropdown's content width for the active
+' menu — used by RenderDropdown and DropdownItemAt to agree on bounds.
+FUNCTION (m AS MenuBar) dropdownInnerW() AS INTEGER
+    IF m.Active < 0 OR m.Active >= LEN(m.Menus) THEN RETURN 0
+    DIM items AS []DropdownItem = m.Menus[m.Active].Items
+    DIM maxW AS INTEGER = 0
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(items) - 1
+        DIM visW AS INTEGER = visibleLabelWidth(items[j].Label)
+        IF visW > maxW THEN maxW = visW
+    NEXT j
+    RETURN maxW + 2
+END FUNCTION
+
+' DropdownItemAt — return the dropdown row index under screen (x, y),
+' or -1 if outside the dropdown or on a separator. Coordinates are
+' menubar-screen-space: y=0 is the menubar row, y=1 is the dropdown's
+' top border.
+FUNCTION (m AS MenuBar) DropdownItemAt(x AS INTEGER, y AS INTEGER) AS INTEGER
+    IF NOT m.Open OR m.Active < 0 OR m.Active >= LEN(m.Menus) THEN RETURN -1
+    DIM items AS []DropdownItem = m.Menus[m.Active].Items
+    DIM xOff AS INTEGER = m.MenuXOffset(m.Active)
+    DIM innerW AS INTEGER = m.dropdownInnerW()
+    DIM dropW AS INTEGER = innerW + 2
+    DIM dropH AS INTEGER = LEN(items) + 2
+    IF x < xOff OR x >= xOff + dropW THEN RETURN -1
+    IF y < 1 OR y >= 1 + dropH THEN RETURN -1
+    DIM rowIdx AS INTEGER = y - 2
+    IF rowIdx < 0 OR rowIdx >= LEN(items) THEN RETURN -1
+    IF items[rowIdx].IsSep THEN RETURN -1
+    RETURN rowIdx
+END FUNCTION
+
+' SetHover updates HoverIdx (menubar) and HoverItem (dropdown) from the
+' current mouse position. When the menu is open and the cursor moves
+' to a different top-level menu label, this auto-switches the active
+' menu — standard Windows / VBDOS behaviour.
+SUB (m AS POINTER TO MenuBar) SetHover(x AS INTEGER, y AS INTEGER)
+    IF y = 0 THEN
+        DIM idx AS INTEGER = m.MenuIndexAt(x)
+        m.HoverIdx = idx
+        IF m.Open AND idx >= 0 AND idx <> m.Active THEN
+            m.OpenMenu(idx)
+        END IF
+        m.HoverItem = -1
+        RETURN
+    END IF
+    m.HoverIdx = -1
+    IF m.Open THEN
+        DIM ridx AS INTEGER = m.DropdownItemAt(x, y)
+        m.HoverItem = ridx
+        IF ridx >= 0 THEN m.DropCursor = ridx
+    ELSE
+        m.HoverItem = -1
+    END IF
+END SUB
+
+' ClearHover — drop all hover state (used when the mouse leaves the
+' menubar/dropdown region or when the menu closes).
+SUB (m AS POINTER TO MenuBar) ClearHover()
+    m.HoverIdx = -1
+    m.HoverItem = -1
+END SUB
+
 ' ----------------------------------------------------------------------
 ' Rendering helpers
 ' ----------------------------------------------------------------------
@@ -307,6 +388,12 @@ FUNCTION (m AS MenuBar) Render() AS STRING
             bg = ColorBg()
             fg = ColorFg()
             padStyle = padStyle.Background(ColorBg()).Foreground(ColorFg())
+        ELSEIF i = m.HoverIdx THEN
+            ' Hover but not active — use the selection background so
+            ' the user knows which label is under the cursor.
+            bg = ColorHover()
+            fg = ColorFg()
+            padStyle = padStyle.Background(ColorHover()).Foreground(ColorFg())
         END IF
         DIM label AS STRING = renderLabelWithHotkey(m.Menus[i].Label, m.Menus[i].Hotkey, bg, fg)
         bar = bar + padStyle.Render(" ") + label + padStyle.Render(" ")
@@ -323,13 +410,8 @@ FUNCTION (m AS MenuBar) RenderDropdown() AS STRING
     IF NOT m.Open OR m.Active < 0 OR m.Active >= LEN(m.Menus) THEN RETURN ""
 
     DIM items AS []DropdownItem = m.Menus[m.Active].Items
-    DIM maxW AS INTEGER = 0
+    DIM innerW AS INTEGER = m.dropdownInnerW()
     DIM i AS INTEGER
-    FOR i = 0 TO LEN(items) - 1
-        DIM visW AS INTEGER = visibleLabelWidth(items[i].Label)
-        IF visW > maxW THEN maxW = visW
-    NEXT i
-    DIM innerW AS INTEGER = maxW + 2  ' 1 padding each side
 
     DIM menuStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorMenuFg()).Background(ColorMenuBg())
     DIM hr AS STRING = menuStyle.Render(strings.Repeat("─", innerW))
@@ -352,6 +434,9 @@ FUNCTION (m AS MenuBar) RenderDropdown() AS STRING
             DIM fg AS color.Color
             IF i = m.DropCursor THEN
                 bg = ColorBg()
+                fg = ColorFg()
+            ELSEIF i = m.HoverItem THEN
+                bg = ColorHover()
                 fg = ColorFg()
             ELSE
                 bg = ColorMenuBg()

@@ -1,0 +1,76 @@
+' DBtui — internal/widgets/progressbar.dbas
+'
+' ProgressBar — visual progress indicator. Min/Max define the range;
+' Value is the current position. Horizontal=TRUE fills left-to-right
+' (default); FALSE fills bottom-to-top. Bordered rectangle with the
+' inner area filled according to (Value - Min) / (Max - Min).
+
+FUNCTION NewProgressBar(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindProgressBar
+    w.Visible = TRUE
+    w.TabStop = FALSE
+    w.W = 24
+    w.H = 3
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#7dcfff"
+    w.Style.Border = "normal"
+    w.Style.Corner = "square"
+    w.RngMin = 0
+    w.RngMax = 100
+    w.RngValue = 35
+    w.RngHorizontal = TRUE
+    RETURN w
+END FUNCTION
+
+FUNCTION ProgressBarProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Min", fmt.Sprintf("%d", w.RngMin)))
+    out = APPEND(out, StringProp("Max", fmt.Sprintf("%d", w.RngMax)))
+    out = APPEND(out, StringProp("Value", fmt.Sprintf("%d", w.RngValue)))
+    out = APPEND(out, BoolProp("Horizontal", w.RngHorizontal))
+    DIM stylePs AS []Property = StyleProperties(w.Style, TRUE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetProgressBarProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Min" THEN
+        DIM v AS INTEGER
+        DIM err AS ERROR
+        v, err = coerceInt(name, value)
+        IF err <> NIL THEN RETURN err
+        w.RngMin = v
+        RETURN NIL
+    END IF
+    IF name = "Max" THEN
+        DIM v2 AS INTEGER
+        DIM err2 AS ERROR
+        v2, err2 = coerceInt(name, value)
+        IF err2 <> NIL THEN RETURN err2
+        w.RngMax = v2
+        RETURN NIL
+    END IF
+    IF name = "Value" THEN
+        DIM v3 AS INTEGER
+        DIM err3 AS ERROR
+        v3, err3 = coerceInt(name, value)
+        IF err3 <> NIL THEN RETURN err3
+        w.RngValue = v3
+        RETURN NIL
+    END IF
+    IF name = "Horizontal" THEN
+        DIM b AS BOOLEAN
+        DIM berr AS ERROR
+        b, berr = coerceBool(name, value)
+        IF berr <> NIL THEN RETURN berr
+        w.RngHorizontal = b
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown ProgressBar property: " + name)
+END FUNCTION

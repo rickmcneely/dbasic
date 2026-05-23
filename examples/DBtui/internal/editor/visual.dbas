@@ -68,6 +68,10 @@ SUB (v AS POINTER TO VisualEditor) LoadForm(f AS Form, reg AS Registry)
             w.TabIndex = entry.TabIndex
             w.TabStop = entry.TabStop
             w.Anchor = entry.Anchor
+            ' Pour kind-specific props (Text/Placeholder/Value/Style/...)
+            ' from the saved entry back into the widget, so a save/load
+            ' round-trip preserves them.
+            ApplyEntryProperties(@w, entry)
             wx = APPEND(wx, w)
         END IF
     NEXT i
@@ -111,6 +115,87 @@ FUNCTION (v AS VisualEditor) SelectedWidget() AS (Widget, BOOLEAN)
 END FUNCTION
 
 ' ----------------------------------------------------------------------
+' Mouse — coordinate translation:
+'   canvas-local (lx, ly) → form-coord (fx, fy) = (lx-1, ly-1)
+' Border cells (lx=0/H-1, ly=0/W-1) are the form border.
+' ----------------------------------------------------------------------
+
+' WidgetAt returns the index of the topmost (last-painted) widget whose
+' bounds enclose form-coord (fx, fy), or -1 if no widget is hit.
+FUNCTION (v AS VisualEditor) WidgetAt(fx AS INTEGER, fy AS INTEGER) AS INTEGER
+    DIM hit AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(v.Widgets) - 1
+        DIM w AS Widget = v.Widgets[i]
+        IF fx >= w.X AND fx < w.X + w.W AND fy >= w.Y AND fy < w.Y + w.H THEN
+            hit = i
+        END IF
+    NEXT i
+    RETURN hit
+END FUNCTION
+
+' ClickAt translates a canvas-local click into a widget selection.
+' Returns (widgetIdx, ok). ok=FALSE means the click landed outside any
+' widget (still inside the form or outside it). The caller is expected
+' to refresh the properties panel after a successful selection.
+FUNCTION (v AS POINTER TO VisualEditor) ClickAt(lx AS INTEGER, ly AS INTEGER) AS (INTEGER, BOOLEAN)
+    DIM fx AS INTEGER = lx - 1
+    DIM fy AS INTEGER = ly - 1
+    DIM idx AS INTEGER = v.WidgetAt(fx, fy)
+    IF idx < 0 THEN RETURN -1, FALSE
+    v.Selected = idx
+    RETURN idx, TRUE
+END FUNCTION
+
+' BeginDragAt classifies the click region within the widget to decide
+' whether the user is moving the widget or resizing it. Returns a
+' tuple of (widgetIdx, resizeX, resizeY, ok). The caller stores these
+' along with the widget's original (X, Y, W, H) so motion events can
+' apply deltas.
+FUNCTION (v AS POINTER TO VisualEditor) BeginDragAt(lx AS INTEGER, ly AS INTEGER) AS (INTEGER, BOOLEAN, BOOLEAN, BOOLEAN)
+    DIM fx AS INTEGER = lx - 1
+    DIM fy AS INTEGER = ly - 1
+    DIM idx AS INTEGER = v.WidgetAt(fx, fy)
+    IF idx < 0 THEN RETURN -1, FALSE, FALSE, FALSE
+    v.Selected = idx
+    DIM w AS Widget = v.Widgets[idx]
+    DIM dx AS INTEGER = fx - w.X
+    DIM dy AS INTEGER = fy - w.Y
+    DIM rx AS BOOLEAN = (dx = w.W - 1)
+    DIM ry AS BOOLEAN = (dy = w.H - 1)
+    RETURN idx, rx, ry, TRUE
+END FUNCTION
+
+' MoveWidget — sets the widget's (X, Y), clamped so the widget stays
+' at least 1 cell visible inside the form.
+SUB (v AS POINTER TO VisualEditor) MoveWidget(idx AS INTEGER, newX AS INTEGER, newY AS INTEGER)
+    IF idx < 0 OR idx >= LEN(v.Widgets) THEN RETURN
+    IF newX < 0 THEN newX = 0
+    IF newY < 0 THEN newY = 0
+    ' Clamp to form interior: form has W cells wide; widget needs to
+    ' stay in [0, FormW - 2] roughly (the -2 accounts for left+right
+    ' border of the form taking 2 cells, since the widget itself can
+    ' overlap into that space here — keep simple).
+    DIM maxX AS INTEGER = v.FormW - v.Widgets[idx].W - 2
+    DIM maxY AS INTEGER = v.FormH - v.Widgets[idx].H - 2
+    IF maxX < 0 THEN maxX = 0
+    IF maxY < 0 THEN maxY = 0
+    IF newX > maxX THEN newX = maxX
+    IF newY > maxY THEN newY = maxY
+    v.Widgets[idx].X = newX
+    v.Widgets[idx].Y = newY
+END SUB
+
+' ResizeWidget — sets the widget's (W, H), clamped to a 1×1 minimum.
+SUB (v AS POINTER TO VisualEditor) ResizeWidget(idx AS INTEGER, newW AS INTEGER, newH AS INTEGER)
+    IF idx < 0 OR idx >= LEN(v.Widgets) THEN RETURN
+    IF newW < 1 THEN newW = 1
+    IF newH < 1 THEN newH = 1
+    v.Widgets[idx].W = newW
+    v.Widgets[idx].H = newH
+END SUB
+
+' ----------------------------------------------------------------------
 ' Rendering
 '
 ' Builds the canvas as a `[]STRING` per cell row. Each cell is decided
@@ -135,19 +220,31 @@ FUNCTION widgetCharAt(w AS Widget, x AS INTEGER, y AS INTEGER, selected AS BOOLE
         RETURN " ", TRUE
     END IF
 
-    DIM tl AS STRING = "┌"
-    DIM tr AS STRING = "┐"
-    DIM bl AS STRING = "└"
-    DIM br AS STRING = "┘"
+    ' Unselected widgets get rounded corners (modern look). Selected
+    ' widgets keep the same line weight but show ◆ handles at the eight
+    ' grip positions (corners + edge midpoints) to mark them.
+    DIM tl AS STRING = "╭"
+    DIM tr AS STRING = "╮"
+    DIM bl AS STRING = "╰"
+    DIM br AS STRING = "╯"
     DIM hz AS STRING = "─"
     DIM vt AS STRING = "│"
+
+    ' For the selected widget, overlay ◆ resize handles at the 4 corners
+    ' and the 4 edge midpoints. The corners hint "resize both axes"; the
+    ' midpoints hint "resize this single edge" — matches how the canvas
+    ' drag classifier in BeginDragAt interprets clicks on those cells.
     IF selected THEN
-        tl = "╔"
-        tr = "╗"
-        bl = "╚"
-        br = "╝"
-        hz = "═"
-        vt = "║"
+        DIM midX AS INTEGER = w.W / 2
+        DIM midYE AS INTEGER = w.H / 2
+        DIM isCorner AS BOOLEAN = FALSE
+        IF dx = 0 AND dy = 0 THEN isCorner = TRUE
+        IF dx = w.W - 1 AND dy = 0 THEN isCorner = TRUE
+        IF dx = 0 AND dy = w.H - 1 THEN isCorner = TRUE
+        IF dx = w.W - 1 AND dy = w.H - 1 THEN isCorner = TRUE
+        IF isCorner THEN RETURN "◆", TRUE
+        IF w.W >= 5 AND (dy = 0 OR dy = w.H - 1) AND dx = midX THEN RETURN "◆", TRUE
+        IF w.H >= 5 AND (dx = 0 OR dx = w.W - 1) AND dy = midYE THEN RETURN "◆", TRUE
     END IF
 
     IF dy = 0 AND dx = 0 THEN RETURN tl, TRUE
@@ -191,6 +288,124 @@ FUNCTION widgetLabel(w AS Widget) AS STRING
         IF w.TiValue <> "" THEN RETURN w.TiValue
         IF w.TiPlaceholder <> "" THEN RETURN w.TiPlaceholder
     END IF
+    IF w.Kind = WidgetKindFileDialog THEN
+        DIM label AS STRING = w.FdValue
+        IF label = "" THEN label = w.FdPlaceholder
+        IF label = "" THEN label = "Choose a file..."
+        DIM btn AS STRING = w.FdButtonText
+        IF btn = "" THEN btn = "..."
+        RETURN label + "  [" + btn + "]"
+    END IF
+    IF w.Kind = WidgetKindCheckbox THEN
+        DIM mark AS STRING = "[ ]"
+        IF w.ChkChecked THEN mark = "[x]"
+        RETURN mark + " " + w.ChkText
+    END IF
+    IF w.Kind = WidgetKindComboBox THEN
+        DIM items AS []STRING = strings.Split(w.LstItems, ";")
+        DIM cur AS STRING = ""
+        IF w.LstIdx >= 0 AND w.LstIdx < LEN(items) THEN cur = items[w.LstIdx]
+        RETURN cur + "  ▾"
+    END IF
+    IF w.Kind = WidgetKindListBox THEN
+        ' Show the selected item as the canvas label hint.
+        DIM litems AS []STRING = strings.Split(w.LstItems, ";")
+        IF w.LstIdx >= 0 AND w.LstIdx < LEN(litems) THEN RETURN litems[w.LstIdx]
+        IF LEN(litems) > 0 THEN RETURN litems[0]
+        RETURN "(empty list)"
+    END IF
+    IF w.Kind = WidgetKindRadioButton THEN
+        DIM rbMark AS STRING = "( )"
+        IF w.RbChecked THEN rbMark = "(•)"
+        RETURN rbMark + " " + w.RbText
+    END IF
+    IF w.Kind = WidgetKindProgressBar THEN
+        DIM rng AS INTEGER = w.RngMax - w.RngMin
+        DIM pct AS INTEGER = 0
+        IF rng > 0 THEN pct = ((w.RngValue - w.RngMin) * 100) / rng
+        IF pct < 0 THEN pct = 0
+        IF pct > 100 THEN pct = 100
+        RETURN fmt.Sprintf("%d%%", pct)
+    END IF
+    IF w.Kind = WidgetKindScrollBar THEN
+        RETURN fmt.Sprintf("◆ %d/%d", w.RngValue, w.RngMax)
+    END IF
+    IF w.Kind = WidgetKindTabStrip THEN
+        DIM tabs AS []STRING = strings.Split(w.LstItems, ";")
+        DIM out AS STRING = ""
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(tabs) - 1
+            DIM sep AS STRING = "  "
+            IF i = 0 THEN sep = ""
+            IF i = w.LstIdx THEN
+                out = out + sep + "[" + tabs[i] + "]"
+            ELSE
+                out = out + sep + tabs[i]
+            END IF
+        NEXT i
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindScrollPane THEN
+        DIM spLines AS []STRING = strings.Split(w.LstItems, ";")
+        IF w.LstIdx >= 0 AND w.LstIdx < LEN(spLines) THEN RETURN spLines[w.LstIdx]
+        IF LEN(spLines) > 0 THEN RETURN spLines[0]
+        RETURN "(empty)"
+    END IF
+    IF w.Kind = WidgetKindTreeView THEN
+        DIM tvLines AS []STRING = strings.Split(w.LstItems, ";")
+        IF LEN(tvLines) > 0 THEN
+            DIM tvParts AS []STRING = strings.SplitN(tvLines[0], "|", 3)
+            IF LEN(tvParts) >= 3 THEN RETURN "▾ " + tvParts[2]
+        END IF
+        RETURN "(empty tree)"
+    END IF
+    IF w.Kind = WidgetKindGroupBox THEN
+        IF w.Title <> "" THEN RETURN "[ " + w.Title + " ]"
+        RETURN "(group)"
+    END IF
+    IF w.Kind = WidgetKindMenuBar THEN
+        DIM mbMenus AS []STRING = strings.Split(w.LstItems, ";")
+        DIM mbOut AS STRING = ""
+        DIM mbI AS INTEGER
+        FOR mbI = 0 TO LEN(mbMenus) - 1
+            DIM mbP AS []STRING = strings.SplitN(mbMenus[mbI], "|", 2)
+            IF LEN(mbP) >= 1 AND mbP[0] <> "" THEN mbOut = mbOut + " " + mbP[0] + " "
+        NEXT mbI
+        RETURN mbOut
+    END IF
+    IF w.Kind = WidgetKindStatusBar THEN
+        DIM sbSegs AS []STRING = strings.Split(w.LstItems, ";")
+        DIM sbOut AS STRING = " "
+        DIM sbI AS INTEGER
+        FOR sbI = 0 TO LEN(sbSegs) - 1
+            IF sbSegs[sbI] <> "" THEN
+                IF sbI > 0 THEN sbOut = sbOut + " │ "
+                sbOut = sbOut + sbSegs[sbI]
+            END IF
+        NEXT sbI
+        RETURN sbOut
+    END IF
+    IF w.Kind = WidgetKindTextArea THEN
+        IF w.TiValue <> "" THEN
+            DIM taLines AS []STRING = strings.SplitN(w.TiValue, "\n", 2)
+            RETURN taLines[0]
+        END IF
+        IF w.TiPlaceholder <> "" THEN RETURN w.TiPlaceholder
+        RETURN "(textarea)"
+    END IF
+    IF w.Kind = WidgetKindSplitPanel THEN
+        IF w.LstItems = "horizontal" THEN RETURN "──── split ────"
+        RETURN "│"
+    END IF
+    IF w.Kind = WidgetKindPropertyGrid THEN
+        DIM pgRows AS []STRING = strings.Split(w.LstItems, ";")
+        IF LEN(pgRows) > 0 AND pgRows[0] <> "" THEN
+            DIM pgP AS []STRING = strings.SplitN(pgRows[0], "|", 4)
+            IF LEN(pgP) >= 1 AND pgP[0] <> "" THEN RETURN "▸ " + pgP[0]
+            IF LEN(pgP) >= 2 THEN RETURN pgP[1]
+        END IF
+        RETURN "(empty grid)"
+    END IF
     RETURN w.Kind
 END FUNCTION
 
@@ -202,25 +417,20 @@ FUNCTION (v AS VisualEditor) Render() AS STRING
     IF bgCol = "" THEN bgCol = "#1a1b2e"
     IF fgCol = "" THEN fgCol = "#e0def4"
 
-    ' Choose form-border characters. Single borders unfocused, double
-    ' when the editor itself is focused — matches the convention that
-    ' panels grow a thicker border when focused.
-    DIM ftl AS STRING = "┌"
-    DIM ftr AS STRING = "┐"
-    DIM fbl AS STRING = "└"
-    DIM fbr AS STRING = "┘"
+    ' Form border is always rounded for the modern look; focus is
+    ' signalled by the border color shifting to ColorFocusBorder
+    ' (sky blue accent) — see formBorderStyle below.
+    DIM ftl AS STRING = "╭"
+    DIM ftr AS STRING = "╮"
+    DIM fbl AS STRING = "╰"
+    DIM fbr AS STRING = "╯"
     DIM fhz AS STRING = "─"
     DIM fvt AS STRING = "│"
-    IF v.Focused THEN
-        ftl = "╔"
-        ftr = "╗"
-        fbl = "╚"
-        fbr = "╝"
-        fhz = "═"
-        fvt = "║"
-    END IF
 
+    DIM borderFg AS STRING = fgCol
+    IF v.Focused THEN borderFg = "#7dcfff"
     DIM formStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(fgCol)).Background(lipgloss.Color(bgCol))
+    DIM formBorderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(borderFg)).Background(lipgloss.Color(bgCol))
     DIM dotStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#3b3d5e")).Background(lipgloss.Color(bgCol))
     DIM outsideStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
 
@@ -251,30 +461,38 @@ FUNCTION (v AS VisualEditor) Render() AS STRING
             ELSE
                 DIM ch AS STRING = ""
                 DIM painted AS BOOLEAN = FALSE
+                DIM borderCell AS BOOLEAN = FALSE
 
                 ' Form border first.
                 IF y = 0 AND x = 0 THEN
                     ch = ftl
                     painted = TRUE
+                    borderCell = TRUE
                 ELSEIF y = 0 AND x = drawW - 1 THEN
                     ch = ftr
                     painted = TRUE
+                    borderCell = TRUE
                 ELSEIF y = drawH - 1 AND x = 0 THEN
                     ch = fbl
                     painted = TRUE
+                    borderCell = TRUE
                 ELSEIF y = drawH - 1 AND x = drawW - 1 THEN
                     ch = fbr
                     painted = TRUE
+                    borderCell = TRUE
                 ELSEIF y = 0 OR y = drawH - 1 THEN
                     ch = fhz
                     painted = TRUE
+                    borderCell = TRUE
                     ' Title overlay on the top border.
                     IF y = 0 AND x >= titleStartX AND x < titleStartX + titleW THEN
                         ch = Mid(titlePadded, x - titleStartX + 1, 1)
+                        borderCell = FALSE
                     END IF
                 ELSEIF x = 0 OR x = drawW - 1 THEN
                     ch = fvt
                     painted = TRUE
+                    borderCell = TRUE
                 END IF
 
                 IF NOT painted THEN
@@ -312,6 +530,8 @@ FUNCTION (v AS VisualEditor) Render() AS STRING
 
                 IF ch = "·" THEN
                     rowSb = rowSb + dotStyle.Render(ch)
+                ELSEIF borderCell THEN
+                    rowSb = rowSb + formBorderStyle.Render(ch)
                 ELSE
                     rowSb = rowSb + formStyle.Render(ch)
                 END IF

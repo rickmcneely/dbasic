@@ -23,7 +23,7 @@ CONST ColorStatusBgHex    AS STRING = "#24273a"
 CONST ColorStatusFgHex    AS STRING = "#8087a2"   ' Dimmer status text
 CONST ColorHotkeyHex      AS STRING = "#f5a97f"   ' Warm peach for hotkeys
 CONST ColorFocusBorderHex AS STRING = "#7dcfff"   ' Matches accent
-CONST ColorHoverHex       AS STRING = "#262840"   ' Mouse-hover row tint
+CONST ColorHoverHex       AS STRING = "#3d4570"   ' Mouse-hover row tint
 
 ' Wrappers so the rest of the app can use lipgloss.Color values without
 ' re-typing the hex strings.
@@ -101,6 +101,10 @@ FUNCTION singleBorder() AS borderChars
     RETURN b
 END FUNCTION
 
+' doubleBorder is the focused-panel variant. Same line weight as
+' singleBorder but square corners — matches vgtui's modern aesthetic
+' where focus is signalled primarily by the BorderForeground color
+' shift to ColorFocusBorder (sky blue), not by a heavier line.
 FUNCTION doubleBorder() AS borderChars
     DIM b AS borderChars
     b.TopLeft = "┌"

@@ -16,6 +16,7 @@
 IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "fmt"
 IMPORT "os"
+IMPORT "strings"
 
 INCLUDE "internal/ui/layout.dbas"
 INCLUDE "internal/ui/theme.dbas"
@@ -26,14 +27,38 @@ INCLUDE "internal/widget/widget.dbas"
 INCLUDE "internal/widgets/button.dbas"
 INCLUDE "internal/widgets/label.dbas"
 INCLUDE "internal/widgets/textinput.dbas"
+INCLUDE "internal/widgets/filedialog.dbas"
+INCLUDE "internal/widgets/checkbox.dbas"
+INCLUDE "internal/widgets/combobox.dbas"
+INCLUDE "internal/widgets/listbox.dbas"
+INCLUDE "internal/widgets/radiobutton.dbas"
+INCLUDE "internal/widgets/progressbar.dbas"
+INCLUDE "internal/widgets/scrollbar.dbas"
+INCLUDE "internal/widgets/tabstrip.dbas"
+INCLUDE "internal/widgets/scrollpane.dbas"
+INCLUDE "internal/widgets/treeview.dbas"
+INCLUDE "internal/widgets/groupbox.dbas"
+INCLUDE "internal/widgets/menubar.dbas"
+INCLUDE "internal/widgets/statusbar.dbas"
+INCLUDE "internal/widgets/textarea.dbas"
+INCLUDE "internal/widgets/splitpanel.dbas"
+INCLUDE "internal/widgets/propertygrid.dbas"
 INCLUDE "internal/widgets/registry.dbas"
+INCLUDE "internal/widgets/tools.dbas"
 INCLUDE "internal/project/format.dbas"
 INCLUDE "internal/project/tree.dbas"
 INCLUDE "internal/editor/visual.dbas"
 INCLUDE "internal/properties/panel.dbas"
+INCLUDE "internal/codegen/codegen.dbas"
 INCLUDE "internal/app/app.dbas"
 
 SUB Main()
+    DIM args AS []STRING = os.Args
+    IF LEN(args) >= 2 AND args[1] = "gen" THEN
+        runCodegen(args)
+        RETURN
+    END IF
+
     DIM model AS Model = NewModel()
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(model, tea.WithoutSignalHandler())
 
@@ -45,4 +70,38 @@ SUB Main()
         os.Exit(1)
     END IF
     _ = finalModel
+END SUB
+
+' runCodegen — `DBtui gen <project.dbproj> [-o <output.dbas>]`
+SUB runCodegen(args AS []STRING)
+    IF LEN(args) < 3 THEN
+        fmt.Fprintln(os.Stderr, "usage: DBtui gen <project.dbproj> [-o output.dbas]")
+        os.Exit(2)
+    END IF
+    DIM projectPath AS STRING = args[2]
+    DIM outPath AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 3 TO LEN(args) - 1
+        IF args[i] = "-o" AND i + 1 < LEN(args) THEN
+            outPath = args[i + 1]
+        END IF
+    NEXT i
+
+    DIM p AS Project
+    DIM err AS ERROR
+    p, err = LoadProject(projectPath)
+    IF err <> NIL THEN
+        fmt.Fprintln(os.Stderr, "load: " + err.Error())
+        os.Exit(1)
+    END IF
+
+    DIM code AS STRING = GenerateProgram(p)
+    IF outPath = "" THEN
+        outPath = strings.TrimSuffix(projectPath, ".dbproj") + ".dbas"
+    END IF
+
+    ' DBasic's WriteFile builtin returns no error — it panics on failure.
+    ' Acceptable for this CLI path; users see the panic at the console.
+    WriteFile(outPath, code)
+    fmt.Printf("generated: %s\n", outPath)
 END SUB

@@ -26,6 +26,7 @@ CONST NodeFolder AS INTEGER = 0
 CONST NodeForm   AS INTEGER = 1
 CONST NodeCode   AS INTEGER = 2
 CONST NodeWidget AS INTEGER = 3   ' widget entry under a form
+CONST NodeTool   AS INTEGER = 4   ' tool entry under a form
 
 ' ----------------------------------------------------------------------
 ' TreeNode — recursive, so Children holds POINTERs.
@@ -115,7 +116,7 @@ FUNCTION DefaultProject() AS Project
     f.Widgets = APPEND(f.Widgets, txtName)
 
     DIM btnOK AS WidgetEntry
-    btnOK.Id = "btnOK"
+    btnOK.Id = "btnOpen"
     btnOK.Kind = WidgetKindButton
     btnOK.X = 44
     btnOK.Y = 4
@@ -124,7 +125,23 @@ FUNCTION DefaultProject() AS Project
     btnOK.Visible = TRUE
     btnOK.TabStop = TRUE
     btnOK.TabIndex = 2
+    DIM btnProps AS MAP OF STRING TO ANY
+    btnProps["Text"] = "Open..."
+    btnOK.Properties = btnProps
     f.Widgets = APPEND(f.Widgets, btnOK)
+
+    ' A FileDialog tool the button can invoke at runtime.
+    DIM dlgOpen AS ToolEntry
+    dlgOpen.Id = "dlgOpen"
+    dlgOpen.Kind = "FileDialog"
+    DIM dlgProps AS MAP OF STRING TO ANY
+    dlgProps["Mode"]        = "open"
+    dlgProps["Mask"]        = "*"
+    dlgProps["Title"]       = "Open File"
+    dlgProps["Placeholder"] = "Choose a file..."
+    dlgProps["ButtonText"]  = "..."
+    dlgOpen.Properties = dlgProps
+    f.Tools = APPEND(f.Tools, dlgOpen)
 
     p.Forms = APPEND(p.Forms, f)
 
@@ -172,6 +189,20 @@ SUB (t AS POINTER TO Tree) buildFromProject()
             widgetNode.Path = f.File
             formNode.Children = APPEND(formNode.Children, widgetNode)
         NEXT w
+        ' Tools (non-visual components) live under a tools/ subfolder.
+        IF LEN(f.Tools) > 0 THEN
+            DIM toolsDir AS POINTER TO TreeNode = newNode("tools/", NodeFolder, 3)
+            toolsDir.Path = f.File
+            toolsDir.Expanded = TRUE
+            DIM tk AS INTEGER
+            FOR tk = 0 TO LEN(f.Tools) - 1
+                DIM toolEntry AS ToolEntry = f.Tools[tk]
+                DIM toolNode AS POINTER TO TreeNode = newNode(toolEntry.Id + " (" + toolEntry.Kind + ")", NodeTool, 4)
+                toolNode.Path = f.File
+                toolsDir.Children = APPEND(toolsDir.Children, toolNode)
+            NEXT tk
+            formNode.Children = APPEND(formNode.Children, toolsDir)
+        END IF
         DIM codeNode AS POINTER TO TreeNode = newNode(f.Name + ".dbas", NodeCode, 2)
         codeNode.Path = f.Code
         formsDir.Children = APPEND(formsDir.Children, formNode)
@@ -304,3 +335,22 @@ END SUB
 FUNCTION (t AS Tree) Render() AS STRING
     RETURN t.Panel.Render()
 END FUNCTION
+
+' ClickAt positions the tree cursor on the flat-node at panel-local
+' (lx, ly). Returns the clicked node pointer (NIL if border/empty).
+FUNCTION (t AS POINTER TO Tree) ClickAt(lx AS INTEGER, ly AS INTEGER) AS POINTER TO TreeNode
+    DIM idx AS INTEGER
+    DIM ok AS BOOLEAN
+    idx, ok = t.Panel.ClickAt(lx, ly)
+    IF NOT ok THEN RETURN NIL
+    IF idx < 0 OR idx >= LEN(t.Flat) THEN RETURN NIL
+    RETURN t.Flat[idx]
+END FUNCTION
+
+SUB (t AS POINTER TO Tree) WheelUp()
+    t.Panel.WheelUp()
+END SUB
+
+SUB (t AS POINTER TO Tree) WheelDown()
+    t.Panel.WheelDown()
+END SUB

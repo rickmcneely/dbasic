@@ -1,0 +1,57 @@
+' DBtui — internal/widgets/tabstrip.dbas
+'
+' TabStrip — horizontal strip of selectable tabs. The active tab is
+' highlighted; ←/→ cycle, click on a label selects. Tabs is a
+' ";"-separated STRING (reuses LstItems). LstIdx holds the active
+' index. Use the Change event to swap content panels at runtime.
+' This widget does NOT own its tabs' content — that's the host's job.
+
+FUNCTION NewTabStrip(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindTabStrip
+    w.Visible = TRUE
+    w.TabStop = TRUE
+    w.W = 40
+    w.H = 1
+    w.Style.BgColor = "#24273a"
+    w.Style.FgColor = "#cad3f5"
+    w.Style.Border = "none"
+    w.Style.Corner = "square"
+    w.LstItems = "Tab 1;Tab 2;Tab 3"
+    w.LstIdx = 0
+    RETURN w
+END FUNCTION
+
+FUNCTION TabStripProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Tabs", w.LstItems))
+    out = APPEND(out, StringProp("Active", fmt.Sprintf("%d", w.LstIdx)))
+    DIM stylePs AS []Property = StyleProperties(w.Style, FALSE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetTabStripProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Tabs" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.LstItems = s
+        RETURN NIL
+    END IF
+    IF name = "Active" THEN
+        DIM iv AS INTEGER
+        DIM ierr AS ERROR
+        iv, ierr = coerceInt(name, value)
+        IF ierr <> NIL THEN RETURN ierr
+        w.LstIdx = iv
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown TabStrip property: " + name)
+END FUNCTION

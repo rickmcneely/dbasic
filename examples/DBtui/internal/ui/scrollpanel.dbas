@@ -92,6 +92,34 @@ SUB (s AS POINTER TO ScrollPanel) EnsureCursorVisible()
 END SUB
 
 ' ----------------------------------------------------------------------
+' Mouse
+' ----------------------------------------------------------------------
+
+' ClickAt translates a panel-local (lx, ly) click into a line index
+' and positions the cursor there. Returns (lineIdx, ok). lx is unused
+' (the panel is single-column for now) but kept for symmetry with other
+' panels that have column-aware cells. Border rows / out-of-range
+' clicks return ok=FALSE.
+FUNCTION (s AS POINTER TO ScrollPanel) ClickAt(lx AS INTEGER, ly AS INTEGER) AS (INTEGER, BOOLEAN)
+    IF ly < 1 OR ly > s.Height - 2 THEN RETURN -1, FALSE
+    DIM lineIdx AS INTEGER = s.Offset + (ly - 1)
+    IF lineIdx < 0 OR lineIdx >= LEN(s.Lines) THEN RETURN -1, FALSE
+    s.Cursor = lineIdx
+    s.EnsureCursorVisible()
+    RETURN lineIdx, TRUE
+END FUNCTION
+
+' Wheel sub-handlers — alias names so the app's mouse dispatch reads
+' uniformly across panel types.
+SUB (s AS POINTER TO ScrollPanel) WheelUp()
+    s.ScrollUp()
+END SUB
+
+SUB (s AS POINTER TO ScrollPanel) WheelDown()
+    s.ScrollDown()
+END SUB
+
+' ----------------------------------------------------------------------
 ' Render — produces exactly Width × Height characters (when those are
 ' ≥ the minimum). Returns "" if the panel is too small to draw.
 ' ----------------------------------------------------------------------

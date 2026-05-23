@@ -1,0 +1,2203 @@
+' DBtui — internal/codegen/codegen.dbas
+'
+' Codegen — turns a Project into a runnable DBasic source file. The
+' generated program imports bubbletea + lipgloss and renders each
+' widget as a styled box layered at its (X, Y) position via lipgloss
+' Compositor. Tab cycles focus among TabStop widgets; q / Ctrl+C
+' quits.
+'
+' Event-handler bodies are stubbed out (status-line echoes) — real
+' user code lands when the code editor is wired. The output file
+' compiles cleanly with `dbasic build <out>.dbas`.
+
+IMPORT "fmt"
+IMPORT "os"
+IMPORT "strings"
+
+' dbasBool returns the DBasic-source form of a Boolean.
+FUNCTION dbasBool(b AS BOOLEAN) AS STRING
+    IF b THEN RETURN "TRUE"
+    RETURN "FALSE"
+END FUNCTION
+
+' dbasStr returns a DBasic-syntax quoted string literal — escapes the
+' contents so a string like a"b\nc emits "a\"b\\nc". Implemented by
+' hand because fmt.Sprintf("%q", …) emits Go-style which is *almost*
+' the same but uses backtick raw strings sometimes.
+FUNCTION dbasStr(s AS STRING) AS STRING
+    DIM out AS STRING = "\""
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(s)
+        DIM c AS STRING = Mid(s, i, 1)
+        IF c = "\"" THEN
+            out = out + "\\\""
+        ELSEIF c = "\\" THEN
+            out = out + "\\\\"
+        ELSEIF c = "\n" THEN
+            out = out + "\\n"
+        ELSEIF c = "\r" THEN
+            out = out + "\\r"
+        ELSEIF c = "\t" THEN
+            out = out + "\\t"
+        ELSE
+            out = out + c
+        END IF
+    NEXT i
+    RETURN out + "\""
+END FUNCTION
+
+' readUserCode loads form.Code from disk. Returns "" if the path is
+' empty or the file doesn't exist — codegen still produces a runnable
+' program in that case (just with no user handlers).
+FUNCTION readUserCode(codePath AS STRING) AS STRING
+    IF codePath = "" THEN RETURN ""
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile(codePath)
+    IF err <> NIL THEN RETURN ""
+    RETURN string(data)
+END FUNCTION
+
+' findDefinedSubs scans the user's code and returns the names of all
+' top-level SUB / FUNCTION definitions. Used so we don't emit a stub
+' that collides with a sub the user has already written.
+'
+' Match rule: a line whose trimmed prefix is `SUB ` or `FUNCTION `
+' followed by a bare identifier (no leading "(") and a "(" within
+' a few tokens. Skips method declarations like `SUB (m AS Model) X()`.
+FUNCTION findDefinedSubs(code AS STRING) AS []STRING
+    DIM out AS []STRING
+    DIM lines AS []STRING = strings.Split(code, "\n")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        DIM line AS STRING = strings.TrimSpace(lines[i])
+        DIM upper AS STRING = strings.ToUpper(line)
+        DIM nameStart AS INTEGER = -1
+        IF strings.HasPrefix(upper, "SUB ") THEN nameStart = 4
+        IF strings.HasPrefix(upper, "FUNCTION ") THEN nameStart = 9
+        IF nameStart < 0 THEN
+            ' not a sub/function line — skip
+        ELSE
+            DIM rest AS STRING = strings.TrimSpace(Mid(line, nameStart + 1, LEN(line) - nameStart))
+            IF strings.HasPrefix(rest, "(") THEN
+                ' method receiver — skip
+            ELSE
+                DIM parenPos AS INTEGER = strings.Index(rest, "(")
+                DIM spacePos AS INTEGER = strings.Index(rest, " ")
+                DIM cut AS INTEGER = parenPos
+                IF spacePos >= 0 AND (cut < 0 OR spacePos < cut) THEN cut = spacePos
+                IF cut >= 0 THEN rest = Mid(rest, 1, cut)
+                DIM nm AS STRING = strings.TrimSpace(rest)
+                IF nm <> "" THEN out = APPEND(out, nm)
+            END IF
+        END IF
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION subDefined(name AS STRING, defined AS []STRING) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(defined) - 1
+        IF strings.EqualFold(defined[i], name) THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' emitDispatchClick writes the SUB that routes a button's Id to its
+' user handler. Generated as one big IF cascade (DBasic doesn't have
+' map literals so a switch on strings is the cheapest path).
+FUNCTION emitDispatchClick(form AS Form) AS STRING
+    DIM s AS STRING = "SUB dispatchClick(id AS STRING)\n"
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(form.Widgets) - 1
+        DIM w AS WidgetEntry = form.Widgets[i]
+        IF w.Kind = WidgetKindButton THEN
+            s = s + fmt.Sprintf("    IF id = %s THEN %s_Click()\n", dbasStr(w.Id), w.Id)
+        END IF
+    NEXT i
+    s = s + "END SUB\n\n"
+    RETURN s
+END FUNCTION
+
+' kindHasChange returns TRUE for widget kinds that emit a `_Change`
+' event when their state mutates at runtime (toggle / cycle / slide).
+FUNCTION kindHasChange(kind AS STRING) AS BOOLEAN
+    IF kind = WidgetKindTextInput   THEN RETURN TRUE
+    IF kind = WidgetKindCheckbox    THEN RETURN TRUE
+    IF kind = WidgetKindRadioButton THEN RETURN TRUE
+    IF kind = WidgetKindComboBox    THEN RETURN TRUE
+    IF kind = WidgetKindListBox     THEN RETURN TRUE
+    IF kind = WidgetKindScrollBar   THEN RETURN TRUE
+    IF kind = WidgetKindTabStrip    THEN RETURN TRUE
+    IF kind = WidgetKindScrollPane  THEN RETURN TRUE
+    IF kind = WidgetKindTreeView    THEN RETURN TRUE
+    IF kind = WidgetKindTextArea    THEN RETURN TRUE
+    IF kind = WidgetKindPropertyGrid THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' emitDispatchChange writes a SUB that routes a widget's Id to its
+' user-defined `<id>_Change()` handler. Mirrors emitDispatchClick.
+FUNCTION emitDispatchChange(form AS Form) AS STRING
+    DIM s AS STRING = "SUB dispatchChange(id AS STRING)\n"
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(form.Widgets) - 1
+        DIM w AS WidgetEntry = form.Widgets[i]
+        IF kindHasChange(w.Kind) THEN
+            s = s + fmt.Sprintf("    IF id = %s THEN %s_Change()\n", dbasStr(w.Id), w.Id)
+        END IF
+    NEXT i
+    s = s + "END SUB\n\n"
+    RETURN s
+END FUNCTION
+
+' emitSetFocus writes the helper that transitions focus, handling
+' Blur/Focus on TextInput widgets so the cursor follows.
+FUNCTION emitSetFocus() AS STRING
+    DIM s AS STRING = ""
+    s = s + "FUNCTION focusableIdxAt(m AS Model, focusIdx AS INTEGER) AS INTEGER\n"
+    s = s + "    DIM fc AS INTEGER = 0\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        IF m.Widgets[i].TStop AND m.Widgets[i].Visi THEN\n"
+    s = s + "            IF fc = focusIdx THEN RETURN i\n"
+    s = s + "            fc = fc + 1\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN -1\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "FUNCTION setFocus(m AS POINTER TO Model, newFocus AS INTEGER) AS tea.Cmd\n"
+    s = s + "    DIM oldIdx AS INTEGER = focusableIdxAt(^m, m.Focus)\n"
+    s = s + "    IF oldIdx >= 0 AND m.Widgets[oldIdx].Kind = \"TextInput\" THEN\n"
+    s = s + "        m.Widgets[oldIdx].TiModel.Blur()\n"
+    s = s + "    END IF\n"
+    s = s + "    IF oldIdx >= 0 AND m.Widgets[oldIdx].Kind = \"TextArea\" THEN\n"
+    s = s + "        m.Widgets[oldIdx].TaModel.Blur()\n"
+    s = s + "    END IF\n"
+    s = s + "    m.Focus = newFocus\n"
+    s = s + "    DIM newIdx AS INTEGER = focusableIdxAt(^m, m.Focus)\n"
+    s = s + "    IF newIdx >= 0 AND m.Widgets[newIdx].Kind = \"TextInput\" THEN\n"
+    s = s + "        RETURN m.Widgets[newIdx].TiModel.Focus()\n"
+    s = s + "    END IF\n"
+    s = s + "    IF newIdx >= 0 AND m.Widgets[newIdx].Kind = \"TextArea\" THEN\n"
+    s = s + "        RETURN m.Widgets[newIdx].TaModel.Focus()\n"
+    s = s + "    END IF\n"
+    s = s + "    RETURN NIL\n"
+    s = s + "END FUNCTION\n\n"
+    RETURN s
+END FUNCTION
+
+' emitSelectRadio writes the helper that handles radio-group exclusivity.
+' Called when a RadioButton is toggled — sets the target Checked=TRUE
+' and clears all other RadioButtons sharing its Group.
+FUNCTION emitSelectRadio() AS STRING
+    DIM s AS STRING = ""
+    s = s + "SUB selectRadio(m AS POINTER TO Model, idx AS INTEGER)\n"
+    s = s + "    IF idx < 0 OR idx >= LEN(m.Widgets) THEN RETURN\n"
+    s = s + "    IF m.Widgets[idx].Kind <> \"RadioButton\" THEN RETURN\n"
+    s = s + "    DIM g AS STRING = m.Widgets[idx].Group\n"
+    s = s + "    DIM j AS INTEGER\n"
+    s = s + "    FOR j = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        IF m.Widgets[j].Kind = \"RadioButton\" AND m.Widgets[j].Group = g THEN\n"
+    s = s + "            m.Widgets[j].Checked = (j = idx)\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT j\n"
+    s = s + "END SUB\n\n"
+    RETURN s
+END FUNCTION
+
+' emitTreeHelper writes the helper that flattens a TreeView's stored
+' "depth|state|label" entries into a *visible* row list — children of a
+' "-" (collapsed) node are skipped. Returns parallel arrays: the
+' visible entries and their absolute indices into the source list.
+' Used by both renderOneWidget and the Update key/click handlers.
+FUNCTION emitTreeHelper() AS STRING
+    DIM s AS STRING = ""
+    s = s + "FUNCTION treeVisible(items AS STRING) AS ([]STRING, []INTEGER)\n"
+    s = s + "    DIM all AS []STRING = strings.Split(items, \";\")\n"
+    s = s + "    DIM vis AS []STRING\n"
+    s = s + "    DIM idx AS []INTEGER\n"
+    s = s + "    DIM skipDepth AS INTEGER = -1\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(all) - 1\n"
+    s = s + "        DIM ent AS STRING = all[i]\n"
+    s = s + "        IF ent <> \"\" THEN\n"
+    s = s + "            DIM parts AS []STRING = strings.SplitN(ent, \"|\", 3)\n"
+    s = s + "            IF LEN(parts) >= 3 THEN\n"
+    s = s + "                DIM d AS INTEGER = 0\n"
+    s = s + "                DIM derr AS ERROR\n"
+    s = s + "                d, derr = strconv.Atoi(parts[0])\n"
+    s = s + "                _ = derr\n"
+    s = s + "                DIM keepRow AS BOOLEAN = TRUE\n"
+    s = s + "                IF skipDepth >= 0 THEN\n"
+    s = s + "                    IF d > skipDepth THEN\n"
+    s = s + "                        keepRow = FALSE\n"
+    s = s + "                    ELSE\n"
+    s = s + "                        skipDepth = -1\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "                IF keepRow THEN\n"
+    s = s + "                    vis = APPEND(vis, ent)\n"
+    s = s + "                    idx = APPEND(idx, i)\n"
+    s = s + "                    IF parts[1] = \"-\" THEN skipDepth = d\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN vis, idx\n"
+    s = s + "END FUNCTION\n\n"
+    ' treeToggle flips the state of the entry at absolute index `abs`.
+    ' "+" → "-" and vice versa. Leaf "*" entries are left unchanged.
+    ' Mutates items in place and returns the new string.
+    s = s + "FUNCTION treeToggle(items AS STRING, abs AS INTEGER) AS STRING\n"
+    s = s + "    DIM all AS []STRING = strings.Split(items, \";\")\n"
+    s = s + "    IF abs < 0 OR abs >= LEN(all) THEN RETURN items\n"
+    s = s + "    DIM parts AS []STRING = strings.SplitN(all[abs], \"|\", 3)\n"
+    s = s + "    IF LEN(parts) < 3 THEN RETURN items\n"
+    s = s + "    DIM oldState AS STRING = parts[1]\n"
+    s = s + "    IF oldState = \"+\" THEN parts[1] = \"-\"\n"
+    s = s + "    IF oldState = \"-\" THEN parts[1] = \"+\"\n"
+    s = s + "    all[abs] = parts[0] + \"|\" + parts[1] + \"|\" + parts[2]\n"
+    s = s + "    RETURN strings.Join(all, \";\")\n"
+    s = s + "END FUNCTION\n\n"
+    RETURN s
+END FUNCTION
+
+' emitPropertyGridHelpers writes runtime helpers for PropertyGrid:
+'   pgSetRowValue — update the Value field of the row at the given
+'                   absolute index; re-encodes the row list.
+'   pgEnumCycle   — given a "enum:a:b:c" type and current value,
+'                   return the next (or prev when dir<0) option.
+FUNCTION emitPropertyGridHelpers() AS STRING
+    DIM s AS STRING = ""
+    s = s + "FUNCTION pgSetRowValue(items AS STRING, absIdx AS INTEGER, newVal AS STRING) AS STRING\n"
+    s = s + "    DIM all AS []STRING = strings.Split(items, \";\")\n"
+    s = s + "    IF absIdx < 0 OR absIdx >= LEN(all) THEN RETURN items\n"
+    s = s + "    DIM parts AS []STRING = strings.SplitN(all[absIdx], \"|\", 4)\n"
+    s = s + "    DO WHILE LEN(parts) < 4\n"
+    s = s + "        parts = APPEND(parts, \"\")\n"
+    s = s + "    LOOP\n"
+    s = s + "    parts[2] = newVal\n"
+    s = s + "    all[absIdx] = parts[0] + \"|\" + parts[1] + \"|\" + parts[2] + \"|\" + parts[3]\n"
+    s = s + "    RETURN strings.Join(all, \";\")\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "FUNCTION pgEnumCycle(typeStr AS STRING, cur AS STRING, dir AS INTEGER) AS STRING\n"
+    s = s + "    IF NOT strings.HasPrefix(typeStr, \"enum:\") THEN RETURN cur\n"
+    s = s + "    DIM rest AS STRING = strings.TrimPrefix(typeStr, \"enum:\")\n"
+    s = s + "    DIM opts AS []STRING = strings.Split(rest, \":\")\n"
+    s = s + "    IF LEN(opts) = 0 THEN RETURN cur\n"
+    s = s + "    DIM idx AS INTEGER = -1\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(opts) - 1\n"
+    s = s + "        IF opts[i] = cur THEN idx = i\n"
+    s = s + "    NEXT i\n"
+    s = s + "    IF idx < 0 THEN RETURN opts[0]\n"
+    s = s + "    DIM nxt AS INTEGER = idx + dir\n"
+    s = s + "    IF nxt < 0 THEN nxt = LEN(opts) - 1\n"
+    s = s + "    IF nxt >= LEN(opts) THEN nxt = 0\n"
+    s = s + "    RETURN opts[nxt]\n"
+    s = s + "END FUNCTION\n\n"
+    RETURN s
+END FUNCTION
+
+' emitMenuHelpers writes the helpers for the MenuBar widget. menuParse
+' returns parallel arrays of menu labels + their item-segments (each
+' item-segment is the unparsed ",-joined item list for that menu).
+' menuItems splits one menu's items into label+action arrays.
+FUNCTION emitMenuHelpers() AS STRING
+    DIM s AS STRING = ""
+    s = s + "FUNCTION menuParse(items AS STRING) AS ([]STRING, []STRING)\n"
+    s = s + "    DIM menus AS []STRING = strings.Split(items, \";\")\n"
+    s = s + "    DIM labels AS []STRING\n"
+    s = s + "    DIM raw AS []STRING\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(menus) - 1\n"
+    s = s + "        IF menus[i] <> \"\" THEN\n"
+    s = s + "            DIM parts AS []STRING = strings.SplitN(menus[i], \"|\", 2)\n"
+    s = s + "            labels = APPEND(labels, parts[0])\n"
+    s = s + "            DIM rawItems AS STRING = \"\"\n"
+    s = s + "            IF LEN(parts) > 1 THEN rawItems = parts[1]\n"
+    s = s + "            raw = APPEND(raw, rawItems)\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN labels, raw\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "FUNCTION menuItems(raw AS STRING) AS ([]STRING, []STRING)\n"
+    s = s + "    DIM lst AS []STRING = strings.Split(raw, \",\")\n"
+    s = s + "    DIM labs AS []STRING\n"
+    s = s + "    DIM acts AS []STRING\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(lst) - 1\n"
+    s = s + "        DIM e AS STRING = lst[i]\n"
+    s = s + "        IF e = \"-\" THEN\n"
+    s = s + "            labs = APPEND(labs, \"-\")\n"
+    s = s + "            acts = APPEND(acts, \"\")\n"
+    s = s + "        ELSEIF e <> \"\" THEN\n"
+    s = s + "            DIM p AS []STRING = strings.SplitN(e, \":\", 2)\n"
+    s = s + "            labs = APPEND(labs, p[0])\n"
+    s = s + "            DIM a AS STRING = \"\"\n"
+    s = s + "            IF LEN(p) > 1 THEN a = p[1]\n"
+    s = s + "            acts = APPEND(acts, a)\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN labs, acts\n"
+    s = s + "END FUNCTION\n\n"
+    RETURN s
+END FUNCTION
+
+' emitDispatchMenuAction writes the SUB that routes (menubarId, action)
+' to the user's <menubarId>_Action(action) handler.
+FUNCTION emitDispatchMenuAction(form AS Form) AS STRING
+    DIM s AS STRING = "SUB dispatchMenuAction(id AS STRING, action AS STRING)\n"
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(form.Widgets) - 1
+        DIM w AS WidgetEntry = form.Widgets[i]
+        IF w.Kind = WidgetKindMenuBar THEN
+            s = s + "    IF id = " + dbasStr(w.Id) + " THEN " + w.Id + "_Action(action)\n"
+        END IF
+    NEXT i
+    s = s + "    _ = action\n"
+    s = s + "END SUB\n\n"
+    RETURN s
+END FUNCTION
+
+' emitStubs writes empty SUB stubs for any expected event handler the
+' user hasn't defined yet. Keeps the generated program compilable even
+' when the form has handlers wired but the .dbas code hasn't caught up.
+FUNCTION emitStubs(form AS Form, defined AS []STRING) AS STRING
+    DIM s AS STRING = ""
+    DIM emitted AS BOOLEAN = FALSE
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(form.Widgets) - 1
+        DIM w AS WidgetEntry = form.Widgets[i]
+        IF w.Kind = WidgetKindButton THEN
+            DIM nm AS STRING = w.Id + "_Click"
+            IF NOT subDefined(nm, defined) THEN
+                IF NOT emitted THEN
+                    s = s + "' Auto-stubs for handlers not yet defined in the form's code file.\n"
+                    s = s + "' Open the form in DBtui (F7 = Code Editor) to fill them in.\n"
+                    emitted = TRUE
+                END IF
+                s = s + "SUB " + nm + "()\n"
+                s = s + "END SUB\n\n"
+            END IF
+        END IF
+        IF kindHasChange(w.Kind) THEN
+            DIM cnm AS STRING = w.Id + "_Change"
+            IF NOT subDefined(cnm, defined) THEN
+                IF NOT emitted THEN
+                    s = s + "' Auto-stubs for handlers not yet defined in the form's code file.\n"
+                    s = s + "' Open the form in DBtui (F7 = Code Editor) to fill them in.\n"
+                    emitted = TRUE
+                END IF
+                s = s + "SUB " + cnm + "()\n"
+                s = s + "END SUB\n\n"
+            END IF
+        END IF
+        IF w.Kind = WidgetKindMenuBar THEN
+            DIM mnm AS STRING = w.Id + "_Action"
+            IF NOT subDefined(mnm, defined) THEN
+                IF NOT emitted THEN
+                    s = s + "' Auto-stubs for handlers not yet defined in the form's code file.\n"
+                    s = s + "' Open the form in DBtui (F7 = Code Editor) to fill them in.\n"
+                    emitted = TRUE
+                END IF
+                s = s + "SUB " + mnm + "(action AS STRING)\n"
+                s = s + "    _ = action\n"
+                s = s + "END SUB\n\n"
+            END IF
+        END IF
+    NEXT i
+    RETURN s
+END FUNCTION
+
+' getIntProp pulls an INTEGER value out of a WidgetEntry.Properties map.
+' Falls back to DOUBLE → INTEGER coercion because encoding/json parses
+' all JSON numbers into interface{} as float64.
+FUNCTION getIntProp(t AS WidgetEntry, key AS STRING) AS (INTEGER, BOOLEAN)
+    DIM v AS ANY = t.Properties[key]
+    IF v = NIL THEN RETURN 0, FALSE
+    DIM iv AS INTEGER
+    DIM iOk AS BOOLEAN
+    iv, iOk = v.(INTEGER)
+    IF iOk THEN RETURN iv, TRUE
+    DIM dv AS DOUBLE
+    DIM dOk AS BOOLEAN
+    dv, dOk = v.(DOUBLE)
+    IF dOk THEN RETURN Int(dv), TRUE
+    RETURN 0, FALSE
+END FUNCTION
+
+' getBoolProp pulls a BOOLEAN from the Properties map.
+FUNCTION getBoolProp(t AS WidgetEntry, key AS STRING) AS (BOOLEAN, BOOLEAN)
+    DIM v AS ANY = t.Properties[key]
+    IF v = NIL THEN RETURN FALSE, FALSE
+    DIM bv AS BOOLEAN
+    DIM bOk AS BOOLEAN
+    bv, bOk = v.(BOOLEAN)
+    IF bOk THEN RETURN bv, TRUE
+    RETURN FALSE, FALSE
+END FUNCTION
+
+' getStrProp pulls a STRING value out of a WidgetEntry.Properties map.
+' Returns the empty string if the key isn't present or isn't a STRING.
+FUNCTION getStrProp(e AS WidgetEntry, key AS STRING) AS STRING
+    DIM v AS ANY = e.Properties[key]
+    IF v = NIL THEN RETURN ""
+    DIM s AS STRING
+    DIM ok AS BOOLEAN
+    s, ok = v.(STRING)
+    IF NOT ok THEN RETURN ""
+    RETURN s
+END FUNCTION
+
+' emitHeader writes the file banner + imports + WState/Model TYPEs.
+FUNCTION emitHeader(p AS Project) AS STRING
+    DIM s AS STRING = ""
+    s = s + "' Generated by DBtui from " + p.Name + ".dbproj — do not edit by hand.\n"
+    s = s + "' Re-run `DBtui gen " + p.Name + ".dbproj` to regenerate.\n\n"
+    s = s + "IMPORT \"charm.land/bubbletea/v2\" AS tea\n"
+    s = s + "IMPORT \"charm.land/lipgloss/v2\" AS lipgloss\n"
+    s = s + "IMPORT \"charm.land/bubbles/v2/textinput\" AS textinput\n"
+    s = s + "IMPORT \"charm.land/bubbles/v2/textarea\" AS textarea\n"
+    s = s + "IMPORT \"fmt\"\n"
+    s = s + "IMPORT \"os\"\n"
+    s = s + "IMPORT \"path/filepath\"\n"
+    s = s + "IMPORT \"sort\"\n"
+    s = s + "IMPORT \"strconv\"\n"
+    s = s + "IMPORT \"strings\"\n\n"
+    s = s + "TYPE WState\n"
+    s = s + "    DIM Id       AS STRING\n"
+    s = s + "    DIM Kind     AS STRING\n"
+    s = s + "    DIM X        AS INTEGER\n"
+    s = s + "    DIM Y        AS INTEGER\n"
+    s = s + "    DIM W        AS INTEGER\n"
+    s = s + "    DIM H        AS INTEGER\n"
+    s = s + "    DIM Text     AS STRING\n"
+    s = s + "    DIM Val      AS STRING\n"
+    s = s + "    DIM Holdr    AS STRING\n"
+    s = s + "    DIM Visi     AS BOOLEAN\n"
+    s = s + "    DIM TStop    AS BOOLEAN\n"
+    s = s + "    DIM TIdx     AS INTEGER\n"
+    s = s + "    DIM BgColor  AS STRING\n"
+    s = s + "    DIM FgColor  AS STRING\n"
+    s = s + "    DIM Checked  AS BOOLEAN\n"
+    s = s + "    DIM Items    AS STRING\n"
+    s = s + "    DIM Selected AS INTEGER\n"
+    s = s + "    DIM Group    AS STRING\n"
+    s = s + "    DIM RngMin   AS INTEGER\n"
+    s = s + "    DIM RngMax   AS INTEGER\n"
+    s = s + "    DIM RngValue AS INTEGER\n"
+    s = s + "    DIM Horizontal AS BOOLEAN\n"
+    s = s + "    DIM Title    AS STRING\n"
+    s = s + "    DIM Offset   AS INTEGER\n"
+    s = s + "    DIM TiModel  AS textinput.Model\n"
+    s = s + "    DIM TaModel  AS textarea.Model\n"
+    s = s + "END TYPE\n\n"
+    s = s + "TYPE ToolCfg\n"
+    s = s + "    DIM Id    AS STRING\n"
+    s = s + "    DIM Kind  AS STRING\n"
+    s = s + "    DIM Mode  AS STRING\n"
+    s = s + "    DIM Mask  AS STRING\n"
+    s = s + "    DIM Title AS STRING\n"
+    s = s + "END TYPE\n\n"
+    s = s + "TYPE Model\n"
+    s = s + "    DIM Width        AS INTEGER\n"
+    s = s + "    DIM Height       AS INTEGER\n"
+    s = s + "    DIM Focus        AS INTEGER\n"
+    s = s + "    DIM Widgets      AS []WState\n"
+    s = s + "    DIM Tools        AS []ToolCfg\n"
+    s = s + "    DIM DialogToolId AS STRING\n"
+    s = s + "    DIM Dialog       AS FileDialog\n"
+    ' ScrollBar drag state — set on mouse-down on a thumb, cleared on
+    ' release; while active, MouseMotionMsg updates the bar's RngValue.
+    s = s + "    DIM DragScroll   AS BOOLEAN\n"
+    s = s + "    DIM DragIdx      AS INTEGER\n"
+    ' ComboBox dropdown state — set when a ComboBox is clicked; while
+    ' active, the dropdown overlay renders and intercepts arrow/Enter/Esc.
+    s = s + "    DIM DropActive   AS BOOLEAN\n"
+    s = s + "    DIM DropIdx      AS INTEGER\n"
+    s = s + "    DIM DropCursor   AS INTEGER\n"
+    ' PropertyGrid edit-mode state — when PgEdit is TRUE the keystroke
+    ' handler routes printable keys into PgEditBuf instead of normal nav.
+    s = s + "    DIM PgEdit       AS BOOLEAN\n"
+    s = s + "    DIM PgEditIdx    AS INTEGER\n"
+    s = s + "    DIM PgEditRow    AS INTEGER\n"
+    s = s + "    DIM PgEditBuf    AS STRING\n"
+    s = s + "    DIM PgEditPos    AS INTEGER\n"
+    s = s + "END TYPE\n\n"
+    ' Package-level pending request — user SUBs set this when they
+    ' call <id>_Show(); the next Update tick observes it and switches
+    ' to dialog mode.
+    s = s + "DIM gPendingDialog AS STRING\n\n"
+    RETURN s
+END FUNCTION
+
+' emitNewModel writes the NewModel() function that initializes every
+' widget on the start form.
+FUNCTION emitNewModel(form AS Form) AS STRING
+    DIM s AS STRING = "FUNCTION NewModel() AS Model\n"
+    s = s + "    DIM m AS Model\n"
+    s = s + "    m.Focus = 0\n"
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(form.Widgets) - 1
+        DIM w AS WidgetEntry = form.Widgets[i]
+        DIM v AS STRING = fmt.Sprintf("    DIM w%d AS WState\n", i)
+        s = s + v
+        s = s + fmt.Sprintf("    w%d.Id = %s\n",      i, dbasStr(w.Id))
+        s = s + fmt.Sprintf("    w%d.Kind = %s\n",    i, dbasStr(w.Kind))
+        s = s + fmt.Sprintf("    w%d.X = %d\n",       i, w.X)
+        s = s + fmt.Sprintf("    w%d.Y = %d\n",       i, w.Y)
+        s = s + fmt.Sprintf("    w%d.W = %d\n",       i, w.Width)
+        s = s + fmt.Sprintf("    w%d.H = %d\n",       i, w.Height)
+        s = s + fmt.Sprintf("    w%d.Visi = %s\n",    i, dbasBool(w.Visible))
+        s = s + fmt.Sprintf("    w%d.TStop = %s\n",   i, dbasBool(w.TabStop))
+        s = s + fmt.Sprintf("    w%d.TIdx = %d\n",    i, w.TabIndex)
+        s = s + fmt.Sprintf("    w%d.Text = %s\n",    i, dbasStr(getStrProp(w, "Text")))
+        s = s + fmt.Sprintf("    w%d.Val = %s\n",     i, dbasStr(getStrProp(w, "Value")))
+        s = s + fmt.Sprintf("    w%d.Holdr = %s\n",   i, dbasStr(getStrProp(w, "Placeholder")))
+        s = s + fmt.Sprintf("    w%d.BgColor = %s\n", i, dbasStr(getStrProp(w, "BgColor")))
+        s = s + fmt.Sprintf("    w%d.FgColor = %s\n", i, dbasStr(getStrProp(w, "FgColor")))
+        ' Checkbox state.
+        DIM chkVal AS ANY = w.Properties["Checked"]
+        IF chkVal <> NIL THEN
+            DIM cb AS BOOLEAN
+            DIM cbOk AS BOOLEAN
+            cb, cbOk = chkVal.(BOOLEAN)
+            IF cbOk THEN s = s + fmt.Sprintf("    w%d.Checked = %s\n", i, dbasBool(cb))
+        END IF
+        ' Combo/List items + selected index.
+        s = s + fmt.Sprintf("    w%d.Items = %s\n", i, dbasStr(getStrProp(w, "Items")))
+        DIM selV AS INTEGER
+        DIM selOk AS BOOLEAN
+        selV, selOk = getIntProp(w, "Selected")
+        IF selOk THEN s = s + fmt.Sprintf("    w%d.Selected = %d\n", i, selV)
+        ' RadioButton group + range fields (ProgressBar / ScrollBar).
+        s = s + fmt.Sprintf("    w%d.Group = %s\n", i, dbasStr(getStrProp(w, "Group")))
+        DIM mnV AS INTEGER
+        DIM mnOk AS BOOLEAN
+        mnV, mnOk = getIntProp(w, "Min")
+        IF mnOk THEN s = s + fmt.Sprintf("    w%d.RngMin = %d\n", i, mnV)
+        DIM mxV AS INTEGER
+        DIM mxOk AS BOOLEAN
+        mxV, mxOk = getIntProp(w, "Max")
+        IF mxOk THEN s = s + fmt.Sprintf("    w%d.RngMax = %d\n", i, mxV)
+        DIM vlV AS INTEGER
+        DIM vlOk AS BOOLEAN
+        vlV, vlOk = getIntProp(w, "Value")
+        IF vlOk THEN s = s + fmt.Sprintf("    w%d.RngValue = %d\n", i, vlV)
+        DIM hzV AS BOOLEAN
+        DIM hzOk AS BOOLEAN
+        hzV, hzOk = getBoolProp(w, "Horizontal")
+        IF hzOk THEN s = s + fmt.Sprintf("    w%d.Horizontal = %s\n", i, dbasBool(hzV))
+        ' Structural widgets share Title + Offset; also accept "Tabs" as
+        ' an alias for Items (TabStrip) and "Active" for Selected.
+        s = s + fmt.Sprintf("    w%d.Title = %s\n", i, dbasStr(getStrProp(w, "Title")))
+        DIM offV AS INTEGER
+        DIM offOk AS BOOLEAN
+        offV, offOk = getIntProp(w, "Offset")
+        IF offOk THEN s = s + fmt.Sprintf("    w%d.Offset = %d\n", i, offV)
+        IF w.Kind = WidgetKindTabStrip THEN
+            DIM tabs AS STRING = getStrProp(w, "Tabs")
+            IF tabs <> "" THEN s = s + fmt.Sprintf("    w%d.Items = %s\n", i, dbasStr(tabs))
+            DIM actV AS INTEGER
+            DIM actOk AS BOOLEAN
+            actV, actOk = getIntProp(w, "Active")
+            IF actOk THEN s = s + fmt.Sprintf("    w%d.Selected = %d\n", i, actV)
+        END IF
+        IF w.Kind = WidgetKindTreeView THEN
+            DIM nodes AS STRING = getStrProp(w, "Nodes")
+            IF nodes <> "" THEN s = s + fmt.Sprintf("    w%d.Items = %s\n", i, dbasStr(nodes))
+        END IF
+        IF w.Kind = WidgetKindMenuBar THEN
+            DIM menus AS STRING = getStrProp(w, "Menus")
+            IF menus <> "" THEN s = s + fmt.Sprintf("    w%d.Items = %s\n", i, dbasStr(menus))
+            DIM mAct AS INTEGER
+            DIM mActOk AS BOOLEAN
+            mAct, mActOk = getIntProp(w, "Active")
+            IF mActOk THEN s = s + fmt.Sprintf("    w%d.Selected = %d\n", i, mAct)
+            ' MenuBar defaults to closed; Active=-1 if not specified.
+            IF NOT mActOk THEN s = s + fmt.Sprintf("    w%d.Selected = -1\n", i)
+        END IF
+        IF w.Kind = WidgetKindStatusBar THEN
+            DIM segs AS STRING = getStrProp(w, "Segments")
+            IF segs <> "" THEN s = s + fmt.Sprintf("    w%d.Items = %s\n", i, dbasStr(segs))
+        END IF
+        IF w.Kind = WidgetKindSplitPanel THEN
+            DIM ori AS STRING = getStrProp(w, "Orientation")
+            IF ori <> "" THEN s = s + fmt.Sprintf("    w%d.Items = %s\n", i, dbasStr(ori))
+            DIM posV AS INTEGER
+            DIM posOk AS BOOLEAN
+            posV, posOk = getIntProp(w, "Position")
+            IF posOk THEN s = s + fmt.Sprintf("    w%d.Selected = %d\n", i, posV)
+        END IF
+        IF w.Kind = WidgetKindPropertyGrid THEN
+            DIM rows AS STRING = getStrProp(w, "Rows")
+            IF rows <> "" THEN s = s + fmt.Sprintf("    w%d.Items = %s\n", i, dbasStr(rows))
+        END IF
+        ' Initialize textinput for TextInput widgets so they accept typing.
+        IF w.Kind = WidgetKindTextInput THEN
+            s = s + fmt.Sprintf("    w%d.TiModel = textinput.New()\n", i)
+            s = s + fmt.Sprintf("    w%d.TiModel.Prompt = \"\"\n", i)
+            s = s + fmt.Sprintf("    w%d.TiModel.Placeholder = %s\n", i, dbasStr(getStrProp(w, "Placeholder")))
+            DIM initVal AS STRING = getStrProp(w, "Value")
+            IF initVal <> "" THEN
+                s = s + fmt.Sprintf("    w%d.TiModel.SetValue(%s)\n", i, dbasStr(initVal))
+            END IF
+            s = s + fmt.Sprintf("    w%d.TiModel.SetWidth(%d)\n", i, w.Width - 2)
+        END IF
+        ' Initialize textarea for TextArea widgets so they accept multi-line typing.
+        IF w.Kind = WidgetKindTextArea THEN
+            s = s + fmt.Sprintf("    w%d.TaModel = textarea.New()\n", i)
+            s = s + fmt.Sprintf("    w%d.TaModel.Placeholder = %s\n", i, dbasStr(getStrProp(w, "Placeholder")))
+            DIM taInitVal AS STRING = getStrProp(w, "Value")
+            IF taInitVal <> "" THEN
+                s = s + fmt.Sprintf("    w%d.TaModel.SetValue(%s)\n", i, dbasStr(taInitVal))
+            END IF
+            s = s + fmt.Sprintf("    w%d.TaModel.SetWidth(%d)\n", i, w.Width - 2)
+            s = s + fmt.Sprintf("    w%d.TaModel.SetHeight(%d)\n", i, w.Height - 2)
+        END IF
+        s = s + fmt.Sprintf("    m.Widgets = APPEND(m.Widgets, w%d)\n", i)
+    NEXT i
+    ' If the first focusable widget is a TextInput, focus its Input so
+    ' the cursor shows + keystrokes route to it from the start.
+    s = s + "    DIM initIdx AS INTEGER = -1\n"
+    s = s + "    DIM initI AS INTEGER\n"
+    s = s + "    FOR initI = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        IF m.Widgets[initI].TStop AND m.Widgets[initI].Visi AND initIdx = -1 THEN\n"
+    s = s + "            initIdx = initI\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT initI\n"
+    s = s + "    IF initIdx >= 0 AND m.Widgets[initIdx].Kind = \"TextInput\" THEN\n"
+    s = s + "        DIM initFC AS tea.Cmd = m.Widgets[initIdx].TiModel.Focus()\n"
+    s = s + "        _ = initFC\n"
+    s = s + "    END IF\n"
+    ' Initialize tool configs from form.Tools.
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(form.Tools) - 1
+        DIM t AS ToolEntry = form.Tools[ti]
+        s = s + fmt.Sprintf("    DIM tc%d AS ToolCfg\n", ti)
+        s = s + fmt.Sprintf("    tc%d.Id = %s\n",    ti, dbasStr(t.Id))
+        s = s + fmt.Sprintf("    tc%d.Kind = %s\n",  ti, dbasStr(t.Kind))
+        s = s + fmt.Sprintf("    tc%d.Mode = %s\n",  ti, dbasStr(getToolStr(t, "Mode")))
+        s = s + fmt.Sprintf("    tc%d.Mask = %s\n",  ti, dbasStr(getToolStr(t, "Mask")))
+        s = s + fmt.Sprintf("    tc%d.Title = %s\n", ti, dbasStr(getToolStr(t, "Title")))
+        s = s + fmt.Sprintf("    m.Tools = APPEND(m.Tools, tc%d)\n", ti)
+    NEXT ti
+    s = s + "    RETURN m\n"
+    s = s + "END FUNCTION\n\n"
+    RETURN s
+END FUNCTION
+
+' getToolStr — local helper for emitNewModel.
+FUNCTION getToolStr(t AS ToolEntry, key AS STRING) AS STRING
+    DIM v AS ANY = t.Properties[key]
+    IF v = NIL THEN RETURN ""
+    DIM s AS STRING
+    DIM ok AS BOOLEAN
+    s, ok = v.(STRING)
+    IF NOT ok THEN RETURN ""
+    RETURN s
+END FUNCTION
+
+' emitLifecycle writes Init + Update + the focusableCount helper.
+FUNCTION emitLifecycle() AS STRING
+    DIM s AS STRING = ""
+    s = s + "FUNCTION (m AS Model) Init() AS tea.Cmd\n"
+    s = s + "    RETURN NIL\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "FUNCTION focusableCount(m AS Model) AS INTEGER\n"
+    s = s + "    DIM n AS INTEGER = 0\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        IF m.Widgets[i].TStop AND m.Widgets[i].Visi THEN n = n + 1\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN n\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)\n"
+    s = s + "    DIM sizeMsg AS tea.WindowSizeMsg\n"
+    s = s + "    DIM sizeOk AS BOOLEAN\n"
+    s = s + "    sizeMsg, sizeOk = msg.(tea.WindowSizeMsg)\n"
+    s = s + "    IF sizeOk THEN\n"
+    s = s + "        m.Width = sizeMsg.Width\n"
+    s = s + "        m.Height = sizeMsg.Height\n"
+    s = s + "        RETURN m, NIL\n"
+    s = s + "    END IF\n"
+    ' ---- Mouse click dispatch (focus + button click + dialog routing). ----
+    s = s + "    DIM mcMsg AS tea.MouseClickMsg\n"
+    s = s + "    DIM mcOk AS BOOLEAN\n"
+    s = s + "    mcMsg, mcOk = msg.(tea.MouseClickMsg)\n"
+    s = s + "    IF mcOk THEN\n"
+    ' MenuBar-open: click on a dropdown row fires its action, click on
+    ' the menubar bar itself switches the open menu, click elsewhere
+    ' closes. This runs *before* the standard hit-test so the dropdown
+    ' overlay always intercepts.
+    s = s + "        DIM mbOpen AS INTEGER = -1\n"
+    s = s + "        DIM mbOI AS INTEGER\n"
+    s = s + "        FOR mbOI = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "            IF m.Widgets[mbOI].Kind = \"MenuBar\" AND m.Widgets[mbOI].Checked THEN mbOpen = mbOI\n"
+    s = s + "        NEXT mbOI\n"
+    s = s + "        IF mbOpen >= 0 THEN\n"
+    s = s + "            DIM mob AS WState = m.Widgets[mbOpen]\n"
+    s = s + "            DIM mobLabs AS []STRING\n"
+    s = s + "            DIM mobRaw AS []STRING\n"
+    s = s + "            mobLabs, mobRaw = menuParse(mob.Items)\n"
+    s = s + "            DIM mobAct AS INTEGER = mob.Selected\n"
+    s = s + "            IF mobAct < 0 OR mobAct >= LEN(mobLabs) THEN mobAct = 0\n"
+    s = s + "            DIM mobIL AS []STRING\n"
+    s = s + "            DIM mobIA AS []STRING\n"
+    s = s + "            mobIL, mobIA = menuItems(mobRaw[mobAct])\n"
+    ' Compute dropdown X offset (sum of label cell widths before active).
+    s = s + "            DIM mobDX AS INTEGER = 0\n"
+    s = s + "            DIM mobK AS INTEGER\n"
+    s = s + "            FOR mobK = 0 TO mobAct - 1\n"
+    s = s + "                mobDX = mobDX + LEN(mobLabs[mobK]) + 2\n"
+    s = s + "            NEXT mobK\n"
+    s = s + "            DIM mobDropX AS INTEGER = mob.X + mobDX\n"
+    s = s + "            DIM mobDropY AS INTEGER = mob.Y + mob.H\n"
+    s = s + "            DIM mobDropW AS INTEGER = 0\n"
+    s = s + "            DIM mobK2 AS INTEGER\n"
+    s = s + "            FOR mobK2 = 0 TO LEN(mobIL) - 1\n"
+    s = s + "                IF LEN(mobIL[mobK2]) + 2 > mobDropW THEN mobDropW = LEN(mobIL[mobK2]) + 2\n"
+    s = s + "            NEXT mobK2\n"
+    s = s + "            IF mobDropW < LEN(mobLabs[mobAct]) + 2 THEN mobDropW = LEN(mobLabs[mobAct]) + 2\n"
+    s = s + "            DIM mobDropH AS INTEGER = LEN(mobIL) + 2\n"
+    s = s + "            DIM mcCX AS INTEGER = mcMsg.X - 1\n"
+    s = s + "            DIM mcCY AS INTEGER = mcMsg.Y - 1\n"
+    ' First: click on the bar — switch active menu.
+    s = s + "            IF mcCY = mob.Y AND mcCX >= mob.X AND mcCX < mob.X + mob.W THEN\n"
+    s = s + "                DIM mobBarX AS INTEGER = mcCX - mob.X\n"
+    s = s + "                DIM mobPos AS INTEGER = 0\n"
+    s = s + "                DIM mobHit AS INTEGER = -1\n"
+    s = s + "                DIM mobI AS INTEGER\n"
+    s = s + "                FOR mobI = 0 TO LEN(mobLabs) - 1\n"
+    s = s + "                    DIM mobCW AS INTEGER = LEN(mobLabs[mobI]) + 2\n"
+    s = s + "                    IF mobBarX >= mobPos AND mobBarX < mobPos + mobCW THEN mobHit = mobI\n"
+    s = s + "                    mobPos = mobPos + mobCW\n"
+    s = s + "                NEXT mobI\n"
+    s = s + "                IF mobHit >= 0 THEN\n"
+    s = s + "                    m.Widgets[mbOpen].Selected = mobHit\n"
+    s = s + "                    m.Widgets[mbOpen].Offset = 0\n"
+    s = s + "                ELSE\n"
+    s = s + "                    m.Widgets[mbOpen].Checked = FALSE\n"
+    s = s + "                    m.Widgets[mbOpen].Selected = -1\n"
+    s = s + "                END IF\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    ' Click inside dropdown bounds → fire that item.
+    s = s + "            IF mcCX >= mobDropX AND mcCX < mobDropX + mobDropW AND mcCY >= mobDropY AND mcCY < mobDropY + mobDropH THEN\n"
+    s = s + "                DIM mobRowIdx AS INTEGER = mcCY - mobDropY - 1\n"
+    s = s + "                IF mobRowIdx >= 0 AND mobRowIdx < LEN(mobIL) THEN\n"
+    s = s + "                    IF mobIL[mobRowIdx] <> \"-\" THEN\n"
+    s = s + "                        DIM mobActStr AS STRING = mobIA[mobRowIdx]\n"
+    s = s + "                        m.Widgets[mbOpen].Checked = FALSE\n"
+    s = s + "                        m.Widgets[mbOpen].Selected = -1\n"
+    s = s + "                        dispatchMenuAction(mob.Id, mobActStr)\n"
+    s = s + "                        RETURN m, NIL\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    ' Click anywhere else closes the menu.
+    s = s + "            m.Widgets[mbOpen].Checked = FALSE\n"
+    s = s + "            m.Widgets[mbOpen].Selected = -1\n"
+    s = s + "            RETURN m, NIL\n"
+    s = s + "        END IF\n"
+    ' Dropdown-active: click on a row commits, click outside closes.
+    s = s + "        IF m.DropActive AND m.DropIdx >= 0 AND m.DropIdx < LEN(m.Widgets) THEN\n"
+    s = s + "            DIM cbW AS WState = m.Widgets[m.DropIdx]\n"
+    s = s + "            DIM cbItm AS []STRING = strings.Split(cbW.Items, \";\")\n"
+    s = s + "            DIM ddH AS INTEGER = LEN(cbItm) + 2\n"
+    s = s + "            IF ddH > 12 THEN ddH = 12\n"
+    s = s + "            DIM ddX AS INTEGER = cbW.X + 1\n"
+    s = s + "            DIM ddY AS INTEGER = cbW.Y + cbW.H + 1\n"
+    s = s + "            IF (mcMsg.X - 1) >= ddX AND (mcMsg.X - 1) < ddX + cbW.W AND (mcMsg.Y - 1) >= ddY AND (mcMsg.Y - 1) < ddY + ddH THEN\n"
+    s = s + "                DIM ddRowIdx AS INTEGER = (mcMsg.Y - 1) - ddY - 1\n"
+    s = s + "                IF ddRowIdx >= 0 AND ddRowIdx < LEN(cbItm) THEN\n"
+    s = s + "                    IF ddRowIdx <> cbW.Selected THEN\n"
+    s = s + "                        m.Widgets[m.DropIdx].Selected = ddRowIdx\n"
+    s = s + "                        dispatchChange(m.Widgets[m.DropIdx].Id)\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            m.DropActive = FALSE\n"
+    s = s + "            RETURN m, NIL\n"
+    s = s + "        END IF\n"
+    s = s + "        IF m.Dialog.Active THEN\n"
+    s = s + "            DIM dCommitted AS BOOLEAN\n"
+    s = s + "            DIM dPath AS STRING\n"
+    s = s + "            DIM dCancelled AS BOOLEAN\n"
+    s = s + "            dCommitted, dPath, dCancelled = m.Dialog.HandleClick(mcMsg.X, mcMsg.Y)\n"
+    s = s + "            IF dCommitted THEN\n"
+    s = s + "                DIM tidM AS STRING = m.DialogToolId\n"
+    s = s + "                m.Dialog.Close()\n"
+    s = s + "                m.DialogToolId = \"\"\n"
+    s = s + "                dispatchFileSelected(tidM, dPath)\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF dCancelled THEN\n"
+    s = s + "                m.Dialog.Close()\n"
+    s = s + "                m.DialogToolId = \"\"\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            RETURN m, NIL\n"
+    s = s + "        END IF\n"
+    s = s + "        ' Hit-test widgets on form coords (X+1, Y+1 maps to form-local).\n"
+    s = s + "        DIM hitIdx AS INTEGER = -1\n"
+    s = s + "        DIM hh AS INTEGER\n"
+    s = s + "        FOR hh = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "            DIM ww AS WState = m.Widgets[hh]\n"
+    s = s + "            IF ww.Visi AND (mcMsg.X - 1) >= ww.X AND (mcMsg.X - 1) < ww.X + ww.W AND (mcMsg.Y - 1) >= ww.Y AND (mcMsg.Y - 1) < ww.Y + ww.H THEN\n"
+    s = s + "                hitIdx = hh\n"
+    s = s + "            END IF\n"
+    s = s + "        NEXT hh\n"
+    s = s + "        IF hitIdx >= 0 THEN\n"
+    s = s + "            ' Re-set Focus to the focusable index of the hit widget.\n"
+    s = s + "            DIM fc AS INTEGER = 0\n"
+    s = s + "            DIM newF AS INTEGER = m.Focus\n"
+    s = s + "            DIM kk AS INTEGER\n"
+    s = s + "            FOR kk = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "                IF m.Widgets[kk].TStop AND m.Widgets[kk].Visi THEN\n"
+    s = s + "                    IF kk = hitIdx THEN newF = fc\n"
+    s = s + "                    fc = fc + 1\n"
+    s = s + "                END IF\n"
+    s = s + "            NEXT kk\n"
+    s = s + "            DIM hfc AS tea.Cmd = setFocus(@m, newF)\n"
+    s = s + "            _ = hfc\n"
+    s = s + "            DIM mk AS STRING = m.Widgets[hitIdx].Kind\n"
+    s = s + "            IF mk = \"Button\" THEN\n"
+    s = s + "                dispatchClick(m.Widgets[hitIdx].Id)\n"
+    s = s + "                IF gPendingDialog <> \"\" THEN\n"
+    s = s + "                    DIM ll AS INTEGER\n"
+    s = s + "                    FOR ll = 0 TO LEN(m.Tools) - 1\n"
+    s = s + "                        IF m.Tools[ll].Id = gPendingDialog THEN\n"
+    s = s + "                            m.DialogToolId = gPendingDialog\n"
+    s = s + "                            m.Dialog.Open(m.Tools[ll].Title, m.Tools[ll].Mode, m.Tools[ll].Mask, \"\", m.Width, m.Height)\n"
+    s = s + "                            gPendingDialog = \"\"\n"
+    s = s + "                            RETURN m, NIL\n"
+    s = s + "                        END IF\n"
+    s = s + "                    NEXT ll\n"
+    s = s + "                    gPendingDialog = \"\"\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSEIF mk = \"Checkbox\" THEN\n"
+    s = s + "                m.Widgets[hitIdx].Checked = NOT m.Widgets[hitIdx].Checked\n"
+    s = s + "                dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "            ELSEIF mk = \"RadioButton\" THEN\n"
+    s = s + "                selectRadio(@m, hitIdx)\n"
+    s = s + "                dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "            ELSEIF mk = \"ListBox\" THEN\n"
+    s = s + "                ' Map click Y within widget to item row, plus Offset for scroll.\n"
+    s = s + "                DIM lbItems AS []STRING = strings.Split(m.Widgets[hitIdx].Items, \";\")\n"
+    s = s + "                DIM rowIdx AS INTEGER = (mcMsg.Y - 1) - m.Widgets[hitIdx].Y - 1 + m.Widgets[hitIdx].Offset\n"
+    s = s + "                IF rowIdx >= 0 AND rowIdx < LEN(lbItems) THEN\n"
+    s = s + "                    IF rowIdx <> m.Widgets[hitIdx].Selected THEN\n"
+    s = s + "                        m.Widgets[hitIdx].Selected = rowIdx\n"
+    s = s + "                        dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSEIF mk = \"ComboBox\" THEN\n"
+    s = s + "                ' Open the dropdown overlay.\n"
+    s = s + "                m.DropActive = TRUE\n"
+    s = s + "                m.DropIdx = hitIdx\n"
+    s = s + "                m.DropCursor = m.Widgets[hitIdx].Selected\n"
+    s = s + "                IF m.DropCursor < 0 THEN m.DropCursor = 0\n"
+    s = s + "            ELSEIF mk = \"TabStrip\" THEN\n"
+    s = s + "                ' Compute clicked tab from x: walk labels.\n"
+    s = s + "                DIM tcItems AS []STRING = strings.Split(m.Widgets[hitIdx].Items, \";\")\n"
+    s = s + "                DIM tcLocalX AS INTEGER = (mcMsg.X - 1) - m.Widgets[hitIdx].X\n"
+    s = s + "                DIM tcPos AS INTEGER = 0\n"
+    s = s + "                DIM tcHit AS INTEGER = -1\n"
+    s = s + "                DIM tcI AS INTEGER\n"
+    s = s + "                FOR tcI = 0 TO LEN(tcItems) - 1\n"
+    s = s + "                    DIM tcLen AS INTEGER = LEN(tcItems[tcI]) + 4\n"
+    s = s + "                    IF tcI > 0 THEN tcLen = tcLen + 1\n"
+    s = s + "                    IF tcLocalX >= tcPos AND tcLocalX < tcPos + tcLen THEN tcHit = tcI\n"
+    s = s + "                    tcPos = tcPos + tcLen\n"
+    s = s + "                NEXT tcI\n"
+    s = s + "                IF tcHit >= 0 AND tcHit <> m.Widgets[hitIdx].Selected THEN\n"
+    s = s + "                    m.Widgets[hitIdx].Selected = tcHit\n"
+    s = s + "                    dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSEIF mk = \"ScrollPane\" THEN\n"
+    s = s + "                DIM spClickY AS INTEGER = (mcMsg.Y - 1) - m.Widgets[hitIdx].Y - 1\n"
+    s = s + "                DIM spClickedIdx AS INTEGER = m.Widgets[hitIdx].Offset + spClickY\n"
+    s = s + "                DIM spAllItems AS []STRING = strings.Split(m.Widgets[hitIdx].Items, \";\")\n"
+    s = s + "                IF spClickedIdx >= 0 AND spClickedIdx < LEN(spAllItems) AND spClickedIdx <> m.Widgets[hitIdx].Selected THEN\n"
+    s = s + "                    m.Widgets[hitIdx].Selected = spClickedIdx\n"
+    s = s + "                    dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSEIF mk = \"PropertyGrid\" THEN\n"
+    s = s + "                DIM pgClickY AS INTEGER = (mcMsg.Y - 1) - m.Widgets[hitIdx].Y - 1\n"
+    s = s + "                DIM pgClickedIdx AS INTEGER = m.Widgets[hitIdx].Offset + pgClickY\n"
+    s = s + "                DIM pgAllRows AS []STRING = strings.Split(m.Widgets[hitIdx].Items, \";\")\n"
+    s = s + "                IF pgClickedIdx >= 0 AND pgClickedIdx < LEN(pgAllRows) AND pgClickedIdx <> m.Widgets[hitIdx].Selected THEN\n"
+    s = s + "                    m.Widgets[hitIdx].Selected = pgClickedIdx\n"
+    s = s + "                    dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSEIF mk = \"TreeView\" THEN\n"
+    s = s + "                DIM tcVis AS []STRING\n"
+    s = s + "                DIM tcAbs AS []INTEGER\n"
+    s = s + "                tcVis, tcAbs = treeVisible(m.Widgets[hitIdx].Items)\n"
+    s = s + "                DIM tcClickY AS INTEGER = (mcMsg.Y - 1) - m.Widgets[hitIdx].Y - 1\n"
+    s = s + "                DIM tcVisIdx AS INTEGER = m.Widgets[hitIdx].Offset + tcClickY\n"
+    s = s + "                IF tcVisIdx >= 0 AND tcVisIdx < LEN(tcVis) THEN\n"
+    s = s + "                    IF tcVisIdx <> m.Widgets[hitIdx].Selected THEN\n"
+    s = s + "                        m.Widgets[hitIdx].Selected = tcVisIdx\n"
+    s = s + "                        dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                    ELSE\n"
+    ' Second click on the already-selected row toggles its open/close state.
+    s = s + "                        DIM tcAbsIdx AS INTEGER = tcAbs[tcVisIdx]\n"
+    s = s + "                        m.Widgets[hitIdx].Items = treeToggle(m.Widgets[hitIdx].Items, tcAbsIdx)\n"
+    s = s + "                        dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSEIF mk = \"MenuBar\" THEN\n"
+    ' Click on a menu label opens it. Compute the clicked label by
+    ' walking the bar (each cell is " label " = 2 + LEN(label) wide).
+    s = s + "                DIM mcLabs AS []STRING\n"
+    s = s + "                DIM mcRaw AS []STRING\n"
+    s = s + "                mcLabs, mcRaw = menuParse(m.Widgets[hitIdx].Items)\n"
+    s = s + "                _ = mcRaw\n"
+    s = s + "                DIM mcLocalX AS INTEGER = (mcMsg.X - 1) - m.Widgets[hitIdx].X\n"
+    s = s + "                DIM mcPos AS INTEGER = 0\n"
+    s = s + "                DIM mcHit AS INTEGER = -1\n"
+    s = s + "                DIM mcI AS INTEGER\n"
+    s = s + "                FOR mcI = 0 TO LEN(mcLabs) - 1\n"
+    s = s + "                    DIM mcCellW AS INTEGER = LEN(mcLabs[mcI]) + 2\n"
+    s = s + "                    IF mcLocalX >= mcPos AND mcLocalX < mcPos + mcCellW THEN mcHit = mcI\n"
+    s = s + "                    mcPos = mcPos + mcCellW\n"
+    s = s + "                NEXT mcI\n"
+    s = s + "                IF mcHit >= 0 THEN\n"
+    s = s + "                    m.Widgets[hitIdx].Selected = mcHit\n"
+    s = s + "                    m.Widgets[hitIdx].Checked = TRUE\n"
+    s = s + "                    m.Widgets[hitIdx].Offset = 0\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSEIF mk = \"SplitPanel\" THEN\n"
+    ' Click anywhere on the divider starts a drag — reuse the
+    ' DragScroll/DragIdx slots (the motion handler treats the widget
+    ' kind appropriately).
+    s = s + "                m.DragScroll = TRUE\n"
+    s = s + "                m.DragIdx = hitIdx\n"
+    s = s + "            ELSEIF mk = \"ScrollBar\" THEN\n"
+    s = s + "                ' Click above the thumb decrements, below increments.\n"
+    s = s + "                DIM sbRng AS INTEGER = m.Widgets[hitIdx].RngMax - m.Widgets[hitIdx].RngMin\n"
+    s = s + "                DIM sbInner AS INTEGER = m.Widgets[hitIdx].H - 2\n"
+    s = s + "                IF m.Widgets[hitIdx].Horizontal THEN sbInner = m.Widgets[hitIdx].W - 4\n"
+    s = s + "                DIM sbThumb AS INTEGER = 0\n"
+    s = s + "                IF sbRng > 0 AND sbInner > 0 THEN sbThumb = ((m.Widgets[hitIdx].RngValue - m.Widgets[hitIdx].RngMin) * (sbInner - 1)) / sbRng\n"
+    s = s + "                DIM clickPos AS INTEGER\n"
+    s = s + "                IF m.Widgets[hitIdx].Horizontal THEN\n"
+    s = s + "                    clickPos = (mcMsg.X - 1) - m.Widgets[hitIdx].X - 2\n"
+    s = s + "                ELSE\n"
+    s = s + "                    clickPos = (mcMsg.Y - 1) - m.Widgets[hitIdx].Y - 1\n"
+    s = s + "                END IF\n"
+    ' Click ON the thumb cell starts a drag — motion events will scrub
+    ' the value until release. Click above/below increments/decrements.
+    s = s + "                IF clickPos = sbThumb THEN\n"
+    s = s + "                    m.DragScroll = TRUE\n"
+    s = s + "                    m.DragIdx = hitIdx\n"
+    s = s + "                ELSE\n"
+    s = s + "                    DIM sbDelta AS INTEGER = 0\n"
+    s = s + "                    IF clickPos < sbThumb THEN sbDelta = 0 - 1\n"
+    s = s + "                    IF clickPos > sbThumb THEN sbDelta = 1\n"
+    s = s + "                    IF sbDelta <> 0 THEN\n"
+    s = s + "                        DIM sbNew AS INTEGER = m.Widgets[hitIdx].RngValue + sbDelta\n"
+    s = s + "                        IF sbNew < m.Widgets[hitIdx].RngMin THEN sbNew = m.Widgets[hitIdx].RngMin\n"
+    s = s + "                        IF sbNew > m.Widgets[hitIdx].RngMax THEN sbNew = m.Widgets[hitIdx].RngMax\n"
+    s = s + "                        m.Widgets[hitIdx].RngValue = sbNew\n"
+    s = s + "                        dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "        RETURN m, NIL\n"
+    s = s + "    END IF\n"
+    ' ---- Mouse motion: drives ScrollBar thumb drag. ----
+    s = s + "    DIM mmMsg AS tea.MouseMotionMsg\n"
+    s = s + "    DIM mmOk AS BOOLEAN\n"
+    s = s + "    mmMsg, mmOk = msg.(tea.MouseMotionMsg)\n"
+    s = s + "    IF mmOk AND m.DragScroll AND m.DragIdx >= 0 AND m.DragIdx < LEN(m.Widgets) THEN\n"
+    s = s + "        DIM dw AS WState = m.Widgets[m.DragIdx]\n"
+    ' SplitPanel drag: update Position (Selected) from mouse position
+    ' along the divider's draggable axis, then move the divider too.
+    s = s + "        IF dw.Kind = \"SplitPanel\" THEN\n"
+    s = s + "            IF dw.Items = \"horizontal\" THEN\n"
+    ' Horizontal divider — drag up/down. Use the parent form bounds
+    ' (the divider's Y can move from 0 to formH-1; here we treat the
+    ' "span" as the form Height so Position is a percent of it).
+    s = s + "                DIM hpct AS INTEGER = ((mmMsg.Y - 1) * 100) / m.Height\n"
+    s = s + "                IF hpct < 0 THEN hpct = 0\n"
+    s = s + "                IF hpct > 100 THEN hpct = 100\n"
+    s = s + "                IF hpct <> m.Widgets[m.DragIdx].Selected THEN\n"
+    s = s + "                    m.Widgets[m.DragIdx].Selected = hpct\n"
+    s = s + "                    m.Widgets[m.DragIdx].Y = (m.Height * hpct) / 100\n"
+    s = s + "                    dispatchChange(m.Widgets[m.DragIdx].Id)\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSE\n"
+    s = s + "                DIM vpct AS INTEGER = ((mmMsg.X - 1) * 100) / m.Width\n"
+    s = s + "                IF vpct < 0 THEN vpct = 0\n"
+    s = s + "                IF vpct > 100 THEN vpct = 100\n"
+    s = s + "                IF vpct <> m.Widgets[m.DragIdx].Selected THEN\n"
+    s = s + "                    m.Widgets[m.DragIdx].Selected = vpct\n"
+    s = s + "                    m.Widgets[m.DragIdx].X = (m.Width * vpct) / 100\n"
+    s = s + "                    dispatchChange(m.Widgets[m.DragIdx].Id)\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            RETURN m, NIL\n"
+    s = s + "        END IF\n"
+    s = s + "        DIM drng AS INTEGER = dw.RngMax - dw.RngMin\n"
+    s = s + "        DIM dInner AS INTEGER = dw.H - 2\n"
+    s = s + "        DIM dLocal AS INTEGER = (mmMsg.Y - 1) - dw.Y - 1\n"
+    s = s + "        IF dw.Horizontal THEN\n"
+    s = s + "            dInner = dw.W - 4\n"
+    s = s + "            dLocal = (mmMsg.X - 1) - dw.X - 2\n"
+    s = s + "        END IF\n"
+    s = s + "        IF dInner < 1 THEN dInner = 1\n"
+    s = s + "        IF dLocal < 0 THEN dLocal = 0\n"
+    s = s + "        IF dLocal >= dInner THEN dLocal = dInner - 1\n"
+    s = s + "        DIM dNew AS INTEGER = dw.RngMin\n"
+    s = s + "        IF dInner > 1 AND drng > 0 THEN dNew = dw.RngMin + (dLocal * drng) / (dInner - 1)\n"
+    s = s + "        IF dNew < dw.RngMin THEN dNew = dw.RngMin\n"
+    s = s + "        IF dNew > dw.RngMax THEN dNew = dw.RngMax\n"
+    s = s + "        IF dNew <> m.Widgets[m.DragIdx].RngValue THEN\n"
+    s = s + "            m.Widgets[m.DragIdx].RngValue = dNew\n"
+    s = s + "            dispatchChange(m.Widgets[m.DragIdx].Id)\n"
+    s = s + "        END IF\n"
+    s = s + "        RETURN m, NIL\n"
+    s = s + "    END IF\n"
+    ' ---- Mouse release: ends any active ScrollBar drag. ----
+    s = s + "    DIM rrMsg AS tea.MouseReleaseMsg\n"
+    s = s + "    DIM rrOk AS BOOLEAN\n"
+    s = s + "    rrMsg, rrOk = msg.(tea.MouseReleaseMsg)\n"
+    s = s + "    IF rrOk THEN\n"
+    s = s + "        _ = rrMsg\n"
+    s = s + "        IF m.DragScroll THEN\n"
+    s = s + "            m.DragScroll = FALSE\n"
+    s = s + "            RETURN m, NIL\n"
+    s = s + "        END IF\n"
+    s = s + "    END IF\n"
+    ' ---- Dialog-active branch: route keys through FileDialog. ----
+    s = s + "    IF m.Dialog.Active THEN\n"
+    s = s + "        DIM dKey AS tea.KeyPressMsg\n"
+    s = s + "        DIM dKeyOk AS BOOLEAN\n"
+    s = s + "        dKey, dKeyOk = msg.(tea.KeyPressMsg)\n"
+    s = s + "        IF dKeyOk THEN\n"
+    s = s + "            DIM committed AS BOOLEAN\n"
+    s = s + "            DIM selPath AS STRING\n"
+    s = s + "            DIM cancelled AS BOOLEAN\n"
+    s = s + "            committed, selPath, cancelled = m.Dialog.HandleKey(dKey.String())\n"
+    s = s + "            IF committed THEN\n"
+    s = s + "                DIM tidC AS STRING = m.DialogToolId\n"
+    s = s + "                m.Dialog.Close()\n"
+    s = s + "                m.DialogToolId = \"\"\n"
+    s = s + "                dispatchFileSelected(tidC, selPath)\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF cancelled THEN\n"
+    s = s + "                m.Dialog.Close()\n"
+    s = s + "                m.DialogToolId = \"\"\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "        RETURN m, NIL\n"
+    s = s + "    END IF\n"
+    ' ---- Dropdown-active branch: route keys for ComboBox overlay. ----
+    s = s + "    IF m.DropActive AND m.DropIdx >= 0 AND m.DropIdx < LEN(m.Widgets) THEN\n"
+    s = s + "        DIM dkMsg AS tea.KeyPressMsg\n"
+    s = s + "        DIM dkOk AS BOOLEAN\n"
+    s = s + "        dkMsg, dkOk = msg.(tea.KeyPressMsg)\n"
+    s = s + "        IF dkOk THEN\n"
+    s = s + "            DIM dkS AS STRING = dkMsg.String()\n"
+    s = s + "            DIM dcbW AS WState = m.Widgets[m.DropIdx]\n"
+    s = s + "            DIM dcbI AS []STRING = strings.Split(dcbW.Items, \";\")\n"
+    s = s + "            IF dkS = \"up\" THEN\n"
+    s = s + "                IF m.DropCursor > 0 THEN m.DropCursor = m.DropCursor - 1\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF dkS = \"down\" THEN\n"
+    s = s + "                IF m.DropCursor < LEN(dcbI) - 1 THEN m.DropCursor = m.DropCursor + 1\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF dkS = \"enter\" THEN\n"
+    s = s + "                IF m.DropCursor <> dcbW.Selected THEN\n"
+    s = s + "                    m.Widgets[m.DropIdx].Selected = m.DropCursor\n"
+    s = s + "                    dispatchChange(m.Widgets[m.DropIdx].Id)\n"
+    s = s + "                END IF\n"
+    s = s + "                m.DropActive = FALSE\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF dkS = \"esc\" OR dkS = \"escape\" THEN\n"
+    s = s + "                m.DropActive = FALSE\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "    END IF\n"
+    ' ---- MenuBar-open branch: route keys for navigation + selection. ----
+    s = s + "    DIM mbKO AS INTEGER = -1\n"
+    s = s + "    DIM mbKI AS INTEGER\n"
+    s = s + "    FOR mbKI = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        IF m.Widgets[mbKI].Kind = \"MenuBar\" AND m.Widgets[mbKI].Checked THEN mbKO = mbKI\n"
+    s = s + "    NEXT mbKI\n"
+    s = s + "    IF mbKO >= 0 THEN\n"
+    s = s + "        DIM mbKey AS tea.KeyPressMsg\n"
+    s = s + "        DIM mbKOk AS BOOLEAN\n"
+    s = s + "        mbKey, mbKOk = msg.(tea.KeyPressMsg)\n"
+    s = s + "        IF mbKOk THEN\n"
+    s = s + "            DIM mbKs AS STRING = mbKey.String()\n"
+    s = s + "            DIM mbW AS WState = m.Widgets[mbKO]\n"
+    s = s + "            DIM mbLabs AS []STRING\n"
+    s = s + "            DIM mbRaw AS []STRING\n"
+    s = s + "            mbLabs, mbRaw = menuParse(mbW.Items)\n"
+    s = s + "            DIM mbAct AS INTEGER = mbW.Selected\n"
+    s = s + "            IF mbAct < 0 OR mbAct >= LEN(mbLabs) THEN mbAct = 0\n"
+    s = s + "            DIM mbIL AS []STRING\n"
+    s = s + "            DIM mbIA AS []STRING\n"
+    s = s + "            mbIL, mbIA = menuItems(mbRaw[mbAct])\n"
+    s = s + "            _ = mbIA\n"
+    s = s + "            IF mbKs = \"left\" THEN\n"
+    s = s + "                DIM mbnA AS INTEGER = mbAct - 1\n"
+    s = s + "                IF mbnA < 0 THEN mbnA = LEN(mbLabs) - 1\n"
+    s = s + "                m.Widgets[mbKO].Selected = mbnA\n"
+    s = s + "                m.Widgets[mbKO].Offset = 0\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF mbKs = \"right\" THEN\n"
+    s = s + "                DIM mbnA2 AS INTEGER = mbAct + 1\n"
+    s = s + "                IF mbnA2 >= LEN(mbLabs) THEN mbnA2 = 0\n"
+    s = s + "                m.Widgets[mbKO].Selected = mbnA2\n"
+    s = s + "                m.Widgets[mbKO].Offset = 0\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF mbKs = \"up\" THEN\n"
+    s = s + "                DIM mbnO AS INTEGER = m.Widgets[mbKO].Offset - 1\n"
+    s = s + "                DIM mbGuard AS INTEGER = 0\n"
+    s = s + "                DO WHILE mbGuard < LEN(mbIL)\n"
+    s = s + "                    IF mbnO < 0 THEN mbnO = LEN(mbIL) - 1\n"
+    s = s + "                    IF mbIL[mbnO] <> \"-\" THEN EXIT DO\n"
+    s = s + "                    mbnO = mbnO - 1\n"
+    s = s + "                    mbGuard = mbGuard + 1\n"
+    s = s + "                LOOP\n"
+    s = s + "                IF mbnO < 0 OR mbnO >= LEN(mbIL) THEN mbnO = 0\n"
+    s = s + "                m.Widgets[mbKO].Offset = mbnO\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF mbKs = \"down\" THEN\n"
+    s = s + "                DIM mbnO2 AS INTEGER = m.Widgets[mbKO].Offset + 1\n"
+    s = s + "                DIM mbGuard2 AS INTEGER = 0\n"
+    s = s + "                DO WHILE mbGuard2 < LEN(mbIL)\n"
+    s = s + "                    IF mbnO2 >= LEN(mbIL) THEN mbnO2 = 0\n"
+    s = s + "                    IF mbIL[mbnO2] <> \"-\" THEN EXIT DO\n"
+    s = s + "                    mbnO2 = mbnO2 + 1\n"
+    s = s + "                    mbGuard2 = mbGuard2 + 1\n"
+    s = s + "                LOOP\n"
+    s = s + "                IF mbnO2 < 0 OR mbnO2 >= LEN(mbIL) THEN mbnO2 = 0\n"
+    s = s + "                m.Widgets[mbKO].Offset = mbnO2\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF mbKs = \"enter\" OR mbKs = \"space\" THEN\n"
+    s = s + "                DIM mbCur AS INTEGER = m.Widgets[mbKO].Offset\n"
+    s = s + "                IF mbCur >= 0 AND mbCur < LEN(mbIL) AND mbIL[mbCur] <> \"-\" THEN\n"
+    s = s + "                    DIM mbActStr AS STRING = mbIA[mbCur]\n"
+    s = s + "                    m.Widgets[mbKO].Checked = FALSE\n"
+    s = s + "                    m.Widgets[mbKO].Selected = -1\n"
+    s = s + "                    dispatchMenuAction(mbW.Id, mbActStr)\n"
+    s = s + "                END IF\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF mbKs = \"esc\" OR mbKs = \"escape\" THEN\n"
+    s = s + "                m.Widgets[mbKO].Checked = FALSE\n"
+    s = s + "                m.Widgets[mbKO].Selected = -1\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "    END IF\n"
+    ' ---- PropertyGrid edit-mode branch: route keys to the buffer. ----
+    s = s + "    IF m.PgEdit AND m.PgEditIdx >= 0 AND m.PgEditIdx < LEN(m.Widgets) THEN\n"
+    s = s + "        DIM peKey AS tea.KeyPressMsg\n"
+    s = s + "        DIM peOk AS BOOLEAN\n"
+    s = s + "        peKey, peOk = msg.(tea.KeyPressMsg)\n"
+    s = s + "        IF peOk THEN\n"
+    s = s + "            DIM peK AS STRING = peKey.String()\n"
+    s = s + "            IF peK = \"enter\" THEN\n"
+    s = s + "                m.Widgets[m.PgEditIdx].Items = pgSetRowValue(m.Widgets[m.PgEditIdx].Items, m.PgEditRow, m.PgEditBuf)\n"
+    s = s + "                dispatchChange(m.Widgets[m.PgEditIdx].Id)\n"
+    s = s + "                m.PgEdit = FALSE\n"
+    s = s + "                m.PgEditBuf = \"\"\n"
+    s = s + "                m.PgEditPos = 0\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF peK = \"esc\" OR peK = \"escape\" THEN\n"
+    s = s + "                m.PgEdit = FALSE\n"
+    s = s + "                m.PgEditBuf = \"\"\n"
+    s = s + "                m.PgEditPos = 0\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF peK = \"backspace\" THEN\n"
+    s = s + "                IF m.PgEditPos > 0 THEN\n"
+    s = s + "                    DIM peLft AS STRING = Mid(m.PgEditBuf, 1, m.PgEditPos - 1)\n"
+    s = s + "                    DIM peRgt AS STRING = \"\"\n"
+    s = s + "                    IF m.PgEditPos < LEN(m.PgEditBuf) THEN peRgt = Mid(m.PgEditBuf, m.PgEditPos + 1, LEN(m.PgEditBuf) - m.PgEditPos)\n"
+    s = s + "                    m.PgEditBuf = peLft + peRgt\n"
+    s = s + "                    m.PgEditPos = m.PgEditPos - 1\n"
+    s = s + "                END IF\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF peK = \"delete\" THEN\n"
+    s = s + "                IF m.PgEditPos < LEN(m.PgEditBuf) THEN\n"
+    s = s + "                    DIM peDL AS STRING = Mid(m.PgEditBuf, 1, m.PgEditPos)\n"
+    s = s + "                    DIM peDR AS STRING = \"\"\n"
+    s = s + "                    IF m.PgEditPos + 1 < LEN(m.PgEditBuf) THEN peDR = Mid(m.PgEditBuf, m.PgEditPos + 2, LEN(m.PgEditBuf) - m.PgEditPos - 1)\n"
+    s = s + "                    m.PgEditBuf = peDL + peDR\n"
+    s = s + "                END IF\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF peK = \"left\" THEN\n"
+    s = s + "                IF m.PgEditPos > 0 THEN m.PgEditPos = m.PgEditPos - 1\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF peK = \"right\" THEN\n"
+    s = s + "                IF m.PgEditPos < LEN(m.PgEditBuf) THEN m.PgEditPos = m.PgEditPos + 1\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF peK = \"home\" THEN\n"
+    s = s + "                m.PgEditPos = 0\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "            IF peK = \"end\" THEN\n"
+    s = s + "                m.PgEditPos = LEN(m.PgEditBuf)\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    ' Printable char insertion — accept single-rune keys.
+    s = s + "            IF LEN(peK) = 1 THEN\n"
+    s = s + "                DIM peLft2 AS STRING = \"\"\n"
+    s = s + "                DIM peRgt2 AS STRING = \"\"\n"
+    s = s + "                IF m.PgEditPos > 0 THEN peLft2 = Mid(m.PgEditBuf, 1, m.PgEditPos)\n"
+    s = s + "                IF m.PgEditPos < LEN(m.PgEditBuf) THEN peRgt2 = Mid(m.PgEditBuf, m.PgEditPos + 1, LEN(m.PgEditBuf) - m.PgEditPos)\n"
+    s = s + "                m.PgEditBuf = peLft2 + peK + peRgt2\n"
+    s = s + "                m.PgEditPos = m.PgEditPos + 1\n"
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "    END IF\n"
+    s = s + "    DIM keyMsg AS tea.KeyPressMsg\n"
+    s = s + "    DIM keyOk AS BOOLEAN\n"
+    s = s + "    keyMsg, keyOk = msg.(tea.KeyPressMsg)\n"
+    s = s + "    IF keyOk THEN\n"
+    s = s + "        DIM k AS STRING = keyMsg.String()\n"
+    s = s + "        IF k = \"ctrl+c\" THEN RETURN m, tea.Quit\n"
+    s = s + "        IF k = \"tab\" THEN\n"
+    s = s + "            DIM total AS INTEGER = focusableCount(m)\n"
+    s = s + "            IF total > 0 THEN\n"
+    s = s + "                DIM nf AS INTEGER = (m.Focus + 1) MOD total\n"
+    s = s + "                DIM tfc AS tea.Cmd = setFocus(@m, nf)\n"
+    s = s + "                RETURN m, tfc\n"
+    s = s + "            END IF\n"
+    s = s + "            RETURN m, NIL\n"
+    s = s + "        END IF\n"
+    ' ---- If a TextInput has focus, route keystrokes to its Input. ----
+    s = s + "        DIM tiIdx AS INTEGER = focusableIdxAt(m, m.Focus)\n"
+    s = s + "        IF tiIdx >= 0 AND m.Widgets[tiIdx].Kind = \"TextInput\" THEN\n"
+    s = s + "            DIM prevVal AS STRING = m.Widgets[tiIdx].TiModel.Value()\n"
+    s = s + "            DIM newInput AS textinput.Model\n"
+    s = s + "            DIM iCmd AS tea.Cmd\n"
+    s = s + "            newInput, iCmd = m.Widgets[tiIdx].TiModel.Update(msg)\n"
+    s = s + "            m.Widgets[tiIdx].TiModel = newInput\n"
+    s = s + "            DIM newVal AS STRING = newInput.Value()\n"
+    s = s + "            IF newVal <> prevVal THEN\n"
+    s = s + "                m.Widgets[tiIdx].Val = newVal\n"
+    s = s + "                dispatchChange(m.Widgets[tiIdx].Id)\n"
+    s = s + "            END IF\n"
+    s = s + "            RETURN m, iCmd\n"
+    s = s + "        END IF\n"
+    ' ---- If a TextArea has focus, route keystrokes to its TaModel. ----
+    s = s + "        IF tiIdx >= 0 AND m.Widgets[tiIdx].Kind = \"TextArea\" THEN\n"
+    s = s + "            DIM taPrev AS STRING = m.Widgets[tiIdx].TaModel.Value()\n"
+    s = s + "            DIM newTa AS textarea.Model\n"
+    s = s + "            DIM taCmd AS tea.Cmd\n"
+    s = s + "            newTa, taCmd = m.Widgets[tiIdx].TaModel.Update(msg)\n"
+    s = s + "            m.Widgets[tiIdx].TaModel = newTa\n"
+    s = s + "            DIM taNew AS STRING = newTa.Value()\n"
+    s = s + "            IF taNew <> taPrev THEN\n"
+    s = s + "                m.Widgets[tiIdx].Val = taNew\n"
+    s = s + "                dispatchChange(m.Widgets[tiIdx].Id)\n"
+    s = s + "            END IF\n"
+    s = s + "            RETURN m, taCmd\n"
+    s = s + "        END IF\n"
+    s = s + "        IF k = \"q\" THEN RETURN m, tea.Quit\n"
+    s = s + "        IF k = \"enter\" OR k = \"space\" THEN\n"
+    s = s + "            DIM focusedIdx AS INTEGER = -1\n"
+    s = s + "            DIM fcount AS INTEGER = 0\n"
+    s = s + "            DIM ii AS INTEGER\n"
+    s = s + "            FOR ii = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "                IF m.Widgets[ii].TStop AND m.Widgets[ii].Visi THEN\n"
+    s = s + "                    IF fcount = m.Focus THEN focusedIdx = ii\n"
+    s = s + "                    fcount = fcount + 1\n"
+    s = s + "                END IF\n"
+    s = s + "            NEXT ii\n"
+    s = s + "            IF focusedIdx >= 0 THEN\n"
+    s = s + "                DIM fk AS STRING = m.Widgets[focusedIdx].Kind\n"
+    s = s + "                IF fk = \"Button\" THEN\n"
+    s = s + "                    dispatchClick(m.Widgets[focusedIdx].Id)\n"
+    s = s + "                ELSEIF fk = \"Checkbox\" THEN\n"
+    s = s + "                    m.Widgets[focusedIdx].Checked = NOT m.Widgets[focusedIdx].Checked\n"
+    s = s + "                    dispatchChange(m.Widgets[focusedIdx].Id)\n"
+    s = s + "                ELSEIF fk = \"RadioButton\" THEN\n"
+    s = s + "                    selectRadio(@m, focusedIdx)\n"
+    s = s + "                    dispatchChange(m.Widgets[focusedIdx].Id)\n"
+    s = s + "                ELSEIF fk = \"ComboBox\" THEN\n"
+    s = s + "                    m.DropActive = TRUE\n"
+    s = s + "                    m.DropIdx = focusedIdx\n"
+    s = s + "                    m.DropCursor = m.Widgets[focusedIdx].Selected\n"
+    s = s + "                    IF m.DropCursor < 0 THEN m.DropCursor = 0\n"
+    s = s + "                ELSEIF fk = \"TreeView\" THEN\n"
+    s = s + "                    DIM ftVis AS []STRING\n"
+    s = s + "                    DIM ftAbs AS []INTEGER\n"
+    s = s + "                    ftVis, ftAbs = treeVisible(m.Widgets[focusedIdx].Items)\n"
+    s = s + "                    _ = ftVis\n"
+    s = s + "                    DIM ftSel AS INTEGER = m.Widgets[focusedIdx].Selected\n"
+    s = s + "                    IF ftSel >= 0 AND ftSel < LEN(ftAbs) THEN\n"
+    s = s + "                        m.Widgets[focusedIdx].Items = treeToggle(m.Widgets[focusedIdx].Items, ftAbs[ftSel])\n"
+    s = s + "                        dispatchChange(m.Widgets[focusedIdx].Id)\n"
+    s = s + "                    END IF\n"
+    s = s + "                ELSEIF fk = \"MenuBar\" THEN\n"
+    s = s + "                    m.Widgets[focusedIdx].Checked = TRUE\n"
+    s = s + "                    IF m.Widgets[focusedIdx].Selected < 0 THEN m.Widgets[focusedIdx].Selected = 0\n"
+    s = s + "                    m.Widgets[focusedIdx].Offset = 0\n"
+    s = s + "                ELSEIF fk = \"PropertyGrid\" THEN\n"
+    ' Space/Enter on a PropertyGrid row: bool toggles in place, enum
+    ' cycles to next option, anything else opens an in-place editor.
+    s = s + "                    DIM pgRs AS []STRING = strings.Split(m.Widgets[focusedIdx].Items, \";\")\n"
+    s = s + "                    DIM pgSI AS INTEGER = m.Widgets[focusedIdx].Selected\n"
+    s = s + "                    IF pgSI >= 0 AND pgSI < LEN(pgRs) THEN\n"
+    s = s + "                        DIM pgPp AS []STRING = strings.SplitN(pgRs[pgSI], \"|\", 4)\n"
+    s = s + "                        DO WHILE LEN(pgPp) < 4\n"
+    s = s + "                            pgPp = APPEND(pgPp, \"\")\n"
+    s = s + "                        LOOP\n"
+    s = s + "                        IF pgPp[0] = \"\" THEN\n"
+    s = s + "                            DIM pgTp AS STRING = pgPp[3]\n"
+    s = s + "                            IF pgTp = \"bool\" THEN\n"
+    s = s + "                                DIM pgNV AS STRING = \"false\"\n"
+    s = s + "                                IF pgPp[2] <> \"true\" THEN pgNV = \"true\"\n"
+    s = s + "                                m.Widgets[focusedIdx].Items = pgSetRowValue(m.Widgets[focusedIdx].Items, pgSI, pgNV)\n"
+    s = s + "                                dispatchChange(m.Widgets[focusedIdx].Id)\n"
+    s = s + "                            ELSEIF strings.HasPrefix(pgTp, \"enum:\") THEN\n"
+    s = s + "                                DIM pgNE AS STRING = pgEnumCycle(pgTp, pgPp[2], 1)\n"
+    s = s + "                                m.Widgets[focusedIdx].Items = pgSetRowValue(m.Widgets[focusedIdx].Items, pgSI, pgNE)\n"
+    s = s + "                                dispatchChange(m.Widgets[focusedIdx].Id)\n"
+    s = s + "                            ELSE\n"
+    ' Open in-place editor — load buffer with current value.
+    s = s + "                                m.PgEdit = TRUE\n"
+    s = s + "                                m.PgEditIdx = focusedIdx\n"
+    s = s + "                                m.PgEditRow = pgSI\n"
+    s = s + "                                m.PgEditBuf = pgPp[2]\n"
+    s = s + "                                m.PgEditPos = LEN(pgPp[2])\n"
+    s = s + "                            END IF\n"
+    s = s + "                        END IF\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    ' ---- After dispatching, check whether the handler asked for a dialog. ----
+    s = s + "            IF gPendingDialog <> \"\" THEN\n"
+    s = s + "                DIM jj AS INTEGER\n"
+    s = s + "                FOR jj = 0 TO LEN(m.Tools) - 1\n"
+    s = s + "                    IF m.Tools[jj].Id = gPendingDialog THEN\n"
+    s = s + "                        m.DialogToolId = gPendingDialog\n"
+    s = s + "                        m.Dialog.Open(m.Tools[jj].Title, m.Tools[jj].Mode, m.Tools[jj].Mask, \"\", m.Width, m.Height)\n"
+    s = s + "                        gPendingDialog = \"\"\n"
+    s = s + "                        RETURN m, NIL\n"
+    s = s + "                    END IF\n"
+    s = s + "                NEXT jj\n"
+    s = s + "                gPendingDialog = \"\"\n"
+    s = s + "            END IF\n"
+    s = s + "            RETURN m, NIL\n"
+    s = s + "        END IF\n"
+    ' ---- Arrow keys: cycle ComboBox/ListBox selection, slide ScrollBar value.
+    s = s + "        IF k = \"up\" OR k = \"down\" OR k = \"left\" OR k = \"right\" THEN\n"
+    s = s + "            DIM afIdx AS INTEGER = -1\n"
+    s = s + "            DIM afc AS INTEGER = 0\n"
+    s = s + "            DIM ai AS INTEGER\n"
+    s = s + "            FOR ai = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "                IF m.Widgets[ai].TStop AND m.Widgets[ai].Visi THEN\n"
+    s = s + "                    IF afc = m.Focus THEN afIdx = ai\n"
+    s = s + "                    afc = afc + 1\n"
+    s = s + "                END IF\n"
+    s = s + "            NEXT ai\n"
+    s = s + "            IF afIdx >= 0 THEN\n"
+    s = s + "                DIM ak AS STRING = m.Widgets[afIdx].Kind\n"
+    s = s + "                IF ak = \"ComboBox\" OR ak = \"ListBox\" OR ak = \"ScrollPane\" OR ak = \"PropertyGrid\" THEN\n"
+    s = s + "                    DIM aItems AS []STRING = strings.Split(m.Widgets[afIdx].Items, \";\")\n"
+    s = s + "                    DIM aDelta AS INTEGER = 0\n"
+    s = s + "                    IF k = \"up\" THEN aDelta = -1\n"
+    s = s + "                    IF k = \"down\" THEN aDelta = 1\n"
+    s = s + "                    IF aDelta <> 0 AND LEN(aItems) > 0 THEN\n"
+    s = s + "                        DIM aNew AS INTEGER = m.Widgets[afIdx].Selected + aDelta\n"
+    s = s + "                        IF aNew < 0 THEN aNew = 0\n"
+    s = s + "                        IF aNew >= LEN(aItems) THEN aNew = LEN(aItems) - 1\n"
+    s = s + "                        IF aNew <> m.Widgets[afIdx].Selected THEN\n"
+    s = s + "                            m.Widgets[afIdx].Selected = aNew\n"
+    ' For ScrollPane / ListBox / PropertyGrid, auto-scroll Offset so cursor stays visible.
+    s = s + "                            IF ak = \"ScrollPane\" OR ak = \"ListBox\" OR ak = \"PropertyGrid\" THEN\n"
+    s = s + "                                DIM spInH AS INTEGER = m.Widgets[afIdx].H - 2\n"
+    s = s + "                                IF aNew < m.Widgets[afIdx].Offset THEN m.Widgets[afIdx].Offset = aNew\n"
+    s = s + "                                IF aNew >= m.Widgets[afIdx].Offset + spInH THEN m.Widgets[afIdx].Offset = aNew - spInH + 1\n"
+    s = s + "                            END IF\n"
+    s = s + "                            dispatchChange(m.Widgets[afIdx].Id)\n"
+    s = s + "                        END IF\n"
+    s = s + "                    END IF\n"
+    s = s + "                ELSEIF ak = \"TabStrip\" THEN\n"
+    s = s + "                    DIM tsAll AS []STRING = strings.Split(m.Widgets[afIdx].Items, \";\")\n"
+    s = s + "                    DIM tsD AS INTEGER = 0\n"
+    s = s + "                    IF k = \"left\"  THEN tsD = -1\n"
+    s = s + "                    IF k = \"right\" THEN tsD = 1\n"
+    s = s + "                    IF tsD <> 0 AND LEN(tsAll) > 0 THEN\n"
+    s = s + "                        DIM tsNew AS INTEGER = m.Widgets[afIdx].Selected + tsD\n"
+    s = s + "                        IF tsNew < 0 THEN tsNew = LEN(tsAll) - 1\n"
+    s = s + "                        IF tsNew >= LEN(tsAll) THEN tsNew = 0\n"
+    s = s + "                        m.Widgets[afIdx].Selected = tsNew\n"
+    s = s + "                        dispatchChange(m.Widgets[afIdx].Id)\n"
+    s = s + "                    END IF\n"
+    s = s + "                ELSEIF ak = \"ScrollBar\" THEN\n"
+    s = s + "                    DIM sDelta AS INTEGER = 0\n"
+    s = s + "                    IF m.Widgets[afIdx].Horizontal THEN\n"
+    s = s + "                        IF k = \"left\"  THEN sDelta = -1\n"
+    s = s + "                        IF k = \"right\" THEN sDelta = 1\n"
+    s = s + "                    ELSE\n"
+    s = s + "                        IF k = \"up\"   THEN sDelta = -1\n"
+    s = s + "                        IF k = \"down\" THEN sDelta = 1\n"
+    s = s + "                    END IF\n"
+    s = s + "                    IF sDelta <> 0 THEN\n"
+    s = s + "                        DIM sNew AS INTEGER = m.Widgets[afIdx].RngValue + sDelta\n"
+    s = s + "                        IF sNew < m.Widgets[afIdx].RngMin THEN sNew = m.Widgets[afIdx].RngMin\n"
+    s = s + "                        IF sNew > m.Widgets[afIdx].RngMax THEN sNew = m.Widgets[afIdx].RngMax\n"
+    s = s + "                        IF sNew <> m.Widgets[afIdx].RngValue THEN\n"
+    s = s + "                            m.Widgets[afIdx].RngValue = sNew\n"
+    s = s + "                            dispatchChange(m.Widgets[afIdx].Id)\n"
+    s = s + "                        END IF\n"
+    s = s + "                    END IF\n"
+    ' ---- TreeView: up/down moves through *visible* rows; Enter toggles
+    '      expandable nodes (and re-emits a Change for navigation).
+    s = s + "                ELSEIF ak = \"TreeView\" THEN\n"
+    s = s + "                    DIM tkVis AS []STRING\n"
+    s = s + "                    DIM tkAbs AS []INTEGER\n"
+    s = s + "                    tkVis, tkAbs = treeVisible(m.Widgets[afIdx].Items)\n"
+    s = s + "                    _ = tkAbs\n"
+    s = s + "                    DIM tkDelta AS INTEGER = 0\n"
+    s = s + "                    IF k = \"up\"   THEN tkDelta = -1\n"
+    s = s + "                    IF k = \"down\" THEN tkDelta = 1\n"
+    s = s + "                    IF tkDelta <> 0 AND LEN(tkVis) > 0 THEN\n"
+    s = s + "                        DIM tkNew AS INTEGER = m.Widgets[afIdx].Selected + tkDelta\n"
+    s = s + "                        IF tkNew < 0 THEN tkNew = 0\n"
+    s = s + "                        IF tkNew >= LEN(tkVis) THEN tkNew = LEN(tkVis) - 1\n"
+    s = s + "                        IF tkNew <> m.Widgets[afIdx].Selected THEN\n"
+    s = s + "                            m.Widgets[afIdx].Selected = tkNew\n"
+    s = s + "                            DIM tkInH AS INTEGER = m.Widgets[afIdx].H - 2\n"
+    s = s + "                            IF tkNew < m.Widgets[afIdx].Offset THEN m.Widgets[afIdx].Offset = tkNew\n"
+    s = s + "                            IF tkNew >= m.Widgets[afIdx].Offset + tkInH THEN m.Widgets[afIdx].Offset = tkNew - tkInH + 1\n"
+    s = s + "                            dispatchChange(m.Widgets[afIdx].Id)\n"
+    s = s + "                        END IF\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    ' ---- PropertyGrid: ←/→ on an enum row cycles the value.
+    s = s + "                IF ak = \"PropertyGrid\" AND (k = \"left\" OR k = \"right\") THEN\n"
+    s = s + "                    DIM pgRs2 AS []STRING = strings.Split(m.Widgets[afIdx].Items, \";\")\n"
+    s = s + "                    DIM pgSI2 AS INTEGER = m.Widgets[afIdx].Selected\n"
+    s = s + "                    IF pgSI2 >= 0 AND pgSI2 < LEN(pgRs2) THEN\n"
+    s = s + "                        DIM pgPp2 AS []STRING = strings.SplitN(pgRs2[pgSI2], \"|\", 4)\n"
+    s = s + "                        DO WHILE LEN(pgPp2) < 4\n"
+    s = s + "                            pgPp2 = APPEND(pgPp2, \"\")\n"
+    s = s + "                        LOOP\n"
+    s = s + "                        IF pgPp2[0] = \"\" AND strings.HasPrefix(pgPp2[3], \"enum:\") THEN\n"
+    s = s + "                            DIM pgDir AS INTEGER = 1\n"
+    s = s + "                            IF k = \"left\" THEN pgDir = 0 - 1\n"
+    s = s + "                            DIM pgNV2 AS STRING = pgEnumCycle(pgPp2[3], pgPp2[2], pgDir)\n"
+    s = s + "                            m.Widgets[afIdx].Items = pgSetRowValue(m.Widgets[afIdx].Items, pgSI2, pgNV2)\n"
+    s = s + "                            dispatchChange(m.Widgets[afIdx].Id)\n"
+    s = s + "                        END IF\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            RETURN m, NIL\n"
+    s = s + "        END IF\n"
+    s = s + "    END IF\n"
+    s = s + "    RETURN m, NIL\n"
+    s = s + "END FUNCTION\n\n"
+    RETURN s
+END FUNCTION
+
+' emitRenderWidget writes the helper that turns one WState into a
+' styled string box.
+FUNCTION emitRenderWidget() AS STRING
+    DIM s AS STRING = ""
+    s = s + "FUNCTION renderOneWidget(w AS WState, focused AS BOOLEAN, editing AS BOOLEAN, editRow AS INTEGER, editBuf AS STRING, editPos AS INTEGER) AS STRING\n"
+    s = s + "    DIM bg AS STRING = w.BgColor\n"
+    s = s + "    DIM fg AS STRING = w.FgColor\n"
+    s = s + "    IF bg = \"\" THEN bg = \"#1a1b2e\"\n"
+    s = s + "    IF fg = \"\" THEN fg = \"#e0def4\"\n"
+    s = s + "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Foreground(lipgloss.Color(fg))\n"
+    s = s + "    DIM borderless AS BOOLEAN = (w.Kind = \"Label\" OR w.Kind = \"Checkbox\" OR w.Kind = \"RadioButton\" OR w.Kind = \"ScrollBar\" OR w.Kind = \"TabStrip\" OR w.Kind = \"MenuBar\" OR w.Kind = \"StatusBar\" OR w.Kind = \"SplitPanel\")\n"
+    s = s + "    IF w.W >= 3 AND w.H >= 3 AND NOT borderless THEN\n"
+    ' lipgloss v2's Width counts the *content* width, but border + width
+    ' together render at total = Width + 0 cells (border eats into the
+    ' visible width). Tested empirically: Width(N) + border renders an
+    ' N-cell box. So pass w.W (not w.W - 2) and let lipgloss carve out
+    ' the border. Inner content for ProgressBar etc. uses (w.W - 2).
+    s = s + "        style = style.Border(lipgloss.NormalBorder()).Width(w.W).Height(w.H)\n"
+    s = s + "        IF focused THEN style = style.BorderForeground(lipgloss.Color(\"#7dcfff\"))\n"
+    s = s + "    ELSE\n"
+    s = s + "        style = style.Width(w.W).Height(w.H)\n"
+    s = s + "    END IF\n"
+    s = s + "    DIM body AS STRING\n"
+    s = s + "    IF w.Kind = \"Label\" THEN\n"
+    s = s + "        body = w.Text\n"
+    s = s + "    ELSEIF w.Kind = \"Button\" THEN\n"
+    s = s + "        body = w.Text\n"
+    s = s + "    ELSEIF w.Kind = \"TextInput\" THEN\n"
+    s = s + "        body = w.TiModel.View()\n"
+    s = s + "    ELSEIF w.Kind = \"FileDialog\" THEN\n"
+    s = s + "        DIM label AS STRING = w.Val\n"
+    s = s + "        IF label = \"\" THEN label = w.Holdr\n"
+    s = s + "        body = label + \"  [...]\"\n"
+    s = s + "    ELSEIF w.Kind = \"Checkbox\" THEN\n"
+    s = s + "        DIM mark AS STRING = \"[ ] \"\n"
+    s = s + "        IF w.Checked THEN mark = \"[x] \"\n"
+    s = s + "        body = mark + w.Text\n"
+    s = s + "    ELSEIF w.Kind = \"ComboBox\" THEN\n"
+    s = s + "        DIM cbItems AS []STRING = strings.Split(w.Items, \";\")\n"
+    s = s + "        DIM cbCur AS STRING = \"\"\n"
+    s = s + "        IF w.Selected >= 0 AND w.Selected < LEN(cbItems) THEN cbCur = cbItems[w.Selected]\n"
+    s = s + "        body = cbCur + \"  ▾\"\n"
+    s = s + "    ELSEIF w.Kind = \"ListBox\" THEN\n"
+    s = s + "        DIM lbItems AS []STRING = strings.Split(w.Items, \";\")\n"
+    s = s + "        DIM lbInnerH AS INTEGER = w.H - 2\n"
+    s = s + "        IF lbInnerH < 1 THEN lbInnerH = 1\n"
+    s = s + "        DIM lbInnerW AS INTEGER = w.W - 2\n"
+    s = s + "        IF lbInnerW < 1 THEN lbInnerW = 1\n"
+    s = s + "        DIM lbCanScroll AS BOOLEAN = (LEN(lbItems) > lbInnerH)\n"
+    s = s + "        DIM lbThumb AS INTEGER = -1\n"
+    s = s + "        IF lbCanScroll AND lbInnerH > 0 THEN\n"
+    s = s + "            DIM lbMaxOff AS INTEGER = LEN(lbItems) - lbInnerH\n"
+    s = s + "            IF lbMaxOff > 0 THEN lbThumb = w.Offset * (lbInnerH - 1) / lbMaxOff\n"
+    s = s + "        END IF\n"
+    s = s + "        DIM lbRowW AS INTEGER = lbInnerW\n"
+    s = s + "        IF lbCanScroll THEN lbRowW = lbInnerW - 1\n"
+    s = s + "        DIM lbLines AS []STRING\n"
+    s = s + "        DIM li AS INTEGER\n"
+    s = s + "        FOR li = 0 TO lbInnerH - 1\n"
+    s = s + "            DIM lbIdx AS INTEGER = w.Offset + li\n"
+    s = s + "            DIM lbRow AS STRING = \"\"\n"
+    s = s + "            IF lbIdx >= 0 AND lbIdx < LEN(lbItems) THEN\n"
+    s = s + "                DIM prefix AS STRING = \"  \"\n"
+    s = s + "                IF lbIdx = w.Selected THEN prefix = \"▶ \"\n"
+    s = s + "                lbRow = prefix + lbItems[lbIdx]\n"
+    s = s + "                IF lipgloss.Width(lbRow) > lbRowW THEN lbRow = Mid(lbRow, 1, lbRowW)\n"
+    s = s + "            END IF\n"
+    s = s + "            DIM lbPad AS INTEGER = lbRowW - lipgloss.Width(lbRow)\n"
+    s = s + "            IF lbPad < 0 THEN lbPad = 0\n"
+    s = s + "            DIM lbBar AS STRING = \"\"\n"
+    s = s + "            IF lbCanScroll THEN\n"
+    s = s + "                IF li = lbThumb THEN lbBar = \"┃\"\n"
+    s = s + "                IF li <> lbThumb THEN lbBar = \"╎\"\n"
+    s = s + "            END IF\n"
+    s = s + "            lbLines = APPEND(lbLines, lbRow + strings.Repeat(\" \", lbPad) + lbBar)\n"
+    s = s + "        NEXT li\n"
+    s = s + "        body = strings.Join(lbLines, \"\\n\")\n"
+    s = s + "    ELSEIF w.Kind = \"RadioButton\" THEN\n"
+    s = s + "        DIM rbMark AS STRING = \"( ) \"\n"
+    s = s + "        IF w.Checked THEN rbMark = \"(•) \"\n"
+    s = s + "        body = rbMark + w.Text\n"
+    s = s + "    ELSEIF w.Kind = \"ProgressBar\" THEN\n"
+    s = s + "        DIM inner AS INTEGER = w.W - 2\n"
+    s = s + "        IF inner < 1 THEN inner = 1\n"
+    s = s + "        DIM rng AS INTEGER = w.RngMax - w.RngMin\n"
+    s = s + "        DIM pct AS INTEGER = 0\n"
+    s = s + "        IF rng > 0 THEN pct = ((w.RngValue - w.RngMin) * 100) / rng\n"
+    s = s + "        IF pct < 0 THEN pct = 0\n"
+    s = s + "        IF pct > 100 THEN pct = 100\n"
+    s = s + "        DIM fill AS INTEGER = (inner * pct) / 100\n"
+    s = s + "        body = strings.Repeat(\"█\", fill) + strings.Repeat(\"░\", inner - fill)\n"
+    s = s + "    ELSEIF w.Kind = \"ScrollBar\" THEN\n"
+    s = s + "        IF w.Horizontal THEN\n"
+    s = s + "            DIM hInner AS INTEGER = w.W - 4\n"
+    s = s + "            IF hInner < 1 THEN hInner = 1\n"
+    s = s + "            DIM hRng AS INTEGER = w.RngMax - w.RngMin\n"
+    s = s + "            DIM hThumbPos AS INTEGER = 0\n"
+    s = s + "            IF hRng > 0 THEN hThumbPos = ((w.RngValue - w.RngMin) * (hInner - 1)) / hRng\n"
+    s = s + "            IF hThumbPos < 0 THEN hThumbPos = 0\n"
+    s = s + "            IF hThumbPos >= hInner THEN hThumbPos = hInner - 1\n"
+    s = s + "            body = \"◄ \" + strings.Repeat(\"─\", hThumbPos) + \"█\" + strings.Repeat(\"─\", hInner - hThumbPos - 1) + \" ►\"\n"
+    s = s + "        ELSE\n"
+    s = s + "            DIM vInner AS INTEGER = w.H - 2\n"
+    s = s + "            IF vInner < 1 THEN vInner = 1\n"
+    s = s + "            DIM vRng AS INTEGER = w.RngMax - w.RngMin\n"
+    s = s + "            DIM vThumbPos AS INTEGER = 0\n"
+    s = s + "            IF vRng > 0 THEN vThumbPos = ((w.RngValue - w.RngMin) * (vInner - 1)) / vRng\n"
+    s = s + "            IF vThumbPos < 0 THEN vThumbPos = 0\n"
+    s = s + "            IF vThumbPos >= vInner THEN vThumbPos = vInner - 1\n"
+    s = s + "            DIM vLines AS []STRING\n"
+    s = s + "            vLines = APPEND(vLines, \"▲\")\n"
+    s = s + "            DIM vi AS INTEGER\n"
+    s = s + "            FOR vi = 0 TO vInner - 1\n"
+    s = s + "                IF vi = vThumbPos THEN\n"
+    s = s + "                    vLines = APPEND(vLines, \"█\")\n"
+    s = s + "                ELSE\n"
+    s = s + "                    vLines = APPEND(vLines, \"│\")\n"
+    s = s + "                END IF\n"
+    s = s + "            NEXT vi\n"
+    s = s + "            vLines = APPEND(vLines, \"▼\")\n"
+    s = s + "            body = strings.Join(vLines, \"\\n\")\n"
+    s = s + "        END IF\n"
+    s = s + "    ELSEIF w.Kind = \"TabStrip\" THEN\n"
+    s = s + "        DIM tsItems AS []STRING = strings.Split(w.Items, \";\")\n"
+    s = s + "        DIM tsOut AS STRING = \"\"\n"
+    s = s + "        DIM tsI AS INTEGER\n"
+    s = s + "        FOR tsI = 0 TO LEN(tsItems) - 1\n"
+    s = s + "            DIM tsSep AS STRING = \" \"\n"
+    s = s + "            IF tsI = 0 THEN tsSep = \"\"\n"
+    s = s + "            IF tsI = w.Selected THEN\n"
+    s = s + "                tsOut = tsOut + tsSep + \"[ \" + tsItems[tsI] + \" ]\"\n"
+    s = s + "            ELSE\n"
+    s = s + "                tsOut = tsOut + tsSep + \"  \" + tsItems[tsI] + \"  \"\n"
+    s = s + "            END IF\n"
+    s = s + "        NEXT tsI\n"
+    s = s + "        body = tsOut\n"
+    s = s + "    ELSEIF w.Kind = \"ScrollPane\" THEN\n"
+    s = s + "        DIM spItems AS []STRING = strings.Split(w.Items, \";\")\n"
+    s = s + "        DIM spInnerH AS INTEGER = w.H - 2\n"
+    s = s + "        IF spInnerH < 1 THEN spInnerH = 1\n"
+    s = s + "        DIM spLines AS []STRING\n"
+    s = s + "        DIM spI AS INTEGER\n"
+    s = s + "        FOR spI = 0 TO spInnerH - 1\n"
+    s = s + "            DIM spIdx AS INTEGER = w.Offset + spI\n"
+    s = s + "            IF spIdx < 0 OR spIdx >= LEN(spItems) THEN\n"
+    s = s + "                spLines = APPEND(spLines, \"\")\n"
+    s = s + "            ELSE\n"
+    s = s + "                DIM spPrefix AS STRING = \"  \"\n"
+    s = s + "                IF spIdx = w.Selected THEN spPrefix = \"▶ \"\n"
+    s = s + "                spLines = APPEND(spLines, spPrefix + spItems[spIdx])\n"
+    s = s + "            END IF\n"
+    s = s + "        NEXT spI\n"
+    s = s + "        body = strings.Join(spLines, \"\\n\")\n"
+    s = s + "    ELSEIF w.Kind = \"TreeView\" THEN\n"
+    s = s + "        DIM tvVisible AS []STRING\n"
+    s = s + "        DIM tvAbsIdx AS []INTEGER\n"
+    s = s + "        tvVisible, tvAbsIdx = treeVisible(w.Items)\n"
+    s = s + "        _ = tvAbsIdx\n"
+    s = s + "        DIM tvInnerH AS INTEGER = w.H - 2\n"
+    s = s + "        IF tvInnerH < 1 THEN tvInnerH = 1\n"
+    s = s + "        DIM tvInnerW AS INTEGER = w.W - 2\n"
+    s = s + "        IF tvInnerW < 1 THEN tvInnerW = 1\n"
+    s = s + "        DIM tvCanScroll AS BOOLEAN = (LEN(tvVisible) > tvInnerH)\n"
+    s = s + "        DIM tvThumb AS INTEGER = -1\n"
+    s = s + "        IF tvCanScroll AND tvInnerH > 0 THEN\n"
+    s = s + "            DIM tvMaxOff AS INTEGER = LEN(tvVisible) - tvInnerH\n"
+    s = s + "            IF tvMaxOff > 0 THEN tvThumb = w.Offset * (tvInnerH - 1) / tvMaxOff\n"
+    s = s + "        END IF\n"
+    s = s + "        DIM tvRowW AS INTEGER = tvInnerW\n"
+    s = s + "        IF tvCanScroll THEN tvRowW = tvInnerW - 1\n"
+    s = s + "        DIM tvLines AS []STRING\n"
+    s = s + "        DIM tvR AS INTEGER\n"
+    s = s + "        FOR tvR = 0 TO tvInnerH - 1\n"
+    s = s + "            DIM tvIdx AS INTEGER = w.Offset + tvR\n"
+    s = s + "            DIM tvRow AS STRING = \"\"\n"
+    s = s + "            IF tvIdx >= 0 AND tvIdx < LEN(tvVisible) THEN\n"
+    s = s + "                DIM tvP AS []STRING = strings.SplitN(tvVisible[tvIdx], \"|\", 3)\n"
+    s = s + "                DIM tvRD AS INTEGER = 0\n"
+    s = s + "                DIM tvRDerr AS ERROR\n"
+    s = s + "                tvRD, tvRDerr = strconv.Atoi(tvP[0])\n"
+    s = s + "                _ = tvRDerr\n"
+    s = s + "                DIM tvMark AS STRING = \"◇ \"\n"
+    s = s + "                IF tvP[1] = \"+\" THEN tvMark = \"▾ \"\n"
+    s = s + "                IF tvP[1] = \"-\" THEN tvMark = \"▸ \"\n"
+    s = s + "                DIM tvCur AS STRING = \"  \"\n"
+    s = s + "                IF tvIdx = w.Selected THEN tvCur = \"▶ \"\n"
+    s = s + "                tvRow = strings.Repeat(\"  \", tvRD) + tvCur + tvMark + tvP[2]\n"
+    s = s + "                IF lipgloss.Width(tvRow) > tvRowW THEN tvRow = Mid(tvRow, 1, tvRowW)\n"
+    s = s + "            END IF\n"
+    s = s + "            DIM tvPad AS INTEGER = tvRowW - lipgloss.Width(tvRow)\n"
+    s = s + "            IF tvPad < 0 THEN tvPad = 0\n"
+    s = s + "            DIM tvBar AS STRING = \"\"\n"
+    s = s + "            IF tvCanScroll THEN\n"
+    s = s + "                IF tvR = tvThumb THEN tvBar = \"┃\"\n"
+    s = s + "                IF tvR <> tvThumb THEN tvBar = \"╎\"\n"
+    s = s + "            END IF\n"
+    s = s + "            tvLines = APPEND(tvLines, tvRow + strings.Repeat(\" \", tvPad) + tvBar)\n"
+    s = s + "        NEXT tvR\n"
+    s = s + "        body = strings.Join(tvLines, \"\\n\")\n"
+    s = s + "    ELSEIF w.Kind = \"GroupBox\" THEN\n"
+    ' GroupBox renders empty body; the border + title is the whole point.
+    s = s + "        body = \"\"\n"
+    s = s + "    ELSEIF w.Kind = \"MenuBar\" THEN\n"
+    ' Render the closed bar — menu labels with the active one highlighted.
+    s = s + "        DIM mbLabs AS []STRING\n"
+    s = s + "        DIM mbRaw AS []STRING\n"
+    s = s + "        mbLabs, mbRaw = menuParse(w.Items)\n"
+    s = s + "        _ = mbRaw\n"
+    s = s + "        DIM mbHi AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#7dcfff\")).Foreground(lipgloss.Color(\"#1a1b2e\"))\n"
+    s = s + "        DIM mbOut AS STRING = \"\"\n"
+    s = s + "        DIM mbI AS INTEGER\n"
+    s = s + "        FOR mbI = 0 TO LEN(mbLabs) - 1\n"
+    s = s + "            DIM mbCell AS STRING = \" \" + mbLabs[mbI] + \" \"\n"
+    s = s + "            IF mbI = w.Selected THEN mbCell = mbHi.Render(mbCell)\n"
+    s = s + "            mbOut = mbOut + mbCell\n"
+    s = s + "        NEXT mbI\n"
+    s = s + "        body = mbOut\n"
+    s = s + "    ELSEIF w.Kind = \"StatusBar\" THEN\n"
+    ' Render segments as " Label: Value │ Label: Value │ ... "
+    s = s + "        DIM sbSegs AS []STRING = strings.Split(w.Items, \";\")\n"
+    s = s + "        DIM sbSep AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(\"#3b3d5e\"))\n"
+    s = s + "        DIM sbOut AS STRING = \"\"\n"
+    s = s + "        DIM sbI AS INTEGER\n"
+    s = s + "        FOR sbI = 0 TO LEN(sbSegs) - 1\n"
+    s = s + "            IF sbSegs[sbI] <> \"\" THEN\n"
+    s = s + "                IF sbOut <> \"\" THEN sbOut = sbOut + sbSep.Render(\" │ \")\n"
+    s = s + "                DIM sbP AS []STRING = strings.SplitN(sbSegs[sbI], \":\", 2)\n"
+    s = s + "                IF LEN(sbP) = 2 THEN\n"
+    s = s + "                    sbOut = sbOut + sbP[0] + \": \" + sbP[1]\n"
+    s = s + "                ELSE\n"
+    s = s + "                    sbOut = sbOut + sbSegs[sbI]\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "        NEXT sbI\n"
+    s = s + "        body = \" \" + sbOut\n"
+    s = s + "    ELSEIF w.Kind = \"TextArea\" THEN\n"
+    s = s + "        body = w.TaModel.View()\n"
+    s = s + "    ELSEIF w.Kind = \"SplitPanel\" THEN\n"
+    ' Render the divider line (vertical orientation = a ╎ column,
+    ' horizontal orientation = a ╌ row).
+    s = s + "        IF w.Items = \"horizontal\" THEN\n"
+    s = s + "            body = strings.Repeat(\"╌\", w.W)\n"
+    s = s + "        ELSE\n"
+    s = s + "            DIM splLines AS []STRING\n"
+    s = s + "            DIM splI AS INTEGER\n"
+    s = s + "            FOR splI = 0 TO w.H - 1\n"
+    s = s + "                splLines = APPEND(splLines, \"╎\")\n"
+    s = s + "            NEXT splI\n"
+    s = s + "            body = strings.Join(splLines, \"\\n\")\n"
+    s = s + "        END IF\n"
+    s = s + "    ELSEIF w.Kind = \"PropertyGrid\" THEN\n"
+    s = s + "        DIM pgRows AS []STRING = strings.Split(w.Items, \";\")\n"
+    s = s + "        DIM pgInnerH AS INTEGER = w.H - 2\n"
+    s = s + "        IF pgInnerH < 1 THEN pgInnerH = 1\n"
+    s = s + "        DIM pgInnerW AS INTEGER = w.W - 2\n"
+    s = s + "        IF pgInnerW < 1 THEN pgInnerW = 1\n"
+    s = s + "        DIM pgCanScroll AS BOOLEAN = (LEN(pgRows) > pgInnerH)\n"
+    s = s + "        DIM pgThumb AS INTEGER = -1\n"
+    s = s + "        IF pgCanScroll AND pgInnerH > 0 THEN\n"
+    s = s + "            DIM pgMaxOff AS INTEGER = LEN(pgRows) - pgInnerH\n"
+    s = s + "            IF pgMaxOff > 0 THEN pgThumb = w.Offset * (pgInnerH - 1) / pgMaxOff\n"
+    s = s + "        END IF\n"
+    s = s + "        DIM pgContentW AS INTEGER = pgInnerW\n"
+    s = s + "        IF pgCanScroll THEN pgContentW = pgInnerW - 1\n"
+    s = s + "        DIM pgNameW AS INTEGER = pgContentW / 2\n"
+    s = s + "        DIM pgValW AS INTEGER = pgContentW - pgNameW - 1\n"
+    s = s + "        DIM pgSep AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(\"#3b3d5e\"))\n"
+    s = s + "        DIM pgCatStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(\"#7dcfff\")).Bold(TRUE)\n"
+    s = s + "        DIM pgCatLine AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(\"#3b3d5e\"))\n"
+    s = s + "        DIM pgSel AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#7dcfff\")).Foreground(lipgloss.Color(\"#1a1b2e\"))\n"
+    s = s + "        DIM pgTrack AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(\"#3b3d5e\"))\n"
+    s = s + "        DIM pgThumbS AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(\"#7dcfff\"))\n"
+    s = s + "        DIM pgLines AS []STRING\n"
+    s = s + "        DIM pgR AS INTEGER\n"
+    s = s + "        FOR pgR = 0 TO pgInnerH - 1\n"
+    s = s + "            DIM pgIdx AS INTEGER = w.Offset + pgR\n"
+    s = s + "            DIM pgRow AS STRING = \"\"\n"
+    s = s + "            DIM pgIsCur AS BOOLEAN = (pgIdx = w.Selected)\n"
+    s = s + "            IF pgIdx >= 0 AND pgIdx < LEN(pgRows) AND pgRows[pgIdx] <> \"\" THEN\n"
+    s = s + "                DIM pgP AS []STRING = strings.SplitN(pgRows[pgIdx], \"|\", 4)\n"
+    ' Pad to 4 parts so missing trailing fields are empty strings.
+    s = s + "                DO WHILE LEN(pgP) < 4\n"
+    s = s + "                    pgP = APPEND(pgP, \"\")\n"
+    s = s + "                LOOP\n"
+    s = s + "                DIM pgCat AS STRING = pgP[0]\n"
+    s = s + "                DIM pgName AS STRING = pgP[1]\n"
+    s = s + "                DIM pgVal AS STRING = pgP[2]\n"
+    s = s + "                DIM pgType AS STRING = pgP[3]\n"
+    s = s + "                IF pgCat <> \"\" THEN\n"
+    ' Category header — "▸ Category " + dashes spanning content width.
+    s = s + "                    DIM pgCText AS STRING = \"▸ \" + pgCat + \" \"\n"
+    s = s + "                    DIM pgCTextW AS INTEGER = lipgloss.Width(pgCText)\n"
+    s = s + "                    IF pgCTextW > pgContentW THEN\n"
+    s = s + "                        pgCText = Mid(pgCText, 1, pgContentW)\n"
+    s = s + "                        pgCTextW = pgContentW\n"
+    s = s + "                    END IF\n"
+    s = s + "                    DIM pgFillLen AS INTEGER = pgContentW - pgCTextW\n"
+    s = s + "                    IF pgFillLen < 0 THEN pgFillLen = 0\n"
+    s = s + "                    pgRow = pgCatStyle.Render(pgCText) + pgCatLine.Render(strings.Repeat(\"─\", pgFillLen))\n"
+    s = s + "                ELSE\n"
+    ' Data row — Name | Value with type-aware Value rendering.
+    s = s + "                    DIM pgNm AS STRING = pgName\n"
+    s = s + "                    IF LEN(pgNm) > pgNameW THEN pgNm = Mid(pgNm, 1, pgNameW)\n"
+    s = s + "                    DIM pgNmPad AS INTEGER = pgNameW - LEN(pgNm)\n"
+    s = s + "                    IF pgNmPad < 0 THEN pgNmPad = 0\n"
+    s = s + "                    DIM pgDisp AS STRING = pgVal\n"
+    s = s + "                    DIM pgSwatch AS STRING = \"\"\n"
+    s = s + "                    DIM pgDispW AS INTEGER = lipgloss.Width(pgDisp)\n"
+    ' Edit-mode override — render buffer with a caret at editPos.
+    s = s + "                    DIM pgEditing AS BOOLEAN = (editing AND pgIdx = editRow)\n"
+    s = s + "                    IF pgEditing THEN\n"
+    s = s + "                        DIM pgEPre AS STRING = \"\"\n"
+    s = s + "                        DIM pgEPost AS STRING = \"\"\n"
+    s = s + "                        IF editPos > 0 THEN pgEPre = Mid(editBuf, 1, editPos)\n"
+    s = s + "                        IF editPos < LEN(editBuf) THEN pgEPost = Mid(editBuf, editPos + 1, LEN(editBuf) - editPos)\n"
+    s = s + "                        pgDisp = pgEPre + \"▎\" + pgEPost\n"
+    s = s + "                        pgDispW = lipgloss.Width(pgDisp)\n"
+    s = s + "                    ELSEIF pgType = \"bool\" THEN\n"
+    s = s + "                        IF pgVal = \"true\" THEN\n"
+    s = s + "                            pgDisp = \"[x] true\"\n"
+    s = s + "                        ELSE\n"
+    s = s + "                            pgDisp = \"[ ] false\"\n"
+    s = s + "                        END IF\n"
+    s = s + "                        pgDispW = lipgloss.Width(pgDisp)\n"
+    s = s + "                    ELSEIF pgType = \"color\" AND pgVal <> \"\" THEN\n"
+    s = s + "                        pgSwatch = lipgloss.NewStyle().Background(lipgloss.Color(pgVal)).Render(\"  \")\n"
+    s = s + "                        pgDisp = pgSwatch + \" \" + pgVal\n"
+    s = s + "                        pgDispW = 3 + lipgloss.Width(pgVal)\n"
+    s = s + "                    ELSEIF strings.HasPrefix(pgType, \"enum:\") THEN\n"
+    s = s + "                        pgDisp = \"◂ \" + pgVal + \" ▸\"\n"
+    s = s + "                        pgDispW = lipgloss.Width(pgDisp)\n"
+    s = s + "                    END IF\n"
+    s = s + "                    IF pgDispW > pgValW AND pgType <> \"color\" THEN\n"
+    s = s + "                        DO WHILE pgDispW > pgValW AND LEN(pgDisp) > 0\n"
+    s = s + "                            pgDisp = Mid(pgDisp, 1, LEN(pgDisp) - 1)\n"
+    s = s + "                            pgDispW = lipgloss.Width(pgDisp)\n"
+    s = s + "                        LOOP\n"
+    s = s + "                    END IF\n"
+    s = s + "                    DIM pgValPad AS INTEGER = pgValW - pgDispW\n"
+    s = s + "                    IF pgValPad < 0 THEN pgValPad = 0\n"
+    s = s + "                    DIM pgVbar AS STRING = pgSep.Render(\"│\")\n"
+    s = s + "                    IF pgIsCur THEN\n"
+    s = s + "                        DIM pgNmCur AS STRING = pgSel.Render(pgNm + strings.Repeat(\" \", pgNmPad))\n"
+    s = s + "                        IF pgType = \"color\" THEN\n"
+    s = s + "                            pgRow = pgNmCur + pgVbar + pgDisp + pgSel.Render(strings.Repeat(\" \", pgValPad))\n"
+    s = s + "                        ELSE\n"
+    s = s + "                            pgRow = pgNmCur + pgVbar + pgSel.Render(pgDisp + strings.Repeat(\" \", pgValPad))\n"
+    s = s + "                        END IF\n"
+    s = s + "                    ELSE\n"
+    s = s + "                        IF pgType = \"color\" THEN\n"
+    s = s + "                            pgRow = pgNm + strings.Repeat(\" \", pgNmPad) + pgVbar + pgDisp + strings.Repeat(\" \", pgValPad)\n"
+    s = s + "                        ELSE\n"
+    s = s + "                            pgRow = pgNm + strings.Repeat(\" \", pgNmPad) + pgVbar + pgDisp + strings.Repeat(\" \", pgValPad)\n"
+    s = s + "                        END IF\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            DIM pgPad AS INTEGER = pgContentW - lipgloss.Width(pgRow)\n"
+    s = s + "            IF pgPad < 0 THEN pgPad = 0\n"
+    s = s + "            DIM pgBar AS STRING = \"\"\n"
+    s = s + "            IF pgCanScroll THEN\n"
+    s = s + "                IF pgR = pgThumb THEN pgBar = pgThumbS.Render(\"┃\")\n"
+    s = s + "                IF pgR <> pgThumb THEN pgBar = pgTrack.Render(\"╎\")\n"
+    s = s + "            END IF\n"
+    s = s + "            pgLines = APPEND(pgLines, pgRow + strings.Repeat(\" \", pgPad) + pgBar)\n"
+    s = s + "        NEXT pgR\n"
+    s = s + "        body = strings.Join(pgLines, \"\\n\")\n"
+    s = s + "    ELSE\n"
+    s = s + "        body = w.Kind\n"
+    s = s + "    END IF\n"
+    s = s + "    RETURN style.Render(body)\n"
+    s = s + "END FUNCTION\n\n"
+    RETURN s
+END FUNCTION
+
+' emitView writes the View function that composes the form + widgets.
+FUNCTION emitView(form AS Form) AS STRING
+    DIM bgCol AS STRING = form.BgColor
+    DIM fgCol AS STRING = form.FgColor
+    IF bgCol = "" THEN bgCol = "#1a1b2e"
+    IF fgCol = "" THEN fgCol = "#e0def4"
+    DIM title AS STRING = form.Title
+    IF title = "" THEN title = form.Name
+
+    DIM s AS STRING = ""
+    s = s + "FUNCTION (m AS Model) View() AS tea.View\n"
+    s = s + fmt.Sprintf("    DIM formW AS INTEGER = %d\n", form.Width)
+    s = s + fmt.Sprintf("    DIM formH AS INTEGER = %d\n", form.Height)
+    s = s + fmt.Sprintf("    DIM bgCol AS STRING = %s\n", dbasStr(bgCol))
+    s = s + fmt.Sprintf("    DIM fgCol AS STRING = %s\n", dbasStr(fgCol))
+    s = s + fmt.Sprintf("    DIM title AS STRING = %s\n", dbasStr(title))
+    s = s + "    DIM formStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Foreground(lipgloss.Color(fgCol)).Width(formW - 2).Height(formH - 2).Border(lipgloss.DoubleBorder()).BorderForeground(lipgloss.Color(fgCol))\n"
+    s = s + "    DIM bg AS STRING = formStyle.Render(\"\")\n"
+    s = s + "    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Foreground(lipgloss.Color(\"#7dcfff\")).Bold(TRUE)\n"
+    s = s + "    DIM titleStr AS STRING = titleStyle.Render(\" \" + title + \" \")\n"
+    s = s + "    DIM bgLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(bg)\n"
+    s = s + "    DIM titleLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(titleStr).X(2).Y(0).Z(1)\n"
+    s = s + "    DIM comp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer, titleLayer)\n"
+    s = s + "    DIM focusedIdx AS INTEGER = -1\n"
+    s = s + "    DIM fcount AS INTEGER = 0\n"
+    s = s + "    DIM ii AS INTEGER\n"
+    s = s + "    FOR ii = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        IF m.Widgets[ii].TStop AND m.Widgets[ii].Visi THEN\n"
+    s = s + "            IF fcount = m.Focus THEN focusedIdx = ii\n"
+    s = s + "            fcount = fcount + 1\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT ii\n"
+    s = s + "    DIM j AS INTEGER\n"
+    s = s + "    FOR j = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        DIM w AS WState = m.Widgets[j]\n"
+    s = s + "        IF w.Visi THEN\n"
+    s = s + "            DIM wEditing AS BOOLEAN = (m.PgEdit AND m.PgEditIdx = j)\n"
+    s = s + "            DIM ws AS STRING = renderOneWidget(w, j = focusedIdx, wEditing, m.PgEditRow, m.PgEditBuf, m.PgEditPos)\n"
+    s = s + "            comp.AddLayers(lipgloss.NewLayer(ws).X(w.X + 1).Y(w.Y + 1).Z(j + 2))\n"
+    ' GroupBox + TreeView/ScrollPane: paint Title as a Z-overlay on the
+    ' top border so it reads as an embedded label.
+    s = s + "            IF w.Title <> \"\" AND (w.Kind = \"GroupBox\" OR w.Kind = \"TreeView\" OR w.Kind = \"ScrollPane\" OR w.Kind = \"PropertyGrid\") THEN\n"
+    s = s + "                DIM gtStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Foreground(lipgloss.Color(\"#7dcfff\")).Bold(TRUE)\n"
+    s = s + "                DIM gtStr AS STRING = gtStyle.Render(\" \" + w.Title + \" \")\n"
+    s = s + "                comp.AddLayers(lipgloss.NewLayer(gtStr).X(w.X + 3).Y(w.Y + 1).Z(j + 100))\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT j\n"
+    s = s + "    DIM formStr AS STRING = comp.Render()\n"
+    ' Wrap the form in a full-terminal background so cells outside the
+    ' form bounds get painted every frame — otherwise modal overlays
+    ' that extend past the form leave stale pixels when they close.
+    s = s + "    DIM termBgStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Width(m.Width).Height(m.Height)\n"
+    s = s + "    DIM termBgStr AS STRING = termBgStyle.Render(\"\")\n"
+    s = s + "    DIM termBgLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(termBgStr)\n"
+    s = s + "    DIM formLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(formStr).X(0).Y(0).Z(1)\n"
+    s = s + "    DIM screenComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(termBgLayer, formLayer)\n"
+    s = s + "    DIM frameStr AS STRING = screenComp.Render()\n"
+    s = s + "    IF m.Dialog.Active THEN\n"
+    s = s + "        DIM dlgStr AS STRING\n"
+    s = s + "        DIM dlgX AS INTEGER\n"
+    s = s + "        DIM dlgY AS INTEGER\n"
+    s = s + "        dlgStr, dlgX, dlgY = m.Dialog.Render()\n"
+    s = s + "        IF dlgStr <> \"\" THEN\n"
+    s = s + "            DIM bgL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(frameStr)\n"
+    s = s + "            DIM dlgLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dlgStr).X(dlgX).Y(dlgY).Z(20)\n"
+    s = s + "            DIM dlgComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgL, dlgLayer)\n"
+    s = s + "            frameStr = dlgComp.Render()\n"
+    s = s + "        END IF\n"
+    s = s + "    END IF\n"
+    ' ComboBox dropdown overlay.
+    s = s + "    IF m.DropActive AND m.DropIdx >= 0 AND m.DropIdx < LEN(m.Widgets) THEN\n"
+    s = s + "        DIM ddCb AS WState = m.Widgets[m.DropIdx]\n"
+    s = s + "        DIM ddIts AS []STRING = strings.Split(ddCb.Items, \";\")\n"
+    s = s + "        DIM ddRows AS INTEGER = LEN(ddIts)\n"
+    s = s + "        IF ddRows > 8 THEN ddRows = 8\n"
+    s = s + "        IF ddRows < 1 THEN ddRows = 1\n"
+    s = s + "        DIM ddWInner AS INTEGER = ddCb.W - 2\n"
+    s = s + "        IF ddWInner < 1 THEN ddWInner = 1\n"
+    s = s + "        DIM ddBox AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#16161e\")).Foreground(lipgloss.Color(\"#a9b1d6\")).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(\"#7dcfff\")).Width(ddWInner)\n"
+    s = s + "        DIM ddSel AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#7dcfff\")).Foreground(lipgloss.Color(\"#1a1b2e\"))\n"
+    s = s + "        DIM ddLines AS []STRING\n"
+    s = s + "        DIM ddOff AS INTEGER = 0\n"
+    s = s + "        IF m.DropCursor >= ddRows THEN ddOff = m.DropCursor - ddRows + 1\n"
+    s = s + "        DIM ddJ AS INTEGER\n"
+    s = s + "        FOR ddJ = 0 TO ddRows - 1\n"
+    s = s + "            DIM ddIdx AS INTEGER = ddOff + ddJ\n"
+    s = s + "            DIM ddLine AS STRING = \"\"\n"
+    s = s + "            IF ddIdx >= 0 AND ddIdx < LEN(ddIts) THEN ddLine = ddIts[ddIdx]\n"
+    s = s + "            IF LEN(ddLine) > ddWInner THEN ddLine = Mid(ddLine, 1, ddWInner)\n"
+    s = s + "            DIM ddPad AS INTEGER = ddWInner - LEN(ddLine)\n"
+    s = s + "            IF ddPad < 0 THEN ddPad = 0\n"
+    s = s + "            DIM ddFull AS STRING = ddLine + strings.Repeat(\" \", ddPad)\n"
+    s = s + "            IF ddIdx = m.DropCursor THEN ddFull = ddSel.Render(ddFull)\n"
+    s = s + "            ddLines = APPEND(ddLines, ddFull)\n"
+    s = s + "        NEXT ddJ\n"
+    s = s + "        DIM ddStr AS STRING = ddBox.Render(strings.Join(ddLines, \"\\n\"))\n"
+    s = s + "        DIM ddBgL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(frameStr)\n"
+    s = s + "        DIM ddLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(ddStr).X(ddCb.X + 1).Y(ddCb.Y + ddCb.H + 1).Z(25)\n"
+    s = s + "        DIM ddComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(ddBgL, ddLayer)\n"
+    s = s + "        frameStr = ddComp.Render()\n"
+    s = s + "    END IF\n"
+    ' MenuBar dropdown overlay — walk widgets, render any MenuBar with
+    ' Checked=TRUE as a dropdown below its active menu label.
+    s = s + "    DIM mvI AS INTEGER\n"
+    s = s + "    FOR mvI = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        IF m.Widgets[mvI].Kind = \"MenuBar\" AND m.Widgets[mvI].Checked THEN\n"
+    s = s + "            DIM mvW AS WState = m.Widgets[mvI]\n"
+    s = s + "            DIM mvLabs AS []STRING\n"
+    s = s + "            DIM mvRaw AS []STRING\n"
+    s = s + "            mvLabs, mvRaw = menuParse(mvW.Items)\n"
+    s = s + "            DIM mvAct AS INTEGER = mvW.Selected\n"
+    s = s + "            IF mvAct >= 0 AND mvAct < LEN(mvLabs) THEN\n"
+    s = s + "                DIM mvIL AS []STRING\n"
+    s = s + "                DIM mvIA AS []STRING\n"
+    s = s + "                mvIL, mvIA = menuItems(mvRaw[mvAct])\n"
+    s = s + "                _ = mvIA\n"
+    s = s + "                DIM mvDX AS INTEGER = 0\n"
+    s = s + "                DIM mvP AS INTEGER\n"
+    s = s + "                FOR mvP = 0 TO mvAct - 1\n"
+    s = s + "                    mvDX = mvDX + LEN(mvLabs[mvP]) + 2\n"
+    s = s + "                NEXT mvP\n"
+    s = s + "                DIM mvWdth AS INTEGER = 0\n"
+    s = s + "                DIM mvQ AS INTEGER\n"
+    s = s + "                FOR mvQ = 0 TO LEN(mvIL) - 1\n"
+    s = s + "                    IF LEN(mvIL[mvQ]) > mvWdth THEN mvWdth = LEN(mvIL[mvQ])\n"
+    s = s + "                NEXT mvQ\n"
+    s = s + "                IF mvWdth < 10 THEN mvWdth = 10\n"
+    s = s + "                DIM mvBox AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#16161e\")).Foreground(lipgloss.Color(\"#a9b1d6\")).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(\"#7dcfff\")).Width(mvWdth + 2)\n"
+    s = s + "                DIM mvCur AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#7dcfff\")).Foreground(lipgloss.Color(\"#1a1b2e\"))\n"
+    s = s + "                DIM mvSep AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(\"#3b3d5e\"))\n"
+    s = s + "                DIM mvLines AS []STRING\n"
+    s = s + "                DIM mvR AS INTEGER\n"
+    s = s + "                FOR mvR = 0 TO LEN(mvIL) - 1\n"
+    s = s + "                    DIM mvText AS STRING\n"
+    s = s + "                    IF mvIL[mvR] = \"-\" THEN\n"
+    s = s + "                        mvText = mvSep.Render(strings.Repeat(\"─\", mvWdth))\n"
+    s = s + "                    ELSE\n"
+    s = s + "                        DIM mvLine AS STRING = mvIL[mvR]\n"
+    s = s + "                        IF LEN(mvLine) > mvWdth THEN mvLine = Mid(mvLine, 1, mvWdth)\n"
+    s = s + "                        DIM mvPad AS INTEGER = mvWdth - LEN(mvLine)\n"
+    s = s + "                        IF mvPad < 0 THEN mvPad = 0\n"
+    s = s + "                        mvText = mvLine + strings.Repeat(\" \", mvPad)\n"
+    s = s + "                        IF mvR = mvW.Offset THEN mvText = mvCur.Render(mvText)\n"
+    s = s + "                    END IF\n"
+    s = s + "                    mvLines = APPEND(mvLines, mvText)\n"
+    s = s + "                NEXT mvR\n"
+    s = s + "                DIM mvStr AS STRING = mvBox.Render(strings.Join(mvLines, \"\\n\"))\n"
+    s = s + "                DIM mvBgL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(frameStr)\n"
+    s = s + "                DIM mvLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(mvStr).X(mvW.X + mvDX + 1).Y(mvW.Y + mvW.H + 1).Z(30)\n"
+    s = s + "                DIM mvComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(mvBgL, mvLayer)\n"
+    s = s + "                frameStr = mvComp.Render()\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT mvI\n"
+    s = s + "    DIM v AS tea.View = tea.NewView(frameStr)\n"
+    s = s + "    v.AltScreen = TRUE\n"
+    s = s + "    v.MouseMode = tea.MouseModeCellMotion\n"
+    s = s + "    RETURN v\n"
+    s = s + "END FUNCTION\n\n"
+    RETURN s
+END FUNCTION
+
+' emitMain writes the program entry point.
+FUNCTION emitMain() AS STRING
+    DIM s AS STRING = ""
+    s = s + "SUB Main()\n"
+    s = s + "    DIM model AS Model = NewModel()\n"
+    s = s + "    DIM prog AS POINTER TO tea.Program = tea.NewProgram(model, tea.WithoutSignalHandler())\n"
+    s = s + "    DIM finalModel AS tea.Model\n"
+    s = s + "    DIM err AS ERROR\n"
+    s = s + "    finalModel, err = prog.Run()\n"
+    s = s + "    IF err <> NIL THEN\n"
+    s = s + "        fmt.Fprintf(os.Stderr, \"error: %v\\n\", err)\n"
+    s = s + "        os.Exit(1)\n"
+    s = s + "    END IF\n"
+    s = s + "    _ = finalModel\n"
+    s = s + "END SUB\n"
+    RETURN s
+END FUNCTION
+
+' emitTools writes per-tool runtime glue:
+'   - SUB <id>_Show() — sets gPendingDialog so the next Update tick
+'     transitions the model into dialog mode.
+'   - SUB dispatchFileSelected(toolId, path) — routes a selection back
+'     to <toolId>_FileSelected(path) if the user defined it (otherwise
+'     emitFileSelectedStubs supplies an empty stub).
+FUNCTION emitTools(form AS Form) AS STRING
+    DIM s AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(form.Tools) - 1
+        DIM t AS ToolEntry = form.Tools[i]
+        IF t.Kind = "FileDialog" THEN
+            s = s + "SUB " + t.Id + "_Show()\n"
+            s = s + "    gPendingDialog = " + dbasStr(t.Id) + "\n"
+            s = s + "END SUB\n\n"
+        END IF
+    NEXT i
+    s = s + "SUB dispatchFileSelected(toolId AS STRING, path AS STRING)\n"
+    FOR i = 0 TO LEN(form.Tools) - 1
+        DIM tt AS ToolEntry = form.Tools[i]
+        IF tt.Kind = "FileDialog" THEN
+            s = s + "    IF toolId = " + dbasStr(tt.Id) + " THEN " + tt.Id + "_FileSelected(path)\n"
+        END IF
+    NEXT i
+    s = s + "END SUB\n\n"
+    RETURN s
+END FUNCTION
+
+' emitToolStubs emits empty <id>_FileSelected stubs for any FileDialog
+' tool whose handler the user hasn't defined.
+FUNCTION emitToolStubs(form AS Form, defined AS []STRING) AS STRING
+    DIM s AS STRING = ""
+    DIM emitted AS BOOLEAN = FALSE
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(form.Tools) - 1
+        DIM t AS ToolEntry = form.Tools[i]
+        IF t.Kind = "FileDialog" THEN
+            DIM nm AS STRING = t.Id + "_FileSelected"
+            IF NOT subDefined(nm, defined) THEN
+                IF NOT emitted THEN
+                    s = s + "' Auto-stubs for FileDialog _FileSelected handlers not yet defined.\n"
+                    emitted = TRUE
+                END IF
+                s = s + "SUB " + nm + "(path AS STRING)\n"
+                s = s + "END SUB\n\n"
+            END IF
+        END IF
+    NEXT i
+    RETURN s
+END FUNCTION
+
+' emitFileDialogRuntime reads internal/runtime/filedialog.dbas and
+' inlines its contents into the generated program. Searched in three
+' places: $DBTUI_RUNTIME_DIR, alongside the DBtui binary, and the
+' development-tree default. Falls back to a stub if none found.
+FUNCTION emitFileDialogRuntime() AS STRING
+    DIM candidates AS []STRING
+    DIM envDir AS STRING = os.Getenv("DBTUI_RUNTIME_DIR")
+    IF envDir <> "" THEN candidates = APPEND(candidates, filepath.Join(envDir, "filedialog.dbas"))
+    DIM exe AS STRING
+    DIM exeErr AS ERROR
+    exe, exeErr = os.Executable()
+    IF exeErr = NIL THEN
+        DIM exeDir AS STRING = filepath.Dir(exe)
+        candidates = APPEND(candidates, filepath.Join(exeDir, "internal", "runtime", "filedialog.dbas"))
+    END IF
+    candidates = APPEND(candidates, "/home/zditech/DBasic/examples/DBtui/internal/runtime/filedialog.dbas")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(candidates) - 1
+        DIM data AS BYTES
+        DIM err AS ERROR
+        data, err = os.ReadFile(candidates[i])
+        IF err = NIL THEN
+            RETURN "' ---- FileDialog runtime (inlined from " + candidates[i] + ") ----\n" + string(data) + "\n"
+        END IF
+    NEXT i
+    RETURN "' ---- FileDialog runtime: not found, dialog calls will fail ----\n"
+END FUNCTION
+
+' GenerateProgram is the public entry point. Returns the .dbas source.
+FUNCTION GenerateProgram(p AS Project) AS STRING
+    ' Find the start form (or the first form if none is named).
+    DIM startIdx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(p.Forms) - 1
+        IF p.Forms[i].Name = p.StartForm THEN startIdx = i
+    NEXT i
+    IF startIdx < 0 AND LEN(p.Forms) > 0 THEN startIdx = 0
+    DIM form AS Form
+    IF startIdx >= 0 THEN form = p.Forms[startIdx]
+
+    DIM userCode AS STRING = readUserCode(form.Code)
+    DIM defined AS []STRING = findDefinedSubs(userCode)
+
+    DIM s AS STRING = ""
+    s = s + emitHeader(p)
+    s = s + emitFileDialogRuntime()
+    s = s + emitNewModel(form)
+    s = s + emitDispatchClick(form)
+    s = s + emitDispatchChange(form)
+    s = s + emitSelectRadio()
+    s = s + emitTreeHelper()
+    s = s + emitMenuHelpers()
+    s = s + emitDispatchMenuAction(form)
+    s = s + emitPropertyGridHelpers()
+    s = s + emitSetFocus()
+    s = s + emitLifecycle()
+    s = s + emitRenderWidget()
+    s = s + emitView(form)
+    s = s + emitTools(form)
+    IF userCode <> "" THEN
+        s = s + "' ---- User code from " + form.Code + " ----\n"
+        s = s + userCode
+        IF NOT strings.HasSuffix(userCode, "\n") THEN s = s + "\n"
+        s = s + "\n"
+    END IF
+    s = s + emitStubs(form, defined)
+    s = s + emitToolStubs(form, defined)
+    s = s + emitMain()
+    RETURN s
+END FUNCTION

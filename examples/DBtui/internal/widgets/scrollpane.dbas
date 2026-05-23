@@ -1,0 +1,80 @@
+' DBtui — internal/widgets/scrollpane.dbas
+'
+' ScrollPane — bordered scrollable container with an optional title.
+' Items is a ";"-separated STRING (reuses LstItems). LstIdx is the
+' cursor line; Offset is the scroll position. The strip resembles the
+' internal ScrollPanel DBtui uses for its tree/palette/properties.
+'
+' Keyboard: ↑/↓ moves the cursor (which auto-scrolls to keep it
+' visible). Mouse wheel scrolls; click selects a row. Enter on the
+' cursor fires Change.
+
+FUNCTION NewScrollPane(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindScrollPane
+    w.Visible = TRUE
+    w.TabStop = TRUE
+    w.W = 32
+    w.H = 10
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#e0def4"
+    w.Style.Border = "normal"
+    w.Style.Corner = "round"
+    w.Title = "Items"
+    w.LstItems = "Apple;Banana;Cherry;Date;Elderberry;Fig;Grape;Honeydew"
+    w.LstIdx = 0
+    w.Offset = 0
+    RETURN w
+END FUNCTION
+
+FUNCTION ScrollPaneProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Title", w.Title))
+    out = APPEND(out, StringProp("Items", w.LstItems))
+    out = APPEND(out, StringProp("Selected", fmt.Sprintf("%d", w.LstIdx)))
+    out = APPEND(out, StringProp("Offset", fmt.Sprintf("%d", w.Offset)))
+    DIM stylePs AS []Property = StyleProperties(w.Style, TRUE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetScrollPaneProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Title" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.Title = s
+        RETURN NIL
+    END IF
+    IF name = "Items" THEN
+        DIM s2 AS STRING
+        DIM err2 AS ERROR
+        s2, err2 = coerceString(name, value)
+        IF err2 <> NIL THEN RETURN err2
+        w.LstItems = s2
+        RETURN NIL
+    END IF
+    IF name = "Selected" THEN
+        DIM iv AS INTEGER
+        DIM ierr AS ERROR
+        iv, ierr = coerceInt(name, value)
+        IF ierr <> NIL THEN RETURN ierr
+        w.LstIdx = iv
+        RETURN NIL
+    END IF
+    IF name = "Offset" THEN
+        DIM ov AS INTEGER
+        DIM oerr AS ERROR
+        ov, oerr = coerceInt(name, value)
+        IF oerr <> NIL THEN RETURN oerr
+        w.Offset = ov
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown ScrollPane property: " + name)
+END FUNCTION

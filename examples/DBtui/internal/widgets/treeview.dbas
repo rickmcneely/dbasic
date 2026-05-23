@@ -1,0 +1,85 @@
+' DBtui — internal/widgets/treeview.dbas
+'
+' TreeView — collapsible hierarchical list. Nodes are stored in the
+' shared LstItems field as ";"-separated entries, each entry of the
+' shape "depth|state|label" where depth is the indent level (0=root)
+' and state is one of:
+'   +   expandable, currently open (renders ▾)
+'   -   expandable, currently closed (renders ▸)
+'   *   leaf (renders ◇)
+'
+' Example: "0|+|project;1|+|src;2|*|main.dbas;1|*|README"
+'
+' LstIdx is the cursor position into the *visible* row list (children
+' of collapsed nodes are skipped); Offset auto-scrolls to keep the
+' cursor in view. Enter on a +/- node toggles its state.
+
+FUNCTION NewTreeView(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindTreeView
+    w.Visible = TRUE
+    w.TabStop = TRUE
+    w.W = 28
+    w.H = 12
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#e0def4"
+    w.Style.Border = "normal"
+    w.Style.Corner = "round"
+    w.Title = "Tree"
+    w.LstItems = "0|+|project;1|+|src;2|*|main.dbas;2|*|util.dbas;1|*|README.md"
+    w.LstIdx = 0
+    w.Offset = 0
+    RETURN w
+END FUNCTION
+
+FUNCTION TreeViewProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Title", w.Title))
+    out = APPEND(out, StringProp("Nodes", w.LstItems))
+    out = APPEND(out, StringProp("Selected", fmt.Sprintf("%d", w.LstIdx)))
+    out = APPEND(out, StringProp("Offset", fmt.Sprintf("%d", w.Offset)))
+    DIM stylePs AS []Property = StyleProperties(w.Style, TRUE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetTreeViewProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Title" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.Title = s
+        RETURN NIL
+    END IF
+    IF name = "Nodes" THEN
+        DIM s2 AS STRING
+        DIM err2 AS ERROR
+        s2, err2 = coerceString(name, value)
+        IF err2 <> NIL THEN RETURN err2
+        w.LstItems = s2
+        RETURN NIL
+    END IF
+    IF name = "Selected" THEN
+        DIM iv AS INTEGER
+        DIM ierr AS ERROR
+        iv, ierr = coerceInt(name, value)
+        IF ierr <> NIL THEN RETURN ierr
+        w.LstIdx = iv
+        RETURN NIL
+    END IF
+    IF name = "Offset" THEN
+        DIM ov AS INTEGER
+        DIM oerr AS ERROR
+        ov, oerr = coerceInt(name, value)
+        IF oerr <> NIL THEN RETURN oerr
+        w.Offset = ov
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown TreeView property: " + name)
+END FUNCTION

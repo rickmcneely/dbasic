@@ -2,9 +2,22 @@
 '
 ' Project file format. Mirrors ~/vgtui/internal/project/format.go in
 ' shape: a Project owns Forms and Modules; each Form owns WidgetEntry
-' instances. JSON marshalling will land alongside File→Open / Save in
-' a later session — for now these are pure data carriers used by the
-' tree builder and (eventually) the codegen.
+' instances. JSON marshal/unmarshal lives here; the rest of the app
+' calls SaveProject/LoadProject and lets encoding/json + reflection
+' walk the tree.
+
+IMPORT "encoding/json" AS encjson
+IMPORT "os"
+
+' ToolEntry is a serialized non-visual component (file dialog, serial
+' connection, timer, etc.) bound to a form. Unlike WidgetEntry it has
+' no geometry — tools are invisible at design time and their behaviour
+' is invoked from event handlers in user code.
+TYPE ToolEntry
+    DIM Id         AS STRING                       ' user-facing id, e.g. "dlgOpen"
+    DIM Kind       AS STRING                       ' "FileDialog", "Timer", "TcpClient", ...
+    DIM Properties AS MAP OF STRING TO ANY
+END TYPE
 
 ' WidgetEntry is a serialized widget instance on a form.
 TYPE WidgetEntry
@@ -42,6 +55,7 @@ TYPE Form
     DIM ShowInTaskbar AS BOOLEAN
     DIM ShowStatusBar AS BOOLEAN
     DIM Widgets       AS []WidgetEntry
+    DIM Tools         AS []ToolEntry
 END TYPE
 
 ' Module represents a standalone DBasic source module.
@@ -57,6 +71,7 @@ TYPE Project
     DIM StartForm AS STRING                         ' name of the startup form
     DIM Forms     AS []Form
     DIM Modules   AS []Module
+    DIM Path      AS STRING                         ' on-disk path; empty for fresh projects
 END TYPE
 
 ' FormDefaults returns sensible defaults for a freshly-created form.
@@ -79,4 +94,164 @@ FUNCTION FormDefaults(name AS STRING) AS Form
     f.Visible = TRUE
     f.ShowInTaskbar = TRUE
     RETURN f
+END FUNCTION
+
+' SetFormProperty applies a Properties-panel edit to a form. File, Code,
+' and the Widgets slice are intentionally not settable here — the file
+' columns are read-only viewer rows, and Widgets is mutated through the
+' visual editor. Returns NIL on success.
+FUNCTION SetFormProperty(f AS POINTER TO Form, name AS STRING, value AS ANY) AS ERROR
+    IF name = "Name" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        f.Name = s
+        RETURN NIL
+    END IF
+    IF name = "Title" THEN
+        DIM s2 AS STRING
+        DIM err2 AS ERROR
+        s2, err2 = coerceString(name, value)
+        IF err2 <> NIL THEN RETURN err2
+        f.Title = s2
+        RETURN NIL
+    END IF
+    IF name = "Width" THEN
+        DIM i AS INTEGER
+        DIM err3 AS ERROR
+        i, err3 = coerceInt(name, value)
+        IF err3 <> NIL THEN RETURN err3
+        IF i < 1 THEN i = 1
+        f.Width = i
+        RETURN NIL
+    END IF
+    IF name = "Height" THEN
+        DIM i2 AS INTEGER
+        DIM err4 AS ERROR
+        i2, err4 = coerceInt(name, value)
+        IF err4 <> NIL THEN RETURN err4
+        IF i2 < 1 THEN i2 = 1
+        f.Height = i2
+        RETURN NIL
+    END IF
+    IF name = "Modal" THEN
+        DIM b AS BOOLEAN
+        DIM err5 AS ERROR
+        b, err5 = coerceBool(name, value)
+        IF err5 <> NIL THEN RETURN err5
+        f.Modal = b
+        RETURN NIL
+    END IF
+    IF name = "ResizableX" THEN
+        DIM b2 AS BOOLEAN
+        DIM err6 AS ERROR
+        b2, err6 = coerceBool(name, value)
+        IF err6 <> NIL THEN RETURN err6
+        f.ResizableX = b2
+        RETURN NIL
+    END IF
+    IF name = "ResizableY" THEN
+        DIM b3 AS BOOLEAN
+        DIM err7 AS ERROR
+        b3, err7 = coerceBool(name, value)
+        IF err7 <> NIL THEN RETURN err7
+        f.ResizableY = b3
+        RETURN NIL
+    END IF
+    IF name = "Visible" THEN
+        DIM b4 AS BOOLEAN
+        DIM err8 AS ERROR
+        b4, err8 = coerceBool(name, value)
+        IF err8 <> NIL THEN RETURN err8
+        f.Visible = b4
+        RETURN NIL
+    END IF
+    IF name = "Taskbar" OR name = "ShowInTaskbar" THEN
+        DIM b5 AS BOOLEAN
+        DIM err9 AS ERROR
+        b5, err9 = coerceBool(name, value)
+        IF err9 <> NIL THEN RETURN err9
+        f.ShowInTaskbar = b5
+        RETURN NIL
+    END IF
+    IF name = "StatusBar" OR name = "ShowStatusBar" THEN
+        DIM b6 AS BOOLEAN
+        DIM err10 AS ERROR
+        b6, err10 = coerceBool(name, value)
+        IF err10 <> NIL THEN RETURN err10
+        f.ShowStatusBar = b6
+        RETURN NIL
+    END IF
+    IF name = "Border" THEN
+        DIM s3 AS STRING
+        DIM err11 AS ERROR
+        s3, err11 = coerceString(name, value)
+        IF err11 <> NIL THEN RETURN err11
+        f.Border = s3
+        RETURN NIL
+    END IF
+    IF name = "Corner" THEN
+        DIM s4 AS STRING
+        DIM err12 AS ERROR
+        s4, err12 = coerceString(name, value)
+        IF err12 <> NIL THEN RETURN err12
+        f.Corner = s4
+        RETURN NIL
+    END IF
+    IF name = "StartPos" THEN
+        DIM s5 AS STRING
+        DIM err13 AS ERROR
+        s5, err13 = coerceString(name, value)
+        IF err13 <> NIL THEN RETURN err13
+        f.StartPos = s5
+        RETURN NIL
+    END IF
+    IF name = "BgColor" THEN
+        DIM s6 AS STRING
+        DIM err14 AS ERROR
+        s6, err14 = coerceString(name, value)
+        IF err14 <> NIL THEN RETURN err14
+        f.BgColor = s6
+        RETURN NIL
+    END IF
+    IF name = "FgColor" THEN
+        DIM s7 AS STRING
+        DIM err15 AS ERROR
+        s7, err15 = coerceString(name, value)
+        IF err15 <> NIL THEN RETURN err15
+        f.FgColor = s7
+        RETURN NIL
+    END IF
+    RETURN NewError("read-only or unknown form property: " + name)
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' .dbproj JSON I/O
+'
+' One file per project. Forms and widgets live inline (the form-as-
+' separate-file split implied by Form.File / Form.Code is aspirational
+' — we keep it as metadata for the codegen pass but persist everything
+' in one .dbproj blob for now).
+' ----------------------------------------------------------------------
+
+FUNCTION SaveProject(p AS Project, path AS STRING) AS ERROR
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = encjson.MarshalIndent(p, "", "  ")
+    IF err <> NIL THEN RETURN err
+    RETURN os.WriteFile(path, data, 0644)
+END FUNCTION
+
+FUNCTION LoadProject(path AS STRING) AS (Project, ERROR)
+    DIM zero AS Project
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile(path)
+    IF err <> NIL THEN RETURN zero, err
+    DIM p AS Project
+    err = encjson.Unmarshal(data, @p)
+    IF err <> NIL THEN RETURN zero, err
+    p.Path = path
+    RETURN p, NIL
 END FUNCTION

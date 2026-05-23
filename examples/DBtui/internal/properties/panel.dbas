@@ -97,8 +97,14 @@ TYPE PropertiesPanel
     DIM Focused  AS BOOLEAN
     DIM ShowForm AS BOOLEAN
     DIM HasWidget AS BOOLEAN
+    DIM HasTool   AS BOOLEAN
     DIM CurForm  AS Form             ' shown when ShowForm
     DIM CurWidget AS Widget          ' shown when HasWidget
+    DIM CurTool   AS ToolEntry       ' shown when HasTool
+    DIM EditMode   AS BOOLEAN        ' TRUE while typing into EditBuffer
+    DIM EditBuffer AS STRING         ' live edit string (text/int/color)
+    DIM EditPos    AS INTEGER        ' caret offset within EditBuffer [0..LEN]
+    DIM EditError  AS STRING         ' last commit error; cleared on next keypress
 END TYPE
 
 FUNCTION NewPropertiesPanel() AS PropertiesPanel
@@ -114,12 +120,14 @@ SUB (p AS POINTER TO PropertiesPanel) Clear()
     p.Cursor = -1
     p.Offset = 0
     p.HasWidget = FALSE
+    p.HasTool = FALSE
     p.ShowForm = FALSE
 END SUB
 
 SUB (p AS POINTER TO PropertiesPanel) SetWidget(w AS Widget)
     p.CurWidget = w
     p.HasWidget = TRUE
+    p.HasTool = FALSE
     p.ShowForm = FALSE
     p.Cursor = 0
     p.Offset = 0
@@ -131,6 +139,18 @@ SUB (p AS POINTER TO PropertiesPanel) SetForm(f AS Form)
     p.CurForm = f
     p.ShowForm = TRUE
     p.HasWidget = FALSE
+    p.HasTool = FALSE
+    p.Cursor = 0
+    p.Offset = 0
+    p.rebuildRows()
+    p.skipCategoriesForward()
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) SetTool(t AS ToolEntry)
+    p.CurTool = t
+    p.HasTool = TRUE
+    p.HasWidget = FALSE
+    p.ShowForm = FALSE
     p.Cursor = 0
     p.Offset = 0
     p.rebuildRows()
@@ -182,6 +202,20 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
         RETURN
     END IF
 
+    IF p.HasTool THEN
+        DIM tw AS Widget = ToolToWidget(p.CurTool)
+        rows = APPEND(rows, cat("▸ " + p.CurTool.Kind + " (tool)"))
+        rows = APPEND(rows, rowText("Name", p.CurTool.Id))
+        DIM kindProps2 AS []Property
+        IF p.CurTool.Kind = WidgetKindFileDialog THEN kindProps2 = FileDialogProperties(tw)
+        DIM tj AS INTEGER
+        FOR tj = 0 TO LEN(kindProps2) - 1
+            rows = APPEND(rows, propToRow(kindProps2[tj]))
+        NEXT tj
+        p.Rows = rows
+        RETURN
+    END IF
+
     IF p.HasWidget THEN
         DIM w AS Widget = p.CurWidget
         rows = APPEND(rows, cat("▸ " + w.Kind))
@@ -195,9 +229,18 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
         ' Kind-specific properties (Text, Placeholder, Value, Align...).
         ' Style props are sorted into their own section below.
         DIM kindProps AS []Property
-        IF w.Kind = WidgetKindButton    THEN kindProps = ButtonProperties(w)
-        IF w.Kind = WidgetKindLabel     THEN kindProps = LabelProperties(w)
-        IF w.Kind = WidgetKindTextInput THEN kindProps = TextInputProperties(w)
+        IF w.Kind = WidgetKindButton     THEN kindProps = ButtonProperties(w)
+        IF w.Kind = WidgetKindLabel      THEN kindProps = LabelProperties(w)
+        IF w.Kind = WidgetKindTextInput  THEN kindProps = TextInputProperties(w)
+        IF w.Kind = WidgetKindFileDialog THEN kindProps = FileDialogProperties(w)
+        IF w.Kind = WidgetKindCheckbox    THEN kindProps = CheckboxProperties(w)
+        IF w.Kind = WidgetKindComboBox    THEN kindProps = ComboBoxProperties(w)
+        IF w.Kind = WidgetKindListBox     THEN kindProps = ListBoxProperties(w)
+        IF w.Kind = WidgetKindRadioButton THEN kindProps = RadioButtonProperties(w)
+        IF w.Kind = WidgetKindProgressBar THEN kindProps = ProgressBarProperties(w)
+        IF w.Kind = WidgetKindScrollBar   THEN kindProps = ScrollBarProperties(w)
+        IF w.Kind = WidgetKindTabStrip    THEN kindProps = TabStripProperties(w)
+        IF w.Kind = WidgetKindScrollPane  THEN kindProps = ScrollPaneProperties(w)
 
         DIM hasStyleProps AS BOOLEAN = FALSE
         DIM i AS INTEGER
@@ -336,6 +379,409 @@ SUB (p AS POINTER TO PropertiesPanel) ensureVisible()
 END SUB
 
 ' ----------------------------------------------------------------------
+' Edit-mode methods — called by the app's key dispatcher when the
+' Properties panel is focused.
+' ----------------------------------------------------------------------
+
+' CurrentRow returns the row under the cursor and an ok flag.
+FUNCTION (p AS PropertiesPanel) CurrentRow() AS (PropRow, BOOLEAN)
+    DIM zero AS PropRow
+    IF p.Cursor < 0 OR p.Cursor >= LEN(p.Rows) THEN RETURN zero, FALSE
+    RETURN p.Rows[p.Cursor], TRUE
+END FUNCTION
+
+' ToggleBool flips a bool row. Returns (name, newValue, ok). ok=FALSE
+' when the cursor row isn't an editable bool. Does NOT mutate the
+' source — the caller applies the change via SetWidgetProperty /
+' SetFormProperty and then calls RefreshFromWidget / RefreshFromForm.
+FUNCTION (p AS POINTER TO PropertiesPanel) ToggleBool() AS (STRING, BOOLEAN, BOOLEAN)
+    IF p.Cursor < 0 OR p.Cursor >= LEN(p.Rows) THEN RETURN "", FALSE, FALSE
+    DIM r AS PropRow = p.Rows[p.Cursor]
+    IF NOT r.IsBool OR NOT r.Editable THEN RETURN "", FALSE, FALSE
+    DIM newVal AS BOOLEAN = TRUE
+    IF r.Value = "true" THEN newVal = FALSE
+    p.EditError = ""
+    RETURN r.Name, newVal, TRUE
+END FUNCTION
+
+' CycleEnum advances an enum row by dir (+1 or -1), wrapping. Returns
+' (name, newValue, ok). Same non-mutating contract as ToggleBool.
+FUNCTION (p AS POINTER TO PropertiesPanel) CycleEnum(dir AS INTEGER) AS (STRING, STRING, BOOLEAN)
+    IF p.Cursor < 0 OR p.Cursor >= LEN(p.Rows) THEN RETURN "", "", FALSE
+    DIM r AS PropRow = p.Rows[p.Cursor]
+    IF LEN(r.Options) = 0 OR NOT r.Editable THEN RETURN "", "", FALSE
+    ' Find current index in Options; -1 if not found.
+    DIM idx AS INTEGER = -1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(r.Options) - 1
+        IF r.Options[i] = r.Value THEN idx = i
+    NEXT i
+    DIM n AS INTEGER = LEN(r.Options)
+    IF idx < 0 THEN idx = 0
+    idx = idx + dir
+    DO WHILE idx < 0
+        idx = idx + n
+    LOOP
+    DO WHILE idx >= n
+        idx = idx - n
+    LOOP
+    p.EditError = ""
+    RETURN r.Name, r.Options[idx], TRUE
+END FUNCTION
+
+' BeginEdit enters PropEdit mode on the current row. Returns FALSE when
+' the row isn't a text/int/color editable row (bools and enums are
+' handled by direct toggles instead). Seeds EditBuffer from the row's
+' current displayed Value and places the caret at the end.
+FUNCTION (p AS POINTER TO PropertiesPanel) BeginEdit() AS BOOLEAN
+    IF p.Cursor < 0 OR p.Cursor >= LEN(p.Rows) THEN RETURN FALSE
+    DIM r AS PropRow = p.Rows[p.Cursor]
+    IF NOT r.Editable THEN RETURN FALSE
+    IF r.IsBool THEN RETURN FALSE
+    IF LEN(r.Options) > 0 THEN RETURN FALSE
+    p.EditMode = TRUE
+    p.EditBuffer = r.Value
+    p.EditPos = LEN(r.Value)
+    p.EditError = ""
+    RETURN TRUE
+END FUNCTION
+
+' clampEditPos keeps EditPos in [0..LEN(EditBuffer)] after a buffer
+' mutation.
+SUB (p AS POINTER TO PropertiesPanel) clampEditPos()
+    IF p.EditPos < 0 THEN p.EditPos = 0
+    IF p.EditPos > LEN(p.EditBuffer) THEN p.EditPos = LEN(p.EditBuffer)
+END SUB
+
+' EditChar inserts a character at the caret and advances the caret.
+SUB (p AS POINTER TO PropertiesPanel) EditChar(s AS STRING)
+    IF NOT p.EditMode THEN RETURN
+    DIM before AS STRING = Mid(p.EditBuffer, 1, p.EditPos)
+    DIM after AS STRING = ""
+    IF p.EditPos < LEN(p.EditBuffer) THEN
+        after = Mid(p.EditBuffer, p.EditPos + 1, LEN(p.EditBuffer) - p.EditPos)
+    END IF
+    p.EditBuffer = before + s + after
+    p.EditPos = p.EditPos + LEN(s)
+    p.EditError = ""
+END SUB
+
+' EditBackspace deletes the character before the caret (←⌫).
+SUB (p AS POINTER TO PropertiesPanel) EditBackspace()
+    IF NOT p.EditMode THEN RETURN
+    IF p.EditPos = 0 THEN RETURN
+    DIM before AS STRING = Mid(p.EditBuffer, 1, p.EditPos - 1)
+    DIM after AS STRING = ""
+    IF p.EditPos < LEN(p.EditBuffer) THEN
+        after = Mid(p.EditBuffer, p.EditPos + 1, LEN(p.EditBuffer) - p.EditPos)
+    END IF
+    p.EditBuffer = before + after
+    p.EditPos = p.EditPos - 1
+    p.EditError = ""
+END SUB
+
+' EditDelete deletes the character AT the caret (forward delete, Del key).
+SUB (p AS POINTER TO PropertiesPanel) EditDelete()
+    IF NOT p.EditMode THEN RETURN
+    IF p.EditPos >= LEN(p.EditBuffer) THEN RETURN
+    DIM before AS STRING = Mid(p.EditBuffer, 1, p.EditPos)
+    DIM after AS STRING = ""
+    IF p.EditPos + 1 < LEN(p.EditBuffer) THEN
+        after = Mid(p.EditBuffer, p.EditPos + 2, LEN(p.EditBuffer) - p.EditPos - 1)
+    END IF
+    p.EditBuffer = before + after
+    p.EditError = ""
+END SUB
+
+' EditCursorLeft / EditCursorRight move the caret one position.
+SUB (p AS POINTER TO PropertiesPanel) EditCursorLeft()
+    IF NOT p.EditMode THEN RETURN
+    IF p.EditPos > 0 THEN p.EditPos = p.EditPos - 1
+    p.EditError = ""
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) EditCursorRight()
+    IF NOT p.EditMode THEN RETURN
+    IF p.EditPos < LEN(p.EditBuffer) THEN p.EditPos = p.EditPos + 1
+    p.EditError = ""
+END SUB
+
+' EditCursorHome / EditCursorEnd jump the caret.
+SUB (p AS POINTER TO PropertiesPanel) EditCursorHome()
+    IF NOT p.EditMode THEN RETURN
+    p.EditPos = 0
+    p.EditError = ""
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) EditCursorEnd()
+    IF NOT p.EditMode THEN RETURN
+    p.EditPos = LEN(p.EditBuffer)
+    p.EditError = ""
+END SUB
+
+' editIsWordChar — alnum or underscore is "word", everything else is
+' a boundary (matches the readline default).
+FUNCTION editIsWordChar(c AS STRING) AS BOOLEAN
+    IF LEN(c) = 0 THEN RETURN FALSE
+    IF c >= "0" AND c <= "9" THEN RETURN TRUE
+    IF c >= "A" AND c <= "Z" THEN RETURN TRUE
+    IF c >= "a" AND c <= "z" THEN RETURN TRUE
+    IF c = "_" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' EditCursorWordLeft skips back over a run of non-word chars (if any)
+' then over a run of word chars — readline / Ctrl+← behaviour.
+SUB (p AS POINTER TO PropertiesPanel) EditCursorWordLeft()
+    IF NOT p.EditMode THEN RETURN
+    p.EditError = ""
+    DO WHILE p.EditPos > 0
+        DIM ch AS STRING = Mid(p.EditBuffer, p.EditPos, 1)
+        IF editIsWordChar(ch) THEN EXIT DO
+        p.EditPos = p.EditPos - 1
+    LOOP
+    DO WHILE p.EditPos > 0
+        DIM ch2 AS STRING = Mid(p.EditBuffer, p.EditPos, 1)
+        IF NOT editIsWordChar(ch2) THEN EXIT DO
+        p.EditPos = p.EditPos - 1
+    LOOP
+END SUB
+
+' EditCursorWordRight skips forward over a run of word chars then a
+' run of non-word chars.
+SUB (p AS POINTER TO PropertiesPanel) EditCursorWordRight()
+    IF NOT p.EditMode THEN RETURN
+    p.EditError = ""
+    DO WHILE p.EditPos < LEN(p.EditBuffer)
+        DIM ch AS STRING = Mid(p.EditBuffer, p.EditPos + 1, 1)
+        IF NOT editIsWordChar(ch) THEN EXIT DO
+        p.EditPos = p.EditPos + 1
+    LOOP
+    DO WHILE p.EditPos < LEN(p.EditBuffer)
+        DIM ch2 AS STRING = Mid(p.EditBuffer, p.EditPos + 1, 1)
+        IF editIsWordChar(ch2) THEN EXIT DO
+        p.EditPos = p.EditPos + 1
+    LOOP
+END SUB
+
+' EditKillToEnd drops everything from the caret onward (Ctrl+K).
+SUB (p AS POINTER TO PropertiesPanel) EditKillToEnd()
+    IF NOT p.EditMode THEN RETURN
+    p.EditBuffer = Mid(p.EditBuffer, 1, p.EditPos)
+    p.EditError = ""
+END SUB
+
+' EditKillToStart drops everything before the caret (Ctrl+U).
+SUB (p AS POINTER TO PropertiesPanel) EditKillToStart()
+    IF NOT p.EditMode THEN RETURN
+    IF p.EditPos = 0 THEN RETURN
+    IF p.EditPos < LEN(p.EditBuffer) THEN
+        p.EditBuffer = Mid(p.EditBuffer, p.EditPos + 1, LEN(p.EditBuffer) - p.EditPos)
+    ELSE
+        p.EditBuffer = ""
+    END IF
+    p.EditPos = 0
+    p.EditError = ""
+END SUB
+
+' EditKillWordLeft deletes the previous word (Ctrl+W) — mirrors
+' EditCursorWordLeft but removes the skipped chars.
+SUB (p AS POINTER TO PropertiesPanel) EditKillWordLeft()
+    IF NOT p.EditMode THEN RETURN
+    DIM startPos AS INTEGER = p.EditPos
+    DO WHILE p.EditPos > 0
+        DIM ch AS STRING = Mid(p.EditBuffer, p.EditPos, 1)
+        IF editIsWordChar(ch) THEN EXIT DO
+        p.EditPos = p.EditPos - 1
+    LOOP
+    DO WHILE p.EditPos > 0
+        DIM ch2 AS STRING = Mid(p.EditBuffer, p.EditPos, 1)
+        IF NOT editIsWordChar(ch2) THEN EXIT DO
+        p.EditPos = p.EditPos - 1
+    LOOP
+    DIM before AS STRING = Mid(p.EditBuffer, 1, p.EditPos)
+    DIM after AS STRING = ""
+    IF startPos < LEN(p.EditBuffer) THEN
+        after = Mid(p.EditBuffer, startPos + 1, LEN(p.EditBuffer) - startPos)
+    END IF
+    p.EditBuffer = before + after
+    p.EditError = ""
+END SUB
+
+' CommitEdit returns (name, buffer, ok). The caller passes buffer to
+' the appropriate Set*Property setter; on setter error, the caller
+' assigns the error to p.EditError and leaves EditMode = TRUE. On
+' success the caller calls FinishEdit() to leave edit mode.
+FUNCTION (p AS POINTER TO PropertiesPanel) CommitEdit() AS (STRING, STRING, BOOLEAN)
+    IF NOT p.EditMode THEN RETURN "", "", FALSE
+    IF p.Cursor < 0 OR p.Cursor >= LEN(p.Rows) THEN RETURN "", "", FALSE
+    DIM r AS PropRow = p.Rows[p.Cursor]
+    IF NOT r.Editable THEN RETURN "", "", FALSE
+    RETURN r.Name, p.EditBuffer, TRUE
+END FUNCTION
+
+' FinishEdit leaves edit mode after a successful commit.
+SUB (p AS POINTER TO PropertiesPanel) FinishEdit()
+    p.EditMode = FALSE
+    p.EditBuffer = ""
+    p.EditPos = 0
+    p.EditError = ""
+END SUB
+
+' SetEditError stores a commit error for display. Does NOT leave edit
+' mode — the user can fix the value and try again, or Esc to cancel.
+SUB (p AS POINTER TO PropertiesPanel) SetEditError(msg AS STRING)
+    p.EditError = msg
+END SUB
+
+' CancelEdit drops the edit buffer and exits edit mode unchanged.
+SUB (p AS POINTER TO PropertiesPanel) CancelEdit()
+    p.EditMode = FALSE
+    p.EditBuffer = ""
+    p.EditPos = 0
+    p.EditError = ""
+END SUB
+
+' RefreshFromWidget is like SetWidget but preserves Cursor and Offset.
+' Used after applying a property change so the user stays on the row
+' they just edited.
+SUB (p AS POINTER TO PropertiesPanel) RefreshFromWidget(w AS Widget)
+    DIM savedCursor AS INTEGER = p.Cursor
+    DIM savedOffset AS INTEGER = p.Offset
+    p.CurWidget = w
+    p.HasWidget = TRUE
+    p.ShowForm = FALSE
+    p.rebuildRows()
+    IF savedCursor >= LEN(p.Rows) THEN savedCursor = LEN(p.Rows) - 1
+    IF savedCursor < 0 THEN savedCursor = 0
+    p.Cursor = savedCursor
+    p.Offset = savedOffset
+    p.ensureVisible()
+END SUB
+
+' ----------------------------------------------------------------------
+' Mouse — ClickAt translates a panel-local (lx, ly) click into a row
+' interaction. The returned ClickAction tells the caller what happened
+' so it can do the cross-panel work (apply prop edit + refresh, switch
+' to ModePropEdit, etc.). Pure local effect: cursor positioning and
+' (in edit mode) caret positioning.
+' ----------------------------------------------------------------------
+
+' PropClickResult — values describe what the click triggered.
+CONST PropClickNone     AS INTEGER = 0
+CONST PropClickCursor   AS INTEGER = 1   ' just moved the cursor
+CONST PropClickToggle   AS INTEGER = 2   ' bool toggle requested
+CONST PropClickEnumPrev AS INTEGER = 3   ' enum ◂ requested
+CONST PropClickEnumNext AS INTEGER = 4   ' enum ▸ requested
+CONST PropClickBeginEdit AS INTEGER = 5  ' wants to enter edit mode
+CONST PropClickReadOnly AS INTEGER = 6   ' clicked a read-only row
+CONST PropClickCaret    AS INTEGER = 7   ' moved EditPos in edit mode
+
+' ClickAt — single-click handler. Returns the action the caller should
+' apply. The panel does cursor + caret positioning itself; the caller
+' applies bool/enum/edit-mode transitions because those need access
+' to the model's data sources.
+FUNCTION (p AS POINTER TO PropertiesPanel) ClickAt(lx AS INTEGER, ly AS INTEGER) AS INTEGER
+    IF ly < 1 OR ly > p.Height - 2 THEN RETURN PropClickNone
+    DIM rowIdx AS INTEGER = p.Offset + (ly - 1)
+    IF rowIdx < 0 OR rowIdx >= LEN(p.Rows) THEN RETURN PropClickNone
+    DIM r AS PropRow = p.Rows[rowIdx]
+    IF r.Category <> "" THEN RETURN PropClickNone
+
+    ' If already editing this very row, the click positions the edit
+    ' caret instead of triggering another action.
+    IF p.EditMode AND rowIdx = p.Cursor THEN
+        ' Value cell starts after the name column + 1-char separator.
+        DIM innerW AS INTEGER = p.Width - 2
+        DIM nameW AS INTEGER = innerW / 2
+        IF nameW < 6 THEN nameW = 6
+        DIM valStartX AS INTEGER = 1 + nameW + 1
+        DIM caretPos AS INTEGER = lx - valStartX
+        IF caretPos < 0 THEN caretPos = 0
+        IF caretPos > LEN(p.EditBuffer) THEN caretPos = LEN(p.EditBuffer)
+        p.EditPos = caretPos
+        p.EditError = ""
+        RETURN PropClickCaret
+    END IF
+
+    ' Otherwise: move the cursor first, then decide if the click hit a
+    ' bool/enum/value region.
+    p.Cursor = rowIdx
+    p.ensureVisible()
+
+    IF NOT r.Editable THEN RETURN PropClickReadOnly
+
+    ' Cell-region heuristics. The value cell starts after nameW+1; if
+    ' the click is on the name side, that's just cursor positioning.
+    DIM innerW2 AS INTEGER = p.Width - 2
+    DIM nameW2 AS INTEGER = innerW2 / 2
+    IF nameW2 < 6 THEN nameW2 = 6
+    DIM valStartX2 AS INTEGER = 1 + nameW2 + 1
+    IF lx < valStartX2 THEN RETURN PropClickCursor
+
+    IF r.IsBool THEN RETURN PropClickToggle
+    IF LEN(r.Options) > 0 THEN
+        ' The displayed value looks like "◂ value ▸". Anything before
+        ' a few chars from valStartX = prev arrow, anything within the
+        ' last ~2 chars of the value cell = next arrow, middle = cycle
+        ' next (right-click would have been prev — keep simple).
+        DIM valEndX AS INTEGER = p.Width - 2
+        DIM dxFromEnd AS INTEGER = valEndX - lx
+        IF lx <= valStartX2 + 1 THEN RETURN PropClickEnumPrev
+        IF dxFromEnd <= 1 THEN RETURN PropClickEnumNext
+        RETURN PropClickEnumNext
+    END IF
+
+    RETURN PropClickBeginEdit
+END FUNCTION
+
+SUB (p AS POINTER TO PropertiesPanel) WheelUp()
+    IF p.Cursor > 0 THEN
+        p.Cursor = p.Cursor - 1
+        p.ensureVisible()
+    END IF
+END SUB
+
+SUB (p AS POINTER TO PropertiesPanel) WheelDown()
+    IF p.Cursor < LEN(p.Rows) - 1 THEN
+        p.Cursor = p.Cursor + 1
+        p.ensureVisible()
+    END IF
+END SUB
+
+' RefreshFromForm — same idea for form rows.
+SUB (p AS POINTER TO PropertiesPanel) RefreshFromForm(f AS Form)
+    DIM savedCursor AS INTEGER = p.Cursor
+    DIM savedOffset AS INTEGER = p.Offset
+    p.CurForm = f
+    p.ShowForm = TRUE
+    p.HasWidget = FALSE
+    p.HasTool = FALSE
+    p.rebuildRows()
+    IF savedCursor >= LEN(p.Rows) THEN savedCursor = LEN(p.Rows) - 1
+    IF savedCursor < 0 THEN savedCursor = 0
+    p.Cursor = savedCursor
+    p.Offset = savedOffset
+    p.ensureVisible()
+END SUB
+
+' RefreshFromTool — same idea for tool rows.
+SUB (p AS POINTER TO PropertiesPanel) RefreshFromTool(t AS ToolEntry)
+    DIM savedCursor AS INTEGER = p.Cursor
+    DIM savedOffset AS INTEGER = p.Offset
+    p.CurTool = t
+    p.HasTool = TRUE
+    p.HasWidget = FALSE
+    p.ShowForm = FALSE
+    p.rebuildRows()
+    IF savedCursor >= LEN(p.Rows) THEN savedCursor = LEN(p.Rows) - 1
+    IF savedCursor < 0 THEN savedCursor = 0
+    p.Cursor = savedCursor
+    p.Offset = savedOffset
+    p.ensureVisible()
+END SUB
+
+' ----------------------------------------------------------------------
 ' Render
 ' ----------------------------------------------------------------------
 
@@ -354,9 +800,21 @@ FUNCTION (p AS PropertiesPanel) Render() AS STRING
     END IF
     DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(borderColor).Background(ColorBg())
 
-    DIM nameW AS INTEGER = innerW / 2
+    ' Scrollbar — reserve the rightmost inner column when rows overflow.
+    DIM canScroll AS BOOLEAN = (LEN(p.Rows) > innerH)
+    DIM thumbPos AS INTEGER = -1
+    IF canScroll AND innerH > 0 THEN
+        DIM maxOff AS INTEGER = LEN(p.Rows) - innerH
+        IF maxOff > 0 THEN thumbPos = p.Offset * (innerH - 1) / maxOff
+    END IF
+    DIM contentW AS INTEGER = innerW
+    IF canScroll THEN contentW = innerW - 1
+    DIM scrollTrack AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
+    DIM scrollThumb AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorBg())
+
+    DIM nameW AS INTEGER = contentW / 2
     IF nameW < 6 THEN nameW = 6
-    DIM valW AS INTEGER = innerW - nameW - 1   ' 1 for the centre separator
+    DIM valW AS INTEGER = contentW - nameW - 1   ' 1 for the centre separator
     IF valW < 1 THEN valW = 1
 
     DIM nameStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorBg())
@@ -388,8 +846,16 @@ FUNCTION (p AS PropertiesPanel) Render() AS STRING
     DIM i AS INTEGER
     FOR i = 0 TO innerH - 1
         DIM rowIdx AS INTEGER = p.Offset + i
+        DIM scrollChar AS STRING = ""
+        IF canScroll THEN
+            IF i = thumbPos THEN
+                scrollChar = scrollThumb.Render("┃")
+            ELSE
+                scrollChar = scrollTrack.Render("╎")
+            END IF
+        END IF
         IF rowIdx >= LEN(p.Rows) THEN
-            rows = APPEND(rows, bStyle.Render(bc.Vertical) + valStyle.Render(strings.Repeat(" ", innerW)) + bStyle.Render(bc.Vertical))
+            rows = APPEND(rows, bStyle.Render(bc.Vertical) + valStyle.Render(strings.Repeat(" ", contentW)) + scrollChar + bStyle.Render(bc.Vertical))
         ELSE
             DIM row AS PropRow = p.Rows[rowIdx]
             DIM isCursor AS BOOLEAN = (rowIdx = p.Cursor)
@@ -398,11 +864,11 @@ FUNCTION (p AS PropertiesPanel) Render() AS STRING
             IF row.Category <> "" THEN
                 DIM catText AS STRING = row.Category
                 DIM textLen AS INTEGER = lipgloss.Width(catText)
-                IF textLen > innerW THEN
-                    catText = Mid(catText, 1, innerW)
-                    textLen = innerW
+                IF textLen > contentW THEN
+                    catText = Mid(catText, 1, contentW)
+                    textLen = contentW
                 END IF
-                DIM catFillLen AS INTEGER = innerW - textLen
+                DIM catFillLen AS INTEGER = contentW - textLen
                 IF catFillLen < 0 THEN catFillLen = 0
                 body = catStyle.Render(catText) + catLineStyle.Render(strings.Repeat("─", catFillLen))
             ELSE
@@ -411,17 +877,32 @@ FUNCTION (p AS PropertiesPanel) Render() AS STRING
                 DIM namePad AS INTEGER = nameW - LEN(nameText)
                 IF namePad < 0 THEN namePad = 0
 
+                DIM editing AS BOOLEAN = isCursor AND p.EditMode AND row.Editable AND NOT row.IsBool AND LEN(row.Options) = 0
                 DIM displayVal AS STRING = row.Value
-                IF row.IsBool THEN
+                DIM swatch AS STRING = ""
+                DIM displayVisW AS INTEGER
+                IF editing THEN
+                    ' Place the block caret AT EditPos by splitting the
+                    ' buffer in two. Past the end of buffer, append it.
+                    DIM caret AS STRING = "▎"
+                    DIM editPre AS STRING = ""
+                    DIM editPost AS STRING = ""
+                    IF p.EditPos > 0 THEN editPre = Mid(p.EditBuffer, 1, p.EditPos)
+                    IF p.EditPos < LEN(p.EditBuffer) THEN
+                        editPost = Mid(p.EditBuffer, p.EditPos + 1, LEN(p.EditBuffer) - p.EditPos)
+                    END IF
+                    DIM errSuffix AS STRING = ""
+                    IF p.EditError <> "" THEN errSuffix = " ⚠"
+                    displayVal = editPre + caret + editPost + errSuffix
+                    displayVisW = lipgloss.Width(displayVal)
+                ELSEIF row.IsBool THEN
                     IF row.Value = "true" THEN
                         displayVal = "[x] true"
                     ELSE
                         displayVal = "[ ] false"
                     END IF
-                END IF
-                DIM swatch AS STRING = ""
-                DIM displayVisW AS INTEGER
-                IF row.IsColor AND row.Value <> "" THEN
+                    displayVisW = lipgloss.Width(displayVal)
+                ELSEIF row.IsColor AND row.Value <> "" THEN
                     swatch = lipgloss.NewStyle().Background(lipgloss.Color(row.Value)).Render("  ")
                     displayVal = swatch + " " + row.Value
                     displayVisW = 3 + lipgloss.Width(row.Value)
@@ -459,7 +940,7 @@ FUNCTION (p AS PropertiesPanel) Render() AS STRING
                 END IF
             END IF
 
-            rows = APPEND(rows, bStyle.Render(bc.Vertical) + body + bStyle.Render(bc.Vertical))
+            rows = APPEND(rows, bStyle.Render(bc.Vertical) + body + scrollChar + bStyle.Render(bc.Vertical))
         END IF
     NEXT i
 

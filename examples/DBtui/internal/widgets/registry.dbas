@@ -21,7 +21,25 @@ FUNCTION DefaultRegistry() AS Registry
     r.Kinds = APPEND(r.Kinds, WidgetKindButton)
     r.Kinds = APPEND(r.Kinds, WidgetKindLabel)
     r.Kinds = APPEND(r.Kinds, WidgetKindTextInput)
+    r.Kinds = APPEND(r.Kinds, WidgetKindCheckbox)
+    r.Kinds = APPEND(r.Kinds, WidgetKindComboBox)
+    r.Kinds = APPEND(r.Kinds, WidgetKindListBox)
+    r.Kinds = APPEND(r.Kinds, WidgetKindRadioButton)
+    r.Kinds = APPEND(r.Kinds, WidgetKindProgressBar)
+    r.Kinds = APPEND(r.Kinds, WidgetKindScrollBar)
+    r.Kinds = APPEND(r.Kinds, WidgetKindTabStrip)
+    r.Kinds = APPEND(r.Kinds, WidgetKindScrollPane)
+    r.Kinds = APPEND(r.Kinds, WidgetKindTreeView)
+    r.Kinds = APPEND(r.Kinds, WidgetKindGroupBox)
+    r.Kinds = APPEND(r.Kinds, WidgetKindMenuBar)
+    r.Kinds = APPEND(r.Kinds, WidgetKindStatusBar)
+    r.Kinds = APPEND(r.Kinds, WidgetKindTextArea)
+    r.Kinds = APPEND(r.Kinds, WidgetKindSplitPanel)
+    r.Kinds = APPEND(r.Kinds, WidgetKindPropertyGrid)
     sort.Strings(r.Kinds)
+    ' Note: WidgetKindFileDialog stays in registry.Create for backwards
+    ' compat with old projects that placed it as a widget, but is no
+    ' longer listed here — new projects use it as a Tool instead.
     RETURN r
 END FUNCTION
 
@@ -45,6 +63,54 @@ FUNCTION (r AS Registry) Create(kind AS STRING, id AS STRING) AS (Widget, ERROR)
     END IF
     IF kind = WidgetKindTextInput THEN
         RETURN NewTextInput(id), NIL
+    END IF
+    IF kind = WidgetKindFileDialog THEN
+        RETURN NewFileDialog(id), NIL
+    END IF
+    IF kind = WidgetKindCheckbox THEN
+        RETURN NewCheckbox(id), NIL
+    END IF
+    IF kind = WidgetKindComboBox THEN
+        RETURN NewComboBox(id), NIL
+    END IF
+    IF kind = WidgetKindListBox THEN
+        RETURN NewListBox(id), NIL
+    END IF
+    IF kind = WidgetKindRadioButton THEN
+        RETURN NewRadioButton(id), NIL
+    END IF
+    IF kind = WidgetKindProgressBar THEN
+        RETURN NewProgressBar(id), NIL
+    END IF
+    IF kind = WidgetKindScrollBar THEN
+        RETURN NewScrollBar(id), NIL
+    END IF
+    IF kind = WidgetKindTabStrip THEN
+        RETURN NewTabStrip(id), NIL
+    END IF
+    IF kind = WidgetKindScrollPane THEN
+        RETURN NewScrollPane(id), NIL
+    END IF
+    IF kind = WidgetKindTreeView THEN
+        RETURN NewTreeView(id), NIL
+    END IF
+    IF kind = WidgetKindGroupBox THEN
+        RETURN NewGroupBox(id), NIL
+    END IF
+    IF kind = WidgetKindMenuBar THEN
+        RETURN NewMenuBarWidget(id), NIL
+    END IF
+    IF kind = WidgetKindStatusBar THEN
+        RETURN NewStatusBarWidget(id), NIL
+    END IF
+    IF kind = WidgetKindTextArea THEN
+        RETURN NewTextArea(id), NIL
+    END IF
+    IF kind = WidgetKindSplitPanel THEN
+        RETURN NewSplitPanel(id), NIL
+    END IF
+    IF kind = WidgetKindPropertyGrid THEN
+        RETURN NewPropertyGrid(id), NIL
     END IF
     DIM zero AS Widget
     RETURN zero, NewError("unknown widget kind: " + kind)

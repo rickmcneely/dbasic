@@ -14,6 +14,8 @@
 ' statements. It also matches what classic VB UserControls did —
 ' tagged structs with discriminator-driven behaviour.
 
+IMPORT "strconv"
+
 ' ----------------------------------------------------------------------
 ' Property — describes one editable property surfaced to the
 ' properties panel and the form-file serializer.
@@ -142,9 +144,25 @@ END FUNCTION
 ' produces a single flat Go struct without nested anonymous structs.
 ' ----------------------------------------------------------------------
 
-CONST WidgetKindButton    AS STRING = "Button"
-CONST WidgetKindLabel     AS STRING = "Label"
-CONST WidgetKindTextInput AS STRING = "TextInput"
+CONST WidgetKindButton      AS STRING = "Button"
+CONST WidgetKindLabel       AS STRING = "Label"
+CONST WidgetKindTextInput   AS STRING = "TextInput"
+CONST WidgetKindFileDialog  AS STRING = "FileDialog"
+CONST WidgetKindCheckbox    AS STRING = "Checkbox"
+CONST WidgetKindComboBox    AS STRING = "ComboBox"
+CONST WidgetKindListBox     AS STRING = "ListBox"
+CONST WidgetKindRadioButton AS STRING = "RadioButton"
+CONST WidgetKindProgressBar AS STRING = "ProgressBar"
+CONST WidgetKindScrollBar   AS STRING = "ScrollBar"
+CONST WidgetKindTabStrip    AS STRING = "TabStrip"
+CONST WidgetKindScrollPane  AS STRING = "ScrollPane"
+CONST WidgetKindTreeView    AS STRING = "TreeView"
+CONST WidgetKindGroupBox    AS STRING = "GroupBox"
+CONST WidgetKindMenuBar     AS STRING = "MenuBar"
+CONST WidgetKindStatusBar   AS STRING = "StatusBar"
+CONST WidgetKindTextArea    AS STRING = "TextArea"
+CONST WidgetKindSplitPanel  AS STRING = "SplitPanel"
+CONST WidgetKindPropertyGrid AS STRING = "PropertyGrid"
 
 TYPE Widget
     ' --- common ----------------------------------------------------
@@ -173,6 +191,37 @@ TYPE Widget
     ' --- TextInput -------------------------------------------------
     DIM TiPlaceholder AS STRING
     DIM TiValue       AS STRING
+
+    ' --- FileDialog ------------------------------------------------
+    DIM FdMode        AS STRING            ' "open" | "save"
+    DIM FdMask        AS STRING            ' glob, e.g. "*.dbproj"
+    DIM FdValue       AS STRING            ' currently-selected path
+    DIM FdPlaceholder AS STRING            ' shown when value is empty
+    DIM FdButtonText  AS STRING            ' label on the [...] trigger
+    DIM FdTitle       AS STRING            ' dialog title at runtime
+
+    ' --- Checkbox --------------------------------------------------
+    DIM ChkText    AS STRING
+    DIM ChkChecked AS BOOLEAN
+
+    ' --- ComboBox / ListBox (share Items + selected index) ---------
+    DIM LstItems AS STRING                 ' ";"-separated values
+    DIM LstIdx   AS INTEGER                ' selected index, -1 = none
+
+    ' --- RadioButton -----------------------------------------------
+    DIM RbText    AS STRING
+    DIM RbChecked AS BOOLEAN
+    DIM RbGroup   AS STRING                ' radios with same group are mutually exclusive
+
+    ' --- ProgressBar / ScrollBar (share Min/Max/Value/Horizontal) --
+    DIM RngMin        AS INTEGER
+    DIM RngMax        AS INTEGER
+    DIM RngValue      AS INTEGER
+    DIM RngHorizontal AS BOOLEAN
+
+    ' --- ScrollPane / TabStrip (Title for top border + scroll offset)
+    DIM Title  AS STRING
+    DIM Offset AS INTEGER
 END TYPE
 
 ' ----------------------------------------------------------------------
@@ -189,6 +238,377 @@ END SUB
 SUB SetWidgetSize(w AS POINTER TO Widget, ww AS INTEGER, wh AS INTEGER)
     w.W = ww
     w.H = wh
+END SUB
+
+' coerceInt converts an ANY into an INTEGER, accepting either an
+' INTEGER directly or a STRING parsed via strconv.Atoi. Returns
+' (value, NIL) on success or (0, error) on failure.
+FUNCTION coerceInt(name AS STRING, value AS ANY) AS (INTEGER, ERROR)
+    DIM i AS INTEGER
+    DIM iOk AS BOOLEAN
+    i, iOk = value.(INTEGER)
+    IF iOk THEN RETURN i, NIL
+    DIM s AS STRING
+    DIM sOk AS BOOLEAN
+    s, sOk = value.(STRING)
+    IF NOT sOk THEN RETURN 0, NewError(name + " must be an integer")
+    DIM parsed AS INTEGER
+    DIM err AS ERROR
+    parsed, err = strconv.Atoi(s)
+    IF err <> NIL THEN RETURN 0, NewError(name + ": invalid integer '" + s + "'")
+    RETURN parsed, NIL
+END FUNCTION
+
+' coerceString returns the STRING value or an error if value isn't one.
+FUNCTION coerceString(name AS STRING, value AS ANY) AS (STRING, ERROR)
+    DIM s AS STRING
+    DIM ok AS BOOLEAN
+    s, ok = value.(STRING)
+    IF NOT ok THEN RETURN "", NewError(name + " must be a string")
+    RETURN s, NIL
+END FUNCTION
+
+' coerceBool returns the BOOLEAN value, or parses "true"/"false" from a
+' STRING. Returns (FALSE, error) on type mismatch.
+FUNCTION coerceBool(name AS STRING, value AS ANY) AS (BOOLEAN, ERROR)
+    DIM b AS BOOLEAN
+    DIM bOk AS BOOLEAN
+    b, bOk = value.(BOOLEAN)
+    IF bOk THEN RETURN b, NIL
+    DIM s AS STRING
+    DIM sOk AS BOOLEAN
+    s, sOk = value.(STRING)
+    IF sOk THEN
+        IF s = "true" THEN RETURN TRUE, NIL
+        IF s = "false" THEN RETURN FALSE, NIL
+    END IF
+    RETURN FALSE, NewError(name + " must be a boolean")
+END FUNCTION
+
+' SetWidgetProperty applies a property change to w. Handles the common
+' Widget fields first (Name → Id, Visible, ZOrder, TabIndex, TabStop,
+' Anchor, X, Y, W=Width, H=Height) then delegates to the per-kind
+' setter for everything else. The dispatcher accepts STRING-form
+' values for int and bool fields so the Properties panel's edit
+' buffer can be passed through unchanged.
+FUNCTION SetWidgetProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    ' --- Common props -------------------------------------------------
+    IF name = "Name" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.Id = s
+        RETURN NIL
+    END IF
+    IF name = "Visible" THEN
+        DIM b AS BOOLEAN
+        DIM err2 AS ERROR
+        b, err2 = coerceBool(name, value)
+        IF err2 <> NIL THEN RETURN err2
+        w.Visible = b
+        RETURN NIL
+    END IF
+    IF name = "TabStop" THEN
+        DIM b2 AS BOOLEAN
+        DIM err3 AS ERROR
+        b2, err3 = coerceBool(name, value)
+        IF err3 <> NIL THEN RETURN err3
+        w.TabStop = b2
+        RETURN NIL
+    END IF
+    IF name = "Anchor" THEN
+        DIM s2 AS STRING
+        DIM err4 AS ERROR
+        s2, err4 = coerceString(name, value)
+        IF err4 <> NIL THEN RETURN err4
+        w.Anchor = s2
+        RETURN NIL
+    END IF
+    IF name = "ZOrder" THEN
+        DIM i AS INTEGER
+        DIM err5 AS ERROR
+        i, err5 = coerceInt(name, value)
+        IF err5 <> NIL THEN RETURN err5
+        w.ZOrder = i
+        RETURN NIL
+    END IF
+    IF name = "TabIndex" THEN
+        DIM i2 AS INTEGER
+        DIM err6 AS ERROR
+        i2, err6 = coerceInt(name, value)
+        IF err6 <> NIL THEN RETURN err6
+        w.TabIndex = i2
+        RETURN NIL
+    END IF
+    IF name = "X" THEN
+        DIM i3 AS INTEGER
+        DIM err7 AS ERROR
+        i3, err7 = coerceInt(name, value)
+        IF err7 <> NIL THEN RETURN err7
+        w.X = i3
+        RETURN NIL
+    END IF
+    IF name = "Y" THEN
+        DIM i4 AS INTEGER
+        DIM err8 AS ERROR
+        i4, err8 = coerceInt(name, value)
+        IF err8 <> NIL THEN RETURN err8
+        w.Y = i4
+        RETURN NIL
+    END IF
+    IF name = "Width" OR name = "W" THEN
+        DIM i5 AS INTEGER
+        DIM err9 AS ERROR
+        i5, err9 = coerceInt(name, value)
+        IF err9 <> NIL THEN RETURN err9
+        IF i5 < 1 THEN i5 = 1
+        w.W = i5
+        RETURN NIL
+    END IF
+    IF name = "Height" OR name = "H" THEN
+        DIM i6 AS INTEGER
+        DIM err10 AS ERROR
+        i6, err10 = coerceInt(name, value)
+        IF err10 <> NIL THEN RETURN err10
+        IF i6 < 1 THEN i6 = 1
+        w.H = i6
+        RETURN NIL
+    END IF
+
+    ' --- Kind dispatch -----------------------------------------------
+    IF w.Kind = WidgetKindButton     THEN RETURN SetButtonProperty(w, name, value)
+    IF w.Kind = WidgetKindLabel      THEN RETURN SetLabelProperty(w, name, value)
+    IF w.Kind = WidgetKindTextInput  THEN RETURN SetTextInputProperty(w, name, value)
+    IF w.Kind = WidgetKindFileDialog THEN RETURN SetFileDialogProperty(w, name, value)
+    IF w.Kind = WidgetKindCheckbox    THEN RETURN SetCheckboxProperty(w, name, value)
+    IF w.Kind = WidgetKindComboBox    THEN RETURN SetComboBoxProperty(w, name, value)
+    IF w.Kind = WidgetKindListBox     THEN RETURN SetListBoxProperty(w, name, value)
+    IF w.Kind = WidgetKindRadioButton THEN RETURN SetRadioButtonProperty(w, name, value)
+    IF w.Kind = WidgetKindProgressBar THEN RETURN SetProgressBarProperty(w, name, value)
+    IF w.Kind = WidgetKindScrollBar   THEN RETURN SetScrollBarProperty(w, name, value)
+    IF w.Kind = WidgetKindTabStrip    THEN RETURN SetTabStripProperty(w, name, value)
+    IF w.Kind = WidgetKindScrollPane  THEN RETURN SetScrollPaneProperty(w, name, value)
+    IF w.Kind = WidgetKindTreeView    THEN RETURN SetTreeViewProperty(w, name, value)
+    IF w.Kind = WidgetKindGroupBox    THEN RETURN SetGroupBoxProperty(w, name, value)
+    IF w.Kind = WidgetKindMenuBar     THEN RETURN SetMenuBarProperty(w, name, value)
+    IF w.Kind = WidgetKindStatusBar   THEN RETURN SetStatusBarProperty(w, name, value)
+    IF w.Kind = WidgetKindTextArea    THEN RETURN SetTextAreaProperty(w, name, value)
+    IF w.Kind = WidgetKindSplitPanel  THEN RETURN SetSplitPanelProperty(w, name, value)
+    IF w.Kind = WidgetKindPropertyGrid THEN RETURN SetPropertyGridProperty(w, name, value)
+    RETURN NewError("unknown widget kind: " + w.Kind)
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Widget ↔ WidgetEntry conversion
+'
+' WidgetEntry is the on-disk shape (Properties as a freeform string→any
+' map). Widget is the in-memory shape (kind-specific fields). The two
+' converters keep edits round-trippable across .dbproj save/load.
+' ----------------------------------------------------------------------
+
+' WidgetToEntry copies common fields and stuffs kind-specific values
+' into the Properties map. Empty/zero values are still written so the
+' .dbproj file is self-describing.
+FUNCTION WidgetToEntry(w AS Widget) AS WidgetEntry
+    DIM e AS WidgetEntry
+    e.Id = w.Id
+    e.Kind = w.Kind
+    e.X = w.X
+    e.Y = w.Y
+    e.Width = w.W
+    e.Height = w.H
+    e.Visible = w.Visible
+    e.ZOrder = w.ZOrder
+    e.TabIndex = w.TabIndex
+    e.TabStop = w.TabStop
+    e.Anchor = w.Anchor
+
+    DIM props AS MAP OF STRING TO ANY
+    props["BgColor"] = w.Style.BgColor
+    props["FgColor"] = w.Style.FgColor
+    props["Border"]  = w.Style.Border
+    props["Corner"]  = w.Style.Corner
+    IF w.Kind = WidgetKindButton THEN
+        props["Text"]    = w.ButText
+        props["BgPress"] = w.ButBgPress
+        props["FgPress"] = w.ButFgPress
+    END IF
+    IF w.Kind = WidgetKindLabel THEN
+        props["Text"]  = w.LblText
+        props["Align"] = w.LblAlign
+    END IF
+    IF w.Kind = WidgetKindTextInput THEN
+        props["Placeholder"] = w.TiPlaceholder
+        props["Value"]       = w.TiValue
+    END IF
+    IF w.Kind = WidgetKindFileDialog THEN
+        props["Mode"]        = w.FdMode
+        props["Mask"]        = w.FdMask
+        props["Value"]       = w.FdValue
+        props["Placeholder"] = w.FdPlaceholder
+        props["ButtonText"]  = w.FdButtonText
+        props["Title"]       = w.FdTitle
+    END IF
+    IF w.Kind = WidgetKindCheckbox THEN
+        props["Text"]    = w.ChkText
+        props["Checked"] = w.ChkChecked
+    END IF
+    IF w.Kind = WidgetKindComboBox OR w.Kind = WidgetKindListBox THEN
+        props["Items"]    = w.LstItems
+        props["Selected"] = w.LstIdx
+    END IF
+    IF w.Kind = WidgetKindRadioButton THEN
+        props["Text"]    = w.RbText
+        props["Checked"] = w.RbChecked
+        props["Group"]   = w.RbGroup
+    END IF
+    IF w.Kind = WidgetKindProgressBar OR w.Kind = WidgetKindScrollBar THEN
+        props["Min"]        = w.RngMin
+        props["Max"]        = w.RngMax
+        props["Value"]      = w.RngValue
+        props["Horizontal"] = w.RngHorizontal
+    END IF
+    IF w.Kind = WidgetKindTabStrip THEN
+        props["Tabs"]   = w.LstItems
+        props["Active"] = w.LstIdx
+    END IF
+    IF w.Kind = WidgetKindScrollPane THEN
+        props["Title"]    = w.Title
+        props["Items"]    = w.LstItems
+        props["Selected"] = w.LstIdx
+        props["Offset"]   = w.Offset
+    END IF
+    IF w.Kind = WidgetKindTreeView THEN
+        props["Title"]    = w.Title
+        props["Nodes"]    = w.LstItems
+        props["Selected"] = w.LstIdx
+        props["Offset"]   = w.Offset
+    END IF
+    IF w.Kind = WidgetKindGroupBox THEN
+        props["Title"] = w.Title
+    END IF
+    IF w.Kind = WidgetKindMenuBar THEN
+        props["Menus"]  = w.LstItems
+        props["Active"] = w.LstIdx
+    END IF
+    IF w.Kind = WidgetKindStatusBar THEN
+        props["Segments"] = w.LstItems
+    END IF
+    IF w.Kind = WidgetKindTextArea THEN
+        props["Value"]       = w.TiValue
+        props["Placeholder"] = w.TiPlaceholder
+    END IF
+    IF w.Kind = WidgetKindSplitPanel THEN
+        props["Orientation"] = w.LstItems
+        props["Position"]    = w.LstIdx
+    END IF
+    IF w.Kind = WidgetKindPropertyGrid THEN
+        props["Title"]    = w.Title
+        props["Rows"]     = w.LstItems
+        props["Selected"] = w.LstIdx
+        props["Offset"]   = w.Offset
+    END IF
+    e.Properties = props
+    RETURN e
+END FUNCTION
+
+' ApplyEntryProperties writes a saved WidgetEntry's Properties map back
+' into a freshly-created Widget (created by the registry). Skips keys
+' whose value is NIL or an empty string — leaves the widget's defaults
+' in place. Called from Visual.LoadForm after the registry produces
+' the widget skeleton.
+SUB ApplyEntryProperties(w AS POINTER TO Widget, e AS WidgetEntry)
+    DIM keys AS []STRING
+    keys = APPEND(keys, "Text")
+    keys = APPEND(keys, "Placeholder")
+    keys = APPEND(keys, "Value")
+    keys = APPEND(keys, "Align")
+    keys = APPEND(keys, "BgColor")
+    keys = APPEND(keys, "FgColor")
+    keys = APPEND(keys, "Border")
+    keys = APPEND(keys, "Corner")
+    keys = APPEND(keys, "BgPress")
+    keys = APPEND(keys, "FgPress")
+    keys = APPEND(keys, "Mode")
+    keys = APPEND(keys, "Mask")
+    keys = APPEND(keys, "ButtonText")
+    keys = APPEND(keys, "Title")
+    keys = APPEND(keys, "Items")
+    keys = APPEND(keys, "Tabs")
+    keys = APPEND(keys, "Nodes")
+    keys = APPEND(keys, "Menus")
+    keys = APPEND(keys, "Segments")
+    keys = APPEND(keys, "Orientation")
+    keys = APPEND(keys, "Rows")
+    keys = APPEND(keys, "Group")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(keys) - 1
+        DIM k AS STRING = keys[i]
+        DIM v AS ANY = e.Properties[k]
+        IF v <> NIL THEN
+            DIM s AS STRING
+            DIM ok AS BOOLEAN
+            s, ok = v.(STRING)
+            IF ok AND s <> "" THEN
+                DIM serr AS ERROR = SetWidgetProperty(w, k, s)
+                _ = serr
+            END IF
+        END IF
+    NEXT i
+    ' Boolean + integer-typed kind-specific properties.
+    DIM checkedVal AS ANY = e.Properties["Checked"]
+    IF checkedVal <> NIL THEN
+        DIM b AS BOOLEAN
+        DIM bOk AS BOOLEAN
+        b, bOk = checkedVal.(BOOLEAN)
+        IF bOk THEN
+            DIM cerr AS ERROR = SetWidgetProperty(w, "Checked", b)
+            _ = cerr
+        END IF
+    END IF
+    DIM selVal AS ANY = e.Properties["Selected"]
+    IF selVal <> NIL THEN
+        DIM iv AS INTEGER
+        DIM iOk AS BOOLEAN
+        iv, iOk = selVal.(INTEGER)
+        IF iOk THEN
+            DIM ierr AS ERROR = SetWidgetProperty(w, "Selected", iv)
+            _ = ierr
+        END IF
+    END IF
+    ' Range-typed properties (ProgressBar / ScrollBar / ScrollPane / TabStrip):
+    DIM rngKeys AS []STRING
+    rngKeys = APPEND(rngKeys, "Min")
+    rngKeys = APPEND(rngKeys, "Max")
+    rngKeys = APPEND(rngKeys, "Value")
+    rngKeys = APPEND(rngKeys, "Active")
+    rngKeys = APPEND(rngKeys, "Offset")
+    DIM rk AS INTEGER
+    FOR rk = 0 TO LEN(rngKeys) - 1
+        DIM rkName AS STRING = rngKeys[rk]
+        DIM rv AS ANY = e.Properties[rkName]
+        IF rv <> NIL THEN
+            DIM rvi AS INTEGER
+            DIM rvOk AS BOOLEAN
+            rvi, rvOk = rv.(INTEGER)
+            IF rvOk THEN
+                DIM rerr AS ERROR = SetWidgetProperty(w, rkName, rvi)
+                _ = rerr
+            END IF
+        END IF
+    NEXT rk
+    ' Boolean Horizontal (ProgressBar / ScrollBar).
+    DIM horizVal AS ANY = e.Properties["Horizontal"]
+    IF horizVal <> NIL THEN
+        DIM hb AS BOOLEAN
+        DIM hOk AS BOOLEAN
+        hb, hOk = horizVal.(BOOLEAN)
+        IF hOk THEN
+            DIM herr AS ERROR = SetWidgetProperty(w, "Horizontal", hb)
+            _ = herr
+        END IF
+    END IF
 END SUB
 
 ' Events returns the event names the kind supports. Used later by the
@@ -216,6 +636,108 @@ FUNCTION WidgetEvents(w AS Widget) AS []STRING
         out = APPEND(out, "GotFocus")
         out = APPEND(out, "LostFocus")
         out = APPEND(out, "KeyPress")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindFileDialog THEN
+        out = APPEND(out, "Click")
+        out = APPEND(out, "FileSelected")
+        out = APPEND(out, "Cancel")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindCheckbox THEN
+        out = APPEND(out, "Click")
+        out = APPEND(out, "Change")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindComboBox THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "DropDown")
+        out = APPEND(out, "Click")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindListBox THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "Click")
+        out = APPEND(out, "DoubleClick")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindRadioButton THEN
+        out = APPEND(out, "Click")
+        out = APPEND(out, "Change")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindProgressBar THEN
+        ' Progress bars are typically driven by code, no user events.
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindScrollBar THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "Scroll")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindTabStrip THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "Click")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindScrollPane THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "Click")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindTreeView THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "Expand")
+        out = APPEND(out, "Collapse")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindGroupBox THEN
+        ' Pure visual frame; no events.
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindMenuBar THEN
+        out = APPEND(out, "Action")
+        out = APPEND(out, "Open")
+        out = APPEND(out, "Close")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindStatusBar THEN
+        ' Read-only segment display; no events.
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindTextArea THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        out = APPEND(out, "KeyPress")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindSplitPanel THEN
+        out = APPEND(out, "Resize")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindPropertyGrid THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
         RETURN out
     END IF
     RETURN out

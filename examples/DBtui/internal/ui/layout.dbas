@@ -23,3 +23,48 @@ CONST ModeColorPicker  AS INTEGER = 5
 CONST ModeHelpWindow   AS INTEGER = 6
 CONST ModeAboutWindow  AS INTEGER = 7
 CONST ModeWidgetHelp   AS INTEGER = 8
+CONST ModePropEdit     AS INTEGER = 9
+
+' File-dialog focus areas — Tab cycles through these.
+CONST DialogFocusPath    AS INTEGER = 0
+CONST DialogFocusFolders AS INTEGER = 1
+CONST DialogFocusFiles   AS INTEGER = 2
+CONST DialogFocusOK      AS INTEGER = 3
+CONST DialogFocusCancel  AS INTEGER = 4
+CONST DialogFocusCount   AS INTEGER = 5
+
+' Bottom-pane tabs — selectable via click or the BottomTab cycle key.
+CONST BottomTabConsole AS INTEGER = 0
+CONST BottomTabShell   AS INTEGER = 1
+CONST BottomTabCount   AS INTEGER = 2
+
+' ----------------------------------------------------------------------
+' Mouse / drag
+' ----------------------------------------------------------------------
+
+' Drag modes — what the current mouse-button-held action is doing.
+CONST DragNone         AS INTEGER = 0
+CONST DragMove         AS INTEGER = 1
+CONST DragResize       AS INTEGER = 2
+CONST DragDialogResize AS INTEGER = 3
+CONST DragSplitLeft    AS INTEGER = 4   ' between project tree + canvas
+CONST DragSplitRight   AS INTEGER = 5   ' between canvas + palette/props
+CONST DragSplitPalette AS INTEGER = 6   ' between palette + properties
+CONST DragSplitBottom  AS INTEGER = 7   ' between body + bottom pane
+
+' Rect is a simple integer bounding box. Used by the app to record
+' each panel's screen position so mouse clicks can be routed.
+TYPE Rect
+    DIM X AS INTEGER
+    DIM Y AS INTEGER
+    DIM W AS INTEGER
+    DIM H AS INTEGER
+END TYPE
+
+' pointInRect — TRUE when (x, y) falls within r (inclusive top/left,
+' exclusive bottom/right).
+FUNCTION pointInRect(x AS INTEGER, y AS INTEGER, r AS Rect) AS BOOLEAN
+    IF x < r.X OR y < r.Y THEN RETURN FALSE
+    IF x >= r.X + r.W OR y >= r.Y + r.H THEN RETURN FALSE
+    RETURN TRUE
+END FUNCTION

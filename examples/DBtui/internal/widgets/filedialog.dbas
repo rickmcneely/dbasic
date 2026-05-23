@@ -1,0 +1,81 @@
+' DBtui — internal/widgets/filedialog.dbas
+'
+' FileDialog widget — a file picker control. At design time it shows
+' as a bordered field with the current value (or placeholder) and a
+' trailing button label like [...]. At runtime, clicking the widget
+' opens the modal file-picker dialog seeded with the widget's Mode
+' (open/save), Mask, and current Value.
+
+FUNCTION NewFileDialog(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindFileDialog
+    w.Visible = TRUE
+    w.TabStop = TRUE
+    w.W = 36
+    w.H = 3
+    w.Style.BgColor = "#FFFFFF"
+    w.Style.FgColor = "#000000"
+    w.Style.Border = "normal"
+    w.Style.Corner = "square"
+    w.FdMode = "open"
+    w.FdMask = "*"
+    w.FdValue = ""
+    w.FdPlaceholder = "Choose a file..."
+    w.FdButtonText = "..."
+    w.FdTitle = "Open File"
+    RETURN w
+END FUNCTION
+
+FUNCTION FileDialogProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    DIM modeOpts AS []STRING
+    modeOpts = APPEND(modeOpts, "open")
+    modeOpts = APPEND(modeOpts, "save")
+    out = APPEND(out, EnumProp("Mode", w.FdMode, modeOpts))
+    out = APPEND(out, StringProp("Mask", w.FdMask))
+    out = APPEND(out, StringProp("Title", w.FdTitle))
+    out = APPEND(out, StringProp("Value", w.FdValue))
+    out = APPEND(out, StringProp("Placeholder", w.FdPlaceholder))
+    out = APPEND(out, StringProp("ButtonText", w.FdButtonText))
+    DIM stylePs AS []Property = StyleProperties(w.Style, TRUE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetFileDialogProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    DIM str AS STRING
+    DIM ok AS BOOLEAN
+    str, ok = value.(STRING)
+    IF name = "Mode" THEN
+        IF NOT ok THEN RETURN NewError("Mode must be a string")
+        IF str <> "open" AND str <> "save" THEN RETURN NewError("Mode must be 'open' or 'save'")
+        w.FdMode = str
+        RETURN NIL
+    END IF
+    IF name = "Mask" THEN
+        IF ok THEN w.FdMask = str
+        RETURN NIL
+    END IF
+    IF name = "Title" THEN
+        IF ok THEN w.FdTitle = str
+        RETURN NIL
+    END IF
+    IF name = "Value" THEN
+        IF ok THEN w.FdValue = str
+        RETURN NIL
+    END IF
+    IF name = "Placeholder" THEN
+        IF ok THEN w.FdPlaceholder = str
+        RETURN NIL
+    END IF
+    IF name = "ButtonText" THEN
+        IF ok THEN w.FdButtonText = str
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown FileDialog property: " + name)
+END FUNCTION
