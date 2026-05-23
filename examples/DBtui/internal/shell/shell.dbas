@@ -122,19 +122,22 @@ END FUNCTION
 '   attrReverse   = 1
 '   attrUnderline = 2
 '   attrBold      = 4
-'   attrGfx       = 8
+'   attrGfx       = 8 (line-drawing alt charset; not a visual attr)
 '   attrItalic    = 16
 '   attrBlink     = 32
-'   attrWrap      = 64
+'   attrWrap      = 64 (line-wrap state; not a visual attr)
+' Dim (SGR 2) and Strikethrough (SGR 9) aren't parsed by vt10x at
+' all — they'd require a fork. Lipgloss supports them via .Faint
+' and .Strikethrough if/when the parser learns to track them.
 CONST shellAttrReverse   AS INTEGER = 1
 CONST shellAttrUnderline AS INTEGER = 2
 CONST shellAttrBold      AS INTEGER = 4
 CONST shellAttrItalic    AS INTEGER = 16
+CONST shellAttrBlink     AS INTEGER = 32
 
 ' styleFor returns a lipgloss.Style configured for the glyph's fg/bg
-' AND mode attributes (bold, italic, underline, reverse). Default
-' fg/bg are left unset so DBtui's panel bg shows through. Uses the
-' BitAnd builtin to mask vt10x's Mode field.
+' AND mode attributes (bold, italic, underline, reverse, blink).
+' Default fg/bg are left unset so DBtui's panel bg shows through.
 FUNCTION styleFor(g AS vt10x.Glyph) AS lipgloss.Style
     DIM s AS lipgloss.Style = lipgloss.NewStyle()
     DIM fg AS STRING = ansiColor(g.FG)
@@ -146,15 +149,16 @@ FUNCTION styleFor(g AS vt10x.Glyph) AS lipgloss.Style
     IF BitAnd(m, shellAttrItalic) <> 0    THEN s = s.Italic(TRUE)
     IF BitAnd(m, shellAttrUnderline) <> 0 THEN s = s.Underline(TRUE)
     IF BitAnd(m, shellAttrReverse) <> 0   THEN s = s.Reverse(TRUE)
+    IF BitAnd(m, shellAttrBlink) <> 0     THEN s = s.Blink(TRUE)
     RETURN s
 END FUNCTION
 
 ' glyphSameStyle returns TRUE if two glyphs share the styling
-' attributes that matter for run-batching (fg, bg, the relevant Mode bits).
+' attributes that matter for run-batching (fg, bg, all visual Mode bits).
 FUNCTION glyphSameStyle(a AS vt10x.Glyph, b AS vt10x.Glyph) AS BOOLEAN
     IF a.FG <> b.FG THEN RETURN FALSE
     IF a.BG <> b.BG THEN RETURN FALSE
-    DIM mask AS INTEGER = shellAttrBold + shellAttrItalic + shellAttrUnderline + shellAttrReverse
+    DIM mask AS INTEGER = shellAttrBold + shellAttrItalic + shellAttrUnderline + shellAttrReverse + shellAttrBlink
     IF BitAnd(Int(a.Mode), mask) <> BitAnd(Int(b.Mode), mask) THEN RETURN FALSE
     RETURN TRUE
 END FUNCTION
