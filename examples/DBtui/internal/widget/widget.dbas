@@ -232,6 +232,10 @@ TYPE Widget
     ' --- FormCanvas (hosts child widgets at runtime) ---------------
     DIM FcShowGrid AS BOOLEAN
     DIM FcGridDot  AS STRING                 ' character to paint as background grid
+
+    ' --- SplitPanel slots (container mode) -------------------------
+    DIM SpSlot1 AS STRING                    ' widget id docked left/top of divider
+    DIM SpSlot2 AS STRING                    ' widget id docked right/bottom of divider
 END TYPE
 
 ' ----------------------------------------------------------------------
@@ -524,6 +528,8 @@ FUNCTION WidgetToEntry(w AS Widget) AS WidgetEntry
     IF w.Kind = WidgetKindSplitPanel THEN
         props["Orientation"] = w.LstItems
         props["Position"]    = w.LstIdx
+        props["Slot1"]       = w.SpSlot1
+        props["Slot2"]       = w.SpSlot2
     END IF
     IF w.Kind = WidgetKindPropertyGrid THEN
         props["Title"]    = w.Title
@@ -572,6 +578,8 @@ SUB ApplyEntryProperties(w AS POINTER TO Widget, e AS WidgetEntry)
     keys = APPEND(keys, "Language")
     keys = APPEND(keys, "ShowGrid")
     keys = APPEND(keys, "GridDot")
+    keys = APPEND(keys, "Slot1")
+    keys = APPEND(keys, "Slot2")
     DIM i AS INTEGER
     FOR i = 0 TO LEN(keys) - 1
         DIM k AS STRING = keys[i]

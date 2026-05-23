@@ -600,6 +600,9 @@ FUNCTION emitHeader(p AS Project) AS STRING
     s = s + "    DIM FcDragOY   AS INTEGER\n"
     s = s + "    DIM FcDragMx   AS INTEGER\n"
     s = s + "    DIM FcDragMy   AS INTEGER\n"
+    ' --- SplitPanel container slots --------------------------------
+    s = s + "    DIM SpSlot1 AS STRING\n"
+    s = s + "    DIM SpSlot2 AS STRING\n"
     ' When TRUE, clicks on this widget start a move-drag — the runtime
     ' tracks the cursor delta and updates X/Y until release.
     s = s + "    DIM Draggable AS BOOLEAN\n"
@@ -1151,6 +1154,10 @@ FUNCTION emitNewModel(form AS Form) AS STRING
             DIM posOk AS BOOLEAN
             posV, posOk = getIntProp(w, "Position")
             IF posOk THEN s = s + fmt.Sprintf("    w%d.Selected = %d\n", i, posV)
+            DIM slot1 AS STRING = getStrProp(w, "Slot1")
+            DIM slot2 AS STRING = getStrProp(w, "Slot2")
+            IF slot1 <> "" THEN s = s + fmt.Sprintf("    w%d.SpSlot1 = %s\n", i, dbasStr(slot1))
+            IF slot2 <> "" THEN s = s + fmt.Sprintf("    w%d.SpSlot2 = %s\n", i, dbasStr(slot2))
         END IF
         IF w.Kind = WidgetKindPropertyGrid THEN
             DIM rows AS STRING = getStrProp(w, "Rows")
@@ -1656,25 +1663,33 @@ FUNCTION emitLifecycle() AS STRING
     ' SplitPanel drag: update Position (Selected) from mouse position
     ' along the divider's draggable axis, then move the divider too.
     s = s + "        IF dw.Kind = \"SplitPanel\" THEN\n"
+    s = s + "            DIM dwHasSlots AS BOOLEAN = (dw.SpSlot1 <> \"\" OR dw.SpSlot2 <> \"\")\n"
     s = s + "            IF dw.Items = \"horizontal\" THEN\n"
-    ' Horizontal divider — drag up/down. Use the parent form bounds
-    ' (the divider's Y can move from 0 to formH-1; here we treat the
-    ' "span" as the form Height so Position is a percent of it).
-    s = s + "                DIM hpct AS INTEGER = ((mmMsg.Y - 1) * 100) / m.Height\n"
+    s = s + "                DIM hpct AS INTEGER\n"
+    s = s + "                IF dwHasSlots AND dw.H > 0 THEN\n"
+    s = s + "                    hpct = ((mmMsg.Y - 1 - dw.Y) * 100) / dw.H\n"
+    s = s + "                ELSE\n"
+    s = s + "                    hpct = ((mmMsg.Y - 1) * 100) / m.Height\n"
+    s = s + "                END IF\n"
     s = s + "                IF hpct < 0 THEN hpct = 0\n"
     s = s + "                IF hpct > 100 THEN hpct = 100\n"
     s = s + "                IF hpct <> m.Widgets[m.DragIdx].Selected THEN\n"
     s = s + "                    m.Widgets[m.DragIdx].Selected = hpct\n"
-    s = s + "                    m.Widgets[m.DragIdx].Y = (m.Height * hpct) / 100\n"
+    s = s + "                    IF NOT dwHasSlots THEN m.Widgets[m.DragIdx].Y = (m.Height * hpct) / 100\n"
     s = s + "                    dispatchChange(m.Widgets[m.DragIdx].Id)\n"
     s = s + "                END IF\n"
     s = s + "            ELSE\n"
-    s = s + "                DIM vpct AS INTEGER = ((mmMsg.X - 1) * 100) / m.Width\n"
+    s = s + "                DIM vpct AS INTEGER\n"
+    s = s + "                IF dwHasSlots AND dw.W > 0 THEN\n"
+    s = s + "                    vpct = ((mmMsg.X - 1 - dw.X) * 100) / dw.W\n"
+    s = s + "                ELSE\n"
+    s = s + "                    vpct = ((mmMsg.X - 1) * 100) / m.Width\n"
+    s = s + "                END IF\n"
     s = s + "                IF vpct < 0 THEN vpct = 0\n"
     s = s + "                IF vpct > 100 THEN vpct = 100\n"
     s = s + "                IF vpct <> m.Widgets[m.DragIdx].Selected THEN\n"
     s = s + "                    m.Widgets[m.DragIdx].Selected = vpct\n"
-    s = s + "                    m.Widgets[m.DragIdx].X = (m.Width * vpct) / 100\n"
+    s = s + "                    IF NOT dwHasSlots THEN m.Widgets[m.DragIdx].X = (m.Width * vpct) / 100\n"
     s = s + "                    dispatchChange(m.Widgets[m.DragIdx].Id)\n"
     s = s + "                END IF\n"
     s = s + "            END IF\n"
@@ -2495,17 +2510,44 @@ FUNCTION emitRenderWidget() AS STRING
     s = s + "        DIM fcWp AS POINTER TO WState = @w\n"
     s = s + "        body = fcRender(fcWp)\n"
     s = s + "    ELSEIF w.Kind = \"SplitPanel\" THEN\n"
-    ' Render the divider line (vertical orientation = a ╎ column,
-    ' horizontal orientation = a ╌ row).
-    s = s + "        IF w.Items = \"horizontal\" THEN\n"
+    s = s + "        DIM hasSlots AS BOOLEAN = (w.SpSlot1 <> \"\" OR w.SpSlot2 <> \"\")\n"
+    s = s + "        DIM spcLines AS []STRING\n"
+    s = s + "        IF hasSlots THEN\n"
+    ' Container mode — draw just the divider line, blank elsewhere so the
+    ' slot widgets (rendered on higher Z) cover the rest.
+    s = s + "            DIM spPos AS INTEGER = w.Selected\n"
+    s = s + "            IF spPos < 5 THEN spPos = 5\n"
+    s = s + "            IF spPos > 95 THEN spPos = 95\n"
+    s = s + "            IF w.Items = \"horizontal\" THEN\n"
+    s = s + "                DIM dividerRow AS INTEGER = (w.H * spPos) / 100\n"
+    s = s + "                DIM hr AS INTEGER\n"
+    s = s + "                FOR hr = 0 TO w.H - 1\n"
+    s = s + "                    IF hr = dividerRow THEN\n"
+    s = s + "                        spcLines = APPEND(spcLines, strings.Repeat(\"╌\", w.W))\n"
+    s = s + "                    ELSE\n"
+    s = s + "                        spcLines = APPEND(spcLines, strings.Repeat(\" \", w.W))\n"
+    s = s + "                    END IF\n"
+    s = s + "                NEXT hr\n"
+    s = s + "            ELSE\n"
+    s = s + "                DIM dividerCol AS INTEGER = (w.W * spPos) / 100\n"
+    s = s + "                DIM vr AS INTEGER\n"
+    s = s + "                FOR vr = 0 TO w.H - 1\n"
+    s = s + "                    DIM lpad AS INTEGER = dividerCol\n"
+    s = s + "                    DIM rpad AS INTEGER = w.W - dividerCol - 1\n"
+    s = s + "                    IF lpad < 0 THEN lpad = 0\n"
+    s = s + "                    IF rpad < 0 THEN rpad = 0\n"
+    s = s + "                    spcLines = APPEND(spcLines, strings.Repeat(\" \", lpad) + \"╎\" + strings.Repeat(\" \", rpad))\n"
+    s = s + "                NEXT vr\n"
+    s = s + "            END IF\n"
+    s = s + "            body = strings.Join(spcLines, \"\\n\")\n"
+    s = s + "        ELSEIF w.Items = \"horizontal\" THEN\n"
     s = s + "            body = strings.Repeat(\"╌\", w.W)\n"
     s = s + "        ELSE\n"
-    s = s + "            DIM splLines AS []STRING\n"
     s = s + "            DIM splI AS INTEGER\n"
     s = s + "            FOR splI = 0 TO w.H - 1\n"
-    s = s + "                splLines = APPEND(splLines, \"╎\")\n"
+    s = s + "                spcLines = APPEND(spcLines, \"╎\")\n"
     s = s + "            NEXT splI\n"
-    s = s + "            body = strings.Join(splLines, \"\\n\")\n"
+    s = s + "            body = strings.Join(spcLines, \"\\n\")\n"
     s = s + "        END IF\n"
     s = s + "    ELSEIF w.Kind = \"PropertyGrid\" THEN\n"
     s = s + "        DIM pgInnerW AS INTEGER = w.W - 2\n"
@@ -2530,6 +2572,9 @@ FUNCTION emitView(form AS Form) AS STRING
 
     DIM s AS STRING = ""
     s = s + "FUNCTION (m AS Model) View() AS tea.View\n"
+    ' Reflow any SplitPanel containers each frame so divider drags +
+    ' WindowSize changes take effect immediately.
+    s = s + "    layoutSplitPanels(@m)\n"
     s = s + fmt.Sprintf("    DIM formW AS INTEGER = %d\n", form.Width)
     s = s + fmt.Sprintf("    DIM formH AS INTEGER = %d\n", form.Height)
     s = s + fmt.Sprintf("    DIM bgCol AS STRING = %s\n", dbasStr(bgCol))
@@ -3602,6 +3647,88 @@ FUNCTION emitFormCanvasAPI(form AS Form) AS STRING
     RETURN s
 END FUNCTION
 
+' emitSplitPanelLayout writes layoutSplitPanels(@m) — a helper called
+' once per render that reflows the slot widgets of every SplitPanel
+' that has at least one slot assigned. Slots are referenced by widget
+' id; missing ids are silently skipped. Legacy "just a divider" mode
+' (no slots set) is left untouched.
+FUNCTION emitSplitPanelLayout() AS STRING
+    DIM s AS STRING = ""
+    s = s + "' --- SplitPanel container runtime ------------------------------\n"
+    s = s + "FUNCTION findWidgetIdx(m AS Model, id AS STRING) AS INTEGER\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        IF m.Widgets[i].Id = id THEN RETURN i\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN 0 - 1\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "SUB layoutSplitPanels(m AS POINTER TO Model)\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        IF m.Widgets[i].Kind = \"SplitPanel\" AND (m.Widgets[i].SpSlot1 <> \"\" OR m.Widgets[i].SpSlot2 <> \"\") THEN\n"
+    s = s + "            DIM sp AS WState = m.Widgets[i]\n"
+    s = s + "            DIM pos AS INTEGER = sp.Selected\n"
+    s = s + "            IF pos < 5 THEN pos = 5\n"
+    s = s + "            IF pos > 95 THEN pos = 95\n"
+    s = s + "            IF sp.Items = \"horizontal\" THEN\n"
+    ' Horizontal divider — top slot above, bottom slot below.
+    s = s + "                DIM dividerY AS INTEGER = sp.Y + (sp.H * pos) / 100\n"
+    s = s + "                DIM topH AS INTEGER = dividerY - sp.Y\n"
+    s = s + "                DIM botY AS INTEGER = dividerY + 1\n"
+    s = s + "                DIM botH AS INTEGER = (sp.Y + sp.H) - botY\n"
+    s = s + "                IF topH < 1 THEN topH = 1\n"
+    s = s + "                IF botH < 1 THEN botH = 1\n"
+    s = s + "                IF sp.SpSlot1 <> \"\" THEN\n"
+    s = s + "                    DIM s1i AS INTEGER = findWidgetIdx(^m, sp.SpSlot1)\n"
+    s = s + "                    IF s1i >= 0 THEN\n"
+    s = s + "                        m.Widgets[s1i].X = sp.X\n"
+    s = s + "                        m.Widgets[s1i].Y = sp.Y\n"
+    s = s + "                        m.Widgets[s1i].W = sp.W\n"
+    s = s + "                        m.Widgets[s1i].H = topH\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "                IF sp.SpSlot2 <> \"\" THEN\n"
+    s = s + "                    DIM s2i AS INTEGER = findWidgetIdx(^m, sp.SpSlot2)\n"
+    s = s + "                    IF s2i >= 0 THEN\n"
+    s = s + "                        m.Widgets[s2i].X = sp.X\n"
+    s = s + "                        m.Widgets[s2i].Y = botY\n"
+    s = s + "                        m.Widgets[s2i].W = sp.W\n"
+    s = s + "                        m.Widgets[s2i].H = botH\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSE\n"
+    ' Vertical divider — left slot left of divider, right slot right of it.
+    s = s + "                DIM dividerX AS INTEGER = sp.X + (sp.W * pos) / 100\n"
+    s = s + "                DIM leftW AS INTEGER = dividerX - sp.X\n"
+    s = s + "                DIM rightX AS INTEGER = dividerX + 1\n"
+    s = s + "                DIM rightW AS INTEGER = (sp.X + sp.W) - rightX\n"
+    s = s + "                IF leftW < 1 THEN leftW = 1\n"
+    s = s + "                IF rightW < 1 THEN rightW = 1\n"
+    s = s + "                IF sp.SpSlot1 <> \"\" THEN\n"
+    s = s + "                    DIM v1i AS INTEGER = findWidgetIdx(^m, sp.SpSlot1)\n"
+    s = s + "                    IF v1i >= 0 THEN\n"
+    s = s + "                        m.Widgets[v1i].X = sp.X\n"
+    s = s + "                        m.Widgets[v1i].Y = sp.Y\n"
+    s = s + "                        m.Widgets[v1i].W = leftW\n"
+    s = s + "                        m.Widgets[v1i].H = sp.H\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "                IF sp.SpSlot2 <> \"\" THEN\n"
+    s = s + "                    DIM v2i AS INTEGER = findWidgetIdx(^m, sp.SpSlot2)\n"
+    s = s + "                    IF v2i >= 0 THEN\n"
+    s = s + "                        m.Widgets[v2i].X = rightX\n"
+    s = s + "                        m.Widgets[v2i].Y = sp.Y\n"
+    s = s + "                        m.Widgets[v2i].W = rightW\n"
+    s = s + "                        m.Widgets[v2i].H = sp.H\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT i\n"
+    s = s + "END SUB\n\n"
+    RETURN s
+END FUNCTION
+
 FUNCTION emitPropertyGridRender() AS STRING
     DIM candidates AS []STRING
     DIM envDir AS STRING = os.Getenv("DBTUI_RUNTIME_DIR")
@@ -3670,6 +3797,7 @@ FUNCTION GenerateProgram(p AS Project) AS STRING
     s = s + emitCodeEditorHelpers()
     s = s + emitFormCanvasHelpers()
     s = s + emitFormCanvasAPI(form)
+    s = s + emitSplitPanelLayout()
     s = s + emitRenderWidget()
     s = s + emitView(form)
     s = s + emitTools(form)

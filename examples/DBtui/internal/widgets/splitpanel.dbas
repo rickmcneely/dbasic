@@ -36,6 +36,8 @@ FUNCTION SplitPanelProperties(w AS Widget) AS []Property
     DIM out AS []Property
     out = APPEND(out, StringProp("Orientation", w.LstItems))
     out = APPEND(out, StringProp("Position", fmt.Sprintf("%d", w.LstIdx)))
+    out = APPEND(out, StringProp("Slot1", w.SpSlot1))
+    out = APPEND(out, StringProp("Slot2", w.SpSlot2))
     DIM stylePs AS []Property = StyleProperties(w.Style, FALSE)
     DIM i AS INTEGER
     FOR i = 0 TO LEN(stylePs) - 1
@@ -65,6 +67,22 @@ FUNCTION SetSplitPanelProperty(w AS POINTER TO Widget, name AS STRING, value AS 
         IF iv < 0 THEN iv = 0
         IF iv > 100 THEN iv = 100
         w.LstIdx = iv
+        RETURN NIL
+    END IF
+    IF name = "Slot1" THEN
+        DIM s1 AS STRING
+        DIM s1err AS ERROR
+        s1, s1err = coerceString(name, value)
+        IF s1err <> NIL THEN RETURN s1err
+        w.SpSlot1 = s1
+        RETURN NIL
+    END IF
+    IF name = "Slot2" THEN
+        DIM s2 AS STRING
+        DIM s2err AS ERROR
+        s2, s2err = coerceString(name, value)
+        IF s2err <> NIL THEN RETURN s2err
+        w.SpSlot2 = s2
         RETURN NIL
     END IF
     RETURN NewError("unknown SplitPanel property: " + name)
