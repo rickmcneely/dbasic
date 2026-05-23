@@ -1,0 +1,549 @@
+' DBtui — internal/editor/highlight.dbas
+'
+' DBasic-aware code editor renderer. Built on top of the bubbles
+' textarea.Model (which still handles all input, cursor motion,
+' undo/redo, etc.) — we just intercept the render so the visible
+' surface gets per-token colors, a styled gutter, and a block cursor.
+'
+' Why not use textarea.View()? The bubbles textarea has no per-character
+' style hook (only SetPromptFunc for the line prefix), and post-processing
+' its output is fragile because the cursor renders inline as ANSI escapes
+' that interleave with the text we'd want to colorize. Cleaner to render
+' our own surface from .Value() + .Line() + .Column() and leave the
+' textarea owning state.
+'
+' Scope: physical-line rendering only (no soft wrap), horizontal scroll
+' by character, vertical scroll tracked here so the cursor stays in view.
+
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "fmt"
+IMPORT "strings"
+
+' ----------------------------------------------------------------------
+' Token colors — Tokyo Night-ish, tuned to live alongside the DBtui
+' palette in ui/theme.dbas. Kept local to the editor so a theme tweak
+' here doesn't ripple through unrelated UI.
+' ----------------------------------------------------------------------
+
+CONST CodeColorComment AS STRING = "#565f89"   ' dim italic gray
+CONST CodeColorString  AS STRING = "#9ece6a"   ' green
+CONST CodeColorKeyword AS STRING = "#bb9af7"   ' purple
+CONST CodeColorType    AS STRING = "#7dcfff"   ' cyan (same as accent)
+CONST CodeColorBuiltin AS STRING = "#f7768e"   ' coral
+CONST CodeColorNumber  AS STRING = "#ff9e64"   ' orange
+CONST CodeColorGutter  AS STRING = "#565f89"   ' dim accent for line nums
+CONST CodeColorCurLine AS STRING = "#7dcfff"   ' bright cyan for cursor row
+
+' ----------------------------------------------------------------------
+' Keyword tables. Compared case-insensitively (DBasic is case-insensitive
+' for keywords). Sorted roughly by usage frequency to keep the linear
+' scan brisk on hot code paths.
+' ----------------------------------------------------------------------
+
+FUNCTION codeKeywords() AS []STRING
+    DIM kw AS []STRING
+    kw = APPEND(kw, "DIM", "LET", "CONST", "SUB", "FUNCTION", "END", "AS")
+    kw = APPEND(kw, "RETURN", "IF", "THEN", "ELSE", "ELSEIF", "ENDIF")
+    kw = APPEND(kw, "FOR", "TO", "STEP", "NEXT", "WHILE", "WEND", "DO", "LOOP", "UNTIL")
+    kw = APPEND(kw, "SELECT", "CASE", "EXIT", "CONTINUE", "GOTO", "GOFUNC")
+    kw = APPEND(kw, "ONERR", "ON", "ERROR", "IMPORT", "INCLUDE", "TYPE", "OF")
+    kw = APPEND(kw, "POINTER", "MAP", "AND", "OR", "NOT", "XOR", "MOD")
+    kw = APPEND(kw, "TRUE", "FALSE", "NIL", "SPAWN", "SEND", "RECEIVE", "DEFER")
+    kw = APPEND(kw, "WITH", "REM", "REDIM", "PRESERVE", "STATIC", "SHARED")
+    kw = APPEND(kw, "OPTION", "EXPLICIT", "BASE", "DECLARE", "CALL", "BYREF", "BYVAL")
+    kw = APPEND(kw, "METHOD", "INTERFACE", "PRINT", "INPUT")
+    RETURN kw
+END FUNCTION
+
+FUNCTION codeTypes() AS []STRING
+    DIM tp AS []STRING
+    tp = APPEND(tp, "INTEGER", "DOUBLE", "FLOAT", "STRING", "BOOLEAN", "BYTE", "BYTES")
+    tp = APPEND(tp, "ERROR", "VOID", "ANY", "UINT")
+    RETURN tp
+END FUNCTION
+
+FUNCTION codeBuiltins() AS []STRING
+    DIM b AS []STRING
+    b = APPEND(b, "LEN", "MID", "LEFT", "RIGHT", "CHR", "ASC", "STR", "VAL")
+    b = APPEND(b, "UCASE", "LCASE", "TRIM", "LTRIM", "RTRIM", "INSTR", "SPACE")
+    b = APPEND(b, "APPEND", "MAKE", "NEW", "INT", "SNG", "RND", "RNDINT")
+    b = APPEND(b, "ABS", "MIN", "MAX", "SQRT", "FLOOR", "CEIL", "ROUND", "POW")
+    b = APPEND(b, "SIN", "COS", "TAN", "ATN", "LOG", "EXP")
+    b = APPEND(b, "UINT8", "UINT16", "UINT32", "UINT64")
+    b = APPEND(b, "ENCODE", "DECODE", "MAKEBYTES", "LENBYTES")
+    b = APPEND(b, "BITAND", "BITOR", "BITXOR", "BITNOT", "BITSHL", "BITSHR")
+    RETURN b
+END FUNCTION
+
+' tableHas — case-insensitive membership check.
+FUNCTION tableHas(t AS []STRING, w AS STRING) AS BOOLEAN
+    DIM up AS STRING = strings.ToUpper(w)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(t) - 1
+        IF t[i] = up THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' isAlpha — letter or underscore. Used for identifier-start detection.
+FUNCTION isAlpha(c AS STRING) AS BOOLEAN
+    IF c = "" THEN RETURN FALSE
+    DIM b AS INTEGER = Asc(c)
+    IF b >= Asc("A") AND b <= Asc("Z") THEN RETURN TRUE
+    IF b >= Asc("a") AND b <= Asc("z") THEN RETURN TRUE
+    IF c = "_" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' isAlnum — identifier continuation: letter, digit, or underscore.
+FUNCTION isAlnum(c AS STRING) AS BOOLEAN
+    IF isAlpha(c) THEN RETURN TRUE
+    IF c = "" THEN RETURN FALSE
+    DIM b AS INTEGER = Asc(c)
+    IF b >= Asc("0") AND b <= Asc("9") THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' isDigit — 0-9.
+FUNCTION isDigit(c AS STRING) AS BOOLEAN
+    IF c = "" THEN RETURN FALSE
+    DIM b AS INTEGER = Asc(c)
+    IF b >= Asc("0") AND b <= Asc("9") THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' withBg — utility: returns a style with the supplied bg applied. When
+' bgHex is "" no background is set, so the same factory works for both
+' plain colorize and selection-highlighted colorize paths.
+FUNCTION withBg(s AS lipgloss.Style, bgHex AS STRING) AS lipgloss.Style
+    IF bgHex = "" THEN RETURN s
+    RETURN s.Background(lipgloss.Color(bgHex))
+END FUNCTION
+
+' colorize — turns one source line into a styled string. Lipgloss
+' handles ANSI escape emission per run. When bgHex is non-empty the
+' background color is applied to EVERY token (and even bare runs of
+' operators/whitespace), so the selection highlight survives the
+' lipgloss-emitted ANSI resets that fall between styled spans.
+FUNCTION colorizeLine(line AS STRING) AS STRING
+    RETURN colorizeLineBg(line, "")
+END FUNCTION
+
+FUNCTION colorizeLineBg(line AS STRING, bgHex AS STRING) AS STRING
+    DIM kws AS []STRING = codeKeywords()
+    DIM tps AS []STRING = codeTypes()
+    DIM bis AS []STRING = codeBuiltins()
+    DIM out AS STRING = ""
+    DIM n AS INTEGER = LEN(line)
+    DIM i AS INTEGER = 1
+    ' plainBuf collects untokenized chars (operators, whitespace) so we
+    ' can emit them as one styled run with the background applied.
+    DIM plainBuf AS STRING = ""
+    DO WHILE i <= n
+        DIM c AS STRING = Mid(line, i, 1)
+
+        ' Flush any pending plain-char run before we emit a styled token.
+        IF c = "'" OR c = Chr(34) OR isDigit(c) OR isAlpha(c) THEN
+            IF plainBuf <> "" THEN
+                IF bgHex = "" THEN
+                    out = out + plainBuf
+                ELSE
+                    DIM ps AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgHex))
+                    out = out + ps.Render(plainBuf)
+                END IF
+                plainBuf = ""
+            END IF
+        END IF
+
+        ' --- Line comment: ' to EOL ---
+        IF c = "'" THEN
+            DIM rest AS STRING = Mid(line, i, n - i + 1)
+            DIM cs AS lipgloss.Style = withBg(lipgloss.NewStyle().Foreground(lipgloss.Color(CodeColorComment)).Italic(TRUE), bgHex)
+            out = out + cs.Render(rest)
+            i = n + 1
+        ELSEIF c = Chr(34) THEN
+            ' --- String literal --- consume until closing " or EOL.
+            DIM start AS INTEGER = i
+            i = i + 1
+            DO WHILE i <= n
+                DIM ch AS STRING = Mid(line, i, 1)
+                i = i + 1
+                IF ch = Chr(34) THEN EXIT DO
+            LOOP
+            DIM lit AS STRING = Mid(line, start, i - start)
+            DIM ss AS lipgloss.Style = withBg(lipgloss.NewStyle().Foreground(lipgloss.Color(CodeColorString)), bgHex)
+            out = out + ss.Render(lit)
+        ELSEIF isDigit(c) THEN
+            ' --- Number --- consume digits, optional '.' + digits.
+            DIM nStart AS INTEGER = i
+            DO WHILE i <= n AND isDigit(Mid(line, i, 1))
+                i = i + 1
+            LOOP
+            IF i <= n AND Mid(line, i, 1) = "." THEN
+                i = i + 1
+                DO WHILE i <= n AND isDigit(Mid(line, i, 1))
+                    i = i + 1
+                LOOP
+            END IF
+            DIM num AS STRING = Mid(line, nStart, i - nStart)
+            DIM ns AS lipgloss.Style = withBg(lipgloss.NewStyle().Foreground(lipgloss.Color(CodeColorNumber)), bgHex)
+            out = out + ns.Render(num)
+        ELSEIF isAlpha(c) THEN
+            ' --- Identifier / keyword / type / builtin ---
+            DIM iStart AS INTEGER = i
+            DO WHILE i <= n AND isAlnum(Mid(line, i, 1))
+                i = i + 1
+            LOOP
+            DIM word AS STRING = Mid(line, iStart, i - iStart)
+            DIM upWord AS STRING = strings.ToUpper(word)
+            ' REM is a comment-to-EOL alternative — consume the rest as comment.
+            IF upWord = "REM" THEN
+                DIM rest2 AS STRING = Mid(line, i, n - i + 1)
+                DIM cs2 AS lipgloss.Style = withBg(lipgloss.NewStyle().Foreground(lipgloss.Color(CodeColorComment)).Italic(TRUE), bgHex)
+                out = out + cs2.Render(word + rest2)
+                i = n + 1
+            ELSEIF tableHas(kws, word) THEN
+                DIM ks AS lipgloss.Style = withBg(lipgloss.NewStyle().Foreground(lipgloss.Color(CodeColorKeyword)).Bold(TRUE), bgHex)
+                out = out + ks.Render(word)
+            ELSEIF tableHas(tps, word) THEN
+                DIM ts AS lipgloss.Style = withBg(lipgloss.NewStyle().Foreground(lipgloss.Color(CodeColorType)), bgHex)
+                out = out + ts.Render(word)
+            ELSEIF tableHas(bis, word) THEN
+                DIM bs AS lipgloss.Style = withBg(lipgloss.NewStyle().Foreground(lipgloss.Color(CodeColorBuiltin)), bgHex)
+                out = out + bs.Render(word)
+            ELSE
+                IF bgHex = "" THEN
+                    out = out + word
+                ELSE
+                    DIM ws AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgHex))
+                    out = out + ws.Render(word)
+                END IF
+            END IF
+        ELSE
+            ' --- Plain character (operator, whitespace, etc.) ---
+            plainBuf = plainBuf + c
+            i = i + 1
+        END IF
+    LOOP
+    ' Flush any trailing plain run.
+    IF plainBuf <> "" THEN
+        IF bgHex = "" THEN
+            out = out + plainBuf
+        ELSE
+            DIM ps2 AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgHex))
+            out = out + ps2.Render(plainBuf)
+        END IF
+    END IF
+    RETURN out
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Autocomplete: prefix extraction + candidate building.
+' ----------------------------------------------------------------------
+
+' currentLine — returns the logical source line at the given row index,
+' or "" if out of bounds. Used by autocomplete to look at the chars to
+' the left of the cursor.
+FUNCTION currentLine(text AS STRING, row AS INTEGER) AS STRING
+    DIM lines AS []STRING = strings.Split(text, "\n")
+    IF row < 0 OR row >= LEN(lines) THEN RETURN ""
+    RETURN lines[row]
+END FUNCTION
+
+' AutocompletePrefix walks backward from col through identifier chars
+' (letters, digits, underscore) and returns the prefix preceding the
+' cursor. Returns "" when the cursor is not adjacent to an identifier.
+FUNCTION AutocompletePrefix(line AS STRING, col AS INTEGER) AS STRING
+    IF col < 1 THEN RETURN ""
+    DIM startCol AS INTEGER = col
+    DO WHILE startCol > 0
+        DIM c AS STRING = Mid(line, startCol, 1)
+        IF NOT isAlnum(c) THEN EXIT DO
+        startCol = startCol - 1
+    LOOP
+    IF startCol >= col THEN RETURN ""
+    DIM prefix AS STRING = Mid(line, startCol + 1, col - startCol)
+    ' Require at least one alpha char so single-digit numbers don't trigger.
+    IF NOT isAlpha(Mid(prefix, 1, 1)) THEN RETURN ""
+    RETURN prefix
+END FUNCTION
+
+' fileIdents scans the full buffer for identifiers (letter-start words
+' of length >= 3) so user-defined names show up in completions. Dedup
+' against the keyword/type/builtin tables happens at filter time.
+FUNCTION fileIdents(text AS STRING) AS []STRING
+    DIM seen AS MAP OF STRING TO BOOLEAN
+    DIM out AS []STRING
+    DIM n AS INTEGER = LEN(text)
+    DIM i AS INTEGER = 1
+    DO WHILE i <= n
+        DIM c AS STRING = Mid(text, i, 1)
+        IF isAlpha(c) THEN
+            DIM s AS INTEGER = i
+            DO WHILE i <= n AND isAlnum(Mid(text, i, 1))
+                i = i + 1
+            LOOP
+            DIM w AS STRING = Mid(text, s, i - s)
+            IF LEN(w) >= 3 AND NOT seen[w] THEN
+                seen[w] = TRUE
+                out = APPEND(out, w)
+            END IF
+        ELSEIF c = Chr(34) THEN
+            ' Skip string literals so words inside strings don't pollute.
+            i = i + 1
+            DO WHILE i <= n
+                DIM ch AS STRING = Mid(text, i, 1)
+                i = i + 1
+                IF ch = Chr(34) THEN EXIT DO
+            LOOP
+        ELSEIF c = "'" THEN
+            ' Skip to end of line for line comments.
+            DO WHILE i <= n AND Mid(text, i, 1) <> Chr(10)
+                i = i + 1
+            LOOP
+        ELSE
+            i = i + 1
+        END IF
+    LOOP
+    RETURN out
+END FUNCTION
+
+' AutocompleteCandidates filters keywords + types + builtins + buffer
+' identifiers by case-insensitive prefix match. Order: keywords, types,
+' builtins, file idents (so language constructs surface first).
+FUNCTION AutocompleteCandidates(prefix AS STRING, bufferText AS STRING) AS []STRING
+    DIM up AS STRING = strings.ToUpper(prefix)
+    DIM out AS []STRING
+    DIM seen AS MAP OF STRING TO BOOLEAN
+
+    DIM kws AS []STRING = codeKeywords()
+    DIM tps AS []STRING = codeTypes()
+    DIM bis AS []STRING = codeBuiltins()
+    DIM ids AS []STRING = fileIdents(bufferText)
+
+    DIM i AS INTEGER
+    ' Types first — when a user types "INT" they almost certainly mean
+    ' INTEGER, not INTERFACE. Common kinds outrank rare ones.
+    FOR i = 0 TO LEN(tps) - 1
+        IF strings.HasPrefix(tps[i], up) AND NOT seen[tps[i]] THEN
+            seen[tps[i]] = TRUE
+            out = APPEND(out, tps[i])
+        END IF
+    NEXT i
+    FOR i = 0 TO LEN(kws) - 1
+        IF strings.HasPrefix(kws[i], up) AND NOT seen[kws[i]] THEN
+            seen[kws[i]] = TRUE
+            out = APPEND(out, kws[i])
+        END IF
+    NEXT i
+    FOR i = 0 TO LEN(bis) - 1
+        IF strings.HasPrefix(bis[i], up) AND NOT seen[bis[i]] THEN
+            seen[bis[i]] = TRUE
+            out = APPEND(out, bis[i])
+        END IF
+    NEXT i
+    FOR i = 0 TO LEN(ids) - 1
+        DIM idUp AS STRING = strings.ToUpper(ids[i])
+        IF strings.HasPrefix(idUp, up) AND NOT seen[ids[i]] AND ids[i] <> prefix THEN
+            seen[ids[i]] = TRUE
+            out = APPEND(out, ids[i])
+        END IF
+    NEXT i
+
+    ' Cap to a manageable popup size.
+    IF LEN(out) > 12 THEN
+        DIM trimmed AS []STRING
+        FOR i = 0 TO 11
+            trimmed = APPEND(trimmed, out[i])
+        NEXT i
+        RETURN trimmed
+    END IF
+    RETURN out
+END FUNCTION
+
+' RenderAutocompletePopup builds a small framed list of completions
+' with the selected row highlighted. Width auto-fits the longest item.
+FUNCTION RenderAutocompletePopup(items AS []STRING, idx AS INTEGER) AS STRING
+    IF LEN(items) = 0 THEN RETURN ""
+    DIM maxW AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items) - 1
+        IF LEN(items[i]) > maxW THEN maxW = LEN(items[i])
+    NEXT i
+    IF maxW < 8 THEN maxW = 8
+    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorFgHex)).Background(lipgloss.Color(ColorMenuBgHex)).Padding(0, 1)
+    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorBgHex)).Background(lipgloss.Color(CodeColorCurLine)).Bold(TRUE).Padding(0, 1)
+    DIM lines AS []STRING
+    FOR i = 0 TO LEN(items) - 1
+        DIM txt AS STRING = items[i]
+        IF LEN(txt) < maxW THEN txt = txt + strings.Repeat(" ", maxW - LEN(txt))
+        IF i = idx THEN
+            lines = APPEND(lines, selStyle.Render(txt))
+        ELSE
+            lines = APPEND(lines, rowStyle.Render(txt))
+        END IF
+    NEXT i
+    DIM body AS STRING = strings.Join(lines, "\n")
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(CodeColorCurLine)).Background(lipgloss.Color(ColorMenuBgHex))
+    RETURN borderStyle.Render(body)
+END FUNCTION
+
+' computeScroll keeps the cursor vertically in view. Bumps scroll forward
+' if cursor sits below the visible window, backward if above. h is the
+' visible row count (gutter row is the source line — no separate header).
+FUNCTION computeScroll(curRow AS INTEGER, scroll AS INTEGER, h AS INTEGER) AS INTEGER
+    IF h < 1 THEN h = 1
+    IF curRow < scroll THEN RETURN curRow
+    IF curRow >= scroll + h THEN RETURN curRow - h + 1
+    RETURN scroll
+END FUNCTION
+
+' selBackgroundStyle — the highlight applied to characters inside the
+' active selection. Kept distinct from the cursor block so a single-char
+' selection still reads as "block at this cell" rather than "cursor here".
+FUNCTION selBackgroundStyle() AS lipgloss.Style
+    RETURN lipgloss.NewStyle().Background(lipgloss.Color(ColorSelectionHex))
+END FUNCTION
+
+' applySelectionToLine overlays the selection background on the
+' already-colorized line. selStart/selEnd are 0-based column bounds
+' (exclusive end). Splits visible at the bounds and re-styles the middle.
+FUNCTION applySelectionToLine(visible AS STRING, selS AS INTEGER, selE AS INTEGER) AS STRING
+    IF selE <= selS THEN RETURN colorizeLine(visible)
+    DIM n AS INTEGER = LEN(visible)
+    IF selE <= 0 OR selS >= n THEN RETURN colorizeLine(visible)
+    DIM s AS INTEGER = selS
+    DIM e AS INTEGER = selE
+    IF s < 0 THEN s = 0
+    IF e > n THEN e = n
+    IF e <= s THEN RETURN colorizeLine(visible)
+    DIM pre AS STRING = ""
+    DIM midStr AS STRING = ""
+    DIM post AS STRING = ""
+    IF s > 0 THEN pre = Mid(visible, 1, s)
+    midStr = Mid(visible, s + 1, e - s)
+    IF e < n THEN post = Mid(visible, e + 1, n - e)
+    ' Selection background is woven into each token of the middle chunk
+    ' so the highlight survives the ANSI resets between styled runs
+    ' (otherwise only the first keyword would carry the bg).
+    RETURN colorizeLine(pre) + colorizeLineBg(midStr, ColorSelectionHex) + colorizeLine(post)
+END FUNCTION
+
+' RenderCode builds the full code-editor panel: line-number gutter +
+' syntax-highlighted source + a block cursor at (curRow, curCol). w is
+' the panel width in cells; h is the panel height. Padded to (w, h) so
+' it slots into lipgloss.JoinHorizontal/Vertical without surprises.
+'
+' selActive/selR0/selC0/selR1/selC1 describe an optional inclusive-start /
+' exclusive-end selection range (in row,col coords). When selActive is
+' FALSE the selection params are ignored.
+FUNCTION RenderCode(text AS STRING, w AS INTEGER, h AS INTEGER, curRow AS INTEGER, curCol AS INTEGER, focused AS BOOLEAN, scroll AS INTEGER, selActive AS BOOLEAN, selR0 AS INTEGER, selC0 AS INTEGER, selR1 AS INTEGER, selC1 AS INTEGER) AS STRING
+    IF w < 1 THEN w = 1
+    IF h < 1 THEN h = 1
+    DIM lines AS []STRING = strings.Split(text, "\n")
+    DIM total AS INTEGER = LEN(lines)
+    ' Gutter width: enough digits for the largest line number + leading/
+    ' trailing space. Minimum 4 (" 99 ") for narrow files so the layout
+    ' doesn't shift as the file grows past 9 lines.
+    DIM digits AS INTEGER = LEN(fmt.Sprintf("%d", total))
+    IF digits < 2 THEN digits = 2
+    DIM gutW AS INTEGER = digits + 2
+
+    DIM gutterStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(CodeColorGutter))
+    DIM curGutter   AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(CodeColorCurLine)).Bold(TRUE)
+    DIM cursorStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorBgHex)).Background(lipgloss.Color(CodeColorCurLine))
+
+    DIM outLines AS []STRING
+    DIM row AS INTEGER
+    FOR row = scroll TO scroll + h - 1
+        DIM gutNum AS STRING
+        DIM srcLine AS STRING
+        IF row < total THEN
+            gutNum = fmt.Sprintf("%*d ", digits, row + 1)
+            srcLine = lines[row]
+        ELSE
+            gutNum = strings.Repeat(" ", digits) + " "
+            srcLine = ""
+        END IF
+        DIM gut AS STRING
+        DIM isCurRow AS BOOLEAN = (row = curRow) AND focused
+        IF isCurRow THEN
+            gut = " " + curGutter.Render(gutNum)
+        ELSE
+            gut = " " + gutterStyle.Render(gutNum)
+        END IF
+
+        ' Visible portion of the source line: truncate to fit in
+        ' (w - gutW). No horizontal scrolling yet — cursor past the
+        ' edge still moves in the textarea, just isn't shown here.
+        DIM avail AS INTEGER = w - gutW
+        IF avail < 1 THEN avail = 1
+        DIM visible AS STRING = srcLine
+        IF LEN(visible) > avail THEN visible = Mid(visible, 1, avail)
+
+        ' Per-row selection bounds (clamped to this line). For middle
+        ' lines of a multi-line selection the bounds expand to the full
+        ' visible width plus a sentinel trailing-space so the highlight
+        ' visually extends to the gutter on the right.
+        DIM rowSelActive AS BOOLEAN = FALSE
+        DIM rowSelS AS INTEGER = 0
+        DIM rowSelE AS INTEGER = 0
+        IF selActive AND row >= selR0 AND row <= selR1 THEN
+            rowSelActive = TRUE
+            IF row = selR0 THEN
+                rowSelS = selC0
+            ELSE
+                rowSelS = 0
+            END IF
+            IF row = selR1 THEN
+                rowSelE = selC1
+            ELSE
+                rowSelE = LEN(visible) + 1
+            END IF
+            ' Pad the visible string with one trailing space so the
+            ' last-line wrap-around selection looks like other editors.
+            IF rowSelE > LEN(visible) AND rowSelE > rowSelS THEN
+                visible = visible + " "
+            END IF
+        END IF
+
+        ' Tokenize + color. Cursor block is overlaid by splitting at
+        ' curCol — pre/cursor/post — and re-colorizing each chunk.
+        DIM body AS STRING
+        IF isCurRow AND (curCol >= 0) AND (curCol <= LEN(visible)) THEN
+            DIM pre AS STRING = ""
+            DIM at  AS STRING = " "
+            DIM post AS STRING = ""
+            IF curCol > 0 THEN pre = Mid(visible, 1, curCol)
+            IF curCol < LEN(visible) THEN
+                at = Mid(visible, curCol + 1, 1)
+                IF curCol + 1 < LEN(visible) THEN
+                    post = Mid(visible, curCol + 2, LEN(visible) - curCol - 1)
+                END IF
+            END IF
+            DIM preR AS STRING = pre
+            DIM postR AS STRING = post
+            IF rowSelActive THEN
+                ' Selection applies to pre+post chunks independently.
+                preR = applySelectionToLine(pre, rowSelS, rowSelE)
+                postR = applySelectionToLine(post, rowSelS - curCol - 1, rowSelE - curCol - 1)
+            ELSE
+                preR = colorizeLine(pre)
+                postR = colorizeLine(post)
+            END IF
+            body = preR + cursorStyle.Render(at) + postR
+        ELSEIF rowSelActive THEN
+            body = applySelectionToLine(visible, rowSelS, rowSelE)
+        ELSE
+            body = colorizeLine(visible)
+        END IF
+
+        ' Pad to full width so the gutter background extends to the
+        ' right edge (lipgloss won't pad for us when we mix styled runs).
+        DIM lineRendered AS STRING = gut + body
+        DIM rendW AS INTEGER = lipgloss.Width(lineRendered)
+        IF rendW < w THEN lineRendered = lineRendered + strings.Repeat(" ", w - rendW)
+        outLines = APPEND(outLines, lineRendered)
+    NEXT row
+    RETURN strings.Join(outLines, "\n")
+END FUNCTION

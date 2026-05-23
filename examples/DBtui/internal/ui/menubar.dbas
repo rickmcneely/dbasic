@@ -228,6 +228,30 @@ FUNCTION (m AS MenuBar) SelectedAction() AS STRING
     RETURN items[m.DropCursor].Action
 END FUNCTION
 
+' MenuIndexByHotkey — case-insensitive lookup of the menu whose Hotkey
+' letter matches `letter`. Returns -1 if no match. Used by the Alt+x
+' shortcut path so Alt+F opens the File menu.
+FUNCTION (m AS MenuBar) MenuIndexByHotkey(letter AS STRING) AS INTEGER
+    DIM up AS STRING = strings.ToLower(letter)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Menus) - 1
+        IF strings.ToLower(m.Menus[i].Hotkey) = up THEN RETURN i
+    NEXT i
+    RETURN -1
+END FUNCTION
+
+' ItemIndexByHotkey — same idea for items in the currently open menu.
+' Skips separators. Returns -1 when no item matches.
+FUNCTION (m AS MenuBar) ItemIndexByHotkey(letter AS STRING) AS INTEGER
+    DIM items AS []DropdownItem = m.ActiveItems()
+    DIM lo AS STRING = strings.ToLower(letter)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items) - 1
+        IF NOT items[i].IsSep AND strings.ToLower(items[i].Hotkey) = lo THEN RETURN i
+    NEXT i
+    RETURN -1
+END FUNCTION
+
 FUNCTION (m AS MenuBar) MenuXOffset(idx AS INTEGER) AS INTEGER
     IF idx < 0 OR idx >= LEN(m.ItemOffsets) THEN RETURN 0
     RETURN m.ItemOffsets[idx]

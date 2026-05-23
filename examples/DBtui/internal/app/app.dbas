@@ -153,6 +153,34 @@ TYPE Model
     DIM CodeMode    AS BOOLEAN
     DIM Editor      AS textarea.Model
     DIM CodePath    AS STRING        ' path of file currently in Editor
+    DIM CodeScroll  AS INTEGER       ' vertical scroll offset for highlighted render
+    DIM CodeViewH   AS INTEGER       ' visible height of the code-editor pane (rows)
+
+    ' Autocomplete popup state — refreshed after each keystroke in code mode.
+    DIM AutoActive  AS BOOLEAN
+    DIM AutoPrefix  AS STRING
+    DIM AutoItems   AS []STRING
+    DIM AutoIdx     AS INTEGER
+
+    ' Code-editor text selection. Anchor is the fixed end of the selection;
+    ' the cursor end is whatever m.Editor reports. CodeClip is an internal
+    ' clipboard used for cut/copy/paste so paste stays synchronous even if
+    ' the terminal blocks OSC52 reads.
+    DIM SelActive    AS BOOLEAN
+    DIM SelAnchorRow AS INTEGER
+    DIM SelAnchorCol AS INTEGER
+    DIM CodeClip     AS STRING
+
+    ' Right-click event-list popup for widgets on the canvas. Pops up
+    ' when the user right-clicks a widget; selecting an event navigates
+    ' (or creates a stub) in the code editor for that handler.
+    DIM CtxMenuActive  AS BOOLEAN
+    DIM CtxMenuX       AS INTEGER
+    DIM CtxMenuY       AS INTEGER
+    DIM CtxMenuWidId   AS STRING
+    DIM CtxMenuWidKind AS STRING
+    DIM CtxMenuItems   AS []STRING
+    DIM CtxMenuIdx     AS INTEGER
 
     ' Bottom pane (Console + Shell tabs) — F12 toggles visibility.
     ' BottomHeight defaults to ~12 rows; later we can drag-resize.
@@ -856,10 +884,17 @@ SUB enterCodeMode(m AS POINTER TO Model)
 
     m.Editor.Reset()
     m.Editor.SetValue(body)
+    ' SetValue lands the cursor at the end of the buffer; rewind to top
+    ' so the user sees the start of the file in the highlighted view.
+    DO WHILE m.Editor.Line() > 0
+        m.Editor.CursorUp()
+    LOOP
+    m.Editor.CursorStart()
     DIM eCmd AS tea.Cmd = m.Editor.Focus()
     _ = eCmd
     m.CodePath = codePath
     m.CodeMode = TRUE
+    m.CodeScroll = 0
     m.StatusBar.Message = "Code: " + codePath + "  —  F7: back to canvas  Ctrl+S: save"
 END SUB
 
@@ -872,6 +907,505 @@ SUB exitCodeMode(m AS POINTER TO Model)
     m.Editor.Blur()
     m.CodeMode = FALSE
     m.StatusBar.Message = defaultStatus()
+END SUB
+
+' ----------------------------------------------------------------------
+' Code-editor text selection. The anchor is a frozen (row,col); the
+' moving end of the selection is whatever m.Editor reports as its
+' current cursor. Selection helpers normalize the (anchor, cursor)
+' pair into (start, end) for rendering and mutation.
+' ----------------------------------------------------------------------
+
+' selBounds — (r0, c0, r1, c1) with the smaller of the two endpoints
+' first. Safe to call even when m.SelActive is FALSE (returns zeros).
+FUNCTION selBounds(m AS POINTER TO Model) AS (INTEGER, INTEGER, INTEGER, INTEGER)
+    IF NOT m.SelActive THEN RETURN 0, 0, 0, 0
+    DIM ar AS INTEGER = m.SelAnchorRow
+    DIM ac AS INTEGER = m.SelAnchorCol
+    DIM cr AS INTEGER = m.Editor.Line()
+    DIM cc AS INTEGER = m.Editor.Column()
+    IF ar < cr THEN RETURN ar, ac, cr, cc
+    IF ar > cr THEN RETURN cr, cc, ar, ac
+    IF ac <= cc THEN RETURN ar, ac, cr, cc
+    RETURN cr, cc, ar, ac
+END FUNCTION
+
+' selText — extracts the currently selected substring from the buffer.
+FUNCTION selText(m AS POINTER TO Model) AS STRING
+    IF NOT m.SelActive THEN RETURN ""
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = selBounds(m)
+    DIM lines AS []STRING = strings.Split(m.Editor.Value(), "\n")
+    IF r0 < 0 OR r0 >= LEN(lines) THEN RETURN ""
+    IF r1 < 0 OR r1 >= LEN(lines) THEN RETURN ""
+    IF r0 = r1 THEN
+        IF c1 <= c0 THEN RETURN ""
+        RETURN Mid(lines[r0], c0 + 1, c1 - c0)
+    END IF
+    DIM parts AS []STRING
+    parts = APPEND(parts, Mid(lines[r0], c0 + 1, LEN(lines[r0]) - c0))
+    DIM rr AS INTEGER
+    FOR rr = r0 + 1 TO r1 - 1
+        parts = APPEND(parts, lines[rr])
+    NEXT rr
+    parts = APPEND(parts, Mid(lines[r1], 1, c1))
+    RETURN strings.Join(parts, "\n")
+END FUNCTION
+
+' moveCursorTo — drive m.Editor.Line()/Column() to (row, col) using the
+' coarse-grained motion the bubbles textarea exposes. CursorUp/Down for
+' the row, SetCursorColumn for the col. Row is clamped to buffer length.
+SUB moveCursorTo(m AS POINTER TO Model, row AS INTEGER, col AS INTEGER)
+    IF row < 0 THEN row = 0
+    DIM safety AS INTEGER = 0
+    DO WHILE m.Editor.Line() > row AND safety < 10000
+        m.Editor.CursorUp()
+        safety = safety + 1
+    LOOP
+    safety = 0
+    DO WHILE m.Editor.Line() < row AND safety < 10000
+        DIM before AS INTEGER = m.Editor.Line()
+        m.Editor.CursorDown()
+        IF m.Editor.Line() = before THEN EXIT DO
+        safety = safety + 1
+    LOOP
+    IF col < 0 THEN col = 0
+    m.Editor.SetCursorColumn(col)
+END SUB
+
+' deleteSelection — remove selected text from the buffer and leave the
+' cursor at the selection's start. Clears m.SelActive.
+SUB deleteSelection(m AS POINTER TO Model)
+    IF NOT m.SelActive THEN RETURN
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = selBounds(m)
+    DIM lines AS []STRING = strings.Split(m.Editor.Value(), "\n")
+    IF r0 < 0 OR r1 >= LEN(lines) THEN
+        m.SelActive = FALSE
+        RETURN
+    END IF
+    DIM beforeStr AS STRING = ""
+    IF c0 > 0 THEN beforeStr = Mid(lines[r0], 1, c0)
+    DIM afterStr AS STRING = ""
+    IF c1 < LEN(lines[r1]) THEN afterStr = Mid(lines[r1], c1 + 1, LEN(lines[r1]) - c1)
+    DIM newLine AS STRING = beforeStr + afterStr
+    DIM newLines AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO r0 - 1
+        newLines = APPEND(newLines, lines[i])
+    NEXT i
+    newLines = APPEND(newLines, newLine)
+    FOR i = r1 + 1 TO LEN(lines) - 1
+        newLines = APPEND(newLines, lines[i])
+    NEXT i
+    DIM newText AS STRING = strings.Join(newLines, "\n")
+    m.Editor.SetValue(newText)
+    moveCursorTo(m, r0, c0)
+    m.SelActive = FALSE
+END SUB
+
+' beginOrExtendSelection — called before any cursor-moving keystroke
+' with Shift held. Sets the anchor at the current cursor position if
+' selection wasn't already active.
+SUB beginOrExtendSelection(m AS POINTER TO Model)
+    IF NOT m.SelActive THEN
+        m.SelActive = TRUE
+        m.SelAnchorRow = m.Editor.Line()
+        m.SelAnchorCol = m.Editor.Column()
+    END IF
+END SUB
+
+' clearSelection — drop the selection without modifying buffer state.
+SUB clearSelection(m AS POINTER TO Model)
+    m.SelActive = FALSE
+END SUB
+
+' copySelection — stash the selected text in m.CodeClip and (best-effort)
+' push to the OS clipboard via OSC52. Caller decides whether to delete.
+FUNCTION copySelection(m AS POINTER TO Model) AS tea.Cmd
+    IF NOT m.SelActive THEN RETURN NIL
+    DIM s AS STRING = selText(m)
+    IF s = "" THEN RETURN NIL
+    m.CodeClip = s
+    RETURN tea.SetClipboard(s)
+END FUNCTION
+
+' pasteAtCursor — replace any active selection with the clipboard
+' contents (m.CodeClip) and leave the cursor after the inserted text.
+SUB pasteAtCursor(m AS POINTER TO Model)
+    IF m.SelActive THEN deleteSelection(m)
+    IF m.CodeClip = "" THEN RETURN
+    m.Editor.InsertString(m.CodeClip)
+END SUB
+
+' isInSelection — TRUE when (row, col) falls inside the currently
+' active selection. Inclusive at the start, exclusive at the end
+' (matches how cursor/selection rendering treats the end-bound).
+FUNCTION isInSelection(m AS POINTER TO Model, row AS INTEGER, col AS INTEGER) AS BOOLEAN
+    IF NOT m.SelActive THEN RETURN FALSE
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = selBounds(m)
+    IF row < r0 OR row > r1 THEN RETURN FALSE
+    IF row = r0 AND col < c0 THEN RETURN FALSE
+    IF row = r1 AND col >= c1 THEN RETURN FALSE
+    RETURN TRUE
+END FUNCTION
+
+' moveSelectionTo — cut the currently selected text out and re-insert
+' it at the supplied drop position. The drop coords are adjusted so
+' they continue to point at the correct cell after the deletion shifts
+' the buffer around. Caller must guarantee (dr, dc) is OUTSIDE the
+' current selection.
+SUB moveSelectionTo(m AS POINTER TO Model, dr AS INTEGER, dc AS INTEGER)
+    IF NOT m.SelActive THEN RETURN
+    DIM moved AS STRING = selText(m)
+    IF moved = "" THEN RETURN
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = selBounds(m)
+    DIM adjDR AS INTEGER = dr
+    DIM adjDC AS INTEGER = dc
+    IF dr > r1 THEN
+        adjDR = dr - (r1 - r0)
+    ELSEIF dr = r1 AND dc > c1 THEN
+        adjDR = r0
+        adjDC = c0 + (dc - c1)
+    END IF
+    deleteSelection(m)
+    moveCursorTo(m, adjDR, adjDC)
+    m.Editor.InsertString(moved)
+END SUB
+
+' ----------------------------------------------------------------------
+' Widget event registry — what handlers each kind exposes. Drives the
+' right-click context menu and the locate/insert flow when the user
+' picks one. Names mirror the handler suffix in the generated code:
+' for kind "Click" the handler is `<widId>_Click()`.
+' ----------------------------------------------------------------------
+FUNCTION widgetEventNames(kind AS STRING) AS []STRING
+    DIM out AS []STRING
+    IF kind = WidgetKindButton THEN
+        out = APPEND(out, "Click")
+    ELSEIF kind = WidgetKindCheckbox THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindRadioButton THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindComboBox THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindListBox THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindTextInput THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindScrollBar THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindTabStrip THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindScrollPane THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindTreeView THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindTextArea THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindPropertyGrid THEN
+        out = APPEND(out, "Change")
+    ELSEIF kind = WidgetKindMenuBar THEN
+        out = APPEND(out, "Action")
+    ELSEIF kind = WidgetKindToolbar THEN
+        out = APPEND(out, "Action")
+    END IF
+    RETURN out
+END FUNCTION
+
+' handlerSignature — returns the SUB declaration line for a (widget, event)
+' pair: e.g. "SUB btnOpen_Click()" or "SUB mbar_Action(action AS STRING)".
+FUNCTION handlerSignature(widId AS STRING, ev AS STRING) AS STRING
+    IF ev = "Action" THEN RETURN "SUB " + widId + "_Action(action AS STRING)"
+    RETURN "SUB " + widId + "_" + ev + "()"
+END FUNCTION
+
+' findHandlerLine — returns the 0-indexed row of the SUB header for
+' (widId, ev) if it exists in the supplied buffer, else -1. Case
+' insensitive on the SUB keyword to match DBasic.
+FUNCTION findHandlerLine(text AS STRING, widId AS STRING, ev AS STRING) AS INTEGER
+    DIM lines AS []STRING = strings.Split(text, "\n")
+    DIM needle AS STRING = widId + "_" + ev
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        DIM trimmed AS STRING = strings.TrimSpace(lines[i])
+        DIM upT AS STRING = strings.ToUpper(trimmed)
+        IF strings.HasPrefix(upT, "SUB ") OR strings.HasPrefix(upT, "FUNCTION ") THEN
+            ' Strip "SUB " / "FUNCTION " and look at the identifier.
+            DIM rest AS STRING = ""
+            IF strings.HasPrefix(upT, "SUB ") THEN rest = Mid(trimmed, 5, LEN(trimmed) - 4)
+            IF strings.HasPrefix(upT, "FUNCTION ") THEN rest = Mid(trimmed, 10, LEN(trimmed) - 9)
+            ' Identifier ends at first "(" or whitespace.
+            DIM pi AS INTEGER = strings.Index(rest, "(")
+            DIM ident AS STRING = rest
+            IF pi >= 0 THEN ident = Mid(rest, 1, pi)
+            ident = strings.TrimSpace(ident)
+            IF ident = needle THEN RETURN i
+        END IF
+    NEXT i
+    RETURN -1
+END FUNCTION
+
+' findInsertPointFor — picks the buffer row where a new handler for
+' (widId, ev) should be inserted, so handlers stay grouped by widget.
+' Strategy: walk all SUB/FUNCTION declarations, remember the END of
+' the last block that starts with `widId_`. If none exist, return the
+' line count (end of file). Returns a 0-indexed row meaning "insert
+' BEFORE this row" (or == row count to append).
+FUNCTION findInsertPointFor(text AS STRING, widId AS STRING) AS INTEGER
+    DIM lines AS []STRING = strings.Split(text, "\n")
+    DIM total AS INTEGER = LEN(lines)
+    DIM prefix AS STRING = widId + "_"
+    DIM upPrefix AS STRING = strings.ToUpper(prefix)
+    DIM lastEnd AS INTEGER = -1
+    DIM inBlock AS BOOLEAN = FALSE
+    DIM matchedBlock AS BOOLEAN = FALSE
+    DIM i AS INTEGER
+    FOR i = 0 TO total - 1
+        DIM trimmed AS STRING = strings.TrimSpace(lines[i])
+        DIM upT AS STRING = strings.ToUpper(trimmed)
+        IF strings.HasPrefix(upT, "SUB ") OR strings.HasPrefix(upT, "FUNCTION ") THEN
+            ' Identifier check.
+            DIM rest AS STRING = ""
+            IF strings.HasPrefix(upT, "SUB ") THEN rest = Mid(trimmed, 5, LEN(trimmed) - 4)
+            IF strings.HasPrefix(upT, "FUNCTION ") THEN rest = Mid(trimmed, 10, LEN(trimmed) - 9)
+            DIM pi AS INTEGER = strings.Index(rest, "(")
+            DIM ident AS STRING = rest
+            IF pi >= 0 THEN ident = Mid(rest, 1, pi)
+            ident = strings.ToUpper(strings.TrimSpace(ident))
+            inBlock = TRUE
+            matchedBlock = strings.HasPrefix(ident, upPrefix)
+        ELSEIF inBlock AND (upT = "END SUB" OR upT = "END FUNCTION") THEN
+            IF matchedBlock THEN lastEnd = i
+            inBlock = FALSE
+            matchedBlock = FALSE
+        END IF
+    NEXT i
+    IF lastEnd >= 0 THEN
+        ' Insert just AFTER the last matching block — i.e., at the line
+        ' immediately following its END (with a blank line gap).
+        RETURN lastEnd + 1
+    END IF
+    RETURN total
+END FUNCTION
+
+' openWidgetContextMenu — populates m.CtxMenu* and switches the input
+' mode. (x, y) is the screen position where the menu should appear
+' (typically the click point).
+SUB openWidgetContextMenu(m AS POINTER TO Model, widIdx AS INTEGER, x AS INTEGER, y AS INTEGER)
+    IF widIdx < 0 OR widIdx >= LEN(m.Visual.Widgets) THEN RETURN
+    DIM w AS Widget = m.Visual.Widgets[widIdx]
+    DIM events AS []STRING = widgetEventNames(w.Kind)
+    IF LEN(events) = 0 THEN RETURN
+    m.CtxMenuActive  = TRUE
+    m.CtxMenuX       = x
+    m.CtxMenuY       = y
+    m.CtxMenuWidId   = w.Id
+    m.CtxMenuWidKind = w.Kind
+    m.CtxMenuItems   = events
+    m.CtxMenuIdx     = 0
+    m.Mode           = ModeContextMenu
+END SUB
+
+' closeWidgetContextMenu — dismisses the popup and returns to Normal.
+SUB closeWidgetContextMenu(m AS POINTER TO Model)
+    m.CtxMenuActive = FALSE
+    m.CtxMenuItems  = NIL
+    m.CtxMenuIdx    = 0
+    IF m.Mode = ModeContextMenu THEN m.Mode = ModeNormal
+END SUB
+
+' renderWidgetContextMenu — small framed list of events. Width auto-fits
+' the longest entry. The selected item gets the accent highlight.
+FUNCTION renderWidgetContextMenu(m AS Model) AS STRING
+    IF NOT m.CtxMenuActive OR LEN(m.CtxMenuItems) = 0 THEN RETURN ""
+    DIM title AS STRING = m.CtxMenuWidId + " events"
+    DIM maxW AS INTEGER = LEN(title)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.CtxMenuItems) - 1
+        IF LEN(m.CtxMenuItems[i]) > maxW THEN maxW = LEN(m.CtxMenuItems[i])
+    NEXT i
+    IF maxW < 10 THEN maxW = 10
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorAccentHex)).Background(lipgloss.Color(ColorMenuBgHex)).Bold(TRUE).Italic(TRUE).Padding(0, 1)
+    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMenuFgHex)).Background(lipgloss.Color(ColorMenuBgHex)).Padding(0, 1)
+    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorBgHex)).Background(lipgloss.Color(ColorAccentHex)).Bold(TRUE).Padding(0, 1)
+    DIM lines AS []STRING
+    DIM titlePad AS STRING = title
+    IF LEN(titlePad) < maxW THEN titlePad = titlePad + strings.Repeat(" ", maxW - LEN(titlePad))
+    lines = APPEND(lines, titleStyle.Render(titlePad))
+    FOR i = 0 TO LEN(m.CtxMenuItems) - 1
+        DIM txt AS STRING = m.CtxMenuItems[i]
+        IF LEN(txt) < maxW THEN txt = txt + strings.Repeat(" ", maxW - LEN(txt))
+        IF i = m.CtxMenuIdx THEN
+            lines = APPEND(lines, selStyle.Render(txt))
+        ELSE
+            lines = APPEND(lines, rowStyle.Render(txt))
+        END IF
+    NEXT i
+    DIM body AS STRING = strings.Join(lines, "\n")
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(ColorAccentHex)).Background(lipgloss.Color(ColorMenuBgHex))
+    RETURN frame.Render(body)
+END FUNCTION
+
+' openHandlerInCode — switch to code mode for the active form, then
+' either move the cursor to the existing `SUB <widId>_<ev>` block or
+' insert a fresh stub at the appropriate grouping point. Idempotent:
+' multiple clicks just keep the cursor on the same handler.
+SUB openHandlerInCode(m AS POINTER TO Model, widId AS STRING, ev AS STRING)
+    IF NOT m.CodeMode THEN enterCodeMode(m)
+    DIM text AS STRING = m.Editor.Value()
+    DIM row AS INTEGER = findHandlerLine(text, widId, ev)
+    IF row >= 0 THEN
+        ' Existing handler — drop the cursor just inside the body
+        ' (one line after the SUB header) so the user can start typing.
+        DIM target AS INTEGER = row + 1
+        DIM lines AS []STRING = strings.Split(text, "\n")
+        IF target >= LEN(lines) THEN target = LEN(lines) - 1
+        DIM col AS INTEGER = 0
+        IF target < LEN(lines) THEN
+            ' Skip leading whitespace to land at first non-blank char.
+            DIM ln AS STRING = lines[target]
+            DO WHILE col < LEN(ln) AND Mid(ln, col + 1, 1) = " "
+                col = col + 1
+            LOOP
+        END IF
+        moveCursorTo(m, target, col)
+        m.CodeScroll = computeScroll(target, m.CodeScroll, m.CodeViewH)
+        m.StatusBar.Message = "opened " + widId + "_" + ev
+        RETURN
+    END IF
+    ' Insert a fresh stub at the grouping point and put the cursor inside.
+    DIM lines2 AS []STRING = strings.Split(text, "\n")
+    DIM ip AS INTEGER = findInsertPointFor(text, widId)
+    DIM stub AS []STRING
+    stub = APPEND(stub, "")
+    stub = APPEND(stub, handlerSignature(widId, ev))
+    stub = APPEND(stub, "    ' " + ev + " handler for " + widId)
+    stub = APPEND(stub, "END SUB")
+    DIM newLines AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO ip - 1
+        newLines = APPEND(newLines, lines2[i])
+    NEXT i
+    FOR i = 0 TO LEN(stub) - 1
+        newLines = APPEND(newLines, stub[i])
+    NEXT i
+    FOR i = ip TO LEN(lines2) - 1
+        newLines = APPEND(newLines, lines2[i])
+    NEXT i
+    m.Editor.SetValue(strings.Join(newLines, "\n"))
+    ' Cursor at the body line (ip + 2 because of leading blank + SUB line).
+    DIM cursorRow AS INTEGER = ip + 2
+    moveCursorTo(m, cursorRow, 4)
+    m.CodeScroll = computeScroll(cursorRow, m.CodeScroll, m.CodeViewH)
+    m.StatusBar.Message = "added " + widId + "_" + ev
+END SUB
+
+' codeXYToRowCol — translate a screen (x, y) inside the canvas into a
+' (row, col) position in the buffer. Mirrors RenderCode's gutter math:
+' gutter width = digits(of total lines) + 2 cells, with one leading
+' space. Clamps to valid positions for the buffer.
+FUNCTION codeXYToRowCol(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER) AS (INTEGER, INTEGER)
+    DIM lines AS []STRING = strings.Split(m.Editor.Value(), "\n")
+    DIM total AS INTEGER = LEN(lines)
+    DIM digits AS INTEGER = LEN(fmt.Sprintf("%d", total))
+    IF digits < 2 THEN digits = 2
+    DIM gutW AS INTEGER = digits + 2
+    DIM row AS INTEGER = (y - m.VisualRect.Y) + m.CodeScroll
+    DIM col AS INTEGER = x - m.VisualRect.X - gutW
+    IF row < 0 THEN row = 0
+    IF row >= total THEN row = total - 1
+    IF row < 0 THEN row = 0
+    DIM ln AS STRING = ""
+    IF row < total THEN ln = lines[row]
+    IF col < 0 THEN col = 0
+    IF col > LEN(ln) THEN col = LEN(ln)
+    RETURN row, col
+END FUNCTION
+
+' selectAllCode — anchor at (0,0), cursor at end of last line.
+SUB selectAllCode(m AS POINTER TO Model)
+    DIM lines AS []STRING = strings.Split(m.Editor.Value(), "\n")
+    IF LEN(lines) = 0 THEN RETURN
+    m.SelActive = TRUE
+    m.SelAnchorRow = 0
+    m.SelAnchorCol = 0
+    moveCursorTo(m, LEN(lines) - 1, LEN(lines[LEN(lines) - 1]))
+END SUB
+
+' autoIndent — after Enter splits a line, copy the previous line's
+' leading whitespace (spaces or tabs) onto the new line so the cursor
+' lands aligned with the prior indent rather than at column 0.
+SUB autoIndent(m AS POINTER TO Model)
+    DIM curRow AS INTEGER = m.Editor.Line()
+    IF curRow < 1 THEN RETURN
+    DIM prev AS STRING = currentLine(m.Editor.Value(), curRow - 1)
+    DIM indent AS STRING = ""
+    DIM i AS INTEGER = 1
+    DO WHILE i <= LEN(prev)
+        DIM c AS STRING = Mid(prev, i, 1)
+        IF c <> " " AND c <> Chr(9) THEN EXIT DO
+        indent = indent + c
+        i = i + 1
+    LOOP
+    IF indent <> "" THEN m.Editor.InsertString(indent)
+END SUB
+
+' refreshAutocomplete is called after every keystroke the textarea
+' processes in code mode. It looks at the word preceding the cursor
+' and (re)populates the suggestion list, or deactivates the popup if
+' there's nothing useful to suggest.
+SUB refreshAutocomplete(m AS POINTER TO Model)
+    DIM line AS STRING = currentLine(m.Editor.Value(), m.Editor.Line())
+    DIM prefix AS STRING = AutocompletePrefix(line, m.Editor.Column())
+    IF LEN(prefix) < 1 THEN
+        m.AutoActive = FALSE
+        RETURN
+    END IF
+    DIM items AS []STRING = AutocompleteCandidates(prefix, m.Editor.Value())
+    IF LEN(items) = 0 THEN
+        m.AutoActive = FALSE
+        RETURN
+    END IF
+    ' If the only suggestion exactly matches what's already typed there's
+    ' nothing to complete to — hide the popup.
+    IF LEN(items) = 1 AND strings.ToUpper(items[0]) = strings.ToUpper(prefix) THEN
+        m.AutoActive = FALSE
+        RETURN
+    END IF
+    m.AutoActive = TRUE
+    m.AutoPrefix = prefix
+    m.AutoItems = items
+    IF m.AutoIdx < 0 OR m.AutoIdx >= LEN(items) THEN m.AutoIdx = 0
+END SUB
+
+' acceptCompletion inserts the suffix of the selected completion that
+' isn't already typed and clears the popup. Keeps the textarea's own
+' cursor position correct via InsertString.
+SUB acceptCompletion(m AS POINTER TO Model)
+    IF NOT m.AutoActive THEN RETURN
+    IF m.AutoIdx < 0 OR m.AutoIdx >= LEN(m.AutoItems) THEN RETURN
+    DIM full AS STRING = m.AutoItems[m.AutoIdx]
+    DIM pl AS INTEGER = LEN(m.AutoPrefix)
+    IF pl <= LEN(full) THEN
+        DIM suffix AS STRING = Mid(full, pl + 1, LEN(full) - pl)
+        IF suffix <> "" THEN m.Editor.InsertString(suffix)
+    END IF
+    m.AutoActive = FALSE
 END SUB
 
 ' saveCodeBuffer flushes the editor buffer to disk without changing
@@ -937,6 +1471,46 @@ FUNCTION dispatchFileAction(m AS POINTER TO Model, action AS STRING) AS tea.Cmd
     END IF
 
     ' --- Edit menu --------------------------------------------------
+    ' Code-mode dispatch comes first: when the code editor is open the
+    ' Edit menu (and its Ctrl+ shortcuts) act on text, not widgets.
+    IF m.CodeMode THEN
+        IF action = "edit.selectall" THEN
+            selectAllCode(m)
+            m.StatusBar.Message = "selected all"
+            RETURN NIL
+        END IF
+        IF action = "edit.copy" THEN
+            DIM ccCmd AS tea.Cmd = copySelection(m)
+            IF m.CodeClip = "" THEN
+                m.StatusBar.Message = "nothing selected"
+            ELSE
+                m.StatusBar.Message = fmt.Sprintf("copied %d chars", LEN(m.CodeClip))
+            END IF
+            RETURN ccCmd
+        END IF
+        IF action = "edit.cut" THEN
+            DIM cxCmd AS tea.Cmd = copySelection(m)
+            DIM codeN AS INTEGER = LEN(m.CodeClip)
+            deleteSelection(m)
+            IF codeN = 0 THEN
+                m.StatusBar.Message = "nothing selected"
+            ELSE
+                m.StatusBar.Message = fmt.Sprintf("cut %d chars", codeN)
+            END IF
+            RETURN cxCmd
+        END IF
+        IF action = "edit.paste" THEN
+            IF m.CodeClip = "" THEN
+                m.StatusBar.Message = "clipboard empty"
+                RETURN NIL
+            END IF
+            pasteAtCursor(m)
+            m.StatusBar.Message = fmt.Sprintf("pasted %d chars", LEN(m.CodeClip))
+            RETURN NIL
+        END IF
+        ' Undo/redo in code mode fall through to bubbles' own buffer
+        ' history via Update — handle in the key dispatch, not here.
+    END IF
     IF action = "edit.undo" THEN
         applyUndo(m)
         RETURN NIL
@@ -1764,6 +2338,17 @@ SUB handleMouseDrag(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER)
         m.RectSelX1 = rlx - 1
         m.RectSelY1 = rly - 1
         m.Visual.SetMarquee(m.RectSelX0, m.RectSelY0, m.RectSelX1, m.RectSelY1)
+        RETURN
+    END IF
+    ' Code-mode text selection — drag the cursor end while the anchor
+    ' stays where the click first landed.
+    IF m.DragMode = DragCodeSelect THEN
+        DIM csRow AS INTEGER
+        DIM csCol AS INTEGER
+        csRow, csCol = codeXYToRowCol(m, x, y)
+        moveCursorTo(m, csRow, csCol)
+        IF csRow <> m.SelAnchorRow OR csCol <> m.SelAnchorCol THEN m.SelActive = TRUE
+        m.CodeScroll = computeScroll(m.Editor.Line(), m.CodeScroll, m.CodeViewH)
         RETURN
     END IF
     ' On the first real motion of a Move/Resize drag, snapshot for
@@ -2616,6 +3201,7 @@ SUB applyLayout(m AS POINTER TO Model)
     m.Visual.SetSize(canvasW, centerInnerH)
     m.Editor.SetWidth(canvasW)
     m.Editor.SetHeight(centerInnerH)
+    m.CodeViewH = centerInnerH
 
     m.MenuRect.X = 0
     m.MenuRect.Y = 0
@@ -2668,6 +3254,27 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     END IF
 
+    ' Bracketed paste — most terminals intercept Ctrl+V (or Cmd+V) and
+    ' deliver the system-clipboard contents as a paste event rather than
+    ' as a Ctrl+V key. Code mode pastes into the buffer; form-designer
+    ' mode treats it as a widget-clipboard paste (since the OS clipboard
+    ' content is irrelevant — the user wanted to paste the widgets they
+    ' just copied via Ctrl+C).
+    DIM pasteMsg AS tea.PasteMsg
+    DIM pasteOk AS BOOLEAN
+    pasteMsg, pasteOk = msg.(tea.PasteMsg)
+    IF pasteOk THEN
+        IF m.CodeMode THEN
+            m.CodeClip = pasteMsg.Content
+            pasteAtCursor(@m)
+            m.StatusBar.Message = fmt.Sprintf("pasted %d chars", LEN(pasteMsg.Content))
+            m.CodeScroll = computeScroll(m.Editor.Line(), m.CodeScroll, m.CodeViewH)
+            refreshAutocomplete(@m)
+            RETURN m, NIL
+        END IF
+        RETURN m, dispatchFileAction(@m, "edit.paste")
+    END IF
+
     ' Shell tab key routing — when the bottom pane is visible and the
     ' Shell tab is active, all key presses go to the PTY (the Shell
     ' has "implicit focus" while shown). Mouse clicks fall through so
@@ -2697,15 +3304,43 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mcMsg, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk THEN
-        ' In code mode, clicks inside the canvas area go to the textarea
-        ' (which handles cursor positioning + selection itself).
+        ' Code-mode canvas click: if the click landed inside an active
+        ' selection, arm a text-drag (we'll cut + reinsert at the drop
+        ' position on release). Otherwise place the cursor at the
+        ' clicked spot and arm a fresh selection drag.
         IF m.CodeMode AND pointInRect(mcMsg.X, mcMsg.Y, m.VisualRect) THEN
-            DIM eMc AS textarea.Model
-            DIM eCmdMc AS tea.Cmd
-            eMc, eCmdMc = m.Editor.Update(msg)
-            m.Editor = eMc
-            RETURN m, eCmdMc
+            DIM cmRow AS INTEGER
+            DIM cmCol AS INTEGER
+            cmRow, cmCol = codeXYToRowCol(@m, mcMsg.X, mcMsg.Y)
+            IF mcMsg.Button = tea.MouseLeft AND isInSelection(@m, cmRow, cmCol) THEN
+                m.DragMode = DragCodeMoveText
+                m.DragStartMx = mcMsg.X
+                m.DragStartMy = mcMsg.Y
+                RETURN m, NIL
+            END IF
+            moveCursorTo(@m, cmRow, cmCol)
+            m.SelActive = FALSE
+            m.SelAnchorRow = cmRow
+            m.SelAnchorCol = cmCol
+            m.DragMode = DragCodeSelect
+            RETURN m, NIL
         END IF
+        ' Right-click on a widget in the form designer pops a context
+        ' menu listing the events that widget supports.
+        IF mcMsg.Button = tea.MouseRight AND NOT m.CodeMode AND pointInRect(mcMsg.X, mcMsg.Y, m.VisualRect) THEN
+            DIM rcFx AS INTEGER = mcMsg.X - m.VisualRect.X - 1
+            DIM rcFy AS INTEGER = mcMsg.Y - m.VisualRect.Y - 1
+            DIM widIdx AS INTEGER = m.Visual.WidgetAt(rcFx, rcFy)
+            IF widIdx >= 0 THEN
+                m.Visual.SelectOnly(widIdx)
+                refreshPropertiesFromSource(@m)
+                openWidgetContextMenu(@m, widIdx, mcMsg.X, mcMsg.Y)
+                RETURN m, NIL
+            END IF
+        END IF
+        ' Any click closes an open context menu (besides the right-click
+        ' that just opened it, which returned above).
+        IF m.CtxMenuActive THEN closeWidgetContextMenu(@m)
         DIM clickCmd AS tea.Cmd = NIL
         IF mcMsg.Button = tea.MouseLeft THEN
             ' Most terminals intercept Shift+click for their own text
@@ -2723,11 +3358,30 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mrMsg AS tea.MouseReleaseMsg
     DIM mrOk AS BOOLEAN
     mrMsg, mrOk = msg.(tea.MouseReleaseMsg)
-    _ = mrMsg
     IF mrOk THEN
         IF m.DragMode = DragRectSelect THEN
             finishRectSelect(@m)
             m.Visual.ClearMarquee()
+        END IF
+        IF m.DragMode = DragCodeSelect THEN
+            ' If cursor never moved off the anchor it's just a click —
+            ' don't leave a phantom zero-length selection.
+            IF m.Editor.Line() = m.SelAnchorRow AND m.Editor.Column() = m.SelAnchorCol THEN
+                m.SelActive = FALSE
+            END IF
+        END IF
+        IF m.DragMode = DragCodeMoveText THEN
+            DIM mtDr AS INTEGER
+            DIM mtDc AS INTEGER
+            mtDr, mtDc = codeXYToRowCol(@m, mrMsg.X, mrMsg.Y)
+            IF isInSelection(@m, mtDr, mtDc) THEN
+                ' Dropped inside the selection — treat as a plain click:
+                ' put the cursor at that spot and drop the selection.
+                moveCursorTo(@m, mtDr, mtDc)
+                m.SelActive = FALSE
+            ELSE
+                moveSelectionTo(@m, mtDr, mtDc)
+            END IF
         END IF
         IF m.DragMode <> DragNone THEN
             m.DragMode = DragNone
@@ -2863,6 +3517,32 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
 
+        IF m.Mode = ModeContextMenu THEN
+            ' --- Right-click widget context menu -----------------------
+            IF k = "esc" THEN
+                closeWidgetContextMenu(@m)
+                RETURN m, NIL
+            END IF
+            IF k = "up" THEN
+                m.CtxMenuIdx = m.CtxMenuIdx - 1
+                IF m.CtxMenuIdx < 0 THEN m.CtxMenuIdx = LEN(m.CtxMenuItems) - 1
+                RETURN m, NIL
+            END IF
+            IF k = "down" THEN
+                m.CtxMenuIdx = m.CtxMenuIdx + 1
+                IF m.CtxMenuIdx >= LEN(m.CtxMenuItems) THEN m.CtxMenuIdx = 0
+                RETURN m, NIL
+            END IF
+            IF k = "enter" THEN
+                DIM evName AS STRING = m.CtxMenuItems[m.CtxMenuIdx]
+                DIM ctxWid AS STRING = m.CtxMenuWidId
+                closeWidgetContextMenu(@m)
+                openHandlerInCode(@m, ctxWid, evName)
+                RETURN m, NIL
+            END IF
+            RETURN m, NIL
+        END IF
+
         IF m.Mode = ModeMenuBar THEN
             ' --- Menu mode ---------------------------------------------
             IF k = "esc" THEN
@@ -2899,6 +3579,35 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 DIM kbCmd AS tea.Cmd = dispatchFileAction(@m, kbAction)
                 RETURN m, kbCmd
             END IF
+            ' Alt+letter while a menu is open switches to that top-level
+            ' menu, mirroring the open-from-anywhere shortcuts below.
+            IF LEN(k) > 4 AND Mid(k, 1, 4) = "alt+" THEN
+                DIM altLetter AS STRING = Mid(k, 5, LEN(k) - 4)
+                DIM altIdx AS INTEGER = m.MenuBar.MenuIndexByHotkey(altLetter)
+                IF altIdx >= 0 THEN
+                    m.MenuBar.OpenMenu(altIdx)
+                    RETURN m, NIL
+                END IF
+                RETURN m, NIL
+            END IF
+            ' Single printable letter — match against the current menu's
+            ' item hotkeys. Found → dispatch immediately (no Enter needed).
+            IF LEN(k) = 1 THEN
+                DIM hkIdx AS INTEGER = m.MenuBar.ItemIndexByHotkey(k)
+                IF hkIdx >= 0 THEN
+                    DIM hkItems AS []DropdownItem = m.MenuBar.ActiveItems()
+                    DIM hkAction AS STRING = hkItems[hkIdx].Action
+                    m.MenuBar.Close()
+                    m.MenuBar.ClearHover()
+                    m.Mode = ModeNormal
+                    IF hkAction = "" THEN
+                        m.StatusBar.Message = defaultStatus()
+                        RETURN m, NIL
+                    END IF
+                    DIM hkCmd AS tea.Cmd = dispatchFileAction(@m, hkAction)
+                    RETURN m, hkCmd
+                END IF
+            END IF
             ' Swallow unhandled keys while a menu is open.
             RETURN m, NIL
         END IF
@@ -2906,6 +3615,29 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' --- Code-editor mode (parallel to focus, but suppresses normal
         '     keybinds while the textarea has the keyboard).
         IF m.CodeMode THEN
+            ' Autocomplete popup intercepts navigation keys while open so
+            ' Up/Down move within suggestions and Tab/Enter accept the
+            ' selected item. Esc dismisses without inserting.
+            IF m.AutoActive THEN
+                IF k = "esc" THEN
+                    m.AutoActive = FALSE
+                    RETURN m, NIL
+                END IF
+                IF k = "up" THEN
+                    m.AutoIdx = m.AutoIdx - 1
+                    IF m.AutoIdx < 0 THEN m.AutoIdx = LEN(m.AutoItems) - 1
+                    RETURN m, NIL
+                END IF
+                IF k = "down" THEN
+                    m.AutoIdx = m.AutoIdx + 1
+                    IF m.AutoIdx >= LEN(m.AutoItems) THEN m.AutoIdx = 0
+                    RETURN m, NIL
+                END IF
+                IF k = "tab" OR k = "enter" THEN
+                    acceptCompletion(@m)
+                    RETURN m, NIL
+                END IF
+            END IF
             IF k = "f7" OR k = "esc" THEN
                 exitCodeMode(@m)
                 RETURN m, NIL
@@ -2919,10 +3651,128 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 saveCodeBuffer(@m)
                 RETURN m, dispatchFileAction(@m, "run.run")
             END IF
+            ' --- Selection clipboard shortcuts ---
+            IF k = "ctrl+c" THEN
+                IF m.SelActive THEN
+                    DIM ccCmd AS tea.Cmd = copySelection(@m)
+                    m.StatusBar.Message = fmt.Sprintf("copied %d chars", LEN(m.CodeClip))
+                    RETURN m, ccCmd
+                END IF
+                m.StatusBar.Message = "nothing selected"
+                RETURN m, NIL
+            END IF
+            IF k = "ctrl+x" THEN
+                IF m.SelActive THEN
+                    DIM cxCmd AS tea.Cmd = copySelection(@m)
+                    DIM xN AS INTEGER = LEN(m.CodeClip)
+                    deleteSelection(@m)
+                    m.StatusBar.Message = fmt.Sprintf("cut %d chars", xN)
+                    refreshAutocomplete(@m)
+                    RETURN m, cxCmd
+                END IF
+                m.StatusBar.Message = "nothing selected"
+                RETURN m, NIL
+            END IF
+            IF k = "ctrl+v" THEN
+                IF m.CodeClip = "" THEN
+                    m.StatusBar.Message = "clipboard empty"
+                    RETURN m, NIL
+                END IF
+                DIM pN AS INTEGER = LEN(m.CodeClip)
+                pasteAtCursor(@m)
+                m.StatusBar.Message = fmt.Sprintf("pasted %d chars", pN)
+                m.CodeScroll = computeScroll(m.Editor.Line(), m.CodeScroll, m.CodeViewH)
+                refreshAutocomplete(@m)
+                RETURN m, NIL
+            END IF
+            IF k = "ctrl+a" THEN
+                selectAllCode(@m)
+                m.StatusBar.Message = "selected all"
+                m.CodeScroll = computeScroll(m.Editor.Line(), m.CodeScroll, m.CodeViewH)
+                RETURN m, NIL
+            END IF
+            ' --- Shift+motion extends the selection ---
+            DIM isShiftMotion AS BOOLEAN = FALSE
+            IF k = "shift+left" OR k = "shift+right" OR k = "shift+up" OR k = "shift+down" THEN isShiftMotion = TRUE
+            IF k = "shift+home" OR k = "shift+end" THEN isShiftMotion = TRUE
+            IF k = "shift+ctrl+left" OR k = "shift+ctrl+right" THEN isShiftMotion = TRUE
+            IF isShiftMotion THEN
+                beginOrExtendSelection(@m)
+                IF k = "shift+left" THEN
+                    IF m.Editor.Column() > 0 THEN
+                        m.Editor.SetCursorColumn(m.Editor.Column() - 1)
+                    ELSEIF m.Editor.Line() > 0 THEN
+                        DIM upLine AS STRING = currentLine(m.Editor.Value(), m.Editor.Line() - 1)
+                        m.Editor.CursorUp()
+                        m.Editor.SetCursorColumn(LEN(upLine))
+                    END IF
+                ELSEIF k = "shift+right" THEN
+                    DIM curLine AS STRING = currentLine(m.Editor.Value(), m.Editor.Line())
+                    IF m.Editor.Column() < LEN(curLine) THEN
+                        m.Editor.SetCursorColumn(m.Editor.Column() + 1)
+                    ELSE
+                        m.Editor.CursorDown()
+                        IF m.Editor.Line() > 0 THEN m.Editor.SetCursorColumn(0)
+                    END IF
+                ELSEIF k = "shift+up" THEN
+                    m.Editor.CursorUp()
+                ELSEIF k = "shift+down" THEN
+                    m.Editor.CursorDown()
+                ELSEIF k = "shift+home" THEN
+                    m.Editor.CursorStart()
+                ELSEIF k = "shift+end" THEN
+                    m.Editor.CursorEnd()
+                END IF
+                m.CodeScroll = computeScroll(m.Editor.Line(), m.CodeScroll, m.CodeViewH)
+                RETURN m, NIL
+            END IF
+            ' --- Plain motion clears the selection (but still moves) and
+            '     dismisses the autocomplete popup so the suggestions
+            '     don't follow the cursor as you navigate over words.
+            DIM isCursorMotion AS BOOLEAN = FALSE
+            IF k = "left" OR k = "right" OR k = "up" OR k = "down" OR k = "home" OR k = "end" OR k = "pgup" OR k = "pgdown" THEN
+                isCursorMotion = TRUE
+            END IF
+            IF isCursorMotion THEN
+                IF m.SelActive THEN clearSelection(@m)
+                m.AutoActive = FALSE
+            END IF
+            ' --- Edits that replace the selection ---
+            DIM isInsertion AS BOOLEAN = FALSE
+            IF LEN(k) = 1 THEN isInsertion = TRUE
+            IF k = "space" THEN isInsertion = TRUE
+            IF k = "backspace" OR k = "delete" THEN isInsertion = TRUE
+            IF k = "enter" THEN isInsertion = TRUE
+            IF k = "tab" THEN isInsertion = TRUE
+            IF isInsertion AND m.SelActive THEN
+                ' Backspace/Delete with a live selection just removes it.
+                IF k = "backspace" OR k = "delete" THEN
+                    deleteSelection(@m)
+                    refreshAutocomplete(@m)
+                    RETURN m, NIL
+                END IF
+                deleteSelection(@m)
+            END IF
+            ' Tab inserts four spaces inline (bubbles textarea otherwise
+            ' swallows tab as a no-op since it isn't a printable rune).
+            IF k = "tab" THEN
+                m.Editor.InsertString("    ")
+                m.CodeScroll = computeScroll(m.Editor.Line(), m.CodeScroll, m.CodeViewH)
+                refreshAutocomplete(@m)
+                RETURN m, NIL
+            END IF
             DIM newEditor AS textarea.Model
             DIM eCmd AS tea.Cmd
             newEditor, eCmd = m.Editor.Update(msg)
             m.Editor = newEditor
+            ' Enter auto-indents the new line to match the previous line's
+            ' leading whitespace — standard code-editor behavior.
+            IF k = "enter" THEN autoIndent(@m)
+            m.CodeScroll = computeScroll(m.Editor.Line(), m.CodeScroll, m.CodeViewH)
+            ' Only refresh suggestions when the user is actually editing —
+            ' cursor navigation shouldn't pop the menu just because the
+            ' cursor crossed over an identifier.
+            IF NOT isCursorMotion THEN refreshAutocomplete(@m)
             RETURN m, eCmd
         END IF
 
@@ -2932,6 +3782,17 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.Mode = ModeMenuBar
             m.StatusBar.Message = "Menu — Esc: Close  ←/→: Menu  ↑/↓: Item  Enter: Select"
             RETURN m, NIL
+        END IF
+        ' Alt+letter — jump straight into the matching top menu.
+        IF LEN(k) > 4 AND Mid(k, 1, 4) = "alt+" THEN
+            DIM altL AS STRING = Mid(k, 5, LEN(k) - 4)
+            DIM mIdx AS INTEGER = m.MenuBar.MenuIndexByHotkey(altL)
+            IF mIdx >= 0 THEN
+                m.MenuBar.OpenMenu(mIdx)
+                m.Mode = ModeMenuBar
+                m.StatusBar.Message = "Menu — Esc: Close  ←/→: Menu  ↑/↓: Item  Enter: Select"
+                RETURN m, NIL
+            END IF
         END IF
         IF k = "f5" THEN
             RETURN m, dispatchFileAction(@m, "run.run")
@@ -2951,6 +3812,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF k = "ctrl+y" THEN
             RETURN m, dispatchFileAction(@m, "edit.redo")
+        END IF
+        IF k = "ctrl+c" THEN
+            RETURN m, dispatchFileAction(@m, "edit.copy")
         END IF
         IF k = "ctrl+x" THEN
             RETURN m, dispatchFileAction(@m, "edit.cut")
@@ -3173,7 +4037,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 RETURN m, NIL
             END IF
         END IF
-        IF k = "q" OR k = "ctrl+c" THEN
+        IF k = "q" THEN
             RETURN m, tea.Quit
         END IF
     END IF
@@ -3217,7 +4081,14 @@ FUNCTION renderBody(m AS Model) AS STRING
     IF m.CodeMode THEN
         captionText = "Code Editor"
         IF m.CodePath <> "" THEN captionText = "Code Editor — " + m.CodePath
-        canvasBody = m.Editor.View()
+        DIM codeH AS INTEGER = m.CodeViewH
+        IF codeH < 1 THEN codeH = 1
+        DIM sR0 AS INTEGER
+        DIM sC0 AS INTEGER
+        DIM sR1 AS INTEGER
+        DIM sC1 AS INTEGER
+        sR0, sC0, sR1, sC1 = selBounds(@m)
+        canvasBody = RenderCode(m.Editor.Value(), canvasW, codeH, m.Editor.Line(), m.Editor.Column(), TRUE, m.CodeScroll, m.SelActive, sR0, sC0, sR1, sC1)
     ELSE
         captionText = "Form Designer"
         IF m.Visual.FormName <> "" THEN captionText = "Form Designer — " + m.Visual.FormName
@@ -3265,6 +4136,47 @@ FUNCTION renderBody(m AS Model) AS STRING
                 stack = lipgloss.NewCompositor(bgLayer, ddLayer2, dlgLayer)
             ELSE
                 stack = lipgloss.NewCompositor(bgLayer, dlgLayer)
+            END IF
+            hasOverlay = TRUE
+        END IF
+    END IF
+
+    ' Right-click widget context menu. Z=3 so it floats above the
+    ' menu bar dropdown and any other overlay except autocomplete.
+    IF m.CtxMenuActive THEN
+        DIM ctxStr AS STRING = renderWidgetContextMenu(m)
+        IF ctxStr <> "" THEN
+            DIM ctxLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(ctxStr).X(m.CtxMenuX).Y(m.CtxMenuY).Z(3)
+            IF hasOverlay THEN
+                stack = stack.AddLayers(ctxLayer)
+            ELSE
+                stack = lipgloss.NewCompositor(bgLayer, ctxLayer)
+            END IF
+            hasOverlay = TRUE
+        END IF
+    END IF
+
+    ' Code-editor autocomplete popup. Positioned just below the cursor,
+    ' anchored against the gutter so the suggestions line up under the
+    ' word being typed. Z=3 so it floats above menus + dialogs.
+    IF m.CodeMode AND m.AutoActive AND LEN(m.AutoItems) > 0 THEN
+        DIM acStr AS STRING = RenderAutocompletePopup(m.AutoItems, m.AutoIdx)
+        IF acStr <> "" THEN
+            ' Mirror RenderCode's gutter math: digits-of-total-lines + 2 cells.
+            DIM totalLines AS INTEGER = LEN(strings.Split(m.Editor.Value(), "\n"))
+            DIM acDigits AS INTEGER = LEN(fmt.Sprintf("%d", totalLines))
+            IF acDigits < 2 THEN acDigits = 2
+            DIM gutW AS INTEGER = acDigits + 2
+            ' curCol of identifier start = column - prefix length.
+            DIM startCol AS INTEGER = m.Editor.Column() - LEN(m.AutoPrefix)
+            IF startCol < 0 THEN startCol = 0
+            DIM acX AS INTEGER = m.LeftW + gutW + startCol
+            DIM acY AS INTEGER = 2 + (m.Editor.Line() - m.CodeScroll) + 1
+            DIM acLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(acStr).X(acX).Y(acY).Z(3)
+            IF hasOverlay THEN
+                stack = stack.AddLayers(acLayer)
+            ELSE
+                stack = lipgloss.NewCompositor(bgLayer, acLayer)
             END IF
             hasOverlay = TRUE
         END IF
