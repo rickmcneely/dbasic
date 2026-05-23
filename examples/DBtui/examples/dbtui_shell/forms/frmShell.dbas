@@ -14,11 +14,15 @@
 
 IMPORT "fmt"
 IMPORT "os"
+IMPORT "strconv"
 IMPORT "strings"
 
 DIM gPlacedCount AS INTEGER = 0
 DIM gPlaceX AS INTEGER = 30
 DIM gPlaceY AS INTEGER = 3
+' Id of the placed widget currently being inspected — set by gOnSelect,
+' read by props_Change to know which widget to push edits back to.
+DIM gSelectedWidgetId AS STRING = ""
 
 FUNCTION defaultSizeFor(kind AS STRING) AS (INTEGER, INTEGER)
     IF kind = "Button" THEN RETURN 12, 3
@@ -120,15 +124,53 @@ SUB lbWidgets_Change()
     gSetItems("status", fmt.Sprintf("Placed:%d;Last:%s;Kind:%s", gPlacedCount, newId, kind))
 END SUB
 
+' props_Change — fires after a PropertyGrid edit/toggle/cycle. Reads
+' the currently-selected row out of the props Items string and pushes
+' the value back to the inspected widget via the matching accessor.
 SUB props_Change()
-    fmt.Fprintln(os.Stderr, "property changed")
+    IF gSelectedWidgetId = "" THEN RETURN
+    DIM rows AS []STRING = strings.Split(gGetItems("props"), ";")
+    DIM cur AS INTEGER = gGetSelected("props")
+    IF cur < 0 OR cur >= LEN(rows) THEN RETURN
+    DIM parts AS []STRING = strings.SplitN(rows[cur], "|", 4)
+    DO WHILE LEN(parts) < 4
+        parts = APPEND(parts, "")
+    LOOP
+    ' Skip category headers (Category column non-empty).
+    IF parts[0] <> "" THEN RETURN
+    DIM name AS STRING = parts[1]
+    DIM val AS STRING = parts[2]
+    IF name = "Text" THEN
+        gSetText(gSelectedWidgetId, val)
+    ELSEIF name = "Value" THEN
+        gSetValue(gSelectedWidgetId, val)
+    ELSEIF name = "Title" THEN
+        gSetTitle(gSelectedWidgetId, val)
+    ELSEIF name = "Visible" THEN
+        gSetVisible(gSelectedWidgetId, val = "true")
+    ELSEIF name = "Selected" THEN
+        DIM iv AS INTEGER = 0
+        DIM ierr AS ERROR
+        iv, ierr = strconv.Atoi(val)
+        _ = ierr
+        gSetSelected(gSelectedWidgetId, iv)
+    ELSEIF name = "Items" THEN
+        ' Demo encoding swaps ; for , when serializing into the grid;
+        ' swap back before pushing to the widget.
+        gSetItems(gSelectedWidgetId, strings.ReplaceAll(val, ",", ";"))
+    END IF
+    ' Refresh status so the user sees the writeback happened.
+    gSetItems("status", fmt.Sprintf("Placed:%d;Edited:%s.%s=%s", gPlacedCount, gSelectedWidgetId, name, val))
 END SUB
 
-' gOnSelect — called for every widget click (codegen-supplied hook).
-' For dynamically placed widgets (id starts with "w"), push their
-' current state into the PropertyGrid so the user can inspect/edit.
+' gOnSelect — called for every focus change AND every successful
+' click hit (codegen-supplied hook). Only acts on placed widgets
+' (id prefix "w"); leaves gSelectedWidgetId untouched otherwise so
+' the user can Tab off the placed widget into the props grid without
+' losing the selection target.
 SUB gOnSelect(id AS STRING)
     IF NOT strings.HasPrefix(id, "w") THEN RETURN
+    gSelectedWidgetId = id
     DIM rows AS STRING = rowsForPlacedWidget(id)
     IF rows = "" THEN RETURN
     gSetItems("props", rows)

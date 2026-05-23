@@ -1093,6 +1093,10 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "            NEXT kk\n"
     s = s + "            DIM hfc AS tea.Cmd = setFocus(@m, newF)\n"
     s = s + "            _ = hfc\n"
+    ' Always notify gOnSelect with the hit widget's id, even if it's
+    ' not focusable (e.g. a Label) — setFocus would otherwise notify
+    ' for whatever widget *is* focused, which would be wrong here.
+    s = s + "            gOnSelect(m.Widgets[hitIdx].Id)\n"
     s = s + "            DIM mk AS STRING = m.Widgets[hitIdx].Kind\n"
     s = s + "            IF mk = \"Button\" THEN\n"
     s = s + "                dispatchClick(m.Widgets[hitIdx].Id)\n"
