@@ -758,6 +758,22 @@ func LineInput(prompt string) string {
 	}
 	return _lineInputScanner.Text()
 }`,
+	"Encode": `// Encode converts a STRING to BYTES (UTF-8 encoding).
+func Encode(s string) []byte {
+	return []byte(s)
+}`,
+	"Decode": `// Decode converts BYTES to a STRING (UTF-8 decoding).
+func Decode(b []byte) string {
+	return string(b)
+}`,
+	"MakeBytes": `// MakeBytes allocates a zero-filled byte slice of the given size.
+func MakeBytes(size int) []byte {
+	return make([]byte, size)
+}`,
+	"LenBytes": `// LenBytes returns the length of a BYTES slice.
+func LenBytes(b []byte) int {
+	return len(b)
+}`,
 }
 
 // runtimeFuncImports maps runtime functions to required imports

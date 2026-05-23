@@ -52,6 +52,7 @@ INCLUDE "internal/project/tree.dbas"
 INCLUDE "internal/editor/visual.dbas"
 INCLUDE "internal/properties/panel.dbas"
 INCLUDE "internal/codegen/codegen.dbas"
+INCLUDE "internal/shell/shell.dbas"
 INCLUDE "internal/app/app.dbas"
 
 SUB Main()

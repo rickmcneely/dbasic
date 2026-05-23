@@ -1,0 +1,223 @@
+' DBtui — internal/shell/shell.dbas
+'
+' PTY-backed shell for the Shell tab in the bottom pane. Spawns
+' $SHELL (defaulting to /bin/bash) inside a pseudo-terminal via
+' github.com/creack/pty; a background goroutine drains the master
+' file descriptor into a buffered channel. The bubbletea Update loop
+' polls the channel via tea.Tick and appends decoded chunks (with
+' ANSI escape codes stripped) into a line-oriented scrollback buffer.
+'
+' Keystrokes while the Shell tab has focus get translated to the
+' wire bytes the shell expects (Enter → \r, arrows → ESC[A..D, etc.)
+' and written to the PTY master.
+'
+' This is a "raw text" shell: ANSI codes are stripped before display,
+' so programs that depend on cursor positioning (vim, less, htop)
+' will render badly. Basic command output (ls, cat, git, make, …)
+' works fine.
+
+IMPORT "os"
+IMPORT "os/exec" AS osexec
+IMPORT "strings"
+IMPORT "github.com/creack/pty"
+
+' Package-level state. The bubbletea Model holds no reference — these
+' globals are accessed through the SUB/FUNCTION API below.
+DIM gShellActive AS BOOLEAN
+DIM gShellPtmx   AS POINTER TO os.File
+DIM gShellCmd    AS POINTER TO osexec.Cmd
+DIM gShellBuf    AS []STRING
+DIM gShellLine   AS STRING                ' current partial line
+DIM gShellCh     AS CHAN OF STRING        ' raw chunks from reader
+
+CONST ShellMaxLines AS INTEGER = 500       ' ring-buffer cap
+
+' ShellIsActive — has the PTY been spawned?
+FUNCTION ShellIsActive() AS BOOLEAN
+    RETURN gShellActive
+END FUNCTION
+
+' ShellBuffer returns the current scrollback (read-only — callers
+' should not mutate it). Returns the partial-current-line as the
+' last entry so live output is visible while a line is being built.
+FUNCTION ShellBuffer() AS []STRING
+    DIM out AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gShellBuf) - 1
+        out = APPEND(out, gShellBuf[i])
+    NEXT i
+    IF gShellLine <> "" THEN out = APPEND(out, gShellLine)
+    RETURN out
+END FUNCTION
+
+' PtyShellStart spawns $SHELL inside a PTY and kicks off the reader
+' goroutine. Idempotent — safe to call multiple times.
+FUNCTION PtyShellStart() AS ERROR
+    IF gShellActive THEN RETURN NIL
+    DIM shellPath AS STRING = os.Getenv("SHELL")
+    IF shellPath = "" THEN shellPath = "/bin/bash"
+    gShellCmd = osexec.Command(shellPath)
+    DIM ptmx AS POINTER TO os.File
+    DIM err AS ERROR
+    ptmx, err = pty.Start(gShellCmd)
+    IF err <> NIL THEN RETURN err
+    gShellPtmx = ptmx
+    gShellCh = MAKE_CHAN(STRING, 256)
+    gShellActive = TRUE
+    SPAWN shellReader()
+    RETURN NIL
+END FUNCTION
+
+' shellReader runs in a goroutine, blocks on Read, pushes chunks to
+' gShellCh. Exits when the PTY closes (Read returns an error).
+SUB shellReader()
+    DIM buf AS BYTES = MakeBytes(4096)
+    DO WHILE TRUE
+        DIM n AS INTEGER
+        DIM err AS ERROR
+        n, err = gShellPtmx.Read(buf)
+        IF err <> NIL THEN
+            gShellActive = FALSE
+            RETURN
+        END IF
+        IF n > 0 THEN
+            DIM chunk AS STRING = string(buf[0:n])
+            SEND chunk TO gShellCh
+        END IF
+    LOOP
+END SUB
+
+' ShellDrain pulls any pending chunks off the channel, strips ANSI
+' escape codes, splits on \n, and appends to the scrollback. Called
+' from the bubbletea Update on every tea.Tick. Returns TRUE if it
+' changed the buffer (so the caller can decide whether to repaint).
+FUNCTION ShellDrain() AS BOOLEAN
+    IF NOT gShellActive THEN RETURN FALSE
+    DIM changed AS BOOLEAN = FALSE
+    DO WHILE LEN(gShellCh) > 0
+        DIM chunk AS STRING
+        RECEIVE chunk FROM gShellCh
+        appendChunk(stripANSI(chunk))
+        changed = TRUE
+    LOOP
+    RETURN changed
+END FUNCTION
+
+' appendChunk splits `chunk` on \n and folds it into gShellBuf +
+' gShellLine. Caps the buffer at ShellMaxLines (oldest dropped).
+SUB appendChunk(chunk AS STRING)
+    DIM i AS INTEGER
+    DIM n AS INTEGER = LEN(chunk)
+    FOR i = 0 TO n - 1
+        DIM c AS STRING = Mid(chunk, i + 1, 1)
+        IF c = "\n" THEN
+            gShellBuf = APPEND(gShellBuf, gShellLine)
+            gShellLine = ""
+            IF LEN(gShellBuf) > ShellMaxLines THEN
+                DIM dropped AS []STRING
+                DIM j AS INTEGER
+                FOR j = LEN(gShellBuf) - ShellMaxLines TO LEN(gShellBuf) - 1
+                    dropped = APPEND(dropped, gShellBuf[j])
+                NEXT j
+                gShellBuf = dropped
+            END IF
+        ELSE
+            gShellLine = gShellLine + c
+        END IF
+    NEXT i
+END SUB
+
+' stripANSI strips CSI sequences (ESC [ ... letter) and discards
+' standalone carriage returns. Good enough for line-oriented output;
+' won't keep up with programs that use cursor positioning.
+FUNCTION stripANSI(s AS STRING) AS STRING
+    DIM out AS STRING = ""
+    DIM i AS INTEGER = 0
+    DIM n AS INTEGER = LEN(s)
+    DO WHILE i < n
+        DIM c AS STRING = Mid(s, i + 1, 1)
+        IF c = Chr(27) THEN
+            i = i + 1
+            IF i < n AND Mid(s, i + 1, 1) = "[" THEN
+                i = i + 1
+                DO WHILE i < n
+                    DIM c2 AS STRING = Mid(s, i + 1, 1)
+                    DIM b AS INTEGER = Asc(c2)
+                    i = i + 1
+                    IF (b >= Asc("a") AND b <= Asc("z")) OR (b >= Asc("A") AND b <= Asc("Z")) THEN EXIT DO
+                LOOP
+            ELSEIF i < n AND Mid(s, i + 1, 1) = "]" THEN
+                ' OSC — skip until BEL (\x07).
+                i = i + 1
+                DO WHILE i < n
+                    IF Mid(s, i + 1, 1) = Chr(7) THEN
+                        i = i + 1
+                        EXIT DO
+                    END IF
+                    i = i + 1
+                LOOP
+            END IF
+        ELSEIF c = Chr(13) THEN
+            i = i + 1
+        ELSEIF c = Chr(8) THEN
+            ' Backspace — pop last char from current line if any.
+            IF LEN(out) > 0 THEN out = Mid(out, 1, LEN(out) - 1)
+            i = i + 1
+        ELSE
+            out = out + c
+            i = i + 1
+        END IF
+    LOOP
+    RETURN out
+END FUNCTION
+
+' ShellWriteKey translates a bubbletea key string into the wire bytes
+' the shell expects and writes them to the PTY master.
+SUB ShellWriteKey(k AS STRING)
+    IF NOT gShellActive THEN RETURN
+    IF gShellPtmx = NIL THEN RETURN
+    DIM s AS STRING = ""
+    IF k = "enter" THEN
+        s = Chr(13)
+    ELSEIF k = "tab" THEN
+        s = Chr(9)
+    ELSEIF k = "esc" OR k = "escape" THEN
+        s = Chr(27)
+    ELSEIF k = "backspace" THEN
+        s = Chr(127)
+    ELSEIF k = "space" THEN
+        s = " "
+    ELSEIF k = "up" THEN
+        s = Chr(27) + "[A"
+    ELSEIF k = "down" THEN
+        s = Chr(27) + "[B"
+    ELSEIF k = "right" THEN
+        s = Chr(27) + "[C"
+    ELSEIF k = "left" THEN
+        s = Chr(27) + "[D"
+    ELSEIF k = "home" THEN
+        s = Chr(27) + "[H"
+    ELSEIF k = "end" THEN
+        s = Chr(27) + "[F"
+    ELSEIF k = "delete" THEN
+        s = Chr(27) + "[3~"
+    ELSEIF LEN(k) = 1 THEN
+        s = k
+    END IF
+    IF s = "" THEN RETURN
+    DIM b AS BYTES = Encode(s)
+    DIM nw AS INTEGER
+    DIM werr AS ERROR
+    nw, werr = gShellPtmx.Write(b)
+    _ = nw
+    _ = werr
+END SUB
+
+' ShellStop terminates the shell and releases the PTY. Idempotent.
+SUB ShellStop()
+    IF NOT gShellActive THEN RETURN
+    gShellActive = FALSE
+    IF gShellPtmx <> NIL THEN gShellPtmx.Close()
+    IF gShellCmd <> NIL AND gShellCmd.Process <> NIL THEN gShellCmd.Process.Kill()
+    gShellPtmx = NIL
+END SUB

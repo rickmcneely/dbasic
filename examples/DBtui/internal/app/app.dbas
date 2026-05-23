@@ -391,6 +391,7 @@ SUB toggleBottomPane(m AS POINTER TO Model)
     ELSE
         m.StatusBar.Message = defaultStatus()
     END IF
+    applyLayout(m)
 END SUB
 
 ' consoleAppend pushes a line into the captured console buffer.
@@ -647,17 +648,26 @@ FUNCTION renderBottomPane(m AS Model) AS STRING
             lines = APPEND(lines, contentStyle.Render(line))
         NEXT i
     ELSE
-        ' Shell tab — TBD placeholder.
-        DIM hintLines AS []STRING
-        hintLines = APPEND(hintLines, "")
-        hintLines = APPEND(hintLines, "  Shell — not yet implemented.")
-        hintLines = APPEND(hintLines, "  Run → Build (or wire run.run) sends output to the Console tab.")
-        DIM j AS INTEGER
-        FOR j = 0 TO contentH - 1
-            DIM hl AS STRING = ""
-            IF j < LEN(hintLines) THEN hl = hintLines[j]
-            lines = APPEND(lines, contentStyle.Render(hl))
-        NEXT j
+        ' Shell tab — PTY-backed live shell. Lazy-start on first view.
+        IF NOT ShellIsActive() THEN
+            DIM serr AS ERROR = PtyShellStart()
+            _ = serr
+        END IF
+        DIM sbuf AS []STRING = ShellBuffer()
+        DIM shStart AS INTEGER = LEN(sbuf) - contentH
+        IF shStart < 0 THEN shStart = 0
+        DIM shJ AS INTEGER
+        FOR shJ = 0 TO contentH - 1
+            DIM shBufIdx AS INTEGER = shStart + shJ
+            DIM shLine AS STRING = ""
+            IF shBufIdx < LEN(sbuf) THEN shLine = sbuf[shBufIdx]
+            IF lipgloss.Width(shLine) > w THEN
+                DO WHILE lipgloss.Width(shLine) > w AND LEN(shLine) > 0
+                    shLine = Mid(shLine, 1, LEN(shLine) - 1)
+                LOOP
+            END IF
+            lines = APPEND(lines, contentStyle.Render(shLine))
+        NEXT shJ
     END IF
     RETURN strings.Join(lines, "\n")
 END FUNCTION
@@ -1067,14 +1077,19 @@ FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER) AS 
         RETURN NIL
     END IF
     ' Horizontal split between body and bottom pane — only when bottom
-    ' pane is visible. Row at BottomRect's top edge.
+    ' pane is visible. The tab row (BottomRect.Y) doubles as the split
+    ' handle, but only past the tab labels — clicks on "[ Console ]"
+    ' or "[ Shell ]" should switch tabs, not start a drag.
     IF m.BottomVisible AND y = m.BottomRect.Y THEN
-        m.DragMode = DragSplitBottom
-        m.DragOrigH = m.BottomHeight
-        m.DragStartMx = x
-        m.DragStartMy = y
-        m.StatusBar.Message = "Drag to resize bottom pane — release to commit"
-        RETURN NIL
+        DIM tabsEdge AS INTEGER = lipgloss.Width("[ Console ] [ Shell ]")
+        IF x > tabsEdge THEN
+            m.DragMode = DragSplitBottom
+            m.DragOrigH = m.BottomHeight
+            m.DragStartMx = x
+            m.DragStartMy = y
+            m.StatusBar.Message = "Drag to resize bottom pane — release to commit"
+            RETURN NIL
+        END IF
     END IF
 
     ' --- Menu mode (a menu is open) ----------------------------------
@@ -2097,8 +2112,24 @@ END FUNCTION
 ' bubbletea v2 lifecycle
 ' ----------------------------------------------------------------------
 
+' shellTickEvent is emitted by tea.Tick — fires every ~50ms when the
+' Shell tab is active so we can drain PTY output into the scrollback.
+TYPE shellTickEvent
+    DIM Tick AS BOOLEAN
+END TYPE
+
+FUNCTION shellTickHandler(t AS time.Time) AS tea.Msg
+    _ = t
+    DIM changed AS BOOLEAN = ShellDrain()
+    _ = changed
+    DIM ev AS shellTickEvent
+    ev.Tick = TRUE
+    RETURN ev
+END FUNCTION
+
 FUNCTION (m AS Model) Init() AS tea.Cmd
-    RETURN NIL
+    ' Bootstrap the shell-drain tick loop.
+    RETURN tea.Tick(50 * time.Millisecond, shellTickHandler)
 END FUNCTION
 
 ' applyLayout recomputes panel rectangles + cascades sizes to children
@@ -2182,6 +2213,15 @@ SUB applyLayout(m AS POINTER TO Model)
 END SUB
 
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    ' shellTickEvent — drain the PTY buffer + re-arm the timer.
+    DIM stk AS shellTickEvent
+    DIM stkOk AS BOOLEAN
+    stk, stkOk = msg.(shellTickEvent)
+    IF stkOk THEN
+        _ = stk
+        RETURN m, tea.Tick(50 * time.Millisecond, shellTickHandler)
+    END IF
+
     ' WindowSizeMsg — record dimensions and cascade to children.
     DIM sizeMsg AS tea.WindowSizeMsg
     DIM sizeOk AS BOOLEAN
@@ -2190,6 +2230,30 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Width = sizeMsg.Width
         m.Height = sizeMsg.Height
         applyLayout(@m)
+        RETURN m, NIL
+    END IF
+
+    ' Shell tab key routing — when the bottom pane is visible and the
+    ' Shell tab is active, all key presses go to the PTY (the Shell
+    ' has "implicit focus" while shown). Mouse clicks fall through so
+    ' the user can switch back to the Console tab.
+    DIM shKey AS tea.KeyPressMsg
+    DIM shKeyOk AS BOOLEAN
+    shKey, shKeyOk = msg.(tea.KeyPressMsg)
+    IF shKeyOk AND m.BottomVisible AND m.BottomTab = BottomTabShell AND ShellIsActive() THEN
+        DIM ks AS STRING = shKey.String()
+        ' Escape hatches: F12 hides the bottom pane; Ctrl+\ kills the
+        ' shell (gets us back to a normal IDE state).
+        IF ks = "f12" THEN
+            m.BottomVisible = FALSE
+            applyLayout(@m)
+            RETURN m, NIL
+        END IF
+        IF ks = "ctrl+\\" THEN
+            ShellStop()
+            RETURN m, NIL
+        END IF
+        ShellWriteKey(ks)
         RETURN m, NIL
     END IF
 
