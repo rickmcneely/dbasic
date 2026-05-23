@@ -36,6 +36,7 @@ FUNCTION DefaultRegistry() AS Registry
     r.Kinds = APPEND(r.Kinds, WidgetKindTextArea)
     r.Kinds = APPEND(r.Kinds, WidgetKindSplitPanel)
     r.Kinds = APPEND(r.Kinds, WidgetKindPropertyGrid)
+    r.Kinds = APPEND(r.Kinds, WidgetKindToolbar)
     sort.Strings(r.Kinds)
     ' Note: WidgetKindFileDialog stays in registry.Create for backwards
     ' compat with old projects that placed it as a widget, but is no
@@ -111,6 +112,9 @@ FUNCTION (r AS Registry) Create(kind AS STRING, id AS STRING) AS (Widget, ERROR)
     END IF
     IF kind = WidgetKindPropertyGrid THEN
         RETURN NewPropertyGrid(id), NIL
+    END IF
+    IF kind = WidgetKindToolbar THEN
+        RETURN NewToolbar(id), NIL
     END IF
     DIM zero AS Widget
     RETURN zero, NewError("unknown widget kind: " + kind)

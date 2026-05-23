@@ -406,6 +406,22 @@ FUNCTION widgetLabel(w AS Widget) AS STRING
         END IF
         RETURN "(empty grid)"
     END IF
+    IF w.Kind = WidgetKindToolbar THEN
+        DIM tbItems AS []STRING = strings.Split(w.LstItems, ",")
+        DIM tbOut AS STRING = ""
+        DIM tbI AS INTEGER
+        FOR tbI = 0 TO LEN(tbItems) - 1
+            DIM tbE AS STRING = tbItems[tbI]
+            IF tbE = "-" THEN
+                tbOut = tbOut + " │ "
+            ELSEIF tbE <> "" THEN
+                DIM tbP AS []STRING = strings.SplitN(tbE, ":", 2)
+                IF tbI > 0 THEN tbOut = tbOut + " "
+                tbOut = tbOut + "[ " + tbP[0] + " ]"
+            END IF
+        NEXT tbI
+        RETURN tbOut
+    END IF
     RETURN w.Kind
 END FUNCTION
 

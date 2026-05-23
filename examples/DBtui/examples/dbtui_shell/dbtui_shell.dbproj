@@ -15,30 +15,33 @@
         {"Id":"mb","Kind":"MenuBar","X":0,"Y":0,"Width":98,"Height":1,"Visible":true,"TabIndex":0,"TabStop":true,
          "Properties":{"Menus":"File|New:file.new,Open:file.open,Save:file.save,-,Exit:file.exit;Edit|Undo:edit.undo,Redo:edit.redo,-,Cut:edit.cut,Copy:edit.copy,Paste:edit.paste;View|Tree:view.tree,Properties:view.props;Run|Build:run.build,Run:run.run;Help|About:help.about"}},
 
-        {"Id":"tree","Kind":"TreeView","X":1,"Y":1,"Width":26,"Height":26,"Visible":true,"TabIndex":1,"TabStop":true,
+        {"Id":"tb","Kind":"Toolbar","X":0,"Y":1,"Width":98,"Height":1,"Visible":true,"TabIndex":1,"TabStop":true,
+         "Properties":{"Buttons":"Save:file.save,-,New Widget:add.widget,Remove Last:edit.cut,-,Exit:file.exit","Active":0}},
+
+        {"Id":"tree","Kind":"TreeView","X":1,"Y":2,"Width":26,"Height":25,"Visible":true,"TabIndex":2,"TabStop":true,
          "Properties":{"Title":"Project","Nodes":"0|+|dbtui_shell;1|+|forms;2|*|frmShell.dbf;2|*|frmShell.dbas;1|+|modules;2|*|main.dbas;1|*|dbtui_shell.dbproj"}},
 
-        {"Id":"sp1","Kind":"SplitPanel","X":27,"Y":1,"Width":1,"Height":26,"Visible":true,
+        {"Id":"sp1","Kind":"SplitPanel","X":27,"Y":2,"Width":1,"Height":25,"Visible":true,
          "Properties":{"Orientation":"vertical","Position":27}},
 
-        {"Id":"gbCanvas","Kind":"GroupBox","X":28,"Y":1,"Width":40,"Height":26,"Visible":true,
+        {"Id":"gbCanvas","Kind":"GroupBox","X":28,"Y":2,"Width":40,"Height":25,"Visible":true,
          "Properties":{"Title":"Form Designer — frmShell"}},
-        {"Id":"lblCanvas","Kind":"Label","X":34,"Y":13,"Width":28,"Height":1,"Visible":true,
+        {"Id":"lblCanvas","Kind":"Label","X":34,"Y":14,"Width":28,"Height":1,"Visible":true,
          "Properties":{"Text":"· · · canvas placeholder · · ·"}},
 
-        {"Id":"sp2","Kind":"SplitPanel","X":68,"Y":1,"Width":1,"Height":26,"Visible":true,
+        {"Id":"sp2","Kind":"SplitPanel","X":68,"Y":2,"Width":1,"Height":25,"Visible":true,
          "Properties":{"Orientation":"vertical","Position":68}},
 
-        {"Id":"tabs","Kind":"TabStrip","X":69,"Y":1,"Width":30,"Height":1,"Visible":true,"TabIndex":2,"TabStop":true,
+        {"Id":"tabs","Kind":"TabStrip","X":69,"Y":2,"Width":30,"Height":1,"Visible":true,"TabIndex":3,"TabStop":true,
          "Properties":{"Tabs":"Widgets;Tools","Active":0}},
 
-        {"Id":"lbWidgets","Kind":"ListBox","X":69,"Y":2,"Width":30,"Height":10,"Visible":true,"TabIndex":3,"TabStop":true,
+        {"Id":"lbWidgets","Kind":"ListBox","X":69,"Y":3,"Width":30,"Height":10,"Visible":true,"TabIndex":4,"TabStop":true,
          "Properties":{"Items":"Button;Label;TextInput;Checkbox;ComboBox;ListBox;RadioButton;ProgressBar;ScrollBar;TreeView;GroupBox;MenuBar;StatusBar;TextArea;SplitPanel;PropertyGrid","Selected":0}},
 
-        {"Id":"sp3","Kind":"SplitPanel","X":69,"Y":12,"Width":30,"Height":1,"Visible":true,
+        {"Id":"sp3","Kind":"SplitPanel","X":69,"Y":13,"Width":30,"Height":1,"Visible":true,
          "Properties":{"Orientation":"horizontal","Position":40}},
 
-        {"Id":"props","Kind":"PropertyGrid","X":69,"Y":13,"Width":30,"Height":14,"Visible":true,"TabIndex":4,"TabStop":true,
+        {"Id":"props","Kind":"PropertyGrid","X":69,"Y":14,"Width":30,"Height":13,"Visible":true,"TabIndex":5,"TabStop":true,
          "Properties":{"Title":"Properties","Rows":"Button||||;|Name|btnDemo|;|Visible|true|bool;|TabIndex|0|int;|TabStop|true|bool;|Text|Click me|;|Align|center|enum:left:center:right;Layout||||;|X|34|int;|Y|13|int;|Width|28|int;|Height|1|int;Visual||||;|BgColor|#1a1b2e|color;|FgColor|#e0def4|color"}},
 
         {"Id":"status","Kind":"StatusBar","X":0,"Y":28,"Width":98,"Height":1,"Visible":true,

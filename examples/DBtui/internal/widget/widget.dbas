@@ -163,6 +163,7 @@ CONST WidgetKindStatusBar   AS STRING = "StatusBar"
 CONST WidgetKindTextArea    AS STRING = "TextArea"
 CONST WidgetKindSplitPanel  AS STRING = "SplitPanel"
 CONST WidgetKindPropertyGrid AS STRING = "PropertyGrid"
+CONST WidgetKindToolbar     AS STRING = "Toolbar"
 
 TYPE Widget
     ' --- common ----------------------------------------------------
@@ -396,6 +397,7 @@ FUNCTION SetWidgetProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY)
     IF w.Kind = WidgetKindTextArea    THEN RETURN SetTextAreaProperty(w, name, value)
     IF w.Kind = WidgetKindSplitPanel  THEN RETURN SetSplitPanelProperty(w, name, value)
     IF w.Kind = WidgetKindPropertyGrid THEN RETURN SetPropertyGridProperty(w, name, value)
+    IF w.Kind = WidgetKindToolbar     THEN RETURN SetToolbarProperty(w, name, value)
     RETURN NewError("unknown widget kind: " + w.Kind)
 END FUNCTION
 
@@ -509,6 +511,10 @@ FUNCTION WidgetToEntry(w AS Widget) AS WidgetEntry
         props["Selected"] = w.LstIdx
         props["Offset"]   = w.Offset
     END IF
+    IF w.Kind = WidgetKindToolbar THEN
+        props["Buttons"] = w.LstItems
+        props["Active"]  = w.LstIdx
+    END IF
     e.Properties = props
     RETURN e
 END FUNCTION
@@ -541,6 +547,7 @@ SUB ApplyEntryProperties(w AS POINTER TO Widget, e AS WidgetEntry)
     keys = APPEND(keys, "Segments")
     keys = APPEND(keys, "Orientation")
     keys = APPEND(keys, "Rows")
+    keys = APPEND(keys, "Buttons")
     keys = APPEND(keys, "Group")
     DIM i AS INTEGER
     FOR i = 0 TO LEN(keys) - 1
@@ -736,6 +743,13 @@ FUNCTION WidgetEvents(w AS Widget) AS []STRING
     END IF
     IF w.Kind = WidgetKindPropertyGrid THEN
         out = APPEND(out, "Change")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindToolbar THEN
+        out = APPEND(out, "Action")
+        out = APPEND(out, "Click")
         out = APPEND(out, "GotFocus")
         out = APPEND(out, "LostFocus")
         RETURN out

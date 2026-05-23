@@ -1,0 +1,69 @@
+' DBtui — internal/widgets/toolbar.dbas
+'
+' Toolbar — inline row of action buttons. Sits typically below a
+' MenuBar (or anywhere on a form) and provides quick-access actions.
+' Buttons stored in LstItems as ","-separated "Label:action" pairs;
+' a single "-" between buttons renders as a visual separator.
+'
+' Example:
+'   "New:file.new,Open:file.open,-,Save:file.save,-,Exit:file.exit"
+'
+' Runtime state reuses existing WState fields:
+'   LstIdx   — active button (-1 = none, or the index)
+'
+' When the user fires a button (Enter/Space on focused Toolbar, or
+' mouse click on a button), the generated program calls the user's
+' SUB <toolbar-id>_Action(action AS STRING) — same signature as
+' MenuBar so the same handler can serve both.
+
+FUNCTION NewToolbar(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindToolbar
+    w.Visible = TRUE
+    w.TabStop = TRUE
+    w.X = 0
+    w.Y = 1
+    w.W = 60
+    w.H = 1
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#e0def4"
+    w.Style.Border = "none"
+    w.Style.Corner = "square"
+    w.LstItems = "New:file.new,Open:file.open,-,Save:file.save"
+    w.LstIdx = 0
+    RETURN w
+END FUNCTION
+
+FUNCTION ToolbarProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Buttons", w.LstItems))
+    out = APPEND(out, StringProp("Active", fmt.Sprintf("%d", w.LstIdx)))
+    DIM stylePs AS []Property = StyleProperties(w.Style, FALSE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetToolbarProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Buttons" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.LstItems = s
+        RETURN NIL
+    END IF
+    IF name = "Active" THEN
+        DIM iv AS INTEGER
+        DIM ierr AS ERROR
+        iv, ierr = coerceInt(name, value)
+        IF ierr <> NIL THEN RETURN ierr
+        w.LstIdx = iv
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown Toolbar property: " + name)
+END FUNCTION

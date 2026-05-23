@@ -357,7 +357,7 @@ FUNCTION emitDispatchMenuAction(form AS Form) AS STRING
     DIM i AS INTEGER
     FOR i = 0 TO LEN(form.Widgets) - 1
         DIM w AS WidgetEntry = form.Widgets[i]
-        IF w.Kind = WidgetKindMenuBar THEN
+        IF w.Kind = WidgetKindMenuBar OR w.Kind = WidgetKindToolbar THEN
             s = s + "    IF id = " + dbasStr(w.Id) + " THEN " + w.Id + "_Action(action)\n"
         END IF
     NEXT i
@@ -399,7 +399,7 @@ FUNCTION emitStubs(form AS Form, defined AS []STRING) AS STRING
                 s = s + "END SUB\n\n"
             END IF
         END IF
-        IF w.Kind = WidgetKindMenuBar THEN
+        IF w.Kind = WidgetKindMenuBar OR w.Kind = WidgetKindToolbar THEN
             DIM mnm AS STRING = w.Id + "_Action"
             IF NOT subDefined(mnm, defined) THEN
                 IF NOT emitted THEN
@@ -965,6 +965,14 @@ FUNCTION emitNewModel(form AS Form) AS STRING
             DIM rows AS STRING = getStrProp(w, "Rows")
             IF rows <> "" THEN s = s + fmt.Sprintf("    w%d.Items = %s\n", i, dbasStr(rows))
         END IF
+        IF w.Kind = WidgetKindToolbar THEN
+            DIM btns AS STRING = getStrProp(w, "Buttons")
+            IF btns <> "" THEN s = s + fmt.Sprintf("    w%d.Items = %s\n", i, dbasStr(btns))
+            DIM tbAct AS INTEGER
+            DIM tbActOk AS BOOLEAN
+            tbAct, tbActOk = getIntProp(w, "Active")
+            IF tbActOk THEN s = s + fmt.Sprintf("    w%d.Selected = %d\n", i, tbAct)
+        END IF
         ' Initialize textinput for TextInput widgets so they accept typing.
         IF w.Kind = WidgetKindTextInput THEN
             s = s + fmt.Sprintf("    w%d.TiModel = textinput.New()\n", i)
@@ -1316,6 +1324,35 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "                    m.Widgets[hitIdx].Selected = mcHit\n"
     s = s + "                    m.Widgets[hitIdx].Checked = TRUE\n"
     s = s + "                    m.Widgets[hitIdx].Offset = 0\n"
+    s = s + "                END IF\n"
+    s = s + "            ELSEIF mk = \"Toolbar\" THEN\n"
+    ' Click on a Toolbar button — compute which button by walking the
+    ' rendered widths. Cell width: "[ label ]" = LEN(label) + 4.
+    ' Separators are " │ " = 3 wide; regular gap between buttons = 1.
+    s = s + "                DIM tbcAll AS []STRING = strings.Split(m.Widgets[hitIdx].Items, \",\")\n"
+    s = s + "                DIM tbcLX AS INTEGER = (mcMsg.X - 1) - m.Widgets[hitIdx].X\n"
+    s = s + "                DIM tbcPos AS INTEGER = 0\n"
+    s = s + "                DIM tbcHit AS INTEGER = -1\n"
+    s = s + "                DIM tbcI AS INTEGER\n"
+    s = s + "                FOR tbcI = 0 TO LEN(tbcAll) - 1\n"
+    s = s + "                    DIM tbcE AS STRING = tbcAll[tbcI]\n"
+    s = s + "                    DIM tbcCW AS INTEGER = 0\n"
+    s = s + "                    IF tbcE = \"-\" THEN\n"
+    s = s + "                        tbcCW = 3\n"
+    s = s + "                    ELSEIF tbcE <> \"\" THEN\n"
+    s = s + "                        DIM tbcPp AS []STRING = strings.SplitN(tbcE, \":\", 2)\n"
+    s = s + "                        tbcCW = LEN(tbcPp[0]) + 4\n"
+    s = s + "                        IF tbcI > 0 THEN tbcCW = tbcCW + 1\n"
+    s = s + "                    END IF\n"
+    s = s + "                    IF tbcE <> \"-\" AND tbcE <> \"\" AND tbcLX >= tbcPos AND tbcLX < tbcPos + tbcCW THEN tbcHit = tbcI\n"
+    s = s + "                    tbcPos = tbcPos + tbcCW\n"
+    s = s + "                NEXT tbcI\n"
+    s = s + "                IF tbcHit >= 0 THEN\n"
+    s = s + "                    m.Widgets[hitIdx].Selected = tbcHit\n"
+    s = s + "                    DIM tbcPp2 AS []STRING = strings.SplitN(tbcAll[tbcHit], \":\", 2)\n"
+    s = s + "                    DIM tbcActStr AS STRING = \"\"\n"
+    s = s + "                    IF LEN(tbcPp2) > 1 THEN tbcActStr = tbcPp2[1]\n"
+    s = s + "                    dispatchMenuAction(m.Widgets[hitIdx].Id, tbcActStr)\n"
     s = s + "                END IF\n"
     s = s + "            ELSEIF mk = \"SplitPanel\" THEN\n"
     ' Click anywhere on the divider starts a drag — reuse the
@@ -1721,6 +1758,16 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "                        m.Widgets[focusedIdx].Items = treeToggle(m.Widgets[focusedIdx].Items, ftAbs[ftSel])\n"
     s = s + "                        dispatchChange(m.Widgets[focusedIdx].Id)\n"
     s = s + "                    END IF\n"
+    s = s + "                ELSEIF fk = \"Toolbar\" THEN\n"
+    ' Fire the currently-selected button's action.
+    s = s + "                    DIM tbA AS []STRING = strings.Split(m.Widgets[focusedIdx].Items, \",\")\n"
+    s = s + "                    DIM tbS AS INTEGER = m.Widgets[focusedIdx].Selected\n"
+    s = s + "                    IF tbS >= 0 AND tbS < LEN(tbA) AND tbA[tbS] <> \"-\" AND tbA[tbS] <> \"\" THEN\n"
+    s = s + "                        DIM tbPp AS []STRING = strings.SplitN(tbA[tbS], \":\", 2)\n"
+    s = s + "                        DIM tbAct AS STRING = \"\"\n"
+    s = s + "                        IF LEN(tbPp) > 1 THEN tbAct = tbPp[1]\n"
+    s = s + "                        dispatchMenuAction(m.Widgets[focusedIdx].Id, tbAct)\n"
+    s = s + "                    END IF\n"
     s = s + "                ELSEIF fk = \"MenuBar\" THEN\n"
     s = s + "                    m.Widgets[focusedIdx].Checked = TRUE\n"
     s = s + "                    IF m.Widgets[focusedIdx].Selected < 0 THEN m.Widgets[focusedIdx].Selected = 0\n"
@@ -1818,6 +1865,27 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "                        m.Widgets[afIdx].Selected = tsNew\n"
     s = s + "                        dispatchChange(m.Widgets[afIdx].Id)\n"
     s = s + "                    END IF\n"
+    s = s + "                ELSEIF ak = \"Toolbar\" THEN\n"
+    ' Toolbar arrow nav — ←/→ moves to the next/prev non-separator
+    ' button, wrapping at the ends.
+    s = s + "                    DIM tbAll AS []STRING = strings.Split(m.Widgets[afIdx].Items, \",\")\n"
+    s = s + "                    DIM tbD AS INTEGER = 0\n"
+    s = s + "                    IF k = \"left\"  THEN tbD = -1\n"
+    s = s + "                    IF k = \"right\" THEN tbD = 1\n"
+    s = s + "                    IF tbD <> 0 AND LEN(tbAll) > 0 THEN\n"
+    s = s + "                        DIM tbNew AS INTEGER = m.Widgets[afIdx].Selected + tbD\n"
+    s = s + "                        DIM tbGuard AS INTEGER = 0\n"
+    s = s + "                        DO WHILE tbGuard < LEN(tbAll)\n"
+    s = s + "                            IF tbNew < 0 THEN tbNew = LEN(tbAll) - 1\n"
+    s = s + "                            IF tbNew >= LEN(tbAll) THEN tbNew = 0\n"
+    s = s + "                            IF tbAll[tbNew] <> \"-\" AND tbAll[tbNew] <> \"\" THEN EXIT DO\n"
+    s = s + "                            tbNew = tbNew + tbD\n"
+    s = s + "                            tbGuard = tbGuard + 1\n"
+    s = s + "                        LOOP\n"
+    s = s + "                        IF tbNew >= 0 AND tbNew < LEN(tbAll) THEN\n"
+    s = s + "                            m.Widgets[afIdx].Selected = tbNew\n"
+    s = s + "                        END IF\n"
+    s = s + "                    END IF\n"
     s = s + "                ELSEIF ak = \"ScrollBar\" THEN\n"
     s = s + "                    DIM sDelta AS INTEGER = 0\n"
     s = s + "                    IF m.Widgets[afIdx].Horizontal THEN\n"
@@ -1896,7 +1964,7 @@ FUNCTION emitRenderWidget() AS STRING
     s = s + "    IF bg = \"\" THEN bg = \"#1a1b2e\"\n"
     s = s + "    IF fg = \"\" THEN fg = \"#e0def4\"\n"
     s = s + "    DIM style AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bg)).Foreground(lipgloss.Color(fg))\n"
-    s = s + "    DIM borderless AS BOOLEAN = (w.Kind = \"Label\" OR w.Kind = \"Checkbox\" OR w.Kind = \"RadioButton\" OR w.Kind = \"ScrollBar\" OR w.Kind = \"TabStrip\" OR w.Kind = \"MenuBar\" OR w.Kind = \"StatusBar\" OR w.Kind = \"SplitPanel\")\n"
+    s = s + "    DIM borderless AS BOOLEAN = (w.Kind = \"Label\" OR w.Kind = \"Checkbox\" OR w.Kind = \"RadioButton\" OR w.Kind = \"ScrollBar\" OR w.Kind = \"TabStrip\" OR w.Kind = \"MenuBar\" OR w.Kind = \"StatusBar\" OR w.Kind = \"SplitPanel\" OR w.Kind = \"Toolbar\")\n"
     s = s + "    IF w.W >= 3 AND w.H >= 3 AND NOT borderless THEN\n"
     ' lipgloss v2's Width counts the *content* width, but border + width
     ' together render at total = Width + 0 cells (border eats into the
@@ -2103,6 +2171,28 @@ FUNCTION emitRenderWidget() AS STRING
     s = s + "            mbOut = mbOut + mbCell\n"
     s = s + "        NEXT mbI\n"
     s = s + "        body = mbOut\n"
+    s = s + "    ELSEIF w.Kind = \"Toolbar\" THEN\n"
+    ' Render buttons inline as " [ Label ] " separated by a single
+    ' space. A "-" item renders as a dim vertical separator.
+    s = s + "        DIM tbList AS []STRING = strings.Split(w.Items, \",\")\n"
+    s = s + "        DIM tbHi AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#7dcfff\")).Foreground(lipgloss.Color(\"#1a1b2e\"))\n"
+    s = s + "        DIM tbSep AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(\"#3b3d5e\"))\n"
+    s = s + "        DIM tbOut AS STRING = \"\"\n"
+    s = s + "        DIM tbI AS INTEGER\n"
+    s = s + "        FOR tbI = 0 TO LEN(tbList) - 1\n"
+    s = s + "            DIM tbE AS STRING = tbList[tbI]\n"
+    s = s + "            IF tbE = \"-\" THEN\n"
+    s = s + "                tbOut = tbOut + tbSep.Render(\" │ \")\n"
+    s = s + "            ELSEIF tbE <> \"\" THEN\n"
+    s = s + "                DIM tbP AS []STRING = strings.SplitN(tbE, \":\", 2)\n"
+    s = s + "                DIM tbLbl AS STRING = tbP[0]\n"
+    s = s + "                DIM tbCell AS STRING = \"[ \" + tbLbl + \" ]\"\n"
+    s = s + "                IF tbI = w.Selected THEN tbCell = tbHi.Render(tbCell)\n"
+    s = s + "                IF tbI > 0 THEN tbOut = tbOut + \" \"\n"
+    s = s + "                tbOut = tbOut + tbCell\n"
+    s = s + "            END IF\n"
+    s = s + "        NEXT tbI\n"
+    s = s + "        body = tbOut\n"
     s = s + "    ELSEIF w.Kind = \"StatusBar\" THEN\n"
     ' Render segments as " Label: Value │ Label: Value │ ... "
     s = s + "        DIM sbSegs AS []STRING = strings.Split(w.Items, \";\")\n"

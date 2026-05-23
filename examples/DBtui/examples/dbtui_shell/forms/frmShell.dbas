@@ -83,7 +83,10 @@ FUNCTION rowsForPlacedWidget(id AS STRING) AS STRING
     RETURN s
 END FUNCTION
 
-SUB mb_Action(action AS STRING)
+' doAction — shared handler for menu + toolbar action ids. Both routes
+' funnel through here so adding a button to the Toolbar that fires
+' the same id as a File menu entry "just works".
+SUB doAction(action AS STRING)
     IF action = "file.exit" THEN os.Exit(0)
     IF action = "file.save" THEN
         DIM err AS ERROR = gSaveProject("dbtui_shell_saved.dbproj", "dbtui_shell_saved", "frmMain", 100, 30, "Saved", "w")
@@ -103,7 +106,20 @@ SUB mb_Action(action AS STRING)
         END IF
         RETURN
     END IF
-    fmt.Fprintln(os.Stderr, "menu:", action)
+    IF action = "add.widget" THEN
+        ' Toolbar shortcut for placing whatever the palette has selected.
+        lbWidgets_Change()
+        RETURN
+    END IF
+    fmt.Fprintln(os.Stderr, "action:", action)
+END SUB
+
+SUB mb_Action(action AS STRING)
+    doAction(action)
+END SUB
+
+SUB tb_Action(action AS STRING)
+    doAction(action)
 END SUB
 
 SUB tree_Change()

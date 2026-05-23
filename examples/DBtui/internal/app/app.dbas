@@ -742,13 +742,13 @@ FUNCTION codeStubFor(form AS Form) AS STRING
             s = s + "    fmt.Fprintln(os.Stderr, \"" + ww.Id + " changed\")\n"
             s = s + "END SUB\n\n"
         END IF
-        IF ww.Kind = WidgetKindMenuBar THEN
+        IF ww.Kind = WidgetKindMenuBar OR ww.Kind = WidgetKindToolbar THEN
             s = s + "SUB " + ww.Id + "_Action(action AS STRING)\n"
             s = s + "    SELECT CASE action\n"
             s = s + "        CASE \"file.exit\"\n"
             s = s + "            os.Exit(0)\n"
             s = s + "        CASE ELSE\n"
-            s = s + "            fmt.Fprintln(os.Stderr, \"menu action:\", action)\n"
+            s = s + "            fmt.Fprintln(os.Stderr, \"action:\", action)\n"
             s = s + "    END SELECT\n"
             s = s + "END SUB\n\n"
         END IF
