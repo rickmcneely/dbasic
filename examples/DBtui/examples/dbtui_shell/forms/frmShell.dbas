@@ -97,6 +97,31 @@ SUB doAction(action AS STRING)
         END IF
         RETURN
     END IF
+    IF action = "file.open" THEN
+        DIM err2 AS ERROR = gLoadProject("dbtui_shell_saved.dbproj", "w")
+        IF err2 <> NIL THEN
+            gSetItems("status", fmt.Sprintf("Open error:%s", err2.Error()))
+            RETURN
+        END IF
+        ' Re-mark every loaded "w*" widget as draggable and bump our
+        ' placed-count past the highest-numbered id we see, so any new
+        ' palette drops won't collide with existing ids.
+        DIM j AS INTEGER
+        FOR j = 0 TO gWidgetCount() - 1
+            DIM lid AS STRING = gWidgetIdAt(j)
+            IF strings.HasPrefix(lid, "w") THEN
+                gSetDraggable(lid, TRUE)
+                DIM nStr AS STRING = Mid(lid, 2, LEN(lid) - 1)
+                DIM n AS INTEGER = 0
+                DIM nErr AS ERROR
+                n, nErr = strconv.Atoi(nStr)
+                _ = nErr
+                IF n + 1 > gPlacedCount THEN gPlacedCount = n + 1
+            END IF
+        NEXT j
+        gSetItems("status", fmt.Sprintf("Loaded — %d widgets", gPlacedCount))
+        RETURN
+    END IF
     IF action = "edit.cut" THEN
         IF gPlacedCount > 0 THEN
             DIM lastId AS STRING = fmt.Sprintf("w%d", gPlacedCount - 1)
