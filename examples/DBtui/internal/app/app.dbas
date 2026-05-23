@@ -1608,6 +1608,7 @@ FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER, shi
             m.RectSelY1 = m.RectSelY0
             m.DragStartMx = x
             m.DragStartMy = y
+            m.Visual.SetMarquee(m.RectSelX0, m.RectSelY0, m.RectSelX1, m.RectSelY1)
             DIM kk AS INTEGER
             FOR kk = 0 TO LEN(m.Tree.Project.Forms) - 1
                 IF m.Tree.Project.Forms[kk].Name = m.Visual.FormName THEN
@@ -1755,13 +1756,14 @@ SUB handleMouseDrag(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER)
     DIM dx AS INTEGER = x - m.DragStartMx
     DIM dy AS INTEGER = y - m.DragStartMy
     ' Rectangle marquee — translate global → canvas-local → form-local
-    ' and update the live X1/Y1 corner. No undo snapshot (selection
-    ' changes aren't undoable here).
+    ' and update the live X1/Y1 corner. Visual.SetMarquee keeps the
+    ' overlay in sync so the user sees the marquee grow.
     IF m.DragMode = DragRectSelect THEN
         DIM rlx AS INTEGER = x - m.VisualRect.X
         DIM rly AS INTEGER = y - m.VisualRect.Y
         m.RectSelX1 = rlx - 1
         m.RectSelY1 = rly - 1
+        m.Visual.SetMarquee(m.RectSelX0, m.RectSelY0, m.RectSelX1, m.RectSelY1)
         RETURN
     END IF
     ' On the first real motion of a Move/Resize drag, snapshot for
@@ -2706,8 +2708,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         DIM clickCmd AS tea.Cmd = NIL
         IF mcMsg.Button = tea.MouseLeft THEN
-            DIM shiftHeld AS BOOLEAN = (BitAnd(Int(mcMsg.Mod), Int(tea.ModShift)) <> 0)
-            clickCmd = handleMouseClick(@m, mcMsg.X, mcMsg.Y, shiftHeld)
+            ' Most terminals intercept Shift+click for their own text
+            ' selection. Treat ANY modifier (Shift OR Ctrl OR Alt) as
+            ' "additive" — whichever modifier the terminal lets pass
+            ' through is fine.
+            DIM modMask AS INTEGER = Int(tea.ModShift) + Int(tea.ModCtrl) + Int(tea.ModAlt)
+            DIM additive AS BOOLEAN = (BitAnd(Int(mcMsg.Mod), modMask) <> 0)
+            clickCmd = handleMouseClick(@m, mcMsg.X, mcMsg.Y, additive)
         END IF
         RETURN m, clickCmd
     END IF
@@ -2720,6 +2727,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF mrOk THEN
         IF m.DragMode = DragRectSelect THEN
             finishRectSelect(@m)
+            m.Visual.ClearMarquee()
         END IF
         IF m.DragMode <> DragNone THEN
             m.DragMode = DragNone
@@ -3023,7 +3031,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF m.Focus = FocusVisual THEN
             ' Arrow keys cycle widget selection forward / backward;
-            ' Enter echoes selection info to the status bar.
+            ' Enter echoes selection info to the status bar; Space
+            ' toggles the primary widget in/out of the selection set
+            ' (keyboard fallback for terminals that eat modifier+click).
             IF k = "right" OR k = "down" THEN
                 m.Visual.SelectNext()
                 syncProperties(@m)
@@ -3032,6 +3042,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             IF k = "left" OR k = "up" THEN
                 m.Visual.SelectPrev()
                 syncProperties(@m)
+                RETURN m, NIL
+            END IF
+            IF k = "space" OR k = " " THEN
+                IF m.Visual.Selected >= 0 AND m.Visual.Selected < LEN(m.Visual.Widgets) THEN
+                    m.Visual.ToggleSelection(m.Visual.Selected)
+                    m.StatusBar.Message = fmt.Sprintf("%d widgets selected", m.Visual.SelectionCount())
+                END IF
                 RETURN m, NIL
             END IF
             IF k = "enter" THEN

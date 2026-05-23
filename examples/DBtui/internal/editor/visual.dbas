@@ -35,7 +35,30 @@ TYPE VisualEditor
     DIM Width       AS INTEGER       ' workspace area width
     DIM Height      AS INTEGER       ' workspace area height
     DIM Focused     AS BOOLEAN
+    ' Live marquee overlay — app.dbas sets these during a drag-rect
+    ' select. Form-local coords. Active=FALSE leaves Render alone.
+    DIM MarqueeActive AS BOOLEAN
+    DIM MarqueeX0     AS INTEGER
+    DIM MarqueeY0     AS INTEGER
+    DIM MarqueeX1     AS INTEGER
+    DIM MarqueeY1     AS INTEGER
 END TYPE
+
+' SetMarquee turns the marquee overlay on with the given form-local
+' corners; ClearMarquee turns it off. Render uses these to draw an
+' accent-colored rectangle on top of the canvas during a drag-rect
+' selection.
+SUB (v AS POINTER TO VisualEditor) SetMarquee(x0 AS INTEGER, y0 AS INTEGER, x1 AS INTEGER, y1 AS INTEGER)
+    v.MarqueeActive = TRUE
+    v.MarqueeX0 = x0
+    v.MarqueeY0 = y0
+    v.MarqueeX1 = x1
+    v.MarqueeY1 = y1
+END SUB
+
+SUB (v AS POINTER TO VisualEditor) ClearMarquee()
+    v.MarqueeActive = FALSE
+END SUB
 
 ' --- selection helpers ----------------------------------------------
 
@@ -659,7 +682,49 @@ FUNCTION (v AS VisualEditor) Render() AS STRING
                     END IF
                 END IF
 
-                IF ch = "·" THEN
+                ' Marquee outline overlay — draws on top of whatever
+                ' the cell would otherwise contain. Form-local coords
+                ' for the marquee; (x-1, y-1) here are the form-local
+                ' equivalents of this cell.
+                DIM marqueeCh AS STRING = ""
+                DIM marqueeOn AS BOOLEAN = FALSE
+                IF v.MarqueeActive THEN
+                    DIM mx0 AS INTEGER = v.MarqueeX0
+                    DIM my0 AS INTEGER = v.MarqueeY0
+                    DIM mx1 AS INTEGER = v.MarqueeX1
+                    DIM my1 AS INTEGER = v.MarqueeY1
+                    IF mx1 < mx0 THEN
+                        DIM tx AS INTEGER = mx0
+                        mx0 = mx1
+                        mx1 = tx
+                    END IF
+                    IF my1 < my0 THEN
+                        DIM ty AS INTEGER = my0
+                        my0 = my1
+                        my1 = ty
+                    END IF
+                    DIM fxLocal AS INTEGER = x - 1
+                    DIM fyLocal AS INTEGER = y - 1
+                    DIM onTop AS BOOLEAN = (fyLocal = my0 AND fxLocal >= mx0 AND fxLocal <= mx1)
+                    DIM onBot AS BOOLEAN = (fyLocal = my1 AND fxLocal >= mx0 AND fxLocal <= mx1)
+                    DIM onLft AS BOOLEAN = (fxLocal = mx0 AND fyLocal >= my0 AND fyLocal <= my1)
+                    DIM onRgt AS BOOLEAN = (fxLocal = mx1 AND fyLocal >= my0 AND fyLocal <= my1)
+                    IF (onTop OR onBot) AND (onLft OR onRgt) THEN
+                        marqueeOn = TRUE
+                        marqueeCh = "+"
+                    ELSEIF onTop OR onBot THEN
+                        marqueeOn = TRUE
+                        marqueeCh = "─"
+                    ELSEIF onLft OR onRgt THEN
+                        marqueeOn = TRUE
+                        marqueeCh = "│"
+                    END IF
+                END IF
+
+                IF marqueeOn THEN
+                    DIM marqueeStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Background(lipgloss.Color(bgCol)).Bold(TRUE)
+                    rowSb = rowSb + marqueeStyle.Render(marqueeCh)
+                ELSEIF ch = "·" THEN
                     rowSb = rowSb + dotStyle.Render(ch)
                 ELSEIF borderCell THEN
                     rowSb = rowSb + formBorderStyle.Render(ch)
