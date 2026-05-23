@@ -72,10 +72,15 @@ TYPE Model
     DIM PropsRect   AS Rect
 
     ' Drag tracking (canvas widget move / resize).
-    DIM DragMode      AS INTEGER       ' DragNone / DragMove / DragResize
+    DIM DragMode      AS INTEGER       ' DragNone / DragMove / DragResize / …
     DIM DragWidgetIdx AS INTEGER
-    DIM DragResizeX   AS BOOLEAN
-    DIM DragResizeY   AS BOOLEAN
+    DIM DragResizeX   AS BOOLEAN        ' legacy: right-edge resize
+    DIM DragResizeY   AS BOOLEAN        ' legacy: bottom-edge resize
+    ' Active edges for 8-handle resize. Combinations cover corners.
+    DIM DragEdgeT     AS BOOLEAN
+    DIM DragEdgeR     AS BOOLEAN
+    DIM DragEdgeB     AS BOOLEAN
+    DIM DragEdgeL     AS BOOLEAN
     DIM DragOrigX     AS INTEGER
     DIM DragOrigY     AS INTEGER
     DIM DragOrigW     AS INTEGER
@@ -91,6 +96,14 @@ TYPE Model
     ' Set TRUE after the drag's first MotionMsg fires pushUndo, so a
     ' pure click (no motion) doesn't pollute the undo history.
     DIM DragUndoPushed AS BOOLEAN
+
+    ' Rectangle marquee on the canvas (DragRectSelect). All four are
+    ' form-local coords. Active only while DragMode = DragRectSelect.
+    DIM RectSelActive AS BOOLEAN
+    DIM RectSelX0     AS INTEGER
+    DIM RectSelY0     AS INTEGER
+    DIM RectSelX1     AS INTEGER
+    DIM RectSelY1     AS INTEGER
 
     ' Clipboard — widgets snapshotted by Edit > Cut / Copy. Paste
     ' appends clones with auto-uniquified Ids at a small offset.
@@ -1074,6 +1087,51 @@ SUB refreshAfterSelectionChange(m AS POINTER TO Model)
     NEXT k
 END SUB
 
+' finishRectSelect commits the marquee at MouseReleaseMsg. Selects
+' every widget whose bounding rect intersects the marquee. A 1x1
+' marquee (no real drag) just clears selection — covers the
+' "click empty area to deselect" case. Updates Properties.
+SUB finishRectSelect(m AS POINTER TO Model)
+    m.RectSelActive = FALSE
+    DIM x0 AS INTEGER = m.RectSelX0
+    DIM y0 AS INTEGER = m.RectSelY0
+    DIM x1 AS INTEGER = m.RectSelX1
+    DIM y1 AS INTEGER = m.RectSelY1
+    IF x1 < x0 THEN
+        DIM t1 AS INTEGER = x0
+        x0 = x1
+        x1 = t1
+    END IF
+    IF y1 < y0 THEN
+        DIM t2 AS INTEGER = y0
+        y0 = y1
+        y1 = t2
+    END IF
+    DIM dragArea AS INTEGER = (x1 - x0) * (y1 - y0)
+    IF dragArea = 0 THEN
+        ' Pure click; selection already cleared at start.
+        RETURN
+    END IF
+    DIM newSel AS []INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Visual.Widgets) - 1
+        DIM w AS Widget = m.Visual.Widgets[i]
+        DIM wx0 AS INTEGER = w.X
+        DIM wy0 AS INTEGER = w.Y
+        DIM wx1 AS INTEGER = w.X + w.W - 1
+        DIM wy1 AS INTEGER = w.Y + w.H - 1
+        IF wx1 >= x0 AND wx0 <= x1 AND wy1 >= y0 AND wy0 <= y1 THEN
+            newSel = APPEND(newSel, i)
+        END IF
+    NEXT i
+    m.Visual.Selections = newSel
+    IF LEN(newSel) > 0 THEN
+        m.Visual.Selected = newSel[LEN(newSel) - 1]
+        m.Properties.SetWidget(m.Visual.Widgets[m.Visual.Selected])
+        m.StatusBar.Message = fmt.Sprintf("%d widgets selected", LEN(newSel))
+    END IF
+END SUB
+
 ' --- Clipboard / selection helpers ---------------------------------
 
 ' copySelectionToClipboard snapshots every selected widget into the
@@ -1475,10 +1533,12 @@ FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER, shi
             RETURN NIL
         END IF
         DIM wIdx AS INTEGER
-        DIM rx AS BOOLEAN
-        DIM ry AS BOOLEAN
+        DIM eT AS BOOLEAN
+        DIM eR AS BOOLEAN
+        DIM eB AS BOOLEAN
+        DIM eL AS BOOLEAN
         DIM dragOk AS BOOLEAN
-        wIdx, rx, ry, dragOk = m.Visual.BeginDragAt(lx2, ly2)
+        wIdx, eT, eR, eB, eL, dragOk = m.Visual.BeginDragAt(lx2, ly2)
         IF dragOk THEN
             ' Start a drag — Move by default, Resize on edge/corner.
             ' Defer the undo snapshot to first motion: pure clicks
@@ -1492,10 +1552,14 @@ FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER, shi
             m.DragOrigH = w.H
             m.DragStartMx = x
             m.DragStartMy = y
-            IF rx OR ry THEN
+            m.DragEdgeT = eT
+            m.DragEdgeR = eR
+            m.DragEdgeB = eB
+            m.DragEdgeL = eL
+            IF eT OR eR OR eB OR eL THEN
                 m.DragMode = DragResize
-                m.DragResizeX = rx
-                m.DragResizeY = ry
+                m.DragResizeX = eR
+                m.DragResizeY = eB
                 m.StatusBar.Message = fmt.Sprintf("resizing %s — drag, release to drop", w.Id)
             ELSE
                 m.DragMode = DragMove
@@ -1529,9 +1593,21 @@ FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER, shi
             ' (not refresh — selection may have changed since last paint).
             m.Properties.SetWidget(w)
         ELSE
-            ' Click on form interior outside any widget — clear the
-            ' selection and surface the form in Properties.
+            ' Click on form interior outside any widget — start a
+            ' rectangle-marquee drag. Selection is cleared up front;
+            ' on release we'll add every intersecting widget. If the
+            ' user just clicks (no drag), the release-handler treats
+            ' it as a "click empty area to clear" and the form
+            ' surfaces in Properties.
             m.Visual.ClearSelections()
+            m.DragMode = DragRectSelect
+            m.RectSelActive = TRUE
+            m.RectSelX0 = lx2 - 1   ' convert canvas→form-local
+            m.RectSelY0 = ly2 - 1
+            m.RectSelX1 = m.RectSelX0
+            m.RectSelY1 = m.RectSelY0
+            m.DragStartMx = x
+            m.DragStartMy = y
             DIM kk AS INTEGER
             FOR kk = 0 TO LEN(m.Tree.Project.Forms) - 1
                 IF m.Tree.Project.Forms[kk].Name = m.Visual.FormName THEN
@@ -1678,6 +1754,16 @@ END SUB
 SUB handleMouseDrag(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER)
     DIM dx AS INTEGER = x - m.DragStartMx
     DIM dy AS INTEGER = y - m.DragStartMy
+    ' Rectangle marquee — translate global → canvas-local → form-local
+    ' and update the live X1/Y1 corner. No undo snapshot (selection
+    ' changes aren't undoable here).
+    IF m.DragMode = DragRectSelect THEN
+        DIM rlx AS INTEGER = x - m.VisualRect.X
+        DIM rly AS INTEGER = y - m.VisualRect.Y
+        m.RectSelX1 = rlx - 1
+        m.RectSelY1 = rly - 1
+        RETURN
+    END IF
     ' On the first real motion of a Move/Resize drag, snapshot for
     ' undo. Pure clicks (no motion) skip this and don't pollute the
     ' undo history.
@@ -1704,10 +1790,25 @@ SUB handleMouseDrag(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER)
         RETURN
     END IF
     IF m.DragMode = DragResize THEN
+        ' 8-handle resize: right/bottom edges extend, left/top edges
+        ' move the origin and shrink. Combinations cover corners.
+        DIM newX AS INTEGER = m.DragOrigX
+        DIM newY AS INTEGER = m.DragOrigY
         DIM newW AS INTEGER = m.DragOrigW
         DIM newH AS INTEGER = m.DragOrigH
-        IF m.DragResizeX THEN newW = m.DragOrigW + dx
-        IF m.DragResizeY THEN newH = m.DragOrigH + dy
+        IF m.DragEdgeR THEN newW = m.DragOrigW + dx
+        IF m.DragEdgeB THEN newH = m.DragOrigH + dy
+        IF m.DragEdgeL THEN
+            newX = m.DragOrigX + dx
+            newW = m.DragOrigW - dx
+        END IF
+        IF m.DragEdgeT THEN
+            newY = m.DragOrigY + dy
+            newH = m.DragOrigH - dy
+        END IF
+        IF newW < 1 THEN newW = 1
+        IF newH < 1 THEN newH = 1
+        m.Visual.MoveWidget(m.DragWidgetIdx, newX, newY)
         m.Visual.ResizeWidget(m.DragWidgetIdx, newW, newH)
         refreshPropertiesFromSource(m)
         RETURN
@@ -2617,6 +2718,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     mrMsg, mrOk = msg.(tea.MouseReleaseMsg)
     _ = mrMsg
     IF mrOk THEN
+        IF m.DragMode = DragRectSelect THEN
+            finishRectSelect(@m)
+        END IF
         IF m.DragMode <> DragNone THEN
             m.DragMode = DragNone
             refreshPropertiesFromSource(@m)

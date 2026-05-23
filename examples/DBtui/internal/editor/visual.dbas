@@ -254,17 +254,17 @@ FUNCTION (v AS POINTER TO VisualEditor) ClickAtMod(lx AS INTEGER, ly AS INTEGER,
 END FUNCTION
 
 ' BeginDragAt classifies the click region within the widget to decide
-' whether the user is moving the widget or resizing it. Returns a
-' tuple of (widgetIdx, resizeX, resizeY, ok). The caller stores these
-' along with the widget's original (X, Y, W, H) so motion events can
-' apply deltas. When the hit widget is already part of a multi-select,
-' the selection is preserved (so the drag moves all of them); a click
-' on a non-selected widget collapses the selection to just it.
-FUNCTION (v AS POINTER TO VisualEditor) BeginDragAt(lx AS INTEGER, ly AS INTEGER) AS (INTEGER, BOOLEAN, BOOLEAN, BOOLEAN)
+' whether the user is moving the widget or resizing it. Returns
+' (widgetIdx, edgeTop, edgeRight, edgeBot, edgeLeft, ok). Any combo
+' of edge flags = resize (corners hit two adjacent edges); no edges =
+' a Move on the widget body. When the hit widget is already part of
+' a multi-select, the selection is preserved (so the drag moves all
+' of them); a click on a non-selected widget collapses the selection.
+FUNCTION (v AS POINTER TO VisualEditor) BeginDragAt(lx AS INTEGER, ly AS INTEGER) AS (INTEGER, BOOLEAN, BOOLEAN, BOOLEAN, BOOLEAN, BOOLEAN)
     DIM fx AS INTEGER = lx - 1
     DIM fy AS INTEGER = ly - 1
     DIM idx AS INTEGER = v.WidgetAt(fx, fy)
-    IF idx < 0 THEN RETURN -1, FALSE, FALSE, FALSE
+    IF idx < 0 THEN RETURN -1, FALSE, FALSE, FALSE, FALSE, FALSE
     IF v.IsSelected(idx) THEN
         ' Keep the existing selection; make idx the primary.
         v.Selected = idx
@@ -274,9 +274,11 @@ FUNCTION (v AS POINTER TO VisualEditor) BeginDragAt(lx AS INTEGER, ly AS INTEGER
     DIM w AS Widget = v.Widgets[idx]
     DIM dx AS INTEGER = fx - w.X
     DIM dy AS INTEGER = fy - w.Y
-    DIM rx AS BOOLEAN = (dx = w.W - 1)
-    DIM ry AS BOOLEAN = (dy = w.H - 1)
-    RETURN idx, rx, ry, TRUE
+    DIM eT AS BOOLEAN = (dy = 0 AND w.H > 1)
+    DIM eB AS BOOLEAN = (dy = w.H - 1 AND w.H > 1)
+    DIM eL AS BOOLEAN = (dx = 0 AND w.W > 1)
+    DIM eR AS BOOLEAN = (dx = w.W - 1 AND w.W > 1)
+    RETURN idx, eT, eR, eB, eL, TRUE
 END FUNCTION
 
 ' MoveWidget — sets the widget's (X, Y), clamped so the widget stays

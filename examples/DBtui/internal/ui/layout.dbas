@@ -51,6 +51,7 @@ CONST DragSplitLeft    AS INTEGER = 4   ' between project tree + canvas
 CONST DragSplitRight   AS INTEGER = 5   ' between canvas + palette/props
 CONST DragSplitPalette AS INTEGER = 6   ' between palette + properties
 CONST DragSplitBottom  AS INTEGER = 7   ' between body + bottom pane
+CONST DragRectSelect   AS INTEGER = 8   ' marquee on the form canvas
 
 ' Rect is a simple integer bounding box. Used by the app to record
 ' each panel's screen position so mouse clicks can be routed.
