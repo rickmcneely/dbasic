@@ -86,7 +86,7 @@
           }
         },
         {
-          "Id": "btnOK",
+          "Id": "btnOpen",
           "Kind": "Button",
           "X": 44,
           "Y": 4,
@@ -104,7 +104,18 @@
             "Corner": "round",
             "FgColor": "#000000",
             "FgPress": "#FFFFFF",
-            "Text": "Button"
+            "Text": "Open..."
+          }
+        }
+      ],
+      "Tools": [
+        {
+          "Id": "dlgOpen",
+          "Kind": "FileDialog",
+          "Properties": {
+            "Title": "Open File",
+            "Mode": "open",
+            "Mask": "*"
           }
         }
       ]
