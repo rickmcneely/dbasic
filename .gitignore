@@ -65,6 +65,8 @@ examples/DBtui/examples/*/dbtui_shell
 examples/DBtui/examples/*/dbtui_shell.dbas
 examples/DBtui/examples/dbtui_shell/go.mod
 examples/DBtui/examples/dbtui_shell/go.sum
+# Scratch save targets produced by gSaveProject demos.
+examples/DBtui/examples/*/dbtui_shell_saved*
 
 # Database files
 *.db

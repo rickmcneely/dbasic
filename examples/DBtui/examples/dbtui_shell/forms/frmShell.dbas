@@ -75,11 +75,25 @@ FUNCTION rowsForPlacedWidget(id AS STRING) AS STRING
     IF sel >= 0 THEN s = s + ";|Selected|" + fmt.Sprintf("%d", sel) + "|int"
     DIM ttl AS STRING = gGetTitle(id)
     IF ttl <> "" THEN s = s + ";|Title|" + ttl + "|"
+    s = s + ";Layout||||"
+    s = s + ";|X|" + fmt.Sprintf("%d", gM.Widgets[idx].X) + "|int"
+    s = s + ";|Y|" + fmt.Sprintf("%d", gM.Widgets[idx].Y) + "|int"
+    s = s + ";|Width|" + fmt.Sprintf("%d", gM.Widgets[idx].W) + "|int"
+    s = s + ";|Height|" + fmt.Sprintf("%d", gM.Widgets[idx].H) + "|int"
     RETURN s
 END FUNCTION
 
 SUB mb_Action(action AS STRING)
     IF action = "file.exit" THEN os.Exit(0)
+    IF action = "file.save" THEN
+        DIM err AS ERROR = gSaveProject("dbtui_shell_saved.dbproj", "dbtui_shell_saved", "frmMain", 100, 30, "Saved", "w")
+        IF err <> NIL THEN
+            gSetItems("status", fmt.Sprintf("Save error:%s", err.Error()))
+        ELSE
+            gSetItems("status", fmt.Sprintf("Saved %d widgets to dbtui_shell_saved.dbproj", gPlacedCount))
+        END IF
+        RETURN
+    END IF
     IF action = "edit.cut" THEN
         IF gPlacedCount > 0 THEN
             DIM lastId AS STRING = fmt.Sprintf("w%d", gPlacedCount - 1)
@@ -111,6 +125,7 @@ SUB lbWidgets_Change()
     w, h = defaultSizeFor(kind)
     DIM nIdx AS INTEGER = gAddWidget(kind, newId, gPlaceX, gPlaceY, w, h)
     IF nIdx < 0 THEN RETURN
+    gSetDraggable(newId, TRUE)
     gPlacedCount = gPlacedCount + 1
     gPlaceX = gPlaceX + 2
     gPlaceY = gPlaceY + h + 1
@@ -155,9 +170,33 @@ SUB props_Change()
         _ = ierr
         gSetSelected(gSelectedWidgetId, iv)
     ELSEIF name = "Items" THEN
-        ' Demo encoding swaps ; for , when serializing into the grid;
-        ' swap back before pushing to the widget.
         gSetItems(gSelectedWidgetId, strings.ReplaceAll(val, ",", ";"))
+    ELSEIF name = "X" OR name = "Y" THEN
+        DIM ic AS INTEGER = 0
+        DIM cerr AS ERROR
+        ic, cerr = strconv.Atoi(val)
+        _ = cerr
+        DIM cidx AS INTEGER = gWidgetIdx(gSelectedWidgetId)
+        IF cidx >= 0 THEN
+            DIM cx AS INTEGER = gM.Widgets[cidx].X
+            DIM cy AS INTEGER = gM.Widgets[cidx].Y
+            IF name = "X" THEN cx = ic
+            IF name = "Y" THEN cy = ic
+            gSetXY(gSelectedWidgetId, cx, cy)
+        END IF
+    ELSEIF name = "Width" OR name = "Height" THEN
+        DIM iw AS INTEGER = 0
+        DIM werr AS ERROR
+        iw, werr = strconv.Atoi(val)
+        _ = werr
+        DIM widx AS INTEGER = gWidgetIdx(gSelectedWidgetId)
+        IF widx >= 0 THEN
+            DIM ww AS INTEGER = gM.Widgets[widx].W
+            DIM wh AS INTEGER = gM.Widgets[widx].H
+            IF name = "Width"  THEN ww = iw
+            IF name = "Height" THEN wh = iw
+            gSetSize(gSelectedWidgetId, ww, wh)
+        END IF
     END IF
     ' Refresh status so the user sees the writeback happened.
     gSetItems("status", fmt.Sprintf("Placed:%d;Edited:%s.%s=%s", gPlacedCount, gSelectedWidgetId, name, val))
