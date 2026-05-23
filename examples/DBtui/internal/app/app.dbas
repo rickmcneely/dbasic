@@ -648,19 +648,18 @@ FUNCTION renderBottomPane(m AS Model) AS STRING
             lines = APPEND(lines, contentStyle.Render(line))
         NEXT i
     ELSE
-        ' Shell tab — PTY-backed live shell. Lazy-start on first view.
+        ' Shell tab — PTY-backed live shell, rendered through vt10x.
+        ' Lazy-start on first view.
         IF NOT ShellIsActive() THEN
             DIM serr AS ERROR = PtyShellStart()
             _ = serr
         END IF
-        DIM sbuf AS []STRING = ShellBuffer()
-        DIM shStart AS INTEGER = LEN(sbuf) - contentH
-        IF shStart < 0 THEN shStart = 0
+        DIM screen AS STRING = ShellRender(w, contentH)
+        DIM sbufV AS []STRING = strings.Split(screen, "\n")
         DIM shJ AS INTEGER
         FOR shJ = 0 TO contentH - 1
-            DIM shBufIdx AS INTEGER = shStart + shJ
             DIM shLine AS STRING = ""
-            IF shBufIdx < LEN(sbuf) THEN shLine = sbuf[shBufIdx]
+            IF shJ < LEN(sbufV) THEN shLine = sbufV[shJ]
             IF lipgloss.Width(shLine) > w THEN
                 DO WHILE lipgloss.Width(shLine) > w AND LEN(shLine) > 0
                     shLine = Mid(shLine, 1, LEN(shLine) - 1)

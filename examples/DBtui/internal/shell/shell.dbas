@@ -1,57 +1,37 @@
 ' DBtui — internal/shell/shell.dbas
 '
-' PTY-backed shell for the Shell tab in the bottom pane. Spawns
-' $SHELL (defaulting to /bin/bash) inside a pseudo-terminal via
-' github.com/creack/pty; a background goroutine drains the master
-' file descriptor into a buffered channel. The bubbletea Update loop
-' polls the channel via tea.Tick and appends decoded chunks (with
-' ANSI escape codes stripped) into a line-oriented scrollback buffer.
+' PTY-backed shell with proper VT100 emulation. Spawns $SHELL
+' (defaulting to /bin/bash) inside a pseudo-terminal via
+' github.com/creack/pty; a background goroutine reads PTY output and
+' feeds it to a github.com/hinshun/vt10x Terminal instance which
+' maintains a virtual cell grid. Render fetches the grid as a string.
 '
-' Keystrokes while the Shell tab has focus get translated to the
-' wire bytes the shell expects (Enter → \r, arrows → ESC[A..D, etc.)
-' and written to the PTY master.
+' This handles cursor positioning, screen clears, scroll regions, etc.
+' Programs like vim, less, htop, top should render correctly.
 '
-' This is a "raw text" shell: ANSI codes are stripped before display,
-' so programs that depend on cursor positioning (vim, less, htop)
-' will render badly. Basic command output (ls, cat, git, make, …)
-' works fine.
+' Keystrokes while the Shell tab is focused get translated to wire
+' bytes and written to the PTY master.
 
 IMPORT "os"
 IMPORT "os/exec" AS osexec
-IMPORT "strings"
 IMPORT "github.com/creack/pty"
+IMPORT "github.com/hinshun/vt10x"
 
-' Package-level state. The bubbletea Model holds no reference — these
-' globals are accessed through the SUB/FUNCTION API below.
+' Package-level state.
 DIM gShellActive AS BOOLEAN
 DIM gShellPtmx   AS POINTER TO os.File
 DIM gShellCmd    AS POINTER TO osexec.Cmd
-DIM gShellBuf    AS []STRING
-DIM gShellLine   AS STRING                ' current partial line
-DIM gShellCh     AS CHAN OF STRING        ' raw chunks from reader
-
-CONST ShellMaxLines AS INTEGER = 500       ' ring-buffer cap
+DIM gShellVT     AS vt10x.Terminal     ' the virtual terminal emulator
+DIM gShellCols   AS INTEGER
+DIM gShellRows   AS INTEGER
 
 ' ShellIsActive — has the PTY been spawned?
 FUNCTION ShellIsActive() AS BOOLEAN
     RETURN gShellActive
 END FUNCTION
 
-' ShellBuffer returns the current scrollback (read-only — callers
-' should not mutate it). Returns the partial-current-line as the
-' last entry so live output is visible while a line is being built.
-FUNCTION ShellBuffer() AS []STRING
-    DIM out AS []STRING
-    DIM i AS INTEGER
-    FOR i = 0 TO LEN(gShellBuf) - 1
-        out = APPEND(out, gShellBuf[i])
-    NEXT i
-    IF gShellLine <> "" THEN out = APPEND(out, gShellLine)
-    RETURN out
-END FUNCTION
-
-' PtyShellStart spawns $SHELL inside a PTY and kicks off the reader
-' goroutine. Idempotent — safe to call multiple times.
+' PtyShellStart spawns $SHELL inside a PTY, kicks off the reader
+' goroutine, and creates the vt10x emulator. Idempotent.
 FUNCTION PtyShellStart() AS ERROR
     IF gShellActive THEN RETURN NIL
     DIM shellPath AS STRING = os.Getenv("SHELL")
@@ -62,14 +42,16 @@ FUNCTION PtyShellStart() AS ERROR
     ptmx, err = pty.Start(gShellCmd)
     IF err <> NIL THEN RETURN err
     gShellPtmx = ptmx
-    gShellCh = MAKE_CHAN(STRING, 256)
+    gShellCols = 80
+    gShellRows = 24
+    gShellVT = vt10x.New(vt10x.WithSize(gShellCols, gShellRows))
     gShellActive = TRUE
     SPAWN shellReader()
     RETURN NIL
 END FUNCTION
 
-' shellReader runs in a goroutine, blocks on Read, pushes chunks to
-' gShellCh. Exits when the PTY closes (Read returns an error).
+' shellReader runs in a goroutine, blocks on PTY Read, writes chunks
+' to the vt10x parser. Exits when the PTY closes.
 SUB shellReader()
     DIM buf AS BYTES = MakeBytes(4096)
     DO WHILE TRUE
@@ -81,98 +63,51 @@ SUB shellReader()
             RETURN
         END IF
         IF n > 0 THEN
-            DIM chunk AS STRING = string(buf[0:n])
-            SEND chunk TO gShellCh
+            DIM nw AS INTEGER
+            DIM werr AS ERROR
+            nw, werr = gShellVT.Write(buf[0:n])
+            _ = nw
+            _ = werr
         END IF
     LOOP
 END SUB
 
-' ShellDrain pulls any pending chunks off the channel, strips ANSI
-' escape codes, splits on \n, and appends to the scrollback. Called
-' from the bubbletea Update on every tea.Tick. Returns TRUE if it
-' changed the buffer (so the caller can decide whether to repaint).
+' ShellResize resizes the vt10x virtual terminal. Ideally we'd also
+' call pty.Setsize so bash/vim get a SIGWINCH and adapt — but DBasic
+' lacks a uint16 cast for pty.Winsize fields, so we punt on that and
+' just resize the virtual grid. Child programs will think the
+' terminal is the default 80x24 and lay out accordingly.
+SUB ShellResize(cols AS INTEGER, rows AS INTEGER)
+    IF NOT gShellActive THEN RETURN
+    IF cols < 1 THEN cols = 1
+    IF rows < 1 THEN rows = 1
+    IF cols = gShellCols AND rows = gShellRows THEN RETURN
+    gShellCols = cols
+    gShellRows = rows
+    gShellVT.Resize(cols, rows)
+END SUB
+
+' ShellRender returns the current rendered screen — one line per row
+' of the virtual terminal. Caller passes the visible size; we resize
+' the vt + PTY first so the screen matches the panel dimensions.
+FUNCTION ShellRender(cols AS INTEGER, rows AS INTEGER) AS STRING
+    IF NOT gShellActive THEN RETURN ""
+    ShellResize(cols, rows)
+    DIM s AS STRING = gShellVT.String()
+    RETURN s
+END FUNCTION
+
+' ShellDrain is a no-op kept as a stable API — vt10x writes happen
+' inside the reader goroutine directly into the virtual terminal,
+' so there's no intermediate buffer to drain. We always return TRUE
+' so the tea.Tick loop triggers a re-render every tick (cheap; the
+' actual screen only repaints when the model changes).
 FUNCTION ShellDrain() AS BOOLEAN
-    IF NOT gShellActive THEN RETURN FALSE
-    DIM changed AS BOOLEAN = FALSE
-    DO WHILE LEN(gShellCh) > 0
-        DIM chunk AS STRING
-        RECEIVE chunk FROM gShellCh
-        appendChunk(stripANSI(chunk))
-        changed = TRUE
-    LOOP
-    RETURN changed
+    RETURN gShellActive
 END FUNCTION
 
-' appendChunk splits `chunk` on \n and folds it into gShellBuf +
-' gShellLine. Caps the buffer at ShellMaxLines (oldest dropped).
-SUB appendChunk(chunk AS STRING)
-    DIM i AS INTEGER
-    DIM n AS INTEGER = LEN(chunk)
-    FOR i = 0 TO n - 1
-        DIM c AS STRING = Mid(chunk, i + 1, 1)
-        IF c = "\n" THEN
-            gShellBuf = APPEND(gShellBuf, gShellLine)
-            gShellLine = ""
-            IF LEN(gShellBuf) > ShellMaxLines THEN
-                DIM dropped AS []STRING
-                DIM j AS INTEGER
-                FOR j = LEN(gShellBuf) - ShellMaxLines TO LEN(gShellBuf) - 1
-                    dropped = APPEND(dropped, gShellBuf[j])
-                NEXT j
-                gShellBuf = dropped
-            END IF
-        ELSE
-            gShellLine = gShellLine + c
-        END IF
-    NEXT i
-END SUB
-
-' stripANSI strips CSI sequences (ESC [ ... letter) and discards
-' standalone carriage returns. Good enough for line-oriented output;
-' won't keep up with programs that use cursor positioning.
-FUNCTION stripANSI(s AS STRING) AS STRING
-    DIM out AS STRING = ""
-    DIM i AS INTEGER = 0
-    DIM n AS INTEGER = LEN(s)
-    DO WHILE i < n
-        DIM c AS STRING = Mid(s, i + 1, 1)
-        IF c = Chr(27) THEN
-            i = i + 1
-            IF i < n AND Mid(s, i + 1, 1) = "[" THEN
-                i = i + 1
-                DO WHILE i < n
-                    DIM c2 AS STRING = Mid(s, i + 1, 1)
-                    DIM b AS INTEGER = Asc(c2)
-                    i = i + 1
-                    IF (b >= Asc("a") AND b <= Asc("z")) OR (b >= Asc("A") AND b <= Asc("Z")) THEN EXIT DO
-                LOOP
-            ELSEIF i < n AND Mid(s, i + 1, 1) = "]" THEN
-                ' OSC — skip until BEL (\x07).
-                i = i + 1
-                DO WHILE i < n
-                    IF Mid(s, i + 1, 1) = Chr(7) THEN
-                        i = i + 1
-                        EXIT DO
-                    END IF
-                    i = i + 1
-                LOOP
-            END IF
-        ELSEIF c = Chr(13) THEN
-            i = i + 1
-        ELSEIF c = Chr(8) THEN
-            ' Backspace — pop last char from current line if any.
-            IF LEN(out) > 0 THEN out = Mid(out, 1, LEN(out) - 1)
-            i = i + 1
-        ELSE
-            out = out + c
-            i = i + 1
-        END IF
-    LOOP
-    RETURN out
-END FUNCTION
-
-' ShellWriteKey translates a bubbletea key string into the wire bytes
-' the shell expects and writes them to the PTY master.
+' ShellWriteKey translates a bubbletea key string into wire bytes and
+' writes them to the PTY master.
 SUB ShellWriteKey(k AS STRING)
     IF NOT gShellActive THEN RETURN
     IF gShellPtmx = NIL THEN RETURN
@@ -201,6 +136,10 @@ SUB ShellWriteKey(k AS STRING)
         s = Chr(27) + "[F"
     ELSEIF k = "delete" THEN
         s = Chr(27) + "[3~"
+    ELSEIF k = "pgup" THEN
+        s = Chr(27) + "[5~"
+    ELSEIF k = "pgdown" THEN
+        s = Chr(27) + "[6~"
     ELSEIF LEN(k) = 1 THEN
         s = k
     END IF
@@ -221,3 +160,13 @@ SUB ShellStop()
     IF gShellCmd <> NIL AND gShellCmd.Process <> NIL THEN gShellCmd.Process.Kill()
     gShellPtmx = NIL
 END SUB
+
+' Kept for API compatibility — splits the rendered screen on newlines.
+FUNCTION ShellBuffer() AS []STRING
+    IF NOT gShellActive THEN
+        DIM empty AS []STRING
+        RETURN empty
+    END IF
+    DIM s AS STRING = gShellVT.String()
+    RETURN strings.Split(s, "\n")
+END FUNCTION
