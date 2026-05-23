@@ -649,9 +649,10 @@ FUNCTION renderBottomPane(m AS Model) AS STRING
         NEXT i
     ELSE
         ' Shell tab — PTY-backed live shell, rendered through vt10x.
-        ' Lazy-start on first view.
+        ' Lazy-start on first view. Pass the panel's current dims so
+        ' bash spawns at the right size from the very first prompt.
         IF NOT ShellIsActive() THEN
-            DIM serr AS ERROR = PtyShellStart()
+            DIM serr AS ERROR = PtyShellStart(w, contentH)
             _ = serr
         END IF
         DIM screen AS STRING = ShellRender(w, contentH)

@@ -31,9 +31,14 @@ FUNCTION ShellIsActive() AS BOOLEAN
 END FUNCTION
 
 ' PtyShellStart spawns $SHELL inside a PTY, kicks off the reader
-' goroutine, and creates the vt10x emulator. Idempotent.
-FUNCTION PtyShellStart() AS ERROR
+' goroutine, and creates the vt10x emulator at the given size. Pass
+' the actual panel dimensions if known so bash spawns at the right
+' size from the start (avoiding the 80x24→real-size SIGWINCH hiccup).
+' Pass 0,0 to use the 80x24 default.
+FUNCTION PtyShellStart(cols AS INTEGER, rows AS INTEGER) AS ERROR
     IF gShellActive THEN RETURN NIL
+    IF cols < 1 THEN cols = 80
+    IF rows < 1 THEN rows = 24
     DIM shellPath AS STRING = os.Getenv("SHELL")
     IF shellPath = "" THEN shellPath = "/bin/bash"
     gShellCmd = osexec.Command(shellPath)
@@ -42,9 +47,16 @@ FUNCTION PtyShellStart() AS ERROR
     ptmx, err = pty.Start(gShellCmd)
     IF err <> NIL THEN RETURN err
     gShellPtmx = ptmx
-    gShellCols = 80
-    gShellRows = 24
-    gShellVT = vt10x.New(vt10x.WithSize(gShellCols, gShellRows))
+    gShellCols = cols
+    gShellRows = rows
+    gShellVT = vt10x.New(vt10x.WithSize(cols, rows))
+    ' Also tell the PTY the real size up front so bash's PS1 prompt
+    ' and any rc-file initialization sees the correct COLUMNS/LINES.
+    DIM ws AS pty.Winsize
+    ws.Rows = Uint16(rows)
+    ws.Cols = Uint16(cols)
+    DIM serr AS ERROR = pty.Setsize(gShellPtmx, @ws)
+    _ = serr
     gShellActive = TRUE
     SPAWN shellReader()
     RETURN NIL
