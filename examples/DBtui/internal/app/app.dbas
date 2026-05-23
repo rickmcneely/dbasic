@@ -75,6 +75,10 @@ TYPE Model
     DIM DragMultiXs   AS []INTEGER
     DIM DragMultiYs   AS []INTEGER
 
+    ' Clipboard — widgets snapshotted by Edit > Cut / Copy. Paste
+    ' appends clones with auto-uniquified Ids at a small offset.
+    DIM Clipboard     AS []Widget
+
     ' Double-click tracking — used by the palette to place a widget on
     ' the canvas when the same row is clicked twice in quick succession.
     DIM LastClickPanel AS INTEGER
@@ -895,8 +899,120 @@ FUNCTION dispatchFileAction(m AS POINTER TO Model, action AS STRING) AS tea.Cmd
         m.StatusBar.Message = "new form: " + nm
         RETURN NIL
     END IF
+
+    ' --- Edit menu --------------------------------------------------
+    IF action = "edit.selectall" THEN
+        m.Visual.SelectAll()
+        m.StatusBar.Message = fmt.Sprintf("%d widgets selected", m.Visual.SelectionCount())
+        RETURN NIL
+    END IF
+    IF action = "edit.copy" THEN
+        copySelectionToClipboard(m)
+        m.StatusBar.Message = fmt.Sprintf("copied %d widgets", LEN(m.Clipboard))
+        RETURN NIL
+    END IF
+    IF action = "edit.cut" THEN
+        copySelectionToClipboard(m)
+        DIM n AS INTEGER = LEN(m.Clipboard)
+        removeSelection(m)
+        m.StatusBar.Message = fmt.Sprintf("cut %d widgets", n)
+        RETURN NIL
+    END IF
+    IF action = "edit.paste" THEN
+        DIM placed AS INTEGER = pasteFromClipboard(m)
+        IF placed > 0 THEN
+            m.StatusBar.Message = fmt.Sprintf("pasted %d widgets", placed)
+        ELSE
+            m.StatusBar.Message = "clipboard empty"
+        END IF
+        RETURN NIL
+    END IF
+
     m.StatusBar.Message = "selected: " + action + "  (action dispatch — TBD)"
     RETURN NIL
+END FUNCTION
+
+' copySelectionToClipboard snapshots every selected widget into the
+' Model's Clipboard (by value, deep enough for the in-memory Widget
+' TYPE — kind-specific fields are part of the same TYPE so they copy
+' along).
+SUB copySelectionToClipboard(m AS POINTER TO Model)
+    DIM clip AS []Widget
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Visual.Selections) - 1
+        DIM idx AS INTEGER = m.Visual.Selections[i]
+        IF idx >= 0 AND idx < LEN(m.Visual.Widgets) THEN
+            clip = APPEND(clip, m.Visual.Widgets[idx])
+        END IF
+    NEXT i
+    m.Clipboard = clip
+END SUB
+
+' removeSelection removes every selected widget from Visual.Widgets
+' and clears the selection. Surfaces the form in Properties after,
+' since the previously-selected widgets are gone.
+SUB removeSelection(m AS POINTER TO Model)
+    IF LEN(m.Visual.Selections) = 0 THEN RETURN
+    ' Build a "keep" set so a single linear scan does the filter.
+    DIM kept AS []Widget
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(m.Visual.Widgets) - 1
+        IF NOT m.Visual.IsSelected(j) THEN kept = APPEND(kept, m.Visual.Widgets[j])
+    NEXT j
+    m.Visual.Widgets = kept
+    m.Visual.ClearSelections()
+    syncProjectFromVisual(m)
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[k].Name = m.Visual.FormName THEN
+            m.Properties.SetForm(m.Tree.Project.Forms[k])
+        END IF
+    NEXT k
+END SUB
+
+' uniqueWidgetId returns a copy of base with a numeric suffix bumped
+' until no existing widget on the canvas owns the same Id. Lets Paste
+' drop clones without collision.
+FUNCTION uniqueWidgetId(m AS POINTER TO Model, baseId AS STRING) AS STRING
+    DIM candidate AS STRING = baseId
+    DIM n AS INTEGER = 1
+    DO WHILE widgetIdExists(m, candidate)
+        n = n + 1
+        candidate = fmt.Sprintf("%s_%d", baseId, n)
+    LOOP
+    RETURN candidate
+END FUNCTION
+
+FUNCTION widgetIdExists(m AS POINTER TO Model, id AS STRING) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Visual.Widgets) - 1
+        IF m.Visual.Widgets[i].Id = id THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' pasteFromClipboard appends a copy of each clipboard widget to the
+' canvas with a +2,+1 offset and a uniquified Id. Selects the newly
+' pasted widgets so a follow-up Cut or drag operates on them.
+FUNCTION pasteFromClipboard(m AS POINTER TO Model) AS INTEGER
+    IF LEN(m.Clipboard) = 0 THEN RETURN 0
+    DIM newIdxs AS []INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Clipboard) - 1
+        DIM clone AS Widget = m.Clipboard[i]
+        clone.Id = uniqueWidgetId(m, clone.Id)
+        clone.X = clone.X + 2
+        clone.Y = clone.Y + 1
+        m.Visual.Widgets = APPEND(m.Visual.Widgets, clone)
+        newIdxs = APPEND(newIdxs, LEN(m.Visual.Widgets) - 1)
+    NEXT i
+    m.Visual.Selections = newIdxs
+    IF LEN(newIdxs) > 0 THEN
+        m.Visual.Selected = newIdxs[LEN(newIdxs) - 1]
+        m.Properties.SetWidget(m.Visual.Widgets[m.Visual.Selected])
+    END IF
+    syncProjectFromVisual(m)
+    RETURN LEN(newIdxs)
 END FUNCTION
 
 SUB refreshPropertiesFromSource(m AS POINTER TO Model)
