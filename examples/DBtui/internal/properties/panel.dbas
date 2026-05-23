@@ -105,7 +105,27 @@ TYPE PropertiesPanel
     DIM EditBuffer AS STRING         ' live edit string (text/int/color)
     DIM EditPos    AS INTEGER        ' caret offset within EditBuffer [0..LEN]
     DIM EditError  AS STRING         ' last commit error; cleared on next keypress
+    ' Embedded PropertyGrid widget — DBtui's panel and a generated
+    ' program's PropertyGrid now share the same underlying data shape.
+    ' p.W.LstItems mirrors the encoded form of p.Rows; p.W.LstIdx mirrors
+    ' p.Cursor; p.W.Offset mirrors p.Offset. Callers can read p.W to get
+    ' the panel "as if" it were a Widget instance (for saving to .dbproj,
+    ' interop with generated programs, etc.). syncWidget() keeps it
+    ' fresh after any state change.
+    DIM W AS Widget
 END TYPE
+
+' syncWidget mirrors the panel's current Rows/Cursor/Offset state into
+' the embedded Widget. Called after every mutation. Must come BEFORE
+' Render so the shared renderPropertyGridBody sees fresh data; in
+' practice we just call it at the end of every mutator.
+SUB syncWidget(p AS POINTER TO PropertiesPanel)
+    p.W.Kind = WidgetKindPropertyGrid
+    p.W.Title = "Properties"
+    p.W.LstItems = propRowsToItems(p.Rows)
+    p.W.LstIdx = p.Cursor
+    p.W.Offset = p.Offset
+END SUB
 
 FUNCTION NewPropertiesPanel() AS PropertiesPanel
     DIM p AS PropertiesPanel
@@ -122,6 +142,7 @@ SUB (p AS POINTER TO PropertiesPanel) Clear()
     p.HasWidget = FALSE
     p.HasTool = FALSE
     p.ShowForm = FALSE
+    syncWidget(p)
 END SUB
 
 SUB (p AS POINTER TO PropertiesPanel) SetWidget(w AS Widget)
@@ -199,6 +220,7 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
         rows = APPEND(rows, rowReadOnly("Code", f.Code))
         rows = APPEND(rows, rowReadOnly("Widgets", fmt.Sprintf("%d", LEN(f.Widgets))))
         p.Rows = rows
+        syncWidget(p)
         RETURN
     END IF
 
@@ -213,6 +235,7 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
             rows = APPEND(rows, propToRow(kindProps2[tj]))
         NEXT tj
         p.Rows = rows
+        syncWidget(p)
         RETURN
     END IF
 
@@ -275,11 +298,13 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
         END IF
 
         p.Rows = rows
+        syncWidget(p)
         RETURN
     END IF
 
     rows = APPEND(rows, cat("  (no selection)"))
     p.Rows = rows
+    syncWidget(p)
 END SUB
 
 ' propToRow translates a widget Property into a PropRow with the right
@@ -373,9 +398,13 @@ END SUB
 
 SUB (p AS POINTER TO PropertiesPanel) ensureVisible()
     DIM innerH AS INTEGER = p.InnerHeight()
-    IF innerH <= 0 THEN RETURN
+    IF innerH <= 0 THEN
+        syncWidget(p)
+        RETURN
+    END IF
     IF p.Cursor < p.Offset THEN p.Offset = p.Cursor
     IF p.Cursor >= p.Offset + innerH THEN p.Offset = p.Cursor - innerH + 1
+    syncWidget(p)
 END SUB
 
 ' ----------------------------------------------------------------------
@@ -838,13 +867,13 @@ FUNCTION (p AS PropertiesPanel) Render() AS STRING
     DIM topLine AS STRING = bStyle.Render(bc.TopLeft) + topBar + bStyle.Render(bc.TopRight)
     DIM bottomLine AS STRING = bStyle.Render(bc.BottomLeft + strings.Repeat(bc.Horizontal, innerW) + bc.BottomRight)
 
-    ' Delegate the body rendering to the shared renderer used by the
-    ' PropertyGrid widget. Convert the typed PropRow list to the
-    ' encoded "Category|Name|Value|Type;..." format first.
-    DIM items AS STRING = propRowsToItems(p.Rows)
+    ' Delegate body rendering to the shared renderer. The encoded
+    ' Items / cursor / offset all come from the embedded Widget (kept
+    ' in sync by syncWidget), so DBtui's panel and a generated
+    ' PropertyGrid widget read from the exact same data shape.
     DIM editRow AS INTEGER = -1
-    IF p.EditMode THEN editRow = p.Cursor
-    DIM bodyStr AS STRING = renderPropertyGridBody(items, p.Cursor, p.Offset, innerW, innerH, p.EditMode, editRow, p.EditBuffer, p.EditPos, p.EditError)
+    IF p.EditMode THEN editRow = p.W.LstIdx
+    DIM bodyStr AS STRING = renderPropertyGridBody(p.W.LstItems, p.W.LstIdx, p.W.Offset, innerW, innerH, p.EditMode, editRow, p.EditBuffer, p.EditPos, p.EditError)
     DIM bodyLines AS []STRING = strings.Split(bodyStr, "\n")
 
     DIM all AS []STRING
