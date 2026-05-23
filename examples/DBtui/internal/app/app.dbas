@@ -1127,11 +1127,38 @@ FUNCTION widgetEventNames(kind AS STRING) AS []STRING
     RETURN out
 END FUNCTION
 
-' handlerSignature — returns the SUB declaration line for a (widget, event)
-' pair: e.g. "SUB btnOpen_Click()" or "SUB mbar_Action(action AS STRING)".
+' formEventNames — the lifecycle / global events that fire at the form
+' level (independent of any widget). Drives the right-click context
+' menu when the user clicks empty form space.
+FUNCTION formEventNames() AS []STRING
+    DIM out AS []STRING
+    out = APPEND(out, "Load")
+    out = APPEND(out, "Resize")
+    out = APPEND(out, "Close")
+    out = APPEND(out, "Key")
+    RETURN out
+END FUNCTION
+
+' handlerSignature — returns the SUB declaration line for a (subject, event)
+' pair. The pseudo-subject "Form" produces "FormLoad()" /
+' "FormResize(w AS INTEGER, h AS INTEGER)" / "FormClose()" /
+' "FormKey(key AS STRING)" — no underscore, matching VB convention.
 FUNCTION handlerSignature(widId AS STRING, ev AS STRING) AS STRING
+    IF widId = "Form" THEN
+        IF ev = "Resize" THEN RETURN "SUB FormResize(w AS INTEGER, h AS INTEGER)"
+        IF ev = "Key"    THEN RETURN "SUB FormKey(key AS STRING)"
+        RETURN "SUB Form" + ev + "()"
+    END IF
     IF ev = "Action" THEN RETURN "SUB " + widId + "_Action(action AS STRING)"
     RETURN "SUB " + widId + "_" + ev + "()"
+END FUNCTION
+
+' handlerName — the bare identifier the SUB declaration uses. Mirrors
+' handlerSignature but without the parameter list. Used by findHandlerLine
+' to look up existing definitions.
+FUNCTION handlerName(widId AS STRING, ev AS STRING) AS STRING
+    IF widId = "Form" THEN RETURN "Form" + ev
+    RETURN widId + "_" + ev
 END FUNCTION
 
 ' findHandlerLine — returns the 0-indexed row of the SUB header for
@@ -1139,7 +1166,7 @@ END FUNCTION
 ' insensitive on the SUB keyword to match DBasic.
 FUNCTION findHandlerLine(text AS STRING, widId AS STRING, ev AS STRING) AS INTEGER
     DIM lines AS []STRING = strings.Split(text, "\n")
-    DIM needle AS STRING = widId + "_" + ev
+    DIM needle AS STRING = handlerName(widId, ev)
     DIM i AS INTEGER
     FOR i = 0 TO LEN(lines) - 1
         DIM trimmed AS STRING = strings.TrimSpace(lines[i])
@@ -1170,6 +1197,7 @@ FUNCTION findInsertPointFor(text AS STRING, widId AS STRING) AS INTEGER
     DIM lines AS []STRING = strings.Split(text, "\n")
     DIM total AS INTEGER = LEN(lines)
     DIM prefix AS STRING = widId + "_"
+    IF widId = "Form" THEN prefix = "Form"
     DIM upPrefix AS STRING = strings.ToUpper(prefix)
     DIM lastEnd AS INTEGER = -1
     DIM inBlock AS BOOLEAN = FALSE
@@ -1234,6 +1262,7 @@ END SUB
 FUNCTION renderWidgetContextMenu(m AS Model) AS STRING
     IF NOT m.CtxMenuActive OR LEN(m.CtxMenuItems) = 0 THEN RETURN ""
     DIM title AS STRING = m.CtxMenuWidId + " events"
+    IF m.CtxMenuWidId = "Form" THEN title = "form events"
     DIM maxW AS INTEGER = LEN(title)
     DIM i AS INTEGER
     FOR i = 0 TO LEN(m.CtxMenuItems) - 1
@@ -1285,16 +1314,18 @@ SUB openHandlerInCode(m AS POINTER TO Model, widId AS STRING, ev AS STRING)
         END IF
         moveCursorTo(m, target, col)
         m.CodeScroll = computeScroll(target, m.CodeScroll, m.CodeViewH)
-        m.StatusBar.Message = "opened " + widId + "_" + ev
+        m.StatusBar.Message = "opened " + handlerName(widId, ev)
         RETURN
     END IF
     ' Insert a fresh stub at the grouping point and put the cursor inside.
     DIM lines2 AS []STRING = strings.Split(text, "\n")
     DIM ip AS INTEGER = findInsertPointFor(text, widId)
+    DIM stubLabel AS STRING = widId
+    IF widId = "Form" THEN stubLabel = "form"
     DIM stub AS []STRING
     stub = APPEND(stub, "")
     stub = APPEND(stub, handlerSignature(widId, ev))
-    stub = APPEND(stub, "    ' " + ev + " handler for " + widId)
+    stub = APPEND(stub, "    ' " + ev + " handler for " + stubLabel)
     stub = APPEND(stub, "END SUB")
     DIM newLines AS []STRING
     DIM i AS INTEGER
@@ -1312,7 +1343,22 @@ SUB openHandlerInCode(m AS POINTER TO Model, widId AS STRING, ev AS STRING)
     DIM cursorRow AS INTEGER = ip + 2
     moveCursorTo(m, cursorRow, 4)
     m.CodeScroll = computeScroll(cursorRow, m.CodeScroll, m.CodeViewH)
-    m.StatusBar.Message = "added " + widId + "_" + ev
+    m.StatusBar.Message = "added " + handlerName(widId, ev)
+END SUB
+
+' openFormContextMenu — like openWidgetContextMenu but for the form
+' itself. Subject is the literal "Form" so openHandlerInCode emits
+' FormLoad / FormResize / etc.
+SUB openFormContextMenu(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER)
+    DIM events AS []STRING = formEventNames()
+    m.CtxMenuActive  = TRUE
+    m.CtxMenuX       = x
+    m.CtxMenuY       = y
+    m.CtxMenuWidId   = "Form"
+    m.CtxMenuWidKind = "Form"
+    m.CtxMenuItems   = events
+    m.CtxMenuIdx     = 0
+    m.Mode           = ModeContextMenu
 END SUB
 
 ' codeXYToRowCol — translate a screen (x, y) inside the canvas into a
@@ -3326,7 +3372,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         ' Right-click on a widget in the form designer pops a context
-        ' menu listing the events that widget supports.
+        ' menu listing the events that widget supports; right-click on
+        ' empty form space pops a menu of form-level lifecycle events.
         IF mcMsg.Button = tea.MouseRight AND NOT m.CodeMode AND pointInRect(mcMsg.X, mcMsg.Y, m.VisualRect) THEN
             DIM rcFx AS INTEGER = mcMsg.X - m.VisualRect.X - 1
             DIM rcFy AS INTEGER = mcMsg.Y - m.VisualRect.Y - 1
@@ -3337,6 +3384,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 openWidgetContextMenu(@m, widIdx, mcMsg.X, mcMsg.Y)
                 RETURN m, NIL
             END IF
+            openFormContextMenu(@m, mcMsg.X, mcMsg.Y)
+            RETURN m, NIL
         END IF
         ' Any click closes an open context menu (besides the right-click
         ' that just opened it, which returned above).

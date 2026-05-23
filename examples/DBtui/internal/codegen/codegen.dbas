@@ -439,6 +439,29 @@ FUNCTION emitStubs(form AS Form, defined AS []STRING) AS STRING
         s = s + "    _ = id\n"
         s = s + "END SUB\n\n"
     END IF
+    ' Form-level lifecycle stubs — these are always called by the
+    ' generated runtime (Init/WindowSizeMsg/quit/unhandled-key), so
+    ' empty implementations have to exist even if the user removed
+    ' them from the form's code file.
+    IF NOT subDefined("FormLoad", defined) THEN
+        s = s + "SUB FormLoad()\n"
+        s = s + "END SUB\n\n"
+    END IF
+    IF NOT subDefined("FormResize", defined) THEN
+        s = s + "SUB FormResize(w AS INTEGER, h AS INTEGER)\n"
+        s = s + "    _ = w\n"
+        s = s + "    _ = h\n"
+        s = s + "END SUB\n\n"
+    END IF
+    IF NOT subDefined("FormClose", defined) THEN
+        s = s + "SUB FormClose()\n"
+        s = s + "END SUB\n\n"
+    END IF
+    IF NOT subDefined("FormKey", defined) THEN
+        s = s + "SUB FormKey(key AS STRING)\n"
+        s = s + "    _ = key\n"
+        s = s + "END SUB\n\n"
+    END IF
     RETURN s
 END FUNCTION
 
@@ -1158,6 +1181,8 @@ END FUNCTION
 FUNCTION emitLifecycle() AS STRING
     DIM s AS STRING = ""
     s = s + "FUNCTION (m AS Model) Init() AS tea.Cmd\n"
+    s = s + "    gM = @m\n"
+    s = s + "    FormLoad()\n"
     s = s + "    RETURN NIL\n"
     s = s + "END FUNCTION\n\n"
     s = s + "FUNCTION focusableCount(m AS Model) AS INTEGER\n"
@@ -1178,6 +1203,7 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "    IF sizeOk THEN\n"
     s = s + "        m.Width = sizeMsg.Width\n"
     s = s + "        m.Height = sizeMsg.Height\n"
+    s = s + "        FormResize(sizeMsg.Width, sizeMsg.Height)\n"
     s = s + "        RETURN m, NIL\n"
     s = s + "    END IF\n"
     ' ---- Mouse click dispatch (focus + button click + dialog routing). ----
@@ -1791,7 +1817,10 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "    keyMsg, keyOk = msg.(tea.KeyPressMsg)\n"
     s = s + "    IF keyOk THEN\n"
     s = s + "        DIM k AS STRING = keyMsg.String()\n"
-    s = s + "        IF k = \"ctrl+c\" THEN RETURN m, tea.Quit\n"
+    s = s + "        IF k = \"ctrl+c\" THEN\n"
+    s = s + "            FormClose()\n"
+    s = s + "            RETURN m, tea.Quit\n"
+    s = s + "        END IF\n"
     s = s + "        IF k = \"tab\" THEN\n"
     s = s + "            DIM total AS INTEGER = focusableCount(m)\n"
     s = s + "            IF total > 0 THEN\n"
@@ -1830,7 +1859,10 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "            END IF\n"
     s = s + "            RETURN m, taCmd\n"
     s = s + "        END IF\n"
-    s = s + "        IF k = \"q\" THEN RETURN m, tea.Quit\n"
+    s = s + "        IF k = \"q\" THEN\n"
+    s = s + "            FormClose()\n"
+    s = s + "            RETURN m, tea.Quit\n"
+    s = s + "        END IF\n"
     s = s + "        IF k = \"enter\" OR k = \"space\" THEN\n"
     s = s + "            DIM focusedIdx AS INTEGER = -1\n"
     s = s + "            DIM fcount AS INTEGER = 0\n"
@@ -2045,6 +2077,9 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "            END IF\n"
     s = s + "            RETURN m, NIL\n"
     s = s + "        END IF\n"
+    ' Anything that fell through the standard key dispatch goes to the
+    ' user-overridable FormKey(k) so apps can wire global shortcuts.
+    s = s + "        FormKey(k)\n"
     s = s + "    END IF\n"
     s = s + "    RETURN m, NIL\n"
     s = s + "END FUNCTION\n\n"
