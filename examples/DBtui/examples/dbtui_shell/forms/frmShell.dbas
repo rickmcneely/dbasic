@@ -5,23 +5,21 @@
 '
 '   - Selecting a kind in the Widgets palette places a new instance
 '     of that kind on the canvas at an incrementing position.
-'   - Each new widget gets a unique id and sensible defaults via
-'     the codegen-emitted gAddWidget() helper.
-'   - The status bar reflects the running widget count.
+'   - Clicking a placed widget (id "w0", "w1", …) repopulates the
+'     PropertyGrid with that widget's actual current state.
+'   - Edit > Cut removes the most-recently-placed widget.
 '
-' Inter-widget mutation flows through the gGet*/gSet*/gAddWidget
-' accessors that codegen emits at package level.
+' Inter-widget mutation flows through the gGet*/gSet*/gAddWidget/
+' gRemoveWidget accessors that codegen emits at package level.
 
 IMPORT "fmt"
 IMPORT "os"
+IMPORT "strings"
 
-' Package-level placement state — incremented each time we drop a
-' widget so they don't all stack at the same point.
 DIM gPlacedCount AS INTEGER = 0
 DIM gPlaceX AS INTEGER = 30
 DIM gPlaceY AS INTEGER = 3
 
-' defaultSizeFor — pick a width/height that fits the kind.
 FUNCTION defaultSizeFor(kind AS STRING) AS (INTEGER, INTEGER)
     IF kind = "Button" THEN RETURN 12, 3
     IF kind = "Label" THEN RETURN 16, 1
@@ -44,22 +42,46 @@ FUNCTION defaultSizeFor(kind AS STRING) AS (INTEGER, INTEGER)
     RETURN 16, 3
 END FUNCTION
 
-' kindAtIdx — the palette's nth kind label.
 FUNCTION kindAtIdx(idx AS INTEGER) AS STRING
     DIM items AS []STRING = strings.Split(gGetItems("lbWidgets"), ";")
     IF idx < 0 OR idx >= LEN(items) THEN RETURN ""
     RETURN items[idx]
 END FUNCTION
 
+' rowsForPlacedWidget builds a PropertyGrid Rows string showing the
+' actual current state of the widget with the given id. Falls back to
+' a kind-agnostic skeleton when the kind has no special properties.
+FUNCTION rowsForPlacedWidget(id AS STRING) AS STRING
+    DIM idx AS INTEGER = gWidgetIdx(id)
+    IF idx < 0 THEN RETURN ""
+    DIM kind AS STRING = gWidgetKindAt(idx)
+    DIM s AS STRING = kind + "||||"
+    s = s + ";|Id|" + id + "|"
+    s = s + ";|Visible|true|bool"
+    DIM tx AS STRING = gGetText(id)
+    IF tx <> "" THEN s = s + ";|Text|" + tx + "|"
+    DIM val AS STRING = gGetValue(id)
+    IF val <> "" THEN s = s + ";|Value|" + val + "|"
+    DIM it AS STRING = gGetItems(id)
+    IF it <> "" THEN
+        DIM safe AS STRING = strings.ReplaceAll(it, ";", ",")
+        s = s + ";|Items|" + safe + "|"
+    END IF
+    DIM sel AS INTEGER = gGetSelected(id)
+    IF sel >= 0 THEN s = s + ";|Selected|" + fmt.Sprintf("%d", sel) + "|int"
+    DIM ttl AS STRING = gGetTitle(id)
+    IF ttl <> "" THEN s = s + ";|Title|" + ttl + "|"
+    RETURN s
+END FUNCTION
+
 SUB mb_Action(action AS STRING)
     IF action = "file.exit" THEN os.Exit(0)
     IF action = "edit.cut" THEN
-        ' Demo: remove the most-recently-placed widget by id.
         IF gPlacedCount > 0 THEN
             DIM lastId AS STRING = fmt.Sprintf("w%d", gPlacedCount - 1)
             DIM ok AS BOOLEAN = gRemoveWidget(lastId)
             IF ok THEN gPlacedCount = gPlacedCount - 1
-            gSetItems("status", fmt.Sprintf("Placed:%d;Last action:%s;Removed:%s", gPlacedCount, action, lastId))
+            gSetItems("status", fmt.Sprintf("Placed:%d;Removed:%s", gPlacedCount, lastId))
         END IF
         RETURN
     END IF
@@ -74,9 +96,7 @@ SUB tabs_Change()
     fmt.Fprintln(os.Stderr, "tab changed")
 END SUB
 
-' lbWidgets_Change — palette row changed. Place a new widget of that
-' kind on the canvas, with an auto-generated id and an incrementing
-' position so widgets don't overlap.
+' lbWidgets_Change — palette selection changed; drop a new widget.
 SUB lbWidgets_Change()
     DIM idx AS INTEGER = gGetSelected("lbWidgets")
     DIM kind AS STRING = kindAtIdx(idx)
@@ -88,8 +108,6 @@ SUB lbWidgets_Change()
     DIM nIdx AS INTEGER = gAddWidget(kind, newId, gPlaceX, gPlaceY, w, h)
     IF nIdx < 0 THEN RETURN
     gPlacedCount = gPlacedCount + 1
-    ' Step the placement cursor diagonally so each new widget is
-    ' visible. Wrap back when we'd run off the canvas.
     gPlaceX = gPlaceX + 2
     gPlaceY = gPlaceY + h + 1
     IF gPlaceY > 22 THEN
@@ -104,4 +122,16 @@ END SUB
 
 SUB props_Change()
     fmt.Fprintln(os.Stderr, "property changed")
+END SUB
+
+' gOnSelect — called for every widget click (codegen-supplied hook).
+' For dynamically placed widgets (id starts with "w"), push their
+' current state into the PropertyGrid so the user can inspect/edit.
+SUB gOnSelect(id AS STRING)
+    IF NOT strings.HasPrefix(id, "w") THEN RETURN
+    DIM rows AS STRING = rowsForPlacedWidget(id)
+    IF rows = "" THEN RETURN
+    gSetItems("props", rows)
+    gSetSelected("props", 0)
+    gSetItems("status", fmt.Sprintf("Placed:%d;Selected:%s", gPlacedCount, id))
 END SUB

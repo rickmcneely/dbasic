@@ -176,6 +176,11 @@ FUNCTION emitSetFocus() AS STRING
     s = s + "    END IF\n"
     s = s + "    m.Focus = newFocus\n"
     s = s + "    DIM newIdx AS INTEGER = focusableIdxAt(^m, m.Focus)\n"
+    ' Generic per-selection hook — fires whenever focus lands on a
+    ' widget (via Tab, click, or programmatic focus). Lets user code
+    ' react to clicks on widgets added at runtime via gAddWidget
+    ' (which have no codegen-time _Click handler).
+    s = s + "    IF newIdx >= 0 THEN gOnSelect(m.Widgets[newIdx].Id)\n"
     s = s + "    IF newIdx >= 0 AND m.Widgets[newIdx].Kind = \"TextInput\" THEN\n"
     s = s + "        RETURN m.Widgets[newIdx].TiModel.Focus()\n"
     s = s + "    END IF\n"
@@ -408,6 +413,15 @@ FUNCTION emitStubs(form AS Form, defined AS []STRING) AS STRING
             END IF
         END IF
     NEXT i
+    ' Generic per-click hook — auto-stubbed empty if the user code
+    ' doesn't define it. Called from the mouse hit-test for every
+    ' successful click, regardless of widget kind. Useful for
+    ' reacting to clicks on widgets added at runtime via gAddWidget.
+    IF NOT subDefined("gOnSelect", defined) THEN
+        s = s + "SUB gOnSelect(id AS STRING)\n"
+        s = s + "    _ = id\n"
+        s = s + "END SUB\n\n"
+    END IF
     RETURN s
 END FUNCTION
 
