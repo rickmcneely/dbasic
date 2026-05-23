@@ -89,37 +89,14 @@ END FUNCTION
 SUB doAction(action AS STRING)
     IF action = "file.exit" THEN os.Exit(0)
     IF action = "file.save" THEN
-        DIM err AS ERROR = gSaveProject("dbtui_shell_saved.dbproj", "dbtui_shell_saved", "frmMain", 100, 30, "Saved", "w")
-        IF err <> NIL THEN
-            gSetItems("status", fmt.Sprintf("Save error:%s", err.Error()))
-        ELSE
-            gSetItems("status", fmt.Sprintf("Saved %d widgets to dbtui_shell_saved.dbproj", gPlacedCount))
-        END IF
+        ' Defer to the Save dialog — the actual save happens in
+        ' dlgSave_FileSelected once the user picks a path.
+        dlgSave_Show()
         RETURN
     END IF
     IF action = "file.open" THEN
-        DIM err2 AS ERROR = gLoadProject("dbtui_shell_saved.dbproj", "w")
-        IF err2 <> NIL THEN
-            gSetItems("status", fmt.Sprintf("Open error:%s", err2.Error()))
-            RETURN
-        END IF
-        ' Re-mark every loaded "w*" widget as draggable and bump our
-        ' placed-count past the highest-numbered id we see, so any new
-        ' palette drops won't collide with existing ids.
-        DIM j AS INTEGER
-        FOR j = 0 TO gWidgetCount() - 1
-            DIM lid AS STRING = gWidgetIdAt(j)
-            IF strings.HasPrefix(lid, "w") THEN
-                gSetDraggable(lid, TRUE)
-                DIM nStr AS STRING = Mid(lid, 2, LEN(lid) - 1)
-                DIM n AS INTEGER = 0
-                DIM nErr AS ERROR
-                n, nErr = strconv.Atoi(nStr)
-                _ = nErr
-                IF n + 1 > gPlacedCount THEN gPlacedCount = n + 1
-            END IF
-        NEXT j
-        gSetItems("status", fmt.Sprintf("Loaded — %d widgets", gPlacedCount))
+        ' Same pattern — pick a path, load happens in dlgOpen_FileSelected.
+        dlgOpen_Show()
         RETURN
     END IF
     IF action = "edit.cut" THEN
@@ -256,4 +233,42 @@ SUB gOnSelect(id AS STRING)
     gSetItems("props", rows)
     gSetSelected("props", 0)
     gSetItems("status", fmt.Sprintf("Placed:%d;Selected:%s", gPlacedCount, id))
+END SUB
+
+' dlgSave_FileSelected — fires when the Save dialog commits a path.
+' Run gSaveProject with the chosen path; the project name is just
+' the basename minus extension for a touch of friendliness.
+SUB dlgSave_FileSelected(path AS STRING)
+    DIM err AS ERROR = gSaveProject(path, "dbtui_shell_saved", "frmMain", 100, 30, "Saved", "w")
+    IF err <> NIL THEN
+        gSetItems("status", fmt.Sprintf("Save error:%s", err.Error()))
+    ELSE
+        gSetItems("status", fmt.Sprintf("Saved %d widgets to %s", gPlacedCount, path))
+    END IF
+END SUB
+
+' dlgOpen_FileSelected — fires when the Open dialog commits a path.
+' Load via gLoadProject, then re-arm Draggable on every loaded "w*"
+' widget and bump gPlacedCount past the highest seen id so new palette
+' drops don't collide.
+SUB dlgOpen_FileSelected(path AS STRING)
+    DIM err AS ERROR = gLoadProject(path, "w")
+    IF err <> NIL THEN
+        gSetItems("status", fmt.Sprintf("Open error:%s", err.Error()))
+        RETURN
+    END IF
+    DIM j AS INTEGER
+    FOR j = 0 TO gWidgetCount() - 1
+        DIM lid AS STRING = gWidgetIdAt(j)
+        IF strings.HasPrefix(lid, "w") THEN
+            gSetDraggable(lid, TRUE)
+            DIM nStr AS STRING = Mid(lid, 2, LEN(lid) - 1)
+            DIM n AS INTEGER = 0
+            DIM nErr AS ERROR
+            n, nErr = strconv.Atoi(nStr)
+            _ = nErr
+            IF n + 1 > gPlacedCount THEN gPlacedCount = n + 1
+        END IF
+    NEXT j
+    gSetItems("status", fmt.Sprintf("Loaded %d widgets from %s", gPlacedCount, path))
 END SUB

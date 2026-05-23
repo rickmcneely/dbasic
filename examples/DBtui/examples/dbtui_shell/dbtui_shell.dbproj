@@ -47,7 +47,26 @@
         {"Id":"status","Kind":"StatusBar","X":0,"Y":28,"Width":98,"Height":1,"Visible":true,
          "Properties":{"Segments":"DBtui mock;Kind:Button;Edit Text in Properties"}}
       ],
-      "Tools": []
+      "Tools": [
+        {
+          "Id": "dlgSave",
+          "Kind": "FileDialog",
+          "Properties": {
+            "Title": "Save Project As",
+            "Mode": "save",
+            "Mask": "*.dbproj"
+          }
+        },
+        {
+          "Id": "dlgOpen",
+          "Kind": "FileDialog",
+          "Properties": {
+            "Title": "Open Project",
+            "Mode": "open",
+            "Mask": "*.dbproj"
+          }
+        }
+      ]
     }
   ]
 }
