@@ -800,6 +800,19 @@ func Uint16(val interface{}) uint16 { return uint16(Int(val)) }`,
 func Uint32(val interface{}) uint32 { return uint32(Int(val)) }`,
 	"Uint64": `// Uint64 casts any integer/float value to uint64 (delegates to Int).
 func Uint64(val interface{}) uint64 { return uint64(Int(val)) }`,
+	"BitAnd": `// BitAnd returns a & b. Both args flow through Int so named
+// external types (vt10x.Color, etc.) work.
+func BitAnd(a, b interface{}) int { return Int(a) & Int(b) }`,
+	"BitOr": `// BitOr returns a | b.
+func BitOr(a, b interface{}) int { return Int(a) | Int(b) }`,
+	"BitXor": `// BitXor returns a ^ b.
+func BitXor(a, b interface{}) int { return Int(a) ^ Int(b) }`,
+	"BitNot": `// BitNot returns ^a.
+func BitNot(a interface{}) int { return ^Int(a) }`,
+	"BitShl": `// BitShl returns a << b.
+func BitShl(a, b interface{}) int { return Int(a) << uint(Int(b)) }`,
+	"BitShr": `// BitShr returns a >> b.
+func BitShr(a, b interface{}) int { return Int(a) >> uint(Int(b)) }`,
 }
 
 // runtimeFuncImports maps runtime functions to required imports
@@ -838,6 +851,12 @@ var runtimeFuncImports = map[string][]string{
 	"Uint16":         {"reflect"},
 	"Uint32":         {"reflect"},
 	"Uint64":         {"reflect"},
+	"BitAnd":         {"reflect"},
+	"BitOr":          {"reflect"},
+	"BitXor":         {"reflect"},
+	"BitNot":         {"reflect"},
+	"BitShl":         {"reflect"},
+	"BitShr":         {"reflect"},
 }
 
 // scanForRuntimeFunctions scans the AST for calls to runtime functions
@@ -954,6 +973,19 @@ func (g *Generator) scanExprForRuntimeFuncs(expr parser.Expression) {
 				// Add required imports for this runtime function
 				if imports, ok := runtimeFuncImports[ident.Value]; ok {
 					for _, imp := range imports {
+						g.imports[imp] = ""
+					}
+				}
+				// Pull in transitive runtime dependencies. Uint* + Bit*
+				// helpers call Int() internally, so Int's body has to
+				// be in the emitted runtime block too even if the user
+				// didn't call Int directly.
+				switch ident.Value {
+				case "Uint8", "Uint16", "Uint32", "Uint64",
+					"BitAnd", "BitOr", "BitXor", "BitNot",
+					"BitShl", "BitShr":
+					g.runtimeFuncs["Int"] = true
+					for _, imp := range runtimeFuncImports["Int"] {
 						g.imports[imp] = ""
 					}
 				}

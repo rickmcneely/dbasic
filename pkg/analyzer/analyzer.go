@@ -64,6 +64,16 @@ func (a *Analyzer) registerBuiltins() {
 	a.addBuiltin("Uint32", []*Type{AnyType}, []*Type{IntegerType})
 	a.addBuiltin("Uint64", []*Type{AnyType}, []*Type{IntegerType})
 
+	// Bitwise operations. DBasic's AND/OR/XOR are logical-only, so
+	// these are the bitwise siblings. Operands flow through Int() so
+	// values from named external types (vt10x.Color, etc.) work.
+	a.addBuiltin("BitAnd", []*Type{AnyType, AnyType}, []*Type{IntegerType})
+	a.addBuiltin("BitOr", []*Type{AnyType, AnyType}, []*Type{IntegerType})
+	a.addBuiltin("BitXor", []*Type{AnyType, AnyType}, []*Type{IntegerType})
+	a.addBuiltin("BitNot", []*Type{AnyType}, []*Type{IntegerType})
+	a.addBuiltin("BitShl", []*Type{AnyType, AnyType}, []*Type{IntegerType})
+	a.addBuiltin("BitShr", []*Type{AnyType, AnyType}, []*Type{IntegerType})
+
 	// Byte functions
 	a.addBuiltin("Encode", []*Type{StringType}, []*Type{BytesType})
 	a.addBuiltin("Decode", []*Type{BytesType}, []*Type{StringType})

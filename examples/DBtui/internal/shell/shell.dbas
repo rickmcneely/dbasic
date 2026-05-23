@@ -117,25 +117,45 @@ FUNCTION ansiColor(c AS vt10x.Color) AS STRING
     RETURN fmt.Sprintf("%d", n)
 END FUNCTION
 
-' styleFor returns a lipgloss.Style configured for the glyph's fg/bg.
-' Default fg/bg are left unset so DBtui's panel bg shows through.
-' (Bold / italic / underline are skipped for now — DBasic has no
-' bitwise AND operator, so we can't mask vt10x's Mode field cleanly.
-' Adding a BitAnd builtin would fix it; v1 ships colors only.)
+' vt10x Mode bit flags. Not exported by the package, so we mirror
+' the values here. From vt10x/state.go iota starting at 1<<0:
+'   attrReverse   = 1
+'   attrUnderline = 2
+'   attrBold      = 4
+'   attrGfx       = 8
+'   attrItalic    = 16
+'   attrBlink     = 32
+'   attrWrap      = 64
+CONST shellAttrReverse   AS INTEGER = 1
+CONST shellAttrUnderline AS INTEGER = 2
+CONST shellAttrBold      AS INTEGER = 4
+CONST shellAttrItalic    AS INTEGER = 16
+
+' styleFor returns a lipgloss.Style configured for the glyph's fg/bg
+' AND mode attributes (bold, italic, underline, reverse). Default
+' fg/bg are left unset so DBtui's panel bg shows through. Uses the
+' BitAnd builtin to mask vt10x's Mode field.
 FUNCTION styleFor(g AS vt10x.Glyph) AS lipgloss.Style
     DIM s AS lipgloss.Style = lipgloss.NewStyle()
     DIM fg AS STRING = ansiColor(g.FG)
     DIM bg AS STRING = ansiColor(g.BG)
     IF fg <> "" THEN s = s.Foreground(lipgloss.Color(fg))
     IF bg <> "" THEN s = s.Background(lipgloss.Color(bg))
+    DIM m AS INTEGER = Int(g.Mode)
+    IF BitAnd(m, shellAttrBold) <> 0      THEN s = s.Bold(TRUE)
+    IF BitAnd(m, shellAttrItalic) <> 0    THEN s = s.Italic(TRUE)
+    IF BitAnd(m, shellAttrUnderline) <> 0 THEN s = s.Underline(TRUE)
+    IF BitAnd(m, shellAttrReverse) <> 0   THEN s = s.Reverse(TRUE)
     RETURN s
 END FUNCTION
 
 ' glyphSameStyle returns TRUE if two glyphs share the styling
-' attributes that matter for run-batching (fg, bg).
+' attributes that matter for run-batching (fg, bg, the relevant Mode bits).
 FUNCTION glyphSameStyle(a AS vt10x.Glyph, b AS vt10x.Glyph) AS BOOLEAN
     IF a.FG <> b.FG THEN RETURN FALSE
     IF a.BG <> b.BG THEN RETURN FALSE
+    DIM mask AS INTEGER = shellAttrBold + shellAttrItalic + shellAttrUnderline + shellAttrReverse
+    IF BitAnd(Int(a.Mode), mask) <> BitAnd(Int(b.Mode), mask) THEN RETURN FALSE
     RETURN TRUE
 END FUNCTION
 
