@@ -35,13 +35,14 @@ IMPORT "strings"
 '   editPos    — caret position into editBuf (0..LEN(editBuf))
 '
 ' Returns: (rendered string, visual width in cells).
-FUNCTION renderPropValue(value AS STRING, valueType AS STRING, editing AS BOOLEAN, editBuf AS STRING, editPos AS INTEGER) AS (STRING, INTEGER)
+FUNCTION renderPropValue(value AS STRING, valueType AS STRING, editing AS BOOLEAN, editBuf AS STRING, editPos AS INTEGER, editError AS STRING) AS (STRING, INTEGER)
     IF editing THEN
         DIM pre AS STRING = ""
         DIM post AS STRING = ""
         IF editPos > 0 THEN pre = Mid(editBuf, 1, editPos)
         IF editPos < LEN(editBuf) THEN post = Mid(editBuf, editPos + 1, LEN(editBuf) - editPos)
         DIM disp AS STRING = pre + "▎" + post
+        IF editError <> "" THEN disp = disp + " ⚠"
         RETURN disp, lipgloss.Width(disp)
     END IF
     IF valueType = "bool" THEN
@@ -58,4 +59,117 @@ FUNCTION renderPropValue(value AS STRING, valueType AS STRING, editing AS BOOLEA
         RETURN disp3, lipgloss.Width(disp3)
     END IF
     RETURN value, lipgloss.Width(value)
+END FUNCTION
+
+' renderPropertyGridBody renders the inner content of a PropertyGrid
+' (rows + per-row scrollbar character) given:
+'
+'   items     — ";"-separated "Category|Name|Value|Type" entries.
+'               Category-only rows render as "▸ Name ────…".
+'               Data rows render as "Name │ Value" with type-aware Value.
+'   selected  — cursor row index (into the full row list).
+'   offset    — first visible row index.
+'   innerW    — content width (caller subtracts the border).
+'   innerH    — number of visible rows.
+'   editing   — TRUE when the cursor row is in inline-edit mode.
+'   editRow   — index of the editing row (only consulted when editing).
+'   editBuf   — current edit buffer.
+'   editPos   — caret position into editBuf.
+'
+' Returns the rendered body as a single string with rows joined by
+' "\n", padded to innerW so callers can wrap it in a border without
+' alignment shifts. The right edge holds a scrollbar character
+' (┃ thumb / ╎ track) when the row count exceeds innerH.
+'
+' Both DBtui's internal Properties panel and the codegen PropertyGrid
+' widget call this so their row layout can't drift.
+FUNCTION renderPropertyGridBody(items AS STRING, selected AS INTEGER, offset AS INTEGER, innerW AS INTEGER, innerH AS INTEGER, editing AS BOOLEAN, editRow AS INTEGER, editBuf AS STRING, editPos AS INTEGER, editError AS STRING) AS STRING
+    IF innerW < 1 THEN innerW = 1
+    IF innerH < 1 THEN innerH = 1
+    DIM rows AS []STRING = strings.Split(items, ";")
+    DIM canScroll AS BOOLEAN = (LEN(rows) > innerH)
+    DIM thumb AS INTEGER = -1
+    IF canScroll THEN
+        DIM maxOff AS INTEGER = LEN(rows) - innerH
+        IF maxOff > 0 THEN thumb = offset * (innerH - 1) / maxOff
+    END IF
+    DIM contentW AS INTEGER = innerW
+    IF canScroll THEN contentW = innerW - 1
+    DIM nameW AS INTEGER = contentW / 2
+    DIM valW AS INTEGER = contentW - nameW - 1
+    IF valW < 1 THEN valW = 1
+    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#3b3d5e"))
+    DIM catStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff")).Bold(TRUE)
+    DIM catLine AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#3b3d5e"))
+    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#7dcfff")).Foreground(lipgloss.Color("#1a1b2e"))
+    DIM trackStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#3b3d5e"))
+    DIM thumbStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7dcfff"))
+    DIM lines AS []STRING
+    DIM r AS INTEGER
+    FOR r = 0 TO innerH - 1
+        DIM idx AS INTEGER = offset + r
+        DIM rowBody AS STRING = ""
+        DIM isCursor AS BOOLEAN = (idx = selected)
+        IF idx >= 0 AND idx < LEN(rows) AND rows[idx] <> "" THEN
+            DIM parts AS []STRING = strings.SplitN(rows[idx], "|", 4)
+            DO WHILE LEN(parts) < 4
+                parts = APPEND(parts, "")
+            LOOP
+            DIM cat AS STRING = parts[0]
+            DIM name AS STRING = parts[1]
+            DIM val AS STRING = parts[2]
+            DIM typ AS STRING = parts[3]
+            IF cat <> "" THEN
+                DIM cText AS STRING = "▸ " + cat + " "
+                DIM cW AS INTEGER = lipgloss.Width(cText)
+                IF cW > contentW THEN
+                    cText = Mid(cText, 1, contentW)
+                    cW = contentW
+                END IF
+                DIM fillLen AS INTEGER = contentW - cW
+                IF fillLen < 0 THEN fillLen = 0
+                rowBody = catStyle.Render(cText) + catLine.Render(strings.Repeat("─", fillLen))
+            ELSE
+                DIM nm AS STRING = name
+                IF LEN(nm) > nameW THEN nm = Mid(nm, 1, nameW)
+                DIM nmPad AS INTEGER = nameW - LEN(nm)
+                IF nmPad < 0 THEN nmPad = 0
+                DIM rowEditing AS BOOLEAN = (editing AND idx = editRow)
+                DIM disp AS STRING
+                DIM dispW AS INTEGER
+                disp, dispW = renderPropValue(val, typ, rowEditing, editBuf, editPos, editError)
+                IF dispW > valW AND typ <> "color" THEN
+                    DO WHILE dispW > valW AND LEN(disp) > 0
+                        disp = Mid(disp, 1, LEN(disp) - 1)
+                        dispW = lipgloss.Width(disp)
+                    LOOP
+                END IF
+                DIM valPad AS INTEGER = valW - dispW
+                IF valPad < 0 THEN valPad = 0
+                DIM sep AS STRING = sepStyle.Render("│")
+                IF isCursor THEN
+                    DIM nPart AS STRING = selStyle.Render(nm + strings.Repeat(" ", nmPad))
+                    IF typ = "color" THEN
+                        rowBody = nPart + sep + disp + selStyle.Render(strings.Repeat(" ", valPad))
+                    ELSE
+                        rowBody = nPart + sep + selStyle.Render(disp + strings.Repeat(" ", valPad))
+                    END IF
+                ELSE
+                    rowBody = nm + strings.Repeat(" ", nmPad) + sep + disp + strings.Repeat(" ", valPad)
+                END IF
+            END IF
+        END IF
+        DIM rowPad AS INTEGER = contentW - lipgloss.Width(rowBody)
+        IF rowPad < 0 THEN rowPad = 0
+        DIM bar AS STRING = ""
+        IF canScroll THEN
+            IF r = thumb THEN
+                bar = thumbStyle.Render("┃")
+            ELSE
+                bar = trackStyle.Render("╎")
+            END IF
+        END IF
+        lines = APPEND(lines, rowBody + strings.Repeat(" ", rowPad) + bar)
+    NEXT r
+    RETURN strings.Join(lines, "\n")
 END FUNCTION

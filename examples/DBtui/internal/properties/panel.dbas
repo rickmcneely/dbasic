@@ -164,19 +164,19 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
 
     IF p.ShowForm THEN
         DIM f AS Form = p.CurForm
-        rows = APPEND(rows, cat("▸ Form"))
+        rows = APPEND(rows, cat("Form"))
         rows = APPEND(rows, rowText("Name", f.Name))
         rows = APPEND(rows, rowText("Title", f.Title))
         rows = APPEND(rows, rowText("Width", fmt.Sprintf("%d", f.Width)))
         rows = APPEND(rows, rowText("Height", fmt.Sprintf("%d", f.Height)))
-        rows = APPEND(rows, cat("▸ Behavior"))
+        rows = APPEND(rows, cat("Behavior"))
         rows = APPEND(rows, rowBool("Modal", f.Modal))
         rows = APPEND(rows, rowBool("ResizableX", f.ResizableX))
         rows = APPEND(rows, rowBool("ResizableY", f.ResizableY))
         rows = APPEND(rows, rowBool("Visible", f.Visible))
         rows = APPEND(rows, rowBool("Taskbar", f.ShowInTaskbar))
         rows = APPEND(rows, rowBool("StatusBar", f.ShowStatusBar))
-        rows = APPEND(rows, cat("▸ Appearance"))
+        rows = APPEND(rows, cat("Appearance"))
         DIM borderOpts AS []STRING
         borderOpts = APPEND(borderOpts, "normal")
         borderOpts = APPEND(borderOpts, "thick")
@@ -194,7 +194,7 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
         rows = APPEND(rows, rowEnum("StartPos", f.StartPos, startOpts))
         rows = APPEND(rows, rowColor("BgColor", f.BgColor))
         rows = APPEND(rows, rowColor("FgColor", f.FgColor))
-        rows = APPEND(rows, cat("▸ File Info"))
+        rows = APPEND(rows, cat("File Info"))
         rows = APPEND(rows, rowReadOnly("File", f.File))
         rows = APPEND(rows, rowReadOnly("Code", f.Code))
         rows = APPEND(rows, rowReadOnly("Widgets", fmt.Sprintf("%d", LEN(f.Widgets))))
@@ -204,7 +204,7 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
 
     IF p.HasTool THEN
         DIM tw AS Widget = ToolToWidget(p.CurTool)
-        rows = APPEND(rows, cat("▸ " + p.CurTool.Kind + " (tool)"))
+        rows = APPEND(rows, cat("" + p.CurTool.Kind + " (tool)"))
         rows = APPEND(rows, rowText("Name", p.CurTool.Id))
         DIM kindProps2 AS []Property
         IF p.CurTool.Kind = WidgetKindFileDialog THEN kindProps2 = FileDialogProperties(tw)
@@ -218,7 +218,7 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
 
     IF p.HasWidget THEN
         DIM w AS Widget = p.CurWidget
-        rows = APPEND(rows, cat("▸ " + w.Kind))
+        rows = APPEND(rows, cat("" + w.Kind))
         rows = APPEND(rows, rowText("Name", w.Id))
         rows = APPEND(rows, rowBool("Visible", w.Visible))
         rows = APPEND(rows, rowText("ZOrder", fmt.Sprintf("%d", w.ZOrder)))
@@ -256,14 +256,14 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
             END IF
         NEXT i
 
-        rows = APPEND(rows, cat("▸ Layout"))
+        rows = APPEND(rows, cat("Layout"))
         rows = APPEND(rows, rowText("X",      fmt.Sprintf("%d", w.X)))
         rows = APPEND(rows, rowText("Y",      fmt.Sprintf("%d", w.Y)))
         rows = APPEND(rows, rowText("Width",  fmt.Sprintf("%d", w.W)))
         rows = APPEND(rows, rowText("Height", fmt.Sprintf("%d", w.H)))
 
         IF hasStyleProps THEN
-            rows = APPEND(rows, cat("▸ Style"))
+            rows = APPEND(rows, cat("Style"))
             DIM j AS INTEGER
             FOR j = 0 TO LEN(kindProps) - 1
                 DIM kpStyle AS Property = kindProps[j]
@@ -785,6 +785,28 @@ END SUB
 ' Render
 ' ----------------------------------------------------------------------
 
+' propRowsToItems converts the panel's typed PropRow list into the
+' shared encoded format ("Category|Name|Value|Type;...") that
+' renderPropertyGridBody accepts. Lets DBtui's panel reuse the same
+' body renderer as generated PropertyGrid widgets.
+FUNCTION propRowsToItems(rows AS []PropRow) AS STRING
+    DIM out AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(rows) - 1
+        DIM r AS PropRow = rows[i]
+        DIM typ AS STRING = ""
+        IF r.IsBool THEN
+            typ = "bool"
+        ELSEIF r.IsColor THEN
+            typ = "color"
+        ELSEIF LEN(r.Options) > 0 THEN
+            typ = "enum:" + strings.Join(r.Options, ":")
+        END IF
+        out = APPEND(out, r.Category + "|" + r.Name + "|" + r.Value + "|" + typ)
+    NEXT i
+    RETURN strings.Join(out, ";")
+END FUNCTION
+
 FUNCTION (p AS PropertiesPanel) Render() AS STRING
     IF p.Width < 4 OR p.Height < 3 THEN RETURN ""
 
@@ -799,31 +821,6 @@ FUNCTION (p AS PropertiesPanel) Render() AS STRING
         borderColor = ColorFocusBorder()
     END IF
     DIM bStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(borderColor).Background(ColorBg())
-
-    ' Scrollbar — reserve the rightmost inner column when rows overflow.
-    DIM canScroll AS BOOLEAN = (LEN(p.Rows) > innerH)
-    DIM thumbPos AS INTEGER = -1
-    IF canScroll AND innerH > 0 THEN
-        DIM maxOff AS INTEGER = LEN(p.Rows) - innerH
-        IF maxOff > 0 THEN thumbPos = p.Offset * (innerH - 1) / maxOff
-    END IF
-    DIM contentW AS INTEGER = innerW
-    IF canScroll THEN contentW = innerW - 1
-    DIM scrollTrack AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
-    DIM scrollThumb AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorBg())
-
-    DIM nameW AS INTEGER = contentW / 2
-    IF nameW < 6 THEN nameW = 6
-    DIM valW AS INTEGER = contentW - nameW - 1   ' 1 for the centre separator
-    IF valW < 1 THEN valW = 1
-
-    DIM nameStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorBg())
-    DIM valStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorBg())
-    DIM catStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorHotkey()).Background(ColorBg()).Bold(TRUE)
-    DIM catLineStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
-    DIM selNameStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorAccent()).Background(ColorSelection()).Bold(TRUE)
-    DIM selValStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorFg()).Background(ColorSelection())
-    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(ColorBorder()).Background(ColorBg())
 
     ' Top + bottom borders. Title centred on top.
     DIM title AS STRING = "Properties"
@@ -841,99 +838,20 @@ FUNCTION (p AS PropertiesPanel) Render() AS STRING
     DIM topLine AS STRING = bStyle.Render(bc.TopLeft) + topBar + bStyle.Render(bc.TopRight)
     DIM bottomLine AS STRING = bStyle.Render(bc.BottomLeft + strings.Repeat(bc.Horizontal, innerW) + bc.BottomRight)
 
-    ' Body rows.
-    DIM rows AS []STRING
-    DIM i AS INTEGER
-    FOR i = 0 TO innerH - 1
-        DIM rowIdx AS INTEGER = p.Offset + i
-        DIM scrollChar AS STRING = ""
-        IF canScroll THEN
-            IF i = thumbPos THEN
-                scrollChar = scrollThumb.Render("┃")
-            ELSE
-                scrollChar = scrollTrack.Render("╎")
-            END IF
-        END IF
-        IF rowIdx >= LEN(p.Rows) THEN
-            rows = APPEND(rows, bStyle.Render(bc.Vertical) + valStyle.Render(strings.Repeat(" ", contentW)) + scrollChar + bStyle.Render(bc.Vertical))
-        ELSE
-            DIM row AS PropRow = p.Rows[rowIdx]
-            DIM isCursor AS BOOLEAN = (rowIdx = p.Cursor)
-            DIM body AS STRING
-
-            IF row.Category <> "" THEN
-                DIM catText AS STRING = row.Category
-                DIM textLen AS INTEGER = lipgloss.Width(catText)
-                IF textLen > contentW THEN
-                    catText = Mid(catText, 1, contentW)
-                    textLen = contentW
-                END IF
-                DIM catFillLen AS INTEGER = contentW - textLen
-                IF catFillLen < 0 THEN catFillLen = 0
-                body = catStyle.Render(catText) + catLineStyle.Render(strings.Repeat("─", catFillLen))
-            ELSE
-                DIM nameText AS STRING = row.Name
-                IF LEN(nameText) > nameW THEN nameText = Mid(nameText, 1, nameW)
-                DIM namePad AS INTEGER = nameW - LEN(nameText)
-                IF namePad < 0 THEN namePad = 0
-
-                DIM editing AS BOOLEAN = isCursor AND p.EditMode AND row.Editable AND NOT row.IsBool AND LEN(row.Options) = 0
-                ' Build the type string in the shared format and delegate
-                ' the value-cell rendering to renderPropValue (so DBtui
-                ' and generated programs can't drift on bool/color/enum
-                ' display).
-                DIM editType AS STRING = ""
-                IF row.IsBool THEN
-                    editType = "bool"
-                ELSEIF row.IsColor THEN
-                    editType = "color"
-                ELSEIF LEN(row.Options) > 0 THEN
-                    editType = "enum:" + strings.Join(row.Options, ":")
-                END IF
-                DIM displayVal AS STRING
-                DIM displayVisW AS INTEGER
-                displayVal, displayVisW = renderPropValue(row.Value, editType, editing, p.EditBuffer, p.EditPos)
-                IF editing AND p.EditError <> "" THEN
-                    displayVal = displayVal + " ⚠"
-                    displayVisW = displayVisW + 2
-                END IF
-
-                IF displayVisW > valW AND NOT row.IsColor THEN
-                    DO WHILE displayVisW > valW AND LEN(displayVal) > 0
-                        displayVal = Mid(displayVal, 1, LEN(displayVal) - 1)
-                        displayVisW = lipgloss.Width(displayVal)
-                    LOOP
-                END IF
-                DIM valPad AS INTEGER = valW - displayVisW
-                IF valPad < 0 THEN valPad = 0
-
-                DIM sep AS STRING = sepStyle.Render("│")
-                IF isCursor THEN
-                    DIM nPart AS STRING = selNameStyle.Render(nameText + strings.Repeat(" ", namePad))
-                    IF row.IsColor THEN
-                        body = nPart + sep + displayVal + selValStyle.Render(strings.Repeat(" ", valPad))
-                    ELSE
-                        body = nPart + sep + selValStyle.Render(displayVal + strings.Repeat(" ", valPad))
-                    END IF
-                ELSE
-                    DIM nPart2 AS STRING = nameStyle.Render(nameText + strings.Repeat(" ", namePad))
-                    IF row.IsColor THEN
-                        body = nPart2 + sep + displayVal + valStyle.Render(strings.Repeat(" ", valPad))
-                    ELSE
-                        body = nPart2 + sep + valStyle.Render(displayVal + strings.Repeat(" ", valPad))
-                    END IF
-                END IF
-            END IF
-
-            rows = APPEND(rows, bStyle.Render(bc.Vertical) + body + scrollChar + bStyle.Render(bc.Vertical))
-        END IF
-    NEXT i
+    ' Delegate the body rendering to the shared renderer used by the
+    ' PropertyGrid widget. Convert the typed PropRow list to the
+    ' encoded "Category|Name|Value|Type;..." format first.
+    DIM items AS STRING = propRowsToItems(p.Rows)
+    DIM editRow AS INTEGER = -1
+    IF p.EditMode THEN editRow = p.Cursor
+    DIM bodyStr AS STRING = renderPropertyGridBody(items, p.Cursor, p.Offset, innerW, innerH, p.EditMode, editRow, p.EditBuffer, p.EditPos, p.EditError)
+    DIM bodyLines AS []STRING = strings.Split(bodyStr, "\n")
 
     DIM all AS []STRING
     all = APPEND(all, topLine)
     DIM r AS INTEGER
-    FOR r = 0 TO LEN(rows) - 1
-        all = APPEND(all, rows[r])
+    FOR r = 0 TO LEN(bodyLines) - 1
+        all = APPEND(all, bStyle.Render(bc.Vertical) + bodyLines[r] + bStyle.Render(bc.Vertical))
     NEXT r
     all = APPEND(all, bottomLine)
     RETURN strings.Join(all, "\n")
