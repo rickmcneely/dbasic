@@ -68,6 +68,12 @@ TYPE Model
     DIM DragOrigH     AS INTEGER
     DIM DragStartMx   AS INTEGER        ' mouse X at drag start (global)
     DIM DragStartMy   AS INTEGER        ' mouse Y at drag start (global)
+    ' For multi-select moves — snapshot of every selected widget's
+    ' original position at drag start. Motion applies the same delta
+    ' to each. Parallel arrays (Idxs[i] is at position OrigXs[i],OrigYs[i]).
+    DIM DragMultiIdxs AS []INTEGER
+    DIM DragMultiXs   AS []INTEGER
+    DIM DragMultiYs   AS []INTEGER
 
     ' Double-click tracking — used by the palette to place a widget on
     ' the canvas when the same row is clicked twice in quick succession.
@@ -1032,7 +1038,7 @@ END FUNCTION
 ' and triggers the appropriate selection / drag / placement. Returns a
 ' tea.Cmd if the click resolves to a deferred bubbletea action (today
 ' that's just File→Quit); NIL otherwise.
-FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER) AS tea.Cmd
+FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER, shift AS BOOLEAN) AS tea.Cmd
     ' --- Modal file dialog (highest priority while active) -----------
     IF m.DialogActive THEN
         IF pointInRect(x, y, dialogRect(m)) THEN
@@ -1192,6 +1198,22 @@ FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER) AS 
         focusPanel(m, FocusVisual)
         DIM lx2 AS INTEGER = x - m.VisualRect.X
         DIM ly2 AS INTEGER = y - m.VisualRect.Y
+        ' Shift+click: toggle the hit widget in/out of the selection
+        ' instead of starting a drag. Skips drag-mode entirely so the
+        ' user can build up a multi-selection without dragging things.
+        IF shift THEN
+            DIM hitIdx2 AS INTEGER
+            DIM hitOk AS BOOLEAN
+            hitIdx2, hitOk = m.Visual.ClickAtMod(lx2, ly2, TRUE)
+            _ = hitIdx2
+            IF hitOk THEN
+                IF m.Visual.Selected >= 0 AND m.Visual.Selected < LEN(m.Visual.Widgets) THEN
+                    m.Properties.SetWidget(m.Visual.Widgets[m.Visual.Selected])
+                END IF
+                m.StatusBar.Message = fmt.Sprintf("%d widgets selected", m.Visual.SelectionCount())
+            END IF
+            RETURN NIL
+        END IF
         DIM wIdx AS INTEGER
         DIM rx AS BOOLEAN
         DIM ry AS BOOLEAN
@@ -1216,16 +1238,37 @@ FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER) AS 
                 m.DragMode = DragMove
                 m.DragResizeX = FALSE
                 m.DragResizeY = FALSE
-                m.StatusBar.Message = fmt.Sprintf("moving %s — drag, release to drop", w.Id)
+                ' Snapshot every selected widget's starting position so
+                ' the motion handler can move them all in lockstep.
+                DIM emptyI AS []INTEGER
+                DIM emptyX AS []INTEGER
+                DIM emptyY AS []INTEGER
+                m.DragMultiIdxs = emptyI
+                m.DragMultiXs = emptyX
+                m.DragMultiYs = emptyY
+                DIM si AS INTEGER
+                FOR si = 0 TO LEN(m.Visual.Selections) - 1
+                    DIM sidx AS INTEGER = m.Visual.Selections[si]
+                    IF sidx >= 0 AND sidx < LEN(m.Visual.Widgets) THEN
+                        m.DragMultiIdxs = APPEND(m.DragMultiIdxs, sidx)
+                        m.DragMultiXs = APPEND(m.DragMultiXs, m.Visual.Widgets[sidx].X)
+                        m.DragMultiYs = APPEND(m.DragMultiYs, m.Visual.Widgets[sidx].Y)
+                    END IF
+                NEXT si
+                DIM moveCount AS INTEGER = m.Visual.SelectionCount()
+                IF moveCount > 1 THEN
+                    m.StatusBar.Message = fmt.Sprintf("moving %d widgets — drag, release to drop", moveCount)
+                ELSE
+                    m.StatusBar.Message = fmt.Sprintf("moving %s — drag, release to drop", w.Id)
+                END IF
             END IF
             ' Switch the Properties panel to the newly-selected widget
             ' (not refresh — selection may have changed since last paint).
             m.Properties.SetWidget(w)
         ELSE
-            ' Click on form interior outside any widget — focus only.
-            ' Refresh the properties panel to show the form, since the
-            ' selection effectively cleared.
-            m.Visual.Selected = -1
+            ' Click on form interior outside any widget — clear the
+            ' selection and surface the form in Properties.
+            m.Visual.ClearSelections()
             DIM kk AS INTEGER
             FOR kk = 0 TO LEN(m.Tree.Project.Forms) - 1
                 IF m.Tree.Project.Forms[kk].Name = m.Visual.FormName THEN
@@ -1367,7 +1410,18 @@ SUB handleMouseDrag(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER)
     DIM dx AS INTEGER = x - m.DragStartMx
     DIM dy AS INTEGER = y - m.DragStartMy
     IF m.DragMode = DragMove THEN
-        m.Visual.MoveWidget(m.DragWidgetIdx, m.DragOrigX + dx, m.DragOrigY + dy)
+        ' If a multi-select drag is active, apply the delta to every
+        ' snapshotted widget. The fallback (no snapshot) just moves
+        ' the primary — covers any path that armed a Move without
+        ' populating DragMultiIdxs.
+        IF LEN(m.DragMultiIdxs) > 0 THEN
+            DIM mi AS INTEGER
+            FOR mi = 0 TO LEN(m.DragMultiIdxs) - 1
+                m.Visual.MoveWidget(m.DragMultiIdxs[mi], m.DragMultiXs[mi] + dx, m.DragMultiYs[mi] + dy)
+            NEXT mi
+        ELSE
+            m.Visual.MoveWidget(m.DragWidgetIdx, m.DragOrigX + dx, m.DragOrigY + dy)
+        END IF
         refreshPropertiesFromSource(m)
         RETURN
     END IF
@@ -2273,7 +2327,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         DIM clickCmd AS tea.Cmd = NIL
         IF mcMsg.Button = tea.MouseLeft THEN
-            clickCmd = handleMouseClick(@m, mcMsg.X, mcMsg.Y)
+            DIM shiftHeld AS BOOLEAN = (BitAnd(Int(mcMsg.Mod), Int(tea.ModShift)) <> 0)
+            clickCmd = handleMouseClick(@m, mcMsg.X, mcMsg.Y, shiftHeld)
         END IF
         RETURN m, clickCmd
     END IF
