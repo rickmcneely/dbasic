@@ -303,7 +303,7 @@ func (g *Generator) collectImports() {
 
 // runtimeFuncDefs contains the Go source for runtime functions
 var runtimeFuncDefs = map[string]string{
-	"Int": `// Int converts to int
+	"Int": `// Int converts to int.
 func Int(val interface{}) int {
 	switch v := val.(type) {
 	case int:
@@ -312,13 +312,31 @@ func Int(val interface{}) int {
 		return int(v)
 	case int64:
 		return int(v)
+	case uint8:
+		return int(v)
+	case uint16:
+		return int(v)
+	case uint32:
+		return int(v)
+	case uint64:
+		return int(v)
 	case float32:
 		return int(v)
 	case float64:
 		return int(v)
-	default:
-		return 0
 	}
+	// Named types (e.g. ` + "`vt10x.Color`" + ` whose underlying type is uint32)
+	// don't match the bare type cases above — fall back to reflection.
+	rv := reflect.ValueOf(val)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return int(rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int(rv.Uint())
+	case reflect.Float32, reflect.Float64:
+		return int(rv.Float())
+	}
+	return 0
 }`,
 	"Lng": `// Lng converts to int64 (LONG)
 func Lng(val interface{}) int64 {
@@ -774,106 +792,14 @@ func MakeBytes(size int) []byte {
 func LenBytes(b []byte) int {
 	return len(b)
 }`,
-	"Uint8": `// Uint8 casts any integer/float value to uint8.
-func Uint8(val interface{}) uint8 {
-	switch v := val.(type) {
-	case int:
-		return uint8(v)
-	case int32:
-		return uint8(v)
-	case int64:
-		return uint8(v)
-	case uint8:
-		return v
-	case uint16:
-		return uint8(v)
-	case uint32:
-		return uint8(v)
-	case uint64:
-		return uint8(v)
-	case float32:
-		return uint8(v)
-	case float64:
-		return uint8(v)
-	default:
-		return 0
-	}
-}`,
-	"Uint16": `// Uint16 casts any integer/float value to uint16.
-func Uint16(val interface{}) uint16 {
-	switch v := val.(type) {
-	case int:
-		return uint16(v)
-	case int32:
-		return uint16(v)
-	case int64:
-		return uint16(v)
-	case uint8:
-		return uint16(v)
-	case uint16:
-		return v
-	case uint32:
-		return uint16(v)
-	case uint64:
-		return uint16(v)
-	case float32:
-		return uint16(v)
-	case float64:
-		return uint16(v)
-	default:
-		return 0
-	}
-}`,
-	"Uint32": `// Uint32 casts any integer/float value to uint32.
-func Uint32(val interface{}) uint32 {
-	switch v := val.(type) {
-	case int:
-		return uint32(v)
-	case int32:
-		return uint32(v)
-	case int64:
-		return uint32(v)
-	case uint8:
-		return uint32(v)
-	case uint16:
-		return uint32(v)
-	case uint32:
-		return v
-	case uint64:
-		return uint32(v)
-	case float32:
-		return uint32(v)
-	case float64:
-		return uint32(v)
-	default:
-		return 0
-	}
-}`,
-	"Uint64": `// Uint64 casts any integer/float value to uint64.
-func Uint64(val interface{}) uint64 {
-	switch v := val.(type) {
-	case int:
-		return uint64(v)
-	case int32:
-		return uint64(v)
-	case int64:
-		return uint64(v)
-	case uint8:
-		return uint64(v)
-	case uint16:
-		return uint64(v)
-	case uint32:
-		return uint64(v)
-	case uint64:
-		return v
-	case float32:
-		return uint64(v)
-	case float64:
-		return uint64(v)
-	default:
-		return 0
-	}
-}`,
+	"Uint8": `// Uint8 casts any integer/float value to uint8 (delegates to Int).
+func Uint8(val interface{}) uint8  { return uint8(Int(val)) }`,
+	"Uint16": `// Uint16 casts any integer/float value to uint16 (delegates to Int).
+func Uint16(val interface{}) uint16 { return uint16(Int(val)) }`,
+	"Uint32": `// Uint32 casts any integer/float value to uint32 (delegates to Int).
+func Uint32(val interface{}) uint32 { return uint32(Int(val)) }`,
+	"Uint64": `// Uint64 casts any integer/float value to uint64 (delegates to Int).
+func Uint64(val interface{}) uint64 { return uint64(Int(val)) }`,
 }
 
 // runtimeFuncImports maps runtime functions to required imports
@@ -907,6 +833,11 @@ var runtimeFuncImports = map[string][]string{
 	"ErrorfFunc":     {"fmt"},
 	"WrapError":      {"fmt"},
 	"LineInput":      {"bufio", "fmt", "os"},
+	"Int":            {"reflect"},
+	"Uint8":          {"reflect"},
+	"Uint16":         {"reflect"},
+	"Uint32":         {"reflect"},
+	"Uint64":         {"reflect"},
 }
 
 // scanForRuntimeFunctions scans the AST for calls to runtime functions

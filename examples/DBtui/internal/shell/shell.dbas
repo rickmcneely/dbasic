@@ -12,8 +12,11 @@
 ' Keystrokes while the Shell tab is focused get translated to wire
 ' bytes and written to the PTY master.
 
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "fmt"
 IMPORT "os"
 IMPORT "os/exec" AS osexec
+IMPORT "strings"
 IMPORT "github.com/creack/pty"
 IMPORT "github.com/hinshun/vt10x"
 
@@ -102,14 +105,71 @@ SUB ShellResize(cols AS INTEGER, rows AS INTEGER)
     _ = serr
 END SUB
 
-' ShellRender returns the current rendered screen — one line per row
-' of the virtual terminal. Caller passes the visible size; we resize
-' the vt + PTY first so the screen matches the panel dimensions.
+' ansiColor formats a vt10x.Color as the numeric string lipgloss
+' accepts ("0"..."15" for ANSI, "16"..."255" for xterm-256). Returns
+' "" for the sentinel default colors (caller leaves fg/bg unset so
+' the panel background shows through).
+FUNCTION ansiColor(c AS vt10x.Color) AS STRING
+    IF c = vt10x.DefaultFG THEN RETURN ""
+    IF c = vt10x.DefaultBG THEN RETURN ""
+    DIM n AS INTEGER = Int(c)
+    IF n < 0 OR n > 255 THEN RETURN ""
+    RETURN fmt.Sprintf("%d", n)
+END FUNCTION
+
+' styleFor returns a lipgloss.Style configured for the glyph's fg/bg.
+' Default fg/bg are left unset so DBtui's panel bg shows through.
+' (Bold / italic / underline are skipped for now — DBasic has no
+' bitwise AND operator, so we can't mask vt10x's Mode field cleanly.
+' Adding a BitAnd builtin would fix it; v1 ships colors only.)
+FUNCTION styleFor(g AS vt10x.Glyph) AS lipgloss.Style
+    DIM s AS lipgloss.Style = lipgloss.NewStyle()
+    DIM fg AS STRING = ansiColor(g.FG)
+    DIM bg AS STRING = ansiColor(g.BG)
+    IF fg <> "" THEN s = s.Foreground(lipgloss.Color(fg))
+    IF bg <> "" THEN s = s.Background(lipgloss.Color(bg))
+    RETURN s
+END FUNCTION
+
+' glyphSameStyle returns TRUE if two glyphs share the styling
+' attributes that matter for run-batching (fg, bg).
+FUNCTION glyphSameStyle(a AS vt10x.Glyph, b AS vt10x.Glyph) AS BOOLEAN
+    IF a.FG <> b.FG THEN RETURN FALSE
+    IF a.BG <> b.BG THEN RETURN FALSE
+    RETURN TRUE
+END FUNCTION
+
+' ShellRender walks the virtual terminal's cell grid, batches
+' adjacent same-style cells into runs, and renders each run through
+' lipgloss so the visible output preserves the shell's colors and
+' bold attributes. Resizes the vt + PTY to match the visible size
+' before rendering.
 FUNCTION ShellRender(cols AS INTEGER, rows AS INTEGER) AS STRING
     IF NOT gShellActive THEN RETURN ""
     ShellResize(cols, rows)
-    DIM s AS STRING = gShellVT.String()
-    RETURN s
+    DIM linesOut AS []STRING
+    DIM y AS INTEGER
+    FOR y = 0 TO rows - 1
+        DIM runBuf AS STRING = ""
+        DIM rendered AS STRING = ""
+        DIM curG AS vt10x.Glyph = gShellVT.Cell(0, y)
+        DIM x AS INTEGER
+        FOR x = 0 TO cols - 1
+            DIM g AS vt10x.Glyph = gShellVT.Cell(x, y)
+            ' Null/zero rune → render as space so empty cells don't collapse.
+            DIM ch AS STRING = string(g.Char)
+            IF Int(g.Char) = 0 THEN ch = " "
+            IF x > 0 AND NOT glyphSameStyle(g, curG) THEN
+                rendered = rendered + styleFor(curG).Render(runBuf)
+                runBuf = ""
+                curG = g
+            END IF
+            runBuf = runBuf + ch
+        NEXT x
+        IF runBuf <> "" THEN rendered = rendered + styleFor(curG).Render(runBuf)
+        linesOut = APPEND(linesOut, rendered)
+    NEXT y
+    RETURN strings.Join(linesOut, "\n")
 END FUNCTION
 
 ' ShellDrain is a no-op kept as a stable API — vt10x writes happen
