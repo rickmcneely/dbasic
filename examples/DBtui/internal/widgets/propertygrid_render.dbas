@@ -1,0 +1,61 @@
+' DBtui — internal/widgets/propertygrid_render.dbas
+'
+' Shared per-row value-cell renderer for the PropertyGrid widget AND
+' DBtui's internal Properties panel. Both consumers call into the
+' same function so the type-aware display (bool / color / enum /
+' edit-mode caret) can't drift between them.
+'
+' This file is INCLUDEd by DBtui and embedded by codegen into every
+' generated program (similar to internal/runtime/filedialog.dbas).
+'
+' What stays in each consumer:
+'   - Border + title overlay drawing (DBtui uses single/double border
+'     with focus shift; codegen uses the generic widget border).
+'   - Name column padding + the centre " │ " separator.
+'   - Cursor row highlight (each consumer's theme decides the bg).
+'   - Scrollbar character on the right edge when overflowing.
+'
+' What lives here:
+'   - The Value cell content + its visual width.
+
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "strings"
+
+' renderPropValue produces the rendered Value cell for a PropertyGrid
+' row, plus its visual width (so the caller can pad correctly).
+'
+' Arguments:
+'   value      — raw Value text (e.g. "true", "#1a1b2e", "left", "42")
+'   valueType  — "bool" | "color" | "int" | "enum:opt1:opt2:..." | ""
+'   editing    — TRUE when the caller's cursor is on this row AND the
+'                row is in edit mode (Enter pressed). When TRUE the
+'                value cell shows editBuf with a caret instead of the
+'                normal type-aware display.
+'   editBuf    — current edit buffer
+'   editPos    — caret position into editBuf (0..LEN(editBuf))
+'
+' Returns: (rendered string, visual width in cells).
+FUNCTION renderPropValue(value AS STRING, valueType AS STRING, editing AS BOOLEAN, editBuf AS STRING, editPos AS INTEGER) AS (STRING, INTEGER)
+    IF editing THEN
+        DIM pre AS STRING = ""
+        DIM post AS STRING = ""
+        IF editPos > 0 THEN pre = Mid(editBuf, 1, editPos)
+        IF editPos < LEN(editBuf) THEN post = Mid(editBuf, editPos + 1, LEN(editBuf) - editPos)
+        DIM disp AS STRING = pre + "▎" + post
+        RETURN disp, lipgloss.Width(disp)
+    END IF
+    IF valueType = "bool" THEN
+        IF value = "true" THEN RETURN "[x] true", 8
+        RETURN "[ ] false", 9
+    END IF
+    IF valueType = "color" AND value <> "" THEN
+        DIM swatch AS STRING = lipgloss.NewStyle().Background(lipgloss.Color(value)).Render("  ")
+        DIM disp2 AS STRING = swatch + " " + value
+        RETURN disp2, 3 + lipgloss.Width(value)
+    END IF
+    IF strings.HasPrefix(valueType, "enum:") THEN
+        DIM disp3 AS STRING = "◂ " + value + " ▸"
+        RETURN disp3, lipgloss.Width(disp3)
+    END IF
+    RETURN value, lipgloss.Width(value)
+END FUNCTION

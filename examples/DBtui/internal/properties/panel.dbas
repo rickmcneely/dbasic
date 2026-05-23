@@ -878,39 +878,24 @@ FUNCTION (p AS PropertiesPanel) Render() AS STRING
                 IF namePad < 0 THEN namePad = 0
 
                 DIM editing AS BOOLEAN = isCursor AND p.EditMode AND row.Editable AND NOT row.IsBool AND LEN(row.Options) = 0
-                DIM displayVal AS STRING = row.Value
-                DIM swatch AS STRING = ""
-                DIM displayVisW AS INTEGER
-                IF editing THEN
-                    ' Place the block caret AT EditPos by splitting the
-                    ' buffer in two. Past the end of buffer, append it.
-                    DIM caret AS STRING = "▎"
-                    DIM editPre AS STRING = ""
-                    DIM editPost AS STRING = ""
-                    IF p.EditPos > 0 THEN editPre = Mid(p.EditBuffer, 1, p.EditPos)
-                    IF p.EditPos < LEN(p.EditBuffer) THEN
-                        editPost = Mid(p.EditBuffer, p.EditPos + 1, LEN(p.EditBuffer) - p.EditPos)
-                    END IF
-                    DIM errSuffix AS STRING = ""
-                    IF p.EditError <> "" THEN errSuffix = " ⚠"
-                    displayVal = editPre + caret + editPost + errSuffix
-                    displayVisW = lipgloss.Width(displayVal)
-                ELSEIF row.IsBool THEN
-                    IF row.Value = "true" THEN
-                        displayVal = "[x] true"
-                    ELSE
-                        displayVal = "[ ] false"
-                    END IF
-                    displayVisW = lipgloss.Width(displayVal)
-                ELSEIF row.IsColor AND row.Value <> "" THEN
-                    swatch = lipgloss.NewStyle().Background(lipgloss.Color(row.Value)).Render("  ")
-                    displayVal = swatch + " " + row.Value
-                    displayVisW = 3 + lipgloss.Width(row.Value)
+                ' Build the type string in the shared format and delegate
+                ' the value-cell rendering to renderPropValue (so DBtui
+                ' and generated programs can't drift on bool/color/enum
+                ' display).
+                DIM editType AS STRING = ""
+                IF row.IsBool THEN
+                    editType = "bool"
+                ELSEIF row.IsColor THEN
+                    editType = "color"
                 ELSEIF LEN(row.Options) > 0 THEN
-                    displayVal = "◂ " + row.Value + " ▸"
-                    displayVisW = lipgloss.Width(displayVal)
-                ELSE
-                    displayVisW = lipgloss.Width(displayVal)
+                    editType = "enum:" + strings.Join(row.Options, ":")
+                END IF
+                DIM displayVal AS STRING
+                DIM displayVisW AS INTEGER
+                displayVal, displayVisW = renderPropValue(row.Value, editType, editing, p.EditBuffer, p.EditPos)
+                IF editing AND p.EditError <> "" THEN
+                    displayVal = displayVal + " ⚠"
+                    displayVisW = displayVisW + 2
                 END IF
 
                 IF displayVisW > valW AND NOT row.IsColor THEN

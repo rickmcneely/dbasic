@@ -1913,33 +1913,10 @@ FUNCTION emitRenderWidget() AS STRING
     s = s + "                    IF LEN(pgNm) > pgNameW THEN pgNm = Mid(pgNm, 1, pgNameW)\n"
     s = s + "                    DIM pgNmPad AS INTEGER = pgNameW - LEN(pgNm)\n"
     s = s + "                    IF pgNmPad < 0 THEN pgNmPad = 0\n"
-    s = s + "                    DIM pgDisp AS STRING = pgVal\n"
-    s = s + "                    DIM pgSwatch AS STRING = \"\"\n"
-    s = s + "                    DIM pgDispW AS INTEGER = lipgloss.Width(pgDisp)\n"
-    ' Edit-mode override — render buffer with a caret at editPos.
     s = s + "                    DIM pgEditing AS BOOLEAN = (editing AND pgIdx = editRow)\n"
-    s = s + "                    IF pgEditing THEN\n"
-    s = s + "                        DIM pgEPre AS STRING = \"\"\n"
-    s = s + "                        DIM pgEPost AS STRING = \"\"\n"
-    s = s + "                        IF editPos > 0 THEN pgEPre = Mid(editBuf, 1, editPos)\n"
-    s = s + "                        IF editPos < LEN(editBuf) THEN pgEPost = Mid(editBuf, editPos + 1, LEN(editBuf) - editPos)\n"
-    s = s + "                        pgDisp = pgEPre + \"▎\" + pgEPost\n"
-    s = s + "                        pgDispW = lipgloss.Width(pgDisp)\n"
-    s = s + "                    ELSEIF pgType = \"bool\" THEN\n"
-    s = s + "                        IF pgVal = \"true\" THEN\n"
-    s = s + "                            pgDisp = \"[x] true\"\n"
-    s = s + "                        ELSE\n"
-    s = s + "                            pgDisp = \"[ ] false\"\n"
-    s = s + "                        END IF\n"
-    s = s + "                        pgDispW = lipgloss.Width(pgDisp)\n"
-    s = s + "                    ELSEIF pgType = \"color\" AND pgVal <> \"\" THEN\n"
-    s = s + "                        pgSwatch = lipgloss.NewStyle().Background(lipgloss.Color(pgVal)).Render(\"  \")\n"
-    s = s + "                        pgDisp = pgSwatch + \" \" + pgVal\n"
-    s = s + "                        pgDispW = 3 + lipgloss.Width(pgVal)\n"
-    s = s + "                    ELSEIF strings.HasPrefix(pgType, \"enum:\") THEN\n"
-    s = s + "                        pgDisp = \"◂ \" + pgVal + \" ▸\"\n"
-    s = s + "                        pgDispW = lipgloss.Width(pgDisp)\n"
-    s = s + "                    END IF\n"
+    s = s + "                    DIM pgDisp AS STRING\n"
+    s = s + "                    DIM pgDispW AS INTEGER\n"
+    s = s + "                    pgDisp, pgDispW = renderPropValue(pgVal, pgType, pgEditing, editBuf, editPos)\n"
     s = s + "                    IF pgDispW > pgValW AND pgType <> \"color\" THEN\n"
     s = s + "                        DO WHILE pgDispW > pgValW AND LEN(pgDisp) > 0\n"
     s = s + "                            pgDisp = Mid(pgDisp, 1, LEN(pgDisp) - 1)\n"
@@ -2243,6 +2220,45 @@ FUNCTION emitFileDialogRuntime() AS STRING
     RETURN "' ---- FileDialog runtime: not found, dialog calls will fail ----\n"
 END FUNCTION
 
+' emitPropertyGridRender reads internal/widgets/propertygrid_render.dbas
+' (the shared value-cell renderer used by both DBtui and generated
+' programs) and inlines its contents — minus the IMPORT lines, which
+' are already present at the top of the generated program.
+FUNCTION emitPropertyGridRender() AS STRING
+    DIM candidates AS []STRING
+    DIM envDir AS STRING = os.Getenv("DBTUI_RUNTIME_DIR")
+    IF envDir <> "" THEN candidates = APPEND(candidates, filepath.Join(envDir, "propertygrid_render.dbas"))
+    DIM exe AS STRING
+    DIM exeErr AS ERROR
+    exe, exeErr = os.Executable()
+    IF exeErr = NIL THEN
+        DIM exeDir AS STRING = filepath.Dir(exe)
+        candidates = APPEND(candidates, filepath.Join(exeDir, "internal", "widgets", "propertygrid_render.dbas"))
+    END IF
+    candidates = APPEND(candidates, "/home/zditech/DBasic/examples/DBtui/internal/widgets/propertygrid_render.dbas")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(candidates) - 1
+        DIM data AS BYTES
+        DIM err AS ERROR
+        data, err = os.ReadFile(candidates[i])
+        IF err = NIL THEN
+            ' Strip leading IMPORT lines — they'll collide with the
+            ' imports already at the top of the generated program.
+            DIM src AS STRING = string(data)
+            DIM lines AS []STRING = strings.Split(src, "\n")
+            DIM out AS []STRING
+            DIM j AS INTEGER
+            FOR j = 0 TO LEN(lines) - 1
+                IF NOT strings.HasPrefix(strings.TrimSpace(lines[j]), "IMPORT ") THEN
+                    out = APPEND(out, lines[j])
+                END IF
+            NEXT j
+            RETURN "' ---- PropertyGrid render helper (inlined from " + candidates[i] + ") ----\n" + strings.Join(out, "\n") + "\n"
+        END IF
+    NEXT i
+    RETURN "' ---- PropertyGrid render helper: not found ----\n"
+END FUNCTION
+
 ' GenerateProgram is the public entry point. Returns the .dbas source.
 FUNCTION GenerateProgram(p AS Project) AS STRING
     ' Find the start form (or the first form if none is named).
@@ -2261,6 +2277,7 @@ FUNCTION GenerateProgram(p AS Project) AS STRING
     DIM s AS STRING = ""
     s = s + emitHeader(p)
     s = s + emitFileDialogRuntime()
+    s = s + emitPropertyGridRender()
     s = s + emitNewModel(form)
     s = s + emitDispatchClick(form)
     s = s + emitDispatchChange(form)
