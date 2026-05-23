@@ -34,6 +34,8 @@ FUNCTION DefaultRegistry() AS Registry
     r.Kinds = APPEND(r.Kinds, WidgetKindMenuBar)
     r.Kinds = APPEND(r.Kinds, WidgetKindStatusBar)
     r.Kinds = APPEND(r.Kinds, WidgetKindTextArea)
+    r.Kinds = APPEND(r.Kinds, WidgetKindCodeEditor)
+    r.Kinds = APPEND(r.Kinds, WidgetKindFormCanvas)
     r.Kinds = APPEND(r.Kinds, WidgetKindSplitPanel)
     r.Kinds = APPEND(r.Kinds, WidgetKindPropertyGrid)
     r.Kinds = APPEND(r.Kinds, WidgetKindToolbar)
@@ -106,6 +108,12 @@ FUNCTION (r AS Registry) Create(kind AS STRING, id AS STRING) AS (Widget, ERROR)
     END IF
     IF kind = WidgetKindTextArea THEN
         RETURN NewTextArea(id), NIL
+    END IF
+    IF kind = WidgetKindCodeEditor THEN
+        RETURN NewCodeEditor(id), NIL
+    END IF
+    IF kind = WidgetKindFormCanvas THEN
+        RETURN NewFormCanvas(id), NIL
     END IF
     IF kind = WidgetKindSplitPanel THEN
         RETURN NewSplitPanel(id), NIL

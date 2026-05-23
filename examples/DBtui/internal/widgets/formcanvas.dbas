@@ -1,0 +1,67 @@
+' DBtui — internal/widgets/formcanvas.dbas
+'
+' FormCanvas — placeable design surface that hosts child widgets at
+' runtime. The canvas itself draws a dotted grid background and (in
+' the runtime) accepts mouse drag for select/move on its children.
+'
+' Use case: a self-hosted DBtui's "form designer" pane is one of these.
+' User code drives placement via fcAddChild / fcRemoveChild and reacts
+' to ChildSelected / ChildMoved / ChildAdded / ChildRemoved events.
+'
+' Designer-side properties:
+'   ShowGrid — paint the dotted grid (TRUE by default).
+'   GridDot  — the character (default "·").
+'
+' Runtime state per instance lives in the generated WState (FcChildren,
+' FcSelectedIdx, FcDragMode, FcDragOX/Y, FcDragStartMx/My, FcDragOrigX/Y).
+
+FUNCTION NewFormCanvas(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindFormCanvas
+    w.Visible = TRUE
+    w.TabStop = TRUE
+    w.W = 60
+    w.H = 16
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#3b3d5e"
+    w.Style.Border = "normal"
+    w.Style.Corner = "round"
+    w.FcShowGrid = TRUE
+    w.FcGridDot = "·"
+    RETURN w
+END FUNCTION
+
+FUNCTION FormCanvasProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, BoolProp("ShowGrid", w.FcShowGrid))
+    out = APPEND(out, StringProp("GridDot", w.FcGridDot))
+    DIM stylePs AS []Property = StyleProperties(w.Style, TRUE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetFormCanvasProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "ShowGrid" THEN
+        DIM b AS BOOLEAN
+        DIM err AS ERROR
+        b, err = coerceBool(name, value)
+        IF err <> NIL THEN RETURN err
+        w.FcShowGrid = b
+        RETURN NIL
+    END IF
+    IF name = "GridDot" THEN
+        DIM s AS STRING
+        DIM serr AS ERROR
+        s, serr = coerceString(name, value)
+        IF serr <> NIL THEN RETURN serr
+        IF s = "" THEN s = "·"
+        w.FcGridDot = s
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown FormCanvas property: " + name)
+END FUNCTION

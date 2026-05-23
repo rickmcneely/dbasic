@@ -1,0 +1,74 @@
+' DBtui — internal/widgets/codeeditor.dbas
+'
+' CodeEditor — syntax-highlighted code editing surface. Storage reuses
+' the TextInput/TextArea fields (TiValue for content, TiPlaceholder for
+' the empty-buffer hint). Adds CeLanguage to pick a syntax-highlight
+' table at render time ("dbasic" enables the DBasic keyword/type/string/
+' number tokenizer; "" turns highlighting off and the editor renders as
+' plain text with a gutter).
+'
+' Runtime backing is a charm.land/bubbles/v2 textarea.Model per instance
+' (shared with TextArea via the WState.TaModel field in generated code).
+' The custom render in the generated program calls into the highlight
+' helpers emitted by codegen so each CodeEditor instance gets the gutter
+' + per-token colors + block cursor — same look as DBtui's own F7 editor.
+
+FUNCTION NewCodeEditor(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = WidgetKindCodeEditor
+    w.Visible = TRUE
+    w.TabStop = TRUE
+    w.W = 60
+    w.H = 12
+    w.Style.BgColor = "#1a1b2e"
+    w.Style.FgColor = "#e0def4"
+    w.Style.Border = "normal"
+    w.Style.Corner = "round"
+    w.TiValue = ""
+    w.TiPlaceholder = "' code goes here..."
+    w.CeLanguage = "dbasic"
+    RETURN w
+END FUNCTION
+
+FUNCTION CodeEditorProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Value", w.TiValue))
+    out = APPEND(out, StringProp("Placeholder", w.TiPlaceholder))
+    out = APPEND(out, StringProp("Language", w.CeLanguage))
+    DIM stylePs AS []Property = StyleProperties(w.Style, TRUE)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(stylePs) - 1
+        out = APPEND(out, stylePs[i])
+    NEXT i
+    RETURN out
+END FUNCTION
+
+FUNCTION SetCodeEditorProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF SetStyleProperty(@w.Style, name, value) THEN RETURN NIL
+    IF name = "Value" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.TiValue = s
+        RETURN NIL
+    END IF
+    IF name = "Placeholder" THEN
+        DIM s2 AS STRING
+        DIM err2 AS ERROR
+        s2, err2 = coerceString(name, value)
+        IF err2 <> NIL THEN RETURN err2
+        w.TiPlaceholder = s2
+        RETURN NIL
+    END IF
+    IF name = "Language" THEN
+        DIM s3 AS STRING
+        DIM err3 AS ERROR
+        s3, err3 = coerceString(name, value)
+        IF err3 <> NIL THEN RETURN err3
+        w.CeLanguage = s3
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown CodeEditor property: " + name)
+END FUNCTION

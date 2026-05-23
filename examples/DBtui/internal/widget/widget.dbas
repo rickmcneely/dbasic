@@ -161,6 +161,8 @@ CONST WidgetKindGroupBox    AS STRING = "GroupBox"
 CONST WidgetKindMenuBar     AS STRING = "MenuBar"
 CONST WidgetKindStatusBar   AS STRING = "StatusBar"
 CONST WidgetKindTextArea    AS STRING = "TextArea"
+CONST WidgetKindCodeEditor  AS STRING = "CodeEditor"
+CONST WidgetKindFormCanvas  AS STRING = "FormCanvas"
 CONST WidgetKindSplitPanel  AS STRING = "SplitPanel"
 CONST WidgetKindPropertyGrid AS STRING = "PropertyGrid"
 CONST WidgetKindToolbar     AS STRING = "Toolbar"
@@ -223,6 +225,13 @@ TYPE Widget
     ' --- ScrollPane / TabStrip (Title for top border + scroll offset)
     DIM Title  AS STRING
     DIM Offset AS INTEGER
+
+    ' --- CodeEditor (syntax-highlighted code editing surface) ------
+    DIM CeLanguage AS STRING                 ' "dbasic" enables DBasic highlight; "" = none
+
+    ' --- FormCanvas (hosts child widgets at runtime) ---------------
+    DIM FcShowGrid AS BOOLEAN
+    DIM FcGridDot  AS STRING                 ' character to paint as background grid
 END TYPE
 
 ' ----------------------------------------------------------------------
@@ -395,6 +404,8 @@ FUNCTION SetWidgetProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY)
     IF w.Kind = WidgetKindMenuBar     THEN RETURN SetMenuBarProperty(w, name, value)
     IF w.Kind = WidgetKindStatusBar   THEN RETURN SetStatusBarProperty(w, name, value)
     IF w.Kind = WidgetKindTextArea    THEN RETURN SetTextAreaProperty(w, name, value)
+    IF w.Kind = WidgetKindCodeEditor  THEN RETURN SetCodeEditorProperty(w, name, value)
+    IF w.Kind = WidgetKindFormCanvas  THEN RETURN SetFormCanvasProperty(w, name, value)
     IF w.Kind = WidgetKindSplitPanel  THEN RETURN SetSplitPanelProperty(w, name, value)
     IF w.Kind = WidgetKindPropertyGrid THEN RETURN SetPropertyGridProperty(w, name, value)
     IF w.Kind = WidgetKindToolbar     THEN RETURN SetToolbarProperty(w, name, value)
@@ -501,6 +512,15 @@ FUNCTION WidgetToEntry(w AS Widget) AS WidgetEntry
         props["Value"]       = w.TiValue
         props["Placeholder"] = w.TiPlaceholder
     END IF
+    IF w.Kind = WidgetKindCodeEditor THEN
+        props["Value"]       = w.TiValue
+        props["Placeholder"] = w.TiPlaceholder
+        props["Language"]    = w.CeLanguage
+    END IF
+    IF w.Kind = WidgetKindFormCanvas THEN
+        props["ShowGrid"] = w.FcShowGrid
+        props["GridDot"]  = w.FcGridDot
+    END IF
     IF w.Kind = WidgetKindSplitPanel THEN
         props["Orientation"] = w.LstItems
         props["Position"]    = w.LstIdx
@@ -549,6 +569,9 @@ SUB ApplyEntryProperties(w AS POINTER TO Widget, e AS WidgetEntry)
     keys = APPEND(keys, "Rows")
     keys = APPEND(keys, "Buttons")
     keys = APPEND(keys, "Group")
+    keys = APPEND(keys, "Language")
+    keys = APPEND(keys, "ShowGrid")
+    keys = APPEND(keys, "GridDot")
     DIM i AS INTEGER
     FOR i = 0 TO LEN(keys) - 1
         DIM k AS STRING = keys[i]
@@ -735,6 +758,20 @@ FUNCTION WidgetEvents(w AS Widget) AS []STRING
         out = APPEND(out, "GotFocus")
         out = APPEND(out, "LostFocus")
         out = APPEND(out, "KeyPress")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindCodeEditor THEN
+        out = APPEND(out, "Change")
+        out = APPEND(out, "GotFocus")
+        out = APPEND(out, "LostFocus")
+        out = APPEND(out, "KeyPress")
+        RETURN out
+    END IF
+    IF w.Kind = WidgetKindFormCanvas THEN
+        out = APPEND(out, "ChildSelected")
+        out = APPEND(out, "ChildMoved")
+        out = APPEND(out, "ChildAdded")
+        out = APPEND(out, "ChildRemoved")
         RETURN out
     END IF
     IF w.Kind = WidgetKindSplitPanel THEN

@@ -531,6 +531,21 @@ FUNCTION widgetLabel(w AS Widget) AS STRING
         IF w.TiPlaceholder <> "" THEN RETURN w.TiPlaceholder
         RETURN "(textarea)"
     END IF
+    IF w.Kind = WidgetKindCodeEditor THEN
+        DIM ceSrc AS STRING = w.TiValue
+        IF ceSrc = "" THEN ceSrc = w.TiPlaceholder
+        IF ceSrc = "" THEN ceSrc = "(code editor)"
+        DIM ceLines AS []STRING = strings.SplitN(ceSrc, "\n", 2)
+        ' Designer preview: plain text + gutter. Real syntax highlight
+        ' happens at runtime via ceRender — adding ANSI here would get
+        ' double-escaped by the surrounding lipgloss panel render.
+        RETURN " 1 " + ceLines[0]
+    END IF
+    IF w.Kind = WidgetKindFormCanvas THEN
+        DIM fcDot AS STRING = w.FcGridDot
+        IF fcDot = "" THEN fcDot = "·"
+        RETURN "FormCanvas " + fcDot + fcDot + fcDot
+    END IF
     IF w.Kind = WidgetKindSplitPanel THEN
         IF w.LstItems = "horizontal" THEN RETURN "──── split ────"
         RETURN "│"
