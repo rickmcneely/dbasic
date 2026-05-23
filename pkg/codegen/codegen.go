@@ -774,6 +774,106 @@ func MakeBytes(size int) []byte {
 func LenBytes(b []byte) int {
 	return len(b)
 }`,
+	"Uint8": `// Uint8 casts any integer/float value to uint8.
+func Uint8(val interface{}) uint8 {
+	switch v := val.(type) {
+	case int:
+		return uint8(v)
+	case int32:
+		return uint8(v)
+	case int64:
+		return uint8(v)
+	case uint8:
+		return v
+	case uint16:
+		return uint8(v)
+	case uint32:
+		return uint8(v)
+	case uint64:
+		return uint8(v)
+	case float32:
+		return uint8(v)
+	case float64:
+		return uint8(v)
+	default:
+		return 0
+	}
+}`,
+	"Uint16": `// Uint16 casts any integer/float value to uint16.
+func Uint16(val interface{}) uint16 {
+	switch v := val.(type) {
+	case int:
+		return uint16(v)
+	case int32:
+		return uint16(v)
+	case int64:
+		return uint16(v)
+	case uint8:
+		return uint16(v)
+	case uint16:
+		return v
+	case uint32:
+		return uint16(v)
+	case uint64:
+		return uint16(v)
+	case float32:
+		return uint16(v)
+	case float64:
+		return uint16(v)
+	default:
+		return 0
+	}
+}`,
+	"Uint32": `// Uint32 casts any integer/float value to uint32.
+func Uint32(val interface{}) uint32 {
+	switch v := val.(type) {
+	case int:
+		return uint32(v)
+	case int32:
+		return uint32(v)
+	case int64:
+		return uint32(v)
+	case uint8:
+		return uint32(v)
+	case uint16:
+		return uint32(v)
+	case uint32:
+		return v
+	case uint64:
+		return uint32(v)
+	case float32:
+		return uint32(v)
+	case float64:
+		return uint32(v)
+	default:
+		return 0
+	}
+}`,
+	"Uint64": `// Uint64 casts any integer/float value to uint64.
+func Uint64(val interface{}) uint64 {
+	switch v := val.(type) {
+	case int:
+		return uint64(v)
+	case int32:
+		return uint64(v)
+	case int64:
+		return uint64(v)
+	case uint8:
+		return uint64(v)
+	case uint16:
+		return uint64(v)
+	case uint32:
+		return uint64(v)
+	case uint64:
+		return v
+	case float32:
+		return uint64(v)
+	case float64:
+		return uint64(v)
+	default:
+		return 0
+	}
+}`,
 }
 
 // runtimeFuncImports maps runtime functions to required imports

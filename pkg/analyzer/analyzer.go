@@ -53,6 +53,16 @@ func (a *Analyzer) registerBuiltins() {
 	a.addBuiltin("Sng", []*Type{AnyType}, []*Type{SingleType})
 	a.addBuiltin("Dbl", []*Type{AnyType}, []*Type{DoubleType})
 	a.addBuiltin("Bool", []*Type{AnyType}, []*Type{BooleanType})
+	// Unsigned-int casts. These actually return Go uint8/16/32/64 at
+	// runtime — the declared IntegerType is a small lie that holds
+	// up only when the result flows directly into a Go API expecting
+	// that exact unsigned type (e.g. pty.Winsize.Rows is uint16, so
+	// `ws.Rows = Uint16(rows)` compiles). Do NOT DIM a variable AS
+	// INTEGER from a UintN call — Go won't accept uint64 in an int slot.
+	a.addBuiltin("Uint8", []*Type{AnyType}, []*Type{IntegerType})
+	a.addBuiltin("Uint16", []*Type{AnyType}, []*Type{IntegerType})
+	a.addBuiltin("Uint32", []*Type{AnyType}, []*Type{IntegerType})
+	a.addBuiltin("Uint64", []*Type{AnyType}, []*Type{IntegerType})
 
 	// Byte functions
 	a.addBuiltin("Encode", []*Type{StringType}, []*Type{BytesType})

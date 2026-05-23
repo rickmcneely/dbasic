@@ -72,11 +72,9 @@ SUB shellReader()
     LOOP
 END SUB
 
-' ShellResize resizes the vt10x virtual terminal. Ideally we'd also
-' call pty.Setsize so bash/vim get a SIGWINCH and adapt — but DBasic
-' lacks a uint16 cast for pty.Winsize fields, so we punt on that and
-' just resize the virtual grid. Child programs will think the
-' terminal is the default 80x24 and lay out accordingly.
+' ShellResize resizes both the vt10x virtual terminal AND the PTY so
+' child programs get a SIGWINCH and adapt their layout. Uses the new
+' Uint16 cast to pack the dimensions into pty.Winsize.
 SUB ShellResize(cols AS INTEGER, rows AS INTEGER)
     IF NOT gShellActive THEN RETURN
     IF cols < 1 THEN cols = 1
@@ -85,6 +83,11 @@ SUB ShellResize(cols AS INTEGER, rows AS INTEGER)
     gShellCols = cols
     gShellRows = rows
     gShellVT.Resize(cols, rows)
+    DIM ws AS pty.Winsize
+    ws.Rows = Uint16(rows)
+    ws.Cols = Uint16(cols)
+    DIM serr AS ERROR = pty.Setsize(gShellPtmx, @ws)
+    _ = serr
 END SUB
 
 ' ShellRender returns the current rendered screen — one line per row
