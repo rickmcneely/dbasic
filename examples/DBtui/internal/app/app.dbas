@@ -30,6 +30,20 @@ IMPORT "time"
 ' Model
 ' ----------------------------------------------------------------------
 
+' VisualSnapshot is a point-in-time copy of everything Undo needs to
+' restore — the widget list (by value, deep), the current selection
+' set, and the primary-selection index. FormName is stamped so a Undo
+' across a form switch is a no-op (we just won't restore into the wrong
+' form; the snapshot is meaningless then).
+TYPE VisualSnapshot
+    DIM FormName   AS STRING
+    DIM Widgets    AS []Widget
+    DIM Selections AS []INTEGER
+    DIM Selected   AS INTEGER
+END TYPE
+
+CONST undoStackCap AS INTEGER = 100
+
 TYPE Model
     DIM Width      AS INTEGER
     DIM Height     AS INTEGER
@@ -74,10 +88,19 @@ TYPE Model
     DIM DragMultiIdxs AS []INTEGER
     DIM DragMultiXs   AS []INTEGER
     DIM DragMultiYs   AS []INTEGER
+    ' Set TRUE after the drag's first MotionMsg fires pushUndo, so a
+    ' pure click (no motion) doesn't pollute the undo history.
+    DIM DragUndoPushed AS BOOLEAN
 
     ' Clipboard — widgets snapshotted by Edit > Cut / Copy. Paste
     ' appends clones with auto-uniquified Ids at a small offset.
     DIM Clipboard     AS []Widget
+
+    ' Undo / redo — VisualSnapshot stacks. pushUndo() is called at the
+    ' entry of every canvas mutation; Undo pops UndoStack, pushes the
+    ' current state to RedoStack, and restores. Capped to ~100 entries.
+    DIM UndoStack    AS []VisualSnapshot
+    DIM RedoStack    AS []VisualSnapshot
 
     ' Double-click tracking — used by the palette to place a widget on
     ' the canvas when the same row is clicked twice in quick succession.
@@ -901,6 +924,14 @@ FUNCTION dispatchFileAction(m AS POINTER TO Model, action AS STRING) AS tea.Cmd
     END IF
 
     ' --- Edit menu --------------------------------------------------
+    IF action = "edit.undo" THEN
+        applyUndo(m)
+        RETURN NIL
+    END IF
+    IF action = "edit.redo" THEN
+        applyRedo(m)
+        RETURN NIL
+    END IF
     IF action = "edit.selectall" THEN
         m.Visual.SelectAll()
         m.StatusBar.Message = fmt.Sprintf("%d widgets selected", m.Visual.SelectionCount())
@@ -912,6 +943,7 @@ FUNCTION dispatchFileAction(m AS POINTER TO Model, action AS STRING) AS tea.Cmd
         RETURN NIL
     END IF
     IF action = "edit.cut" THEN
+        pushUndo(m)
         copySelectionToClipboard(m)
         DIM n AS INTEGER = LEN(m.Clipboard)
         removeSelection(m)
@@ -919,18 +951,130 @@ FUNCTION dispatchFileAction(m AS POINTER TO Model, action AS STRING) AS tea.Cmd
         RETURN NIL
     END IF
     IF action = "edit.paste" THEN
-        DIM placed AS INTEGER = pasteFromClipboard(m)
-        IF placed > 0 THEN
-            m.StatusBar.Message = fmt.Sprintf("pasted %d widgets", placed)
-        ELSE
+        IF LEN(m.Clipboard) = 0 THEN
             m.StatusBar.Message = "clipboard empty"
+            RETURN NIL
         END IF
+        pushUndo(m)
+        DIM placed AS INTEGER = pasteFromClipboard(m)
+        m.StatusBar.Message = fmt.Sprintf("pasted %d widgets", placed)
         RETURN NIL
     END IF
 
     m.StatusBar.Message = "selected: " + action + "  (action dispatch — TBD)"
     RETURN NIL
 END FUNCTION
+
+' --- Undo / Redo ---------------------------------------------------
+
+' snapshotVisual builds a deep-enough copy of the visual editor's
+' state for undo restoration. Widget is a TYPE value, so APPENDing
+' each element gives an independent copy; same for the INTEGER
+' selection slice.
+FUNCTION snapshotVisual(m AS POINTER TO Model) AS VisualSnapshot
+    DIM s AS VisualSnapshot
+    s.FormName = m.Visual.FormName
+    s.Selected = m.Visual.Selected
+    DIM ws AS []Widget
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Visual.Widgets) - 1
+        ws = APPEND(ws, m.Visual.Widgets[i])
+    NEXT i
+    s.Widgets = ws
+    DIM sel AS []INTEGER
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(m.Visual.Selections) - 1
+        sel = APPEND(sel, m.Visual.Selections[j])
+    NEXT j
+    s.Selections = sel
+    RETURN s
+END FUNCTION
+
+' restoreVisual swaps the visual editor's state to match the snapshot.
+' Caller is responsible for refreshing dependent panels (Properties).
+SUB restoreVisual(m AS POINTER TO Model, s AS VisualSnapshot)
+    m.Visual.Widgets = s.Widgets
+    m.Visual.Selections = s.Selections
+    m.Visual.Selected = s.Selected
+END SUB
+
+' pushUndo records the current visual state so a follow-up Undo can
+' restore it. Called at the start of every mutation. Clears RedoStack
+' (the redo lineage diverges after a fresh edit). Caps UndoStack at
+' undoStackCap by dropping the oldest entry.
+SUB pushUndo(m AS POINTER TO Model)
+    DIM snap AS VisualSnapshot = snapshotVisual(m)
+    m.UndoStack = APPEND(m.UndoStack, snap)
+    IF LEN(m.UndoStack) > undoStackCap THEN
+        DIM trimmed AS []VisualSnapshot
+        DIM k AS INTEGER
+        FOR k = LEN(m.UndoStack) - undoStackCap TO LEN(m.UndoStack) - 1
+            trimmed = APPEND(trimmed, m.UndoStack[k])
+        NEXT k
+        m.UndoStack = trimmed
+    END IF
+    DIM emptyRedo AS []VisualSnapshot
+    m.RedoStack = emptyRedo
+END SUB
+
+' applyUndo pops the latest UndoStack entry, snapshots the current
+' state onto RedoStack (so Redo can revert), and restores. No-op if
+' the stack is empty or the snapshot belongs to a different form.
+SUB applyUndo(m AS POINTER TO Model)
+    IF LEN(m.UndoStack) = 0 THEN
+        m.StatusBar.Message = "nothing to undo"
+        RETURN
+    END IF
+    DIM top AS VisualSnapshot = m.UndoStack[LEN(m.UndoStack) - 1]
+    IF top.FormName <> m.Visual.FormName THEN
+        m.StatusBar.Message = "undo skipped — snapshot belongs to " + top.FormName
+        RETURN
+    END IF
+    m.UndoStack = m.UndoStack[0:LEN(m.UndoStack) - 1]
+    m.RedoStack = APPEND(m.RedoStack, snapshotVisual(m))
+    restoreVisual(m, top)
+    syncProjectFromVisual(m)
+    refreshAfterSelectionChange(m)
+    m.StatusBar.Message = fmt.Sprintf("undo — %d in history", LEN(m.UndoStack))
+END SUB
+
+' applyRedo mirrors applyUndo.
+SUB applyRedo(m AS POINTER TO Model)
+    IF LEN(m.RedoStack) = 0 THEN
+        m.StatusBar.Message = "nothing to redo"
+        RETURN
+    END IF
+    DIM top AS VisualSnapshot = m.RedoStack[LEN(m.RedoStack) - 1]
+    IF top.FormName <> m.Visual.FormName THEN
+        m.StatusBar.Message = "redo skipped — snapshot belongs to " + top.FormName
+        RETURN
+    END IF
+    m.RedoStack = m.RedoStack[0:LEN(m.RedoStack) - 1]
+    m.UndoStack = APPEND(m.UndoStack, snapshotVisual(m))
+    restoreVisual(m, top)
+    syncProjectFromVisual(m)
+    refreshAfterSelectionChange(m)
+    m.StatusBar.Message = fmt.Sprintf("redo — %d in history", LEN(m.RedoStack))
+END SUB
+
+' refreshAfterSelectionChange surfaces either the new primary widget
+' or the form in Properties, depending on whether anything is
+' selected after the state swap.
+SUB refreshAfterSelectionChange(m AS POINTER TO Model)
+    IF m.Visual.Selected >= 0 AND m.Visual.Selected < LEN(m.Visual.Widgets) THEN
+        m.Properties.SetWidget(m.Visual.Widgets[m.Visual.Selected])
+        RETURN
+    END IF
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(m.Tree.Project.Forms) - 1
+        IF m.Tree.Project.Forms[k].Name = m.Visual.FormName THEN
+            m.Properties.SetForm(m.Tree.Project.Forms[k])
+            RETURN
+        END IF
+    NEXT k
+END SUB
+
+' --- Clipboard / selection helpers ---------------------------------
 
 ' copySelectionToClipboard snapshots every selected widget into the
 ' Model's Clipboard (by value, deep enough for the in-memory Widget
@@ -1337,6 +1481,9 @@ FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER, shi
         wIdx, rx, ry, dragOk = m.Visual.BeginDragAt(lx2, ly2)
         IF dragOk THEN
             ' Start a drag — Move by default, Resize on edge/corner.
+            ' Defer the undo snapshot to first motion: pure clicks
+            ' (no drag) shouldn't pollute the undo history.
+            m.DragUndoPushed = FALSE
             DIM w AS Widget = m.Visual.Widgets[wIdx]
             m.DragWidgetIdx = wIdx
             m.DragOrigX = w.X
@@ -1418,10 +1565,14 @@ FUNCTION handleMouseClick(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER, shi
         idx, pok = m.Palette.ClickAt(lx3, ly3 - 1)
         IF NOT pok THEN RETURN NIL
         IF isDoubleClick(m, FocusWidgets, idx) THEN
+            ' Placement is a mutation — snapshot before so Undo can
+            ' remove it. Skip the snapshot for tool placement since
+            ' tools aren't part of Visual.Widgets.
             DIM perr AS ERROR
             IF m.PaletteTab = 1 THEN
                 perr = placePaletteTool(m)
             ELSE
+                pushUndo(m)
                 perr = placePaletteWidget(m)
             END IF
             IF perr <> NIL THEN
@@ -1456,6 +1607,7 @@ SUB applyPropClickAction(m AS POINTER TO Model, action AS INTEGER)
         DIM tok AS BOOLEAN
         tname, tnewVal, tok = m.Properties.ToggleBool()
         IF tok THEN
+            IF m.Properties.HasWidget THEN pushUndo(m)
             DIM terr AS ERROR
             IF m.Properties.HasWidget THEN
                 terr = applyWidgetEdit(m, tname, tnewVal)
@@ -1483,6 +1635,7 @@ SUB applyPropClickAction(m AS POINTER TO Model, action AS INTEGER)
         DIM cok AS BOOLEAN
         cname, cnew, cok = m.Properties.CycleEnum(cdir)
         IF cok THEN
+            IF m.Properties.HasWidget THEN pushUndo(m)
             DIM cerr AS ERROR
             IF m.Properties.HasWidget THEN
                 cerr = applyWidgetEdit(m, cname, cnew)
@@ -1525,6 +1678,15 @@ END SUB
 SUB handleMouseDrag(m AS POINTER TO Model, x AS INTEGER, y AS INTEGER)
     DIM dx AS INTEGER = x - m.DragStartMx
     DIM dy AS INTEGER = y - m.DragStartMy
+    ' On the first real motion of a Move/Resize drag, snapshot for
+    ' undo. Pure clicks (no motion) skip this and don't pollute the
+    ' undo history.
+    IF NOT m.DragUndoPushed AND (m.DragMode = DragMove OR m.DragMode = DragResize) THEN
+        IF dx <> 0 OR dy <> 0 THEN
+            pushUndo(m)
+            m.DragUndoPushed = TRUE
+        END IF
+    END IF
     IF m.DragMode = DragMove THEN
         ' If a multi-select drag is active, apply the delta to every
         ' snapshotted widget. The fallback (no snapshot) just moves
@@ -2516,6 +2678,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     m.StatusBar.Message = defaultStatus()
                     RETURN m, NIL
                 END IF
+                IF m.Properties.HasWidget THEN pushUndo(@m)
                 DIM aerr AS ERROR
                 IF m.Properties.HasWidget THEN
                     aerr = applyWidgetEdit(@m, pname, pbuf)
@@ -2669,6 +2832,23 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             toggleBottomPane(@m)
             RETURN m, NIL
         END IF
+        ' Edit-menu keyboard shortcuts (the menu hints already advertise
+        ' them; this just makes them work without opening the menu).
+        IF k = "ctrl+z" THEN
+            RETURN m, dispatchFileAction(@m, "edit.undo")
+        END IF
+        IF k = "ctrl+y" THEN
+            RETURN m, dispatchFileAction(@m, "edit.redo")
+        END IF
+        IF k = "ctrl+x" THEN
+            RETURN m, dispatchFileAction(@m, "edit.cut")
+        END IF
+        IF k = "ctrl+v" THEN
+            RETURN m, dispatchFileAction(@m, "edit.paste")
+        END IF
+        IF k = "ctrl+a" THEN
+            RETURN m, dispatchFileAction(@m, "edit.selectall")
+        END IF
         IF k = "tab" THEN
             ' Cycle ProjectTree → Visual → Widgets → Properties → ProjectTree.
             IF m.Focus = FocusProjectTree THEN
@@ -2777,6 +2957,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 DIM tok AS BOOLEAN
                 tname, tnewVal, tok = m.Properties.ToggleBool()
                 IF tok THEN
+                    IF m.Properties.HasWidget THEN pushUndo(@m)
                     DIM terr AS ERROR
                     IF m.Properties.HasWidget THEN
                         terr = applyWidgetEdit(@m, tname, tnewVal)
@@ -2804,6 +2985,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 DIM cok AS BOOLEAN
                 cname, cnew, cok = m.Properties.CycleEnum(cdir)
                 IF cok THEN
+                    IF m.Properties.HasWidget THEN pushUndo(@m)
                     DIM cerr AS ERROR
                     IF m.Properties.HasWidget THEN
                         cerr = applyWidgetEdit(@m, cname, cnew)
