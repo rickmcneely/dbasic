@@ -60,6 +60,11 @@ examples/tictactoe/tictactoe
 examples/DBtui/myproject
 examples/DBtui/myproject.dbas
 examples/DBtui/forms/
+# DBtui sub-example binaries + generated .dbas (rebuild from .dbproj).
+examples/DBtui/examples/*/dbtui_shell
+examples/DBtui/examples/*/dbtui_shell.dbas
+examples/DBtui/examples/dbtui_shell/go.mod
+examples/DBtui/examples/dbtui_shell/go.sum
 
 # Database files
 *.db

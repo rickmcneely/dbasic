@@ -1,0 +1,133 @@
+' DBtui shell mock — interactive handlers.
+'
+' This program is generated from dbtui_shell.dbproj and demonstrates
+' the widget set behaving like a tiny IDE:
+'
+'   - Clicking a kind in the Widgets palette swaps the PropertyGrid
+'     contents to that kind's properties + updates the canvas label.
+'   - Editing the Text row in the PropertyGrid mutates the canvas
+'     label live.
+'
+' All inter-widget mutation flows through the gGet*/gSet* accessors
+' that codegen emits at package level — they read/write fields on the
+' current Update tick's Model via the gM pointer.
+
+' rowsForKind returns the PropertyGrid Rows string for a widget kind.
+' Categories are encoded as "Cat||||", data rows as "|Name|Value|Type".
+FUNCTION rowsForKind(kind AS STRING) AS STRING
+    DIM common AS STRING = ";Layout||||;|X|34|int;|Y|13|int;|Width|28|int;|Height|1|int;Visual||||;|BgColor|#1a1b2e|color;|FgColor|#e0def4|color"
+    IF kind = "Button" THEN
+        RETURN "Button||||;|Name|btnDemo|;|Visible|true|bool;|TabIndex|0|int;|TabStop|true|bool;|Text|Click me|;|Align|center|enum:left:center:right" + common
+    END IF
+    IF kind = "Label" THEN
+        RETURN "Label||||;|Name|lblDemo|;|Visible|true|bool;|TabStop|false|bool;|Text|Hello world|;|Align|left|enum:left:center:right" + common
+    END IF
+    IF kind = "TextInput" THEN
+        RETURN "TextInput||||;|Name|txtDemo|;|Visible|true|bool;|TabIndex|0|int;|TabStop|true|bool;|Value||;|Placeholder|Type here..." + common
+    END IF
+    IF kind = "Checkbox" THEN
+        RETURN "Checkbox||||;|Name|chkDemo|;|Visible|true|bool;|TabStop|true|bool;|Text|Enable|;|Checked|false|bool" + common
+    END IF
+    IF kind = "ComboBox" THEN
+        RETURN "ComboBox||||;|Name|cmbDemo|;|Visible|true|bool;|TabStop|true|bool;|Items|red;green;blue|;|Selected|0|int" + common
+    END IF
+    IF kind = "ListBox" THEN
+        RETURN "ListBox||||;|Name|lstDemo|;|Visible|true|bool;|TabStop|true|bool;|Items|alpha;bravo;charlie|;|Selected|0|int" + common
+    END IF
+    IF kind = "RadioButton" THEN
+        RETURN "RadioButton||||;|Name|rbDemo|;|Visible|true|bool;|TabStop|true|bool;|Text|Option A|;|Group|opts|;|Checked|false|bool" + common
+    END IF
+    IF kind = "ProgressBar" THEN
+        RETURN "ProgressBar||||;|Name|pbDemo|;|Visible|true|bool;|Min|0|int;|Max|100|int;|Value|50|int" + common
+    END IF
+    IF kind = "ScrollBar" THEN
+        RETURN "ScrollBar||||;|Name|sbDemo|;|Visible|true|bool;|TabStop|true|bool;|Min|0|int;|Max|100|int;|Value|50|int;|Horizontal|false|bool" + common
+    END IF
+    IF kind = "TreeView" THEN
+        RETURN "TreeView||||;|Name|tvDemo|;|Title|Tree|;|TabStop|true|bool;|Nodes|0|+|root;1|*|child" + common
+    END IF
+    IF kind = "GroupBox" THEN
+        RETURN "GroupBox||||;|Name|gbDemo|;|Title|Group|" + common
+    END IF
+    IF kind = "MenuBar" THEN
+        RETURN "MenuBar||||;|Name|mbDemo|;|TabStop|true|bool;|Menus|File|New:file.new" + common
+    END IF
+    IF kind = "StatusBar" THEN
+        RETURN "StatusBar||||;|Name|sbDemo|;|Segments|Status:Ready" + common
+    END IF
+    IF kind = "TextArea" THEN
+        RETURN "TextArea||||;|Name|taDemo|;|TabStop|true|bool;|Value||;|Placeholder|Multi-line..." + common
+    END IF
+    IF kind = "SplitPanel" THEN
+        RETURN "SplitPanel||||;|Name|spDemo|;|Orientation|vertical|enum:vertical:horizontal;|Position|50|int" + common
+    END IF
+    IF kind = "PropertyGrid" THEN
+        RETURN "PropertyGrid||||;|Name|pgDemo|;|Title|Properties|;|TabStop|true|bool" + common
+    END IF
+    RETURN kind + "||||;|Name||;|Visible|true|bool" + common
+END FUNCTION
+
+' kindAtIdx — the palette's nth kind label.
+FUNCTION kindAtIdx(idx AS INTEGER) AS STRING
+    DIM items AS []STRING = strings.Split(gGetItems("lbWidgets"), ";")
+    IF idx < 0 OR idx >= LEN(items) THEN RETURN ""
+    RETURN items[idx]
+END FUNCTION
+
+' canvasLabelFor — what to display on the canvas for a given kind.
+FUNCTION canvasLabelFor(kind AS STRING, text AS STRING) AS STRING
+    IF kind = "Button" THEN RETURN "[ " + text + " ]"
+    IF kind = "Label"  THEN RETURN text
+    IF kind = "Checkbox" THEN RETURN "[ ] " + text
+    IF kind = "RadioButton" THEN RETURN "( ) " + text
+    IF kind = "TextInput" THEN RETURN "│" + text + "│"
+    RETURN "« " + kind + " »"
+END FUNCTION
+
+' textFromRows — pull the Text or Value column out of a rows string.
+' Returns the first matching "|Text|...|" or "|Value|...|" entry.
+FUNCTION textFromRows(rows AS STRING) AS STRING
+    DIM all AS []STRING = strings.Split(rows, ";")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(all) - 1
+        DIM parts AS []STRING = strings.SplitN(all[i], "|", 4)
+        IF LEN(parts) >= 3 THEN
+            IF parts[1] = "Text" OR parts[1] = "Value" THEN RETURN parts[2]
+        END IF
+    NEXT i
+    RETURN ""
+END FUNCTION
+
+SUB mb_Action(action AS STRING)
+    IF action = "file.exit" THEN os.Exit(0)
+    fmt.Fprintln(os.Stderr, "menu:", action)
+END SUB
+
+SUB tree_Change()
+    fmt.Fprintln(os.Stderr, "tree row changed")
+END SUB
+
+SUB tabs_Change()
+    fmt.Fprintln(os.Stderr, "tab changed")
+END SUB
+
+' lbWidgets_Change — palette row changed. Repopulate the PropertyGrid
+' for that kind and refresh the canvas label.
+SUB lbWidgets_Change()
+    DIM idx AS INTEGER = gGetSelected("lbWidgets")
+    DIM kind AS STRING = kindAtIdx(idx)
+    IF kind = "" THEN RETURN
+    DIM rows AS STRING = rowsForKind(kind)
+    gSetItems("props", rows)
+    gSetSelected("props", 0)
+    gSetText("lblCanvas", canvasLabelFor(kind, textFromRows(rows)))
+END SUB
+
+' props_Change — a PropertyGrid row was edited. If it was the Text or
+' Value row, push it through to the canvas label.
+SUB props_Change()
+    DIM kindIdx AS INTEGER = gGetSelected("lbWidgets")
+    DIM kind AS STRING = kindAtIdx(kindIdx)
+    DIM rows AS STRING = gGetItems("props")
+    gSetText("lblCanvas", canvasLabelFor(kind, textFromRows(rows)))
+END SUB

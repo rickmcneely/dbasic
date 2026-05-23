@@ -530,6 +530,87 @@ FUNCTION emitHeader(p AS Project) AS STRING
     ' call <id>_Show(); the next Update tick observes it and switches
     ' to dialog mode.
     s = s + "DIM gPendingDialog AS STRING\n\n"
+    ' Package-level Model pointer — Update sets gM = @m on every tick.
+    ' Accessor helpers (gGetText, gSetItems, etc.) read/mutate widget
+    ' state through this pointer so user SUBs can affect other widgets.
+    s = s + "DIM gM AS POINTER TO Model\n\n"
+    RETURN s
+END FUNCTION
+
+' emitWidgetAccessors writes the package-level helpers that user code
+' uses to query / mutate widget state from inside _Change / _Click /
+' _Action handlers. All helpers no-op if gM is NIL (called outside
+' the Update tick) or the id doesn't match a widget.
+FUNCTION emitWidgetAccessors() AS STRING
+    DIM s AS STRING = ""
+    s = s + "FUNCTION gWidgetIdx(id AS STRING) AS INTEGER\n"
+    s = s + "    IF gM = NIL THEN RETURN -1\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(gM.Widgets) - 1\n"
+    s = s + "        IF gM.Widgets[i].Id = id THEN RETURN i\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN -1\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "FUNCTION gGetText(id AS STRING) AS STRING\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN \"\"\n"
+    s = s + "    RETURN gM.Widgets[i].Text\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "SUB gSetText(id AS STRING, text AS STRING)\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN\n"
+    s = s + "    gM.Widgets[i].Text = text\n"
+    s = s + "END SUB\n\n"
+    s = s + "FUNCTION gGetItems(id AS STRING) AS STRING\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN \"\"\n"
+    s = s + "    RETURN gM.Widgets[i].Items\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "SUB gSetItems(id AS STRING, items AS STRING)\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN\n"
+    s = s + "    gM.Widgets[i].Items = items\n"
+    s = s + "END SUB\n\n"
+    s = s + "FUNCTION gGetSelected(id AS STRING) AS INTEGER\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN -1\n"
+    s = s + "    RETURN gM.Widgets[i].Selected\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "SUB gSetSelected(id AS STRING, sel AS INTEGER)\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN\n"
+    s = s + "    gM.Widgets[i].Selected = sel\n"
+    s = s + "END SUB\n\n"
+    s = s + "FUNCTION gGetTitle(id AS STRING) AS STRING\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN \"\"\n"
+    s = s + "    RETURN gM.Widgets[i].Title\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "SUB gSetTitle(id AS STRING, title AS STRING)\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN\n"
+    s = s + "    gM.Widgets[i].Title = title\n"
+    s = s + "END SUB\n\n"
+    s = s + "FUNCTION gGetVisible(id AS STRING) AS BOOLEAN\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN FALSE\n"
+    s = s + "    RETURN gM.Widgets[i].Visi\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "SUB gSetVisible(id AS STRING, vis AS BOOLEAN)\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN\n"
+    s = s + "    gM.Widgets[i].Visi = vis\n"
+    s = s + "END SUB\n\n"
+    s = s + "FUNCTION gGetValue(id AS STRING) AS STRING\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN \"\"\n"
+    s = s + "    RETURN gM.Widgets[i].Val\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "SUB gSetValue(id AS STRING, val AS STRING)\n"
+    s = s + "    DIM i AS INTEGER = gWidgetIdx(id)\n"
+    s = s + "    IF i < 0 THEN RETURN\n"
+    s = s + "    gM.Widgets[i].Val = val\n"
+    s = s + "END SUB\n\n"
     RETURN s
 END FUNCTION
 
@@ -715,6 +796,9 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "    RETURN n\n"
     s = s + "END FUNCTION\n\n"
     s = s + "FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)\n"
+    ' Keep the package-level pointer fresh so user SUBs can reach the
+    ' current widget state through gGet*/gSet* accessors.
+    s = s + "    gM = @m\n"
     s = s + "    DIM sizeMsg AS tea.WindowSizeMsg\n"
     s = s + "    DIM sizeOk AS BOOLEAN\n"
     s = s + "    sizeMsg, sizeOk = msg.(tea.WindowSizeMsg)\n"
@@ -2185,6 +2269,7 @@ FUNCTION GenerateProgram(p AS Project) AS STRING
     s = s + emitMenuHelpers()
     s = s + emitDispatchMenuAction(form)
     s = s + emitPropertyGridHelpers()
+    s = s + emitWidgetAccessors()
     s = s + emitSetFocus()
     s = s + emitLifecycle()
     s = s + emitRenderWidget()
