@@ -141,6 +141,9 @@ TYPE Model
     DIM HoverX AS INTEGER
     DIM HoverY AS INTEGER
 
+    ' Last find query — F3 repeats it from the current cursor.
+    DIM FindQuery AS STRING
+
     ' Generic modal dialog state. Two flavours:
     '   • button modal  → ModalIsInput=FALSE; user picks one of
     '     ModalButtons via arrows + Enter.
@@ -452,6 +455,113 @@ FUNCTION newTextarea() AS textarea.Model
     RETURN ed
 END FUNCTION
 
+' -------------------------------------------------------------------------
+' Cursor / find / goto helpers — work against the active tab's editor.
+' -------------------------------------------------------------------------
+
+' cursorOffset — current cursor position as a byte offset from the
+' start of the buffer. Computed by summing prior line lengths +1
+' (for the implicit '\n') and adding the column inside the line.
+FUNCTION cursorOffset(m AS POINTER TO Model) AS INTEGER
+    IF NOT hasActiveTab(^m) THEN RETURN 0
+    DIM content AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    DIM row AS INTEGER = m.Tabs[m.TabIdx].Editor.Line()
+    DIM col AS INTEGER = m.Tabs[m.TabIdx].Editor.Column()
+    DIM lines AS []STRING = strings.Split(content, "\n")
+    DIM off AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO row - 1
+        IF i < LEN(lines) THEN off = off + LEN(lines[i]) + 1
+    NEXT i
+    off = off + col
+    RETURN off
+END FUNCTION
+
+' moveCursorToOffset — translate a byte offset back to (row, col)
+' and walk the textarea cursor to that spot. textarea exposes
+' MoveToBegin/CursorDown/SetCursorColumn but no "set absolute"
+' helper, so we have to drive it step-by-step.
+SUB moveCursorToOffset(m AS POINTER TO Model, offset AS INTEGER)
+    IF NOT hasActiveTab(^m) THEN RETURN
+    DIM content AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    IF offset < 0 THEN offset = 0
+    IF offset > LEN(content) THEN offset = LEN(content)
+    DIM row AS INTEGER = 0
+    DIM col AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO offset - 1
+        IF Mid(content, i + 1, 1) = "\n" THEN
+            row = row + 1
+            col = 0
+        ELSE
+            col = col + 1
+        END IF
+    NEXT i
+    m.Tabs[m.TabIdx].Editor.MoveToBegin()
+    DIM r AS INTEGER
+    FOR r = 0 TO row - 1
+        m.Tabs[m.TabIdx].Editor.CursorDown()
+    NEXT r
+    m.Tabs[m.TabIdx].Editor.SetCursorColumn(col)
+END SUB
+
+' findNextInActive — search the active tab's content for FindQuery,
+' starting at byte offset `fromOff`. Wraps around to the top of the
+' buffer if nothing is found in the tail. Status bar reports the
+' outcome (hit, wrapped, or not-found).
+SUB findNextInActive(m AS POINTER TO Model, fromOff AS INTEGER)
+    IF NOT hasActiveTab(^m) THEN
+        m.Status = "no file open to search"
+        RETURN
+    END IF
+    IF m.FindQuery = "" THEN
+        m.Status = "Ctrl+F to set a find query"
+        RETURN
+    END IF
+    DIM content AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    IF fromOff < 0 THEN fromOff = 0
+    IF fromOff > LEN(content) THEN fromOff = LEN(content)
+    DIM tail AS STRING = ""
+    IF fromOff < LEN(content) THEN tail = Mid(content, fromOff + 1, LEN(content) - fromOff)
+    DIM rel AS INTEGER = strings.Index(tail, m.FindQuery)
+    DIM abs AS INTEGER = 0 - 1
+    DIM wrapped AS BOOLEAN = FALSE
+    IF rel >= 0 THEN
+        abs = fromOff + rel
+    ELSE
+        abs = strings.Index(content, m.FindQuery)
+        wrapped = TRUE
+    END IF
+    IF abs < 0 THEN
+        m.Status = "not found: " + m.FindQuery
+        RETURN
+    END IF
+    moveCursorToOffset(m, abs)
+    setFocus(m, "editor")
+    IF wrapped THEN
+        m.Status = "wrapped — '" + m.FindQuery + "'"
+    ELSE
+        m.Status = "found '" + m.FindQuery + "' (F3 = next)"
+    END IF
+END SUB
+
+' gotoLine — jump the cursor to the start of line `line` (1-based)
+' in the active tab. Out-of-range values are clamped.
+SUB gotoLine(m AS POINTER TO Model, line AS INTEGER)
+    IF NOT hasActiveTab(^m) THEN RETURN
+    IF line < 1 THEN line = 1
+    DIM lineCount AS INTEGER = m.Tabs[m.TabIdx].Editor.LineCount()
+    IF line > lineCount THEN line = lineCount
+    m.Tabs[m.TabIdx].Editor.MoveToBegin()
+    DIM i AS INTEGER
+    FOR i = 0 TO line - 2
+        m.Tabs[m.TabIdx].Editor.CursorDown()
+    NEXT i
+    m.Tabs[m.TabIdx].Editor.SetCursorColumn(0)
+    setFocus(m, "editor")
+    m.Status = "line " + fmt.Sprintf("%d", line)
+END SUB
+
 ' setFocus — shift keyboard focus to `pane` ("tree" or "editor").
 ' Handles editor Focus()/Blur() so only the focused pane shows a
 ' cursor. Asking for "editor" focus when no editor is available
@@ -574,6 +684,30 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         DIM np AS STRING = strings.TrimSpace(text)
         IF np = "" THEN np = "untitled"
         newEmptyTab(m, np)
+        RETURN FALSE
+    END IF
+    ' "find" — saves the query and runs a fresh search from the top
+    ' of the buffer (Ctrl+F always restarts the search; F3 continues).
+    IF m.ModalContext = "find" THEN
+        DIM fq AS STRING = text
+        IF fq = "" THEN
+            m.Status = "find cancelled"
+            RETURN FALSE
+        END IF
+        m.FindQuery = fq
+        findNextInActive(m, 0)
+        RETURN FALSE
+    END IF
+    ' "goto" — input modal asking for a 1-based line number.
+    IF m.ModalContext = "goto" THEN
+        DIM ln AS INTEGER
+        DIM lnErr AS ERROR
+        ln, lnErr = strconv.Atoi(strings.TrimSpace(text))
+        IF lnErr <> NIL THEN
+            m.Status = "not a line number: " + text
+            RETURN FALSE
+        END IF
+        gotoLine(m, ln)
         RETURN FALSE
     END IF
     m.Status = "modal " + m.ModalContext + " → " + button
@@ -1159,6 +1293,20 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             showInputModal(@m, "Open File", "Path:", cwdOp + "/", "open")
             RETURN m, NIL
         END IF
+        ' Find / Goto live alongside the file shortcuts so they work
+        ' from either pane (the editor never sees them).
+        IF key = "ctrl+f" THEN
+            showInputModal(@m, "Find", "Find:", m.FindQuery, "find")
+            RETURN m, NIL
+        END IF
+        IF key = "f3" THEN
+            findNextInActive(@m, cursorOffset(@m) + 1)
+            RETURN m, NIL
+        END IF
+        IF key = "ctrl+g" THEN
+            showInputModal(@m, "Go To Line", "Line number:", "", "goto")
+            RETURN m, NIL
+        END IF
 
         ' --- Menubar handling -----------------------------------------
         ' Menubar takes priority when active: arrows navigate, Enter
@@ -1639,10 +1787,51 @@ FUNCTION renderDropdown(m AS Model) AS STRING
     RETURN frame.Render(body)
 END FUNCTION
 
-' renderStatusBar — bottom row, hint text.
+' hintCell — render one " KEY=label" cell with the key in the hotkey
+' colour and the label in dim menubar text. Used by renderStatusBar
+' to build the right-aligned VBDOS-style strip.
+FUNCTION hintCell(key AS STRING, label AS STRING) AS STRING
+    DIM keyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
+    DIM lblStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg))
+    RETURN keyStyle.Render(key) + lblStyle.Render(" " + label)
+END FUNCTION
+
+' renderStatusBar — bottom row. Left segment shows the live status
+' message; right segment shows a VBDOS-style key-hint strip. When
+' the status text would overflow into the hints, it is truncated
+' with an ellipsis so the hints always remain readable.
 FUNCTION renderStatusBar(width AS INTEGER, text AS STRING) AS STRING
-    DIM bar AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cStatusFg)).Italic(TRUE).Width(width)
-    RETURN bar.Render(" " + text)
+    DIM barBg AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg))
+    DIM msgStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cStatusFg)).Italic(TRUE)
+
+    ' Build the hint strip. Each cell is two spaces apart.
+    DIM hints AS STRING = ""
+    hints = hints + hintCell("F5", "Run")    + barBg.Render("  ")
+    hints = hints + hintCell("F8", "Check")  + barBg.Render("  ")
+    hints = hints + hintCell("F10", "Menu")  + barBg.Render("  ")
+    hints = hints + hintCell("^S", "Save")   + barBg.Render("  ")
+    hints = hints + hintCell("^F", "Find")   + barBg.Render("  ")
+    hints = hints + hintCell("^N", "New")    + barBg.Render("  ")
+    hints = hints + hintCell("^O", "Open")   + barBg.Render("  ")
+    hints = hints + hintCell("^W", "Close")
+    DIM hintsW AS INTEGER = lipgloss.Width(hints)
+
+    ' Status message, truncated to the remaining width with a trailing
+    ' ellipsis when it would otherwise collide with the hint strip.
+    DIM msgRaw AS STRING = " " + text + " "
+    DIM avail AS INTEGER = width - hintsW - 1
+    IF avail < 4 THEN avail = 4
+    IF lipgloss.Width(msgRaw) > avail THEN
+        msgRaw = Mid(msgRaw, 1, avail - 1) + "…"
+    END IF
+    DIM msgPadded AS STRING = msgStyle.Render(msgRaw) + barBg.Render(strings.Repeat(" ", avail - lipgloss.Width(msgRaw)))
+
+    ' If the terminal is too narrow for any hints, just show the
+    ' status message stretched the full width.
+    IF width < hintsW + 6 THEN
+        RETURN msgStyle.Width(width).Render(" " + text)
+    END IF
+    RETURN msgPadded + hints
 END FUNCTION
 
 ' titledBox — render `body` inside a bordered panel with `title`
