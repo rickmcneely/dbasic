@@ -106,6 +106,17 @@ TYPE Model
     DIM Menus       AS []MenuDef         ' definitions built once at startup
     DIM MenuActive  AS INTEGER           ' -1 = closed; else top-menu index
     DIM MenuItemIdx AS INTEGER           ' cursor inside the open dropdown
+
+    ' Generic modal dialog state. When ModalActive is TRUE the
+    ' renderer overlays a framed Yes/No-style dialog and Update
+    ' intercepts keystrokes for navigation + commit.
+    DIM ModalActive  AS BOOLEAN
+    DIM ModalTitle   AS STRING
+    DIM ModalMessage AS STRING
+    DIM ModalButtons AS []STRING
+    DIM ModalIdx     AS INTEGER
+    DIM ModalContext AS STRING           ' free-text tag so the close
+                                         ' handler knows what was asked
 END TYPE
 
 ' setExpanded — toggle whether `path` is in the TreeExpanded "set".
@@ -303,6 +314,51 @@ SUB saveCurrent(m AS POINTER TO Model)
     m.Status = fmt.Sprintf("saved %s (%d bytes)", m.CurFile, LEN(body))
 END SUB
 
+' showModal — pop a modal dialog with `title`, `message`, and a
+' comma-separated `buttonsCSV` (e.g. "Discard,Cancel"). `context` is
+' a free-text tag forwarded to dispatchModalClose so the same handler
+' can serve multiple dialog kinds. The active modal is rendered as a
+' centered lipgloss-layer overlay in View().
+SUB showModal(m AS POINTER TO Model, title AS STRING, message AS STRING, buttonsCSV AS STRING, context AS STRING)
+    m.ModalTitle = title
+    m.ModalMessage = message
+    DIM buttons AS []STRING
+    DIM parts AS []STRING = strings.Split(buttonsCSV, ",")
+    DIM bi AS INTEGER
+    FOR bi = 0 TO LEN(parts) - 1
+        DIM p AS STRING = strings.TrimSpace(parts[bi])
+        IF p <> "" THEN buttons = APPEND(buttons, p)
+    NEXT bi
+    IF LEN(buttons) = 0 THEN buttons = APPEND(buttons, "OK")
+    m.ModalButtons = buttons
+    m.ModalIdx = 0
+    m.ModalContext = context
+    m.ModalActive = TRUE
+END SUB
+
+' dispatchModalClose — called by Update when the user commits a modal
+' choice. Returns TRUE if the program should terminate immediately
+' after this call (e.g. "Discard" on the quit-confirm modal).
+FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING) AS BOOLEAN
+    IF m.ModalContext = "quit" THEN
+        IF button = "Discard" THEN RETURN TRUE
+        m.Status = "quit cancelled"
+        RETURN FALSE
+    END IF
+    m.Status = "modal " + m.ModalContext + " → " + button
+    RETURN FALSE
+END FUNCTION
+
+' tryQuit — single chokepoint for every "user wants to leave" path.
+' Returns TRUE if it's safe to quit now (no unsaved edits); returns
+' FALSE after popping a Discard/Cancel modal so the caller knows to
+' stay alive and wait for the user's pick.
+FUNCTION tryQuit(m AS POINTER TO Model) AS BOOLEAN
+    IF NOT m.Dirty THEN RETURN TRUE
+    showModal(m, "Quit", baseName(m.CurFile) + " has unsaved changes. Discard?", "Discard,Cancel", "quit")
+    RETURN FALSE
+END FUNCTION
+
 ' dispatchAction — resolve the user's menu pick to the underlying
 ' action handler. Centralised here so other paths (keyboard shortcuts
 ' or buttons later) can invoke the same code.
@@ -434,9 +490,42 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF kOk THEN
         DIM key AS STRING = k.String()
 
+        ' --- Modal dialog takes priority over everything else ---------
+        IF m.ModalActive THEN
+            IF key = "esc" THEN
+                m.ModalActive = FALSE
+                m.Status = "modal cancelled"
+                RETURN m, NIL
+            END IF
+            IF key = "left" OR key = "up" OR key = "shift+tab" THEN
+                m.ModalIdx = m.ModalIdx - 1
+                IF m.ModalIdx < 0 THEN m.ModalIdx = LEN(m.ModalButtons) - 1
+                RETURN m, NIL
+            END IF
+            IF key = "right" OR key = "down" OR key = "tab" THEN
+                m.ModalIdx = m.ModalIdx + 1
+                IF m.ModalIdx >= LEN(m.ModalButtons) THEN m.ModalIdx = 0
+                RETURN m, NIL
+            END IF
+            IF key = "enter" OR key = "space" THEN
+                DIM pick AS STRING = ""
+                IF m.ModalIdx >= 0 AND m.ModalIdx < LEN(m.ModalButtons) THEN
+                    pick = m.ModalButtons[m.ModalIdx]
+                END IF
+                m.ModalActive = FALSE
+                IF dispatchModalClose(@m, pick) THEN RETURN m, tea.Quit
+                RETURN m, NIL
+            END IF
+            ' Swallow other keys while the modal is up.
+            RETURN m, NIL
+        END IF
+
         ' Global shortcuts first — apply regardless of which pane is
         ' "logically focused".
-        IF key = "ctrl+c" THEN RETURN m, tea.Quit
+        IF key = "ctrl+c" THEN
+            IF tryQuit(@m) THEN RETURN m, tea.Quit
+            RETURN m, NIL
+        END IF
         IF key = "ctrl+s" THEN
             saveCurrent(@m)
             RETURN m, NIL
@@ -476,8 +565,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 IF m.MenuItemIdx >= 0 AND m.MenuItemIdx < LEN(items) AND NOT items[m.MenuItemIdx].IsSep THEN
                     DIM act AS STRING = items[m.MenuItemIdx].Action
                     m.MenuActive = 0 - 1
+                    IF act = "file.quit" THEN
+                        IF tryQuit(@m) THEN RETURN m, tea.Quit
+                        RETURN m, NIL
+                    END IF
                     dispatchAction(@m, act)
-                    IF act = "file.quit" THEN RETURN m, tea.Quit
                 END IF
                 RETURN m, NIL
             END IF
@@ -489,8 +581,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     IF NOT itemsK[ii].IsSep AND menuHotkey(itemsK[ii].Label) = strings.ToLower(key) THEN
                         DIM act2 AS STRING = itemsK[ii].Action
                         m.MenuActive = 0 - 1
+                        IF act2 = "file.quit" THEN
+                            IF tryQuit(@m) THEN RETURN m, tea.Quit
+                            RETURN m, NIL
+                        END IF
                         dispatchAction(@m, act2)
-                        IF act2 = "file.quit" THEN RETURN m, tea.Quit
                         RETURN m, NIL
                     END IF
                 NEXT ii
@@ -564,7 +659,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
 
         ' --- Tree navigation (only when not in code mode) -------------
-        IF key = "q" THEN RETURN m, tea.Quit
+        IF key = "q" THEN
+            IF tryQuit(@m) THEN RETURN m, tea.Quit
+            RETURN m, NIL
+        END IF
         IF key = "up" THEN
             IF m.TreeSelected > 0 THEN m.TreeSelected = m.TreeSelected - 1
             RETURN m, NIL
@@ -803,11 +901,15 @@ FUNCTION renderMiddlePane(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
     DIM dashStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
     DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
 
-    ' Caption text picks the mode-appropriate title.
+    ' Caption text picks the mode-appropriate title. A "*" prefix on
+    ' the filename signals an unsaved buffer (matches the convention
+    ' used by VBDOS and most modern editors).
     DIM titleText AS STRING
     IF m.ViewMode = "code" THEN
         IF m.CurFile <> "" THEN
-            titleText = "Code Editor — " + m.CurFile
+            DIM marker AS STRING = ""
+            IF m.Dirty THEN marker = "*"
+            titleText = "Code Editor — " + marker + m.CurFile
         ELSE
             titleText = "Code Editor"
         END IF
@@ -860,6 +962,92 @@ FUNCTION renderRightPane(width AS INTEGER, height AS INTEGER) AS STRING
 END FUNCTION
 
 ' -------------------------------------------------------------------------
+' renderModal — build the centered confirmation dialog string.
+'
+' Returns "" when no modal is currently active. Otherwise returns a
+' rounded-border box containing the title (highlighted), one or more
+' message lines (word-wrapped to a reasonable width), and a row of
+' buttons with the currently-selected button inverted.
+'
+' The composition is done with lipgloss styles only — placement
+' (centering) is handled in View() via the lipgloss.Compositor, so
+' this helper only needs to worry about the *contents* of the box.
+' -------------------------------------------------------------------------
+FUNCTION renderModal(m AS Model) AS STRING
+    IF NOT m.ModalActive THEN RETURN ""
+
+    ' --- Dimensions -----------------------------------------------
+    ' A simple readable width that fits typical confirm-dialog text
+    ' without spanning the whole screen.
+    DIM innerW AS INTEGER = 48
+
+    ' --- Title row ------------------------------------------------
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Bold(TRUE).Foreground(lipgloss.Color(cHotkey)).Width(innerW).Align(lipgloss.Center)
+    DIM titleLine AS STRING = titleStyle.Render(m.ModalTitle)
+
+    ' --- Message body --------------------------------------------
+    ' Hand-roll a soft word wrap so we do not bring in another
+    ' import. Splits on spaces and accumulates words up to innerW.
+    DIM msgLines AS []STRING
+    DIM words AS []STRING = strings.Fields(m.ModalMessage)
+    DIM cur AS STRING = ""
+    DIM wi AS INTEGER
+    FOR wi = 0 TO LEN(words) - 1
+        DIM word AS STRING = words[wi]
+        IF cur = "" THEN
+            cur = word
+        ELSE
+            IF LEN(cur) + 1 + LEN(word) <= innerW THEN
+                cur = cur + " " + word
+            ELSE
+                msgLines = APPEND(msgLines, cur)
+                cur = word
+            END IF
+        END IF
+    NEXT wi
+    IF cur <> "" THEN msgLines = APPEND(msgLines, cur)
+
+    DIM bodyStyle AS lipgloss.Style = lipgloss.NewStyle().Width(innerW)
+    DIM bodyText AS STRING = strings.Join(msgLines, "\n")
+    DIM bodyBlock AS STRING = bodyStyle.Render(bodyText)
+
+    ' --- Button row ----------------------------------------------
+    ' Each button is rendered as " label "; the active one (matching
+    ' ModalIdx) is reverse-video so it reads as the default action.
+    DIM btnNormal AS lipgloss.Style = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder))
+    DIM btnActive AS lipgloss.Style = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Foreground(lipgloss.Color(cBg)).Background(lipgloss.Color(cHotkey)).Bold(TRUE)
+
+    DIM rendered AS []STRING
+    DIM bi AS INTEGER
+    FOR bi = 0 TO LEN(m.ModalButtons) - 1
+        DIM lbl AS STRING = m.ModalButtons[bi]
+        IF bi = m.ModalIdx THEN
+            rendered = APPEND(rendered, btnActive.Render(lbl))
+        ELSE
+            rendered = APPEND(rendered, btnNormal.Render(lbl))
+        END IF
+    NEXT bi
+    ' DBasic doesn't support variadic spread (xs...), so dispatch
+    ' by button count. Real dialogs only ever have 1–3 buttons.
+    DIM btnRow AS STRING = ""
+    IF LEN(rendered) = 1 THEN
+        btnRow = rendered[0]
+    ELSEIF LEN(rendered) = 2 THEN
+        btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1])
+    ELSEIF LEN(rendered) >= 3 THEN
+        btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1], "  ", rendered[2])
+    END IF
+    DIM btnRow2 AS STRING = lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Render(btnRow)
+
+    ' --- Stack title / body / spacer / buttons -------------------
+    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, titleLine, "", bodyBlock, "", btnRow2)
+
+    ' --- Outer frame ---------------------------------------------
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Background(lipgloss.Color(cBg)).Padding(1, 2)
+    RETURN frame.Render(stacked)
+END FUNCTION
+
+' -------------------------------------------------------------------------
 ' View — compose the full screen each frame.
 ' -------------------------------------------------------------------------
 
@@ -898,6 +1086,25 @@ FUNCTION (m AS Model) View() AS tea.View
             DIM ddLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dd).X(menuOffsetX(m, m.MenuActive)).Y(1).Z(1)
             DIM comp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer, ddLayer)
             full = comp.Render()
+        END IF
+    END IF
+
+    ' --- Modal overlay (Z=2 so it floats above an open dropdown) ---
+    ' Centered on the visible screen using lipgloss.Width / Height
+    ' for visible-cell math (the box uses multi-byte border chars).
+    IF m.ModalActive THEN
+        DIM md AS STRING = renderModal(m)
+        IF md <> "" THEN
+            DIM mdW AS INTEGER = lipgloss.Width(md)
+            DIM mdH AS INTEGER = lipgloss.Height(md)
+            DIM xOff AS INTEGER = (w - mdW) / 2
+            DIM yOff AS INTEGER = (h - mdH) / 2
+            IF xOff < 0 THEN xOff = 0
+            IF yOff < 0 THEN yOff = 0
+            DIM bgLayer2 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM mdLayer  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(md).X(xOff).Y(yOff).Z(2)
+            DIM comp2 AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer2, mdLayer)
+            full = comp2.Render()
         END IF
     END IF
 
