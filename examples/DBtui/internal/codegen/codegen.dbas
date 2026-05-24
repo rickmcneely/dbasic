@@ -2865,8 +2865,9 @@ FUNCTION emitRenderWidget() AS STRING
     s = s + "        DIM hasSlots AS BOOLEAN = (w.SpSlot1 <> \"\" OR w.SpSlot2 <> \"\")\n"
     s = s + "        DIM spcLines AS []STRING\n"
     s = s + "        IF hasSlots THEN\n"
-    ' Container mode — draw just the divider line, blank elsewhere so the
-    ' slot widgets (rendered on higher Z) cover the rest.
+    ' Container mode — draw a solid line divider. First + last cells of
+    ' the divider are blank so the line never butts up against the
+    ' parent frame (a sibling vertical splitter, the form border, etc.).
     s = s + "            DIM spPos AS INTEGER = w.Selected\n"
     s = s + "            IF spPos < 5 THEN spPos = 5\n"
     s = s + "            IF spPos > 95 THEN spPos = 95\n"
@@ -2875,7 +2876,9 @@ FUNCTION emitRenderWidget() AS STRING
     s = s + "                DIM hr AS INTEGER\n"
     s = s + "                FOR hr = 0 TO w.H - 1\n"
     s = s + "                    IF hr = dividerRow THEN\n"
-    s = s + "                        spcLines = APPEND(spcLines, strings.Repeat(\"╌\", w.W))\n"
+    s = s + "                        DIM divInner AS INTEGER = w.W - 2\n"
+    s = s + "                        IF divInner < 1 THEN divInner = 1\n"
+    s = s + "                        spcLines = APPEND(spcLines, \" \" + strings.Repeat(\"─\", divInner) + \" \")\n"
     s = s + "                    ELSE\n"
     s = s + "                        spcLines = APPEND(spcLines, strings.Repeat(\" \", w.W))\n"
     s = s + "                    END IF\n"
@@ -2888,7 +2891,11 @@ FUNCTION emitRenderWidget() AS STRING
     s = s + "                    DIM rpad AS INTEGER = w.W - dividerCol - 1\n"
     s = s + "                    IF lpad < 0 THEN lpad = 0\n"
     s = s + "                    IF rpad < 0 THEN rpad = 0\n"
-    s = s + "                    spcLines = APPEND(spcLines, strings.Repeat(\" \", lpad) + \"╎\" + strings.Repeat(\" \", rpad))\n"
+    s = s + "                    IF vr = 0 OR vr = w.H - 1 THEN\n"
+    s = s + "                        spcLines = APPEND(spcLines, strings.Repeat(\" \", w.W))\n"
+    s = s + "                    ELSE\n"
+    s = s + "                        spcLines = APPEND(spcLines, strings.Repeat(\" \", lpad) + \"│\" + strings.Repeat(\" \", rpad))\n"
+    s = s + "                    END IF\n"
     s = s + "                NEXT vr\n"
     s = s + "            END IF\n"
     s = s + "            body = strings.Join(spcLines, \"\\n\")\n"
@@ -2935,7 +2942,7 @@ FUNCTION emitView(form AS Form) AS STRING
     s = s + fmt.Sprintf("    DIM bgCol AS STRING = %s\n", dbasStr(bgCol))
     s = s + fmt.Sprintf("    DIM fgCol AS STRING = %s\n", dbasStr(fgCol))
     s = s + fmt.Sprintf("    DIM title AS STRING = %s\n", dbasStr(title))
-    s = s + "    DIM formStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Foreground(lipgloss.Color(fgCol)).Width(formW - 2).Height(formH - 2).Border(lipgloss.DoubleBorder()).BorderForeground(lipgloss.Color(fgCol))\n"
+    s = s + "    DIM formStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Foreground(lipgloss.Color(fgCol)).Width(formW - 2).Height(formH - 2).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(fgCol))\n"
     s = s + "    DIM bg AS STRING = formStyle.Render(\"\")\n"
     s = s + "    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Foreground(lipgloss.Color(\"#7dcfff\")).Bold(TRUE)\n"
     s = s + "    DIM titleStr AS STRING = titleStyle.Render(\" \" + title + \" \")\n"
