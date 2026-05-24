@@ -47,6 +47,75 @@ SUB clearBottomOutput(m AS POINTER TO Model)
     m.BottomBody = ""
 END SUB
 
+' setBottomOutput — like appendBottomOutput but REPLACES the body
+' instead of appending. Used by Find in Files where each run is a
+' fresh result set, not an accumulating log.
+SUB setBottomOutput(m AS POINTER TO Model, title AS STRING, content AS STRING)
+    m.BottomTitle   = title
+    m.BottomBody    = content
+    m.BottomVisible = TRUE
+    invalidateEditorCache(m)
+END SUB
+
+' parseFileLineRef — extract (path, lineNum) from a "path:line: ..."
+' string. Returns (path, lineNum, TRUE) on success or ("", 0, FALSE).
+FUNCTION parseFileLineRef(line AS STRING) AS (STRING, INTEGER, BOOLEAN)
+    DIM c1 AS INTEGER = strings.Index(line, ":")
+    IF c1 < 0 THEN RETURN "", 0, FALSE
+    DIM after AS STRING = ""
+    IF c1 + 1 < LEN(line) THEN after = Mid(line, c1 + 2, LEN(line) - c1 - 1)
+    DIM c2 AS INTEGER = strings.Index(after, ":")
+    IF c2 < 0 THEN RETURN "", 0, FALSE
+    DIM pathPart AS STRING = ""
+    IF c1 > 0 THEN pathPart = Mid(line, 1, c1)
+    DIM numStr AS STRING = ""
+    IF c2 > 0 THEN numStr = Mid(after, 1, c2)
+    DIM n AS INTEGER
+    DIM err AS ERROR
+    n, err = strconv.Atoi(numStr)
+    IF err <> NIL THEN RETURN "", 0, FALSE
+    RETURN pathPart, n, TRUE
+END FUNCTION
+
+' doFindInFiles — case-insensitive substring search across every
+' .dbas / .dbproj file under the project root. Writes the results
+' (one "path:line: snippet" per match) to the bottom output pane.
+SUB doFindInFiles(m AS POINTER TO Model, query AS STRING)
+    DIM q AS STRING = strings.TrimSpace(query)
+    IF q = "" THEN
+        m.Status = "empty find query"
+        RETURN
+    END IF
+    DIM files AS []STRING
+    scanProjectFiles(m.TreeRoot, @files)
+    DIM lo AS STRING = strings.ToLower(q)
+    DIM out AS []STRING
+    DIM count AS INTEGER = 0
+    DIM fi AS INTEGER
+    FOR fi = 0 TO LEN(files) - 1
+        DIM path AS STRING = files[fi]
+        DIM data AS BYTES
+        DIM rerr AS ERROR
+        data, rerr = os.ReadFile(path)
+        IF rerr = NIL THEN
+            DIM rel AS STRING = quickRelPath(m.TreeRoot, path)
+            DIM lines AS []STRING = strings.Split(string(data), "\n")
+            DIM li AS INTEGER
+            FOR li = 0 TO LEN(lines) - 1
+                IF strings.Contains(strings.ToLower(lines[li]), lo) THEN
+                    out = APPEND(out, fmt.Sprintf("%s:%d: %s", rel, li + 1, strings.TrimSpace(lines[li])))
+                    count = count + 1
+                END IF
+            NEXT li
+        END IF
+    NEXT fi
+    DIM header AS STRING = fmt.Sprintf("[find] '%s' — %d hit(s) in %d files (click a result to jump)", q, count, LEN(files))
+    DIM body AS STRING = header
+    IF count > 0 THEN body = body + "\n" + strings.Join(out, "\n")
+    setBottomOutput(m, "Find Results", body)
+    m.Status = header
+END SUB
+
 TYPE RunFinishedMsg
     DIM Err AS ERROR
 END TYPE

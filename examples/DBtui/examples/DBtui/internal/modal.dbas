@@ -162,6 +162,12 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         gotoLine(m, ln)
         RETURN FALSE, NIL
     END IF
+    ' "findinfiles" — input modal that runs a project-wide grep
+    ' and dumps the results into the bottom output pane.
+    IF m.ModalContext = "findinfiles" THEN
+        doFindInFiles(m, text)
+        RETURN FALSE, NIL
+    END IF
     m.Status = "modal " + m.ModalContext + " → " + button
     RETURN FALSE, NIL
 END FUNCTION

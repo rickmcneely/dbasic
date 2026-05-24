@@ -119,6 +119,10 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
         showInputModal(m, "Replace", "Find:", m.FindQuery, "replace-find")
         RETURN
     END IF
+    IF action = "edit.findinfiles" THEN
+        showInputModal(m, "Find in Files", "Search:", "", "findinfiles")
+        RETURN
+    END IF
     IF action = "edit.goto" THEN
         showInputModal(m, "Go To Line", "Line number:", "", "goto")
         RETURN
