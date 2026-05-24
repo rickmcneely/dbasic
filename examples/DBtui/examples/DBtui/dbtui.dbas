@@ -168,6 +168,11 @@ TYPE Model
     DIM ReplaceFind AS STRING
     DIM ReplaceText AS STRING
 
+    ' Save-As target awaiting overwrite confirmation. Set by the
+    ' "saveas" handler when the typed path already exists on disk;
+    ' consumed by the "saveas-overwrite" handler.
+    DIM PendingSaveAs AS STRING
+
     ' "Loading <path>" message shown while an async file load is in
     ' flight. Cleared when the LoadFinishedMsg lands. Empty string =
     ' no load in progress.
@@ -439,6 +444,26 @@ FUNCTION buildMenus(m AS Model) AS []MenuDef
     runItems = APPEND(runItems, mkItem("(C)heck           F8", "run.check"))
     menus = APPEND(menus, mkMenu("(R)un", runItems))
 
+    ' Window menu — one item per open tab (numbered 1..9). Active
+    ' tab is marked with a leading ▶ so it's visible at a glance.
+    ' Hidden entirely when nothing is open.
+    IF LEN(m.Tabs) > 0 THEN
+        DIM winItems AS []MenuItem
+        DIM wi AS INTEGER
+        DIM wlim AS INTEGER = LEN(m.Tabs)
+        IF wlim > 9 THEN wlim = 9
+        FOR wi = 0 TO wlim - 1
+            DIM wnLbl AS STRING = strconv.Itoa(wi + 1)
+            DIM wname AS STRING = baseName(m.Tabs[wi].Path)
+            IF wname = "" THEN wname = "(untitled)"
+            DIM prefix AS STRING = "  "
+            IF wi = m.TabIdx THEN prefix = "▶ "
+            DIM wlabel AS STRING = "(" + wnLbl + ") " + prefix + wname
+            winItems = APPEND(winItems, mkItem(wlabel, "window.switch:" + strconv.Itoa(wi)))
+        NEXT wi
+        menus = APPEND(menus, mkMenu("(W)indow", winItems))
+    END IF
+
     DIM helpItems AS []MenuItem
     helpItems = APPEND(helpItems, mkItem("(A)bout", "help.about"))
     helpItems = APPEND(helpItems, mkItem("(K)eys",  "help.keys"))
@@ -491,6 +516,13 @@ FUNCTION findTabIdx(m AS Model, path AS STRING) AS INTEGER
     RETURN 0 - 1
 END FUNCTION
 
+' rebuildMenus — refresh the menubar definitions from the current
+' Model. Called after anything that changes tabs (open/close/switch)
+' or the recent-files list so the dropdowns match reality.
+SUB rebuildMenus(m AS POINTER TO Model)
+    m.Menus = buildMenus(^m)
+END SUB
+
 ' switchToTab — make tab `idx` active. Focuses its editor when the
 ' editor pane is already the focused one; otherwise just swaps the
 ' active buffer (leaves cursor in tree). No-op if idx is out of range.
@@ -506,6 +538,7 @@ SUB switchToTab(m AS POINTER TO Model, idx AS INTEGER)
         _ = fcmd
     END IF
     invalidateEditorCache(m)
+    rebuildMenus(m)
 END SUB
 
 ' closeTab — drop tab `idx` from the list. Adjusts TabIdx so it still
@@ -536,6 +569,7 @@ SUB closeTab(m AS POINTER TO Model, idx AS INTEGER)
         _ = fcmd
     END IF
     invalidateEditorCache(m)
+    rebuildMenus(m)
 END SUB
 
 ' invalidateEditorCache — flag the cached editor view as stale so
@@ -938,12 +972,33 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         RETURN FALSE, oCmd
     END IF
     ' "saveas" — input modal asking where to write the active tab.
-    ' Updates the tab's Path then re-uses saveCurrent.
+    ' Pre-flight: if the target already exists, chain a confirm
+    ' modal so we don't silently clobber an unrelated file.
     IF m.ModalContext = "saveas" THEN
         DIM sp AS STRING = strings.TrimSpace(text)
         IF sp = "" OR NOT hasActiveTab(^m) THEN RETURN FALSE, NIL
+        DIM sfi AS os.FileInfo
+        DIM serr AS ERROR
+        sfi, serr = os.Stat(sp)
+        _ = sfi
+        IF serr = NIL THEN
+            m.PendingSaveAs = sp
+            showModal(m, "Overwrite?", baseName(sp) + " already exists. Overwrite?", "Overwrite,Cancel", "saveas-overwrite")
+            RETURN FALSE, NIL
+        END IF
         m.Tabs[m.TabIdx].Path = sp
         saveCurrent(m)
+        RETURN FALSE, NIL
+    END IF
+    ' "saveas-overwrite" — confirm from the chained modal.
+    IF m.ModalContext = "saveas-overwrite" THEN
+        IF button = "Overwrite" AND hasActiveTab(^m) THEN
+            m.Tabs[m.TabIdx].Path = m.PendingSaveAs
+            saveCurrent(m)
+        ELSE
+            m.Status = "save as cancelled"
+        END IF
+        m.PendingSaveAs = ""
         RETURN FALSE, NIL
     END IF
     ' "new" — input modal asking for a name for the fresh buffer.
@@ -985,6 +1040,18 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         replaceAllInActive(m, m.ReplaceFind, m.ReplaceText)
         RETURN FALSE, NIL
     END IF
+    ' "run-confirm" — three-button modal shown by doRun when the
+    ' active buffer is dirty. Save & Run flushes first; Run As Is
+    ' skips the save and runs the on-disk version; Cancel aborts.
+    IF m.ModalContext = "run-confirm" THEN
+        IF button = "Cancel" THEN
+            m.Status = "run cancelled"
+            RETURN FALSE, NIL
+        END IF
+        IF button = "Save & Run" THEN saveCurrent(m)
+        DIM rcCmd AS tea.Cmd = runActiveNow(m)
+        RETURN FALSE, rcCmd
+    END IF
     ' "goto" — input modal asking for a 1-based line number.
     IF m.ModalContext = "goto" THEN
         DIM ln AS INTEGER
@@ -1015,6 +1082,7 @@ SUB newEmptyTab(m AS POINTER TO Model, path AS STRING)
     m.ViewMode = "code"
     setFocus(m, "editor")
     invalidateEditorCache(m)
+    rebuildMenus(m)
     m.Status = "new file: " + path
 END SUB
 
@@ -1079,19 +1147,39 @@ FUNCTION runFinishedHandler(err AS ERROR) AS tea.Msg
     RETURN msg
 END FUNCTION
 
-' doRun — save the active tab, then hand the terminal to
-' `dbasic run <path>`. Returns the Cmd so the caller can hand it
-' straight back to bubbletea.
+' runActiveNow — actually launch `dbasic run <path>` on the active
+' tab. Pulled out of doRun so the "run-confirm" modal handler can
+' invoke the same logic after the user picks Save & Run / Run As Is.
+FUNCTION runActiveNow(m AS POINTER TO Model) AS tea.Cmd
+    IF NOT hasActiveTab(^m) THEN
+        m.Status = "nothing to run"
+        RETURN NIL
+    END IF
+    DIM path AS STRING = m.Tabs[m.TabIdx].Path
+    IF path = "" THEN
+        m.Status = "save the buffer first (no on-disk path)"
+        RETURN NIL
+    END IF
+    m.Status = "running: dbasic run " + path
+    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command("dbasic", "run", path)
+    RETURN tea.ExecProcess(cmd, runFinishedHandler)
+END FUNCTION
+
+' doRun — F5 entry point. Auto-prompts when the active tab is dirty
+' so the user picks between "save and run", "run the on-disk
+' version", or cancel.
 FUNCTION doRun(m AS POINTER TO Model) AS tea.Cmd
     IF NOT hasActiveTab(^m) THEN
         m.Status = "nothing to run"
         RETURN NIL
     END IF
-    saveCurrent(m)
-    DIM path AS STRING = m.Tabs[m.TabIdx].Path
-    m.Status = "running: dbasic run " + path
-    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command("dbasic", "run", path)
-    RETURN tea.ExecProcess(cmd, runFinishedHandler)
+    IF m.Tabs[m.TabIdx].Dirty THEN
+        DIM dn AS STRING = baseName(m.Tabs[m.TabIdx].Path)
+        IF dn = "" THEN dn = "(untitled)"
+        showModal(m, "Run", dn + " has unsaved changes.", "Save & Run,Run As Is,Cancel", "run-confirm")
+        RETURN NIL
+    END IF
+    RETURN runActiveNow(m)
 END FUNCTION
 
 ' truncateOutput — cap compiler output at ~12 lines so the modal
@@ -1429,6 +1517,7 @@ SUB completeFileLoad(m AS POINTER TO Model, path AS STRING, data AS BYTES, err A
     m.ViewMode = "code"
     setFocus(m, "editor")
     invalidateEditorCache(m)
+    rebuildMenus(m)
     m.Status = "opened " + path
 END SUB
 
@@ -1727,6 +1816,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     DIM ddRcmd AS tea.Cmd = openFile(@m, ddRpath)
                     RETURN m, ddRcmd
                 END IF
+                IF strings.HasPrefix(ddAct, "window.switch:") THEN
+                    DIM ddWidx AS INTEGER
+                    DIM ddWerr AS ERROR
+                    ddWidx, ddWerr = strconv.Atoi(Mid(ddAct, 15, LEN(ddAct) - 14))
+                    IF ddWerr = NIL THEN switchToTab(@m, ddWidx)
+                    RETURN m, NIL
+                END IF
                 dispatchAction(@m, ddAct)
                 RETURN m, NIL
             END IF
@@ -1989,6 +2085,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                         DIM enRcmd AS tea.Cmd = openFile(@m, enRpath)
                         RETURN m, enRcmd
                     END IF
+                    IF strings.HasPrefix(act, "window.switch:") THEN
+                        DIM enWidx AS INTEGER
+                        DIM enWerr AS ERROR
+                        enWidx, enWerr = strconv.Atoi(Mid(act, 15, LEN(act) - 14))
+                        IF enWerr = NIL THEN switchToTab(@m, enWidx)
+                        RETURN m, NIL
+                    END IF
                     dispatchAction(@m, act)
                 END IF
                 RETURN m, NIL
@@ -2016,6 +2119,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                             DIM hkRpath AS STRING = Mid(act2, 14, LEN(act2) - 13)
                             DIM hkRcmd AS tea.Cmd = openFile(@m, hkRpath)
                             RETURN m, hkRcmd
+                        END IF
+                        IF strings.HasPrefix(act2, "window.switch:") THEN
+                            DIM hkWidx AS INTEGER
+                            DIM hkWerr AS ERROR
+                            hkWidx, hkWerr = strconv.Atoi(Mid(act2, 15, LEN(act2) - 14))
+                            IF hkWerr = NIL THEN switchToTab(@m, hkWidx)
+                            RETURN m, NIL
                         END IF
                         dispatchAction(@m, act2)
                         RETURN m, NIL
