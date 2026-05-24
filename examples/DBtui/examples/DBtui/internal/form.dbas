@@ -216,3 +216,96 @@ FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
     NEXT r
     RETURN strings.Join(lines, "\n")
 END FUNCTION
+
+' -------------------------------------------------------------------------
+' Persistence — .dbproj is a JSON blob of DesignForm.
+' -------------------------------------------------------------------------
+
+' loadFormFromDisk — parse `path` as a .dbproj JSON file into m.Form.
+' On any error the status bar gets the diagnostic and the in-memory
+' form is left alone. On success, ViewMode flips to "form".
+SUB loadFormFromDisk(m AS POINTER TO Model, path AS STRING)
+    DIM data AS BYTES
+    DIM rerr AS ERROR
+    data, rerr = os.ReadFile(path)
+    IF rerr <> NIL THEN
+        m.Status = "open " + path + ": " + rerr.Error()
+        RETURN
+    END IF
+    DIM f AS DesignForm
+    DIM jerr AS ERROR = encjson.Unmarshal(data, @f)
+    IF jerr <> NIL THEN
+        m.Status = "bad .dbproj: " + jerr.Error()
+        RETURN
+    END IF
+    m.Form = f
+    m.CurrentFormPath = path
+    m.SelWidget = 0 - 1
+    m.ViewMode = "form"
+    setFocus(m, "tree")
+    invalidateEditorCache(m)
+    m.Status = "loaded form " + path
+END SUB
+
+' saveForm — JSON-marshal m.Form to m.CurrentFormPath. Empty path
+' pops a Save As prompt (modal context "saveform").
+SUB saveForm(m AS POINTER TO Model)
+    IF m.CurrentFormPath = "" THEN
+        showInputModal(m, "Save Form", "Path:", "form.dbproj", "saveform")
+        RETURN
+    END IF
+    DIM data AS BYTES
+    DIM merr AS ERROR
+    data, merr = encjson.MarshalIndent(m.Form, "", "  ")
+    IF merr <> NIL THEN
+        m.Status = "marshal failed: " + merr.Error()
+        RETURN
+    END IF
+    DIM werr AS ERROR = os.WriteFile(m.CurrentFormPath, data, 0644)
+    IF werr <> NIL THEN
+        m.Status = "save failed: " + werr.Error()
+        RETURN
+    END IF
+    m.Status = fmt.Sprintf("saved form %s (%d bytes)", m.CurrentFormPath, LEN(data))
+END SUB
+
+' -------------------------------------------------------------------------
+' Widget property editing — clicking a row in the right-pane
+' Properties section pops an input modal pre-filled with the current
+' value. dispatchModalClose for "wprop:*" applies the edit.
+' -------------------------------------------------------------------------
+
+' formClickPropAt — dispatch a click on Properties row `rowIdx`
+' (0-based) into the right modal. Row layout matches the renderer:
+'   0  Kind        (read-only)
+'   1  Name        editable
+'   2  Text        editable
+'   3  Pos (X, Y)  editable
+'   4  Size (W, H) editable
+SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
+    IF m.SelWidget < 0 OR m.SelWidget >= LEN(m.Form.Widgets) THEN RETURN
+    DIM w AS DesignWidget = m.Form.Widgets[m.SelWidget]
+    IF rowIdx = 1 THEN
+        showInputModal(m, "Edit Name", "Name:", w.Name, "wprop:name")
+    ELSEIF rowIdx = 2 THEN
+        showInputModal(m, "Edit Text", "Text:", w.Text, "wprop:text")
+    ELSEIF rowIdx = 3 THEN
+        showInputModal(m, "Edit Position", "X, Y:", fmt.Sprintf("%d, %d", w.X, w.Y), "wprop:pos")
+    ELSEIF rowIdx = 4 THEN
+        showInputModal(m, "Edit Size", "W, H:", fmt.Sprintf("%d, %d", w.W, w.H), "wprop:size")
+    END IF
+END SUB
+
+' parseTwoInts — helper for Pos / Size edits. "X, Y" → (X, Y, ok).
+FUNCTION parseTwoInts(s AS STRING) AS (INTEGER, INTEGER, BOOLEAN)
+    DIM parts AS []STRING = strings.Split(s, ",")
+    IF LEN(parts) <> 2 THEN RETURN 0, 0, FALSE
+    DIM a AS INTEGER
+    DIM b AS INTEGER
+    DIM ae AS ERROR
+    DIM be AS ERROR
+    a, ae = strconv.Atoi(strings.TrimSpace(parts[0]))
+    b, be = strconv.Atoi(strings.TrimSpace(parts[1]))
+    IF ae <> NIL OR be <> NIL THEN RETURN 0, 0, FALSE
+    RETURN a, b, TRUE
+END FUNCTION

@@ -168,6 +168,55 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         doFindInFiles(m, text)
         RETURN FALSE, NIL
     END IF
+    ' "saveform" — input modal asking for a .dbproj path. Sets
+    ' CurrentFormPath then runs saveForm.
+    IF m.ModalContext = "saveform" THEN
+        DIM sfPath AS STRING = strings.TrimSpace(text)
+        IF sfPath = "" THEN RETURN FALSE, NIL
+        m.CurrentFormPath = sfPath
+        saveForm(m)
+        RETURN FALSE, NIL
+    END IF
+    ' "wprop:*" — widget property edits from clicks on the
+    ' Properties panel rows in form mode.
+    IF m.ModalContext = "wprop:name" THEN
+        IF m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
+            m.Form.Widgets[m.SelWidget].Name = strings.TrimSpace(text)
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:text" THEN
+        IF m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
+            m.Form.Widgets[m.SelWidget].Text = text
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:pos" THEN
+        DIM pX AS INTEGER
+        DIM pY AS INTEGER
+        DIM pok AS BOOLEAN
+        pX, pY, pok = parseTwoInts(text)
+        IF pok AND m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
+            IF pX < 0 THEN pX = 0
+            IF pY < 0 THEN pY = 0
+            m.Form.Widgets[m.SelWidget].X = pX
+            m.Form.Widgets[m.SelWidget].Y = pY
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:size" THEN
+        DIM sW AS INTEGER
+        DIM sH AS INTEGER
+        DIM sok AS BOOLEAN
+        sW, sH, sok = parseTwoInts(text)
+        IF sok AND m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
+            IF sW < 1 THEN sW = 1
+            IF sH < 1 THEN sH = 1
+            m.Form.Widgets[m.SelWidget].W = sW
+            m.Form.Widgets[m.SelWidget].H = sH
+        END IF
+        RETURN FALSE, NIL
+    END IF
     ' "watch:reload" — file-watcher prompt. Reload reads disk;
     ' Keep silences the prompt by refreshing LoadedMtime to the
     ' current disk mtime; Cancel does nothing (next tick will

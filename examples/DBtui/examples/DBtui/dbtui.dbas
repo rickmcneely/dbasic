@@ -261,15 +261,17 @@ TYPE Model
     ' the state so it survives restarts.
     DIM ClosedTabs AS []STRING
 
-    ' Form designer — single in-memory form for now; multi-form +
-    ' .dbproj persistence comes later. SelWidget is the index of
-    ' the currently-selected widget on the form (-1 = none).
-    ' FormDragOffX / Y store the cursor's offset within the widget
-    ' when the move-drag started, so motion translates 1:1.
-    DIM Form         AS DesignForm
-    DIM SelWidget    AS INTEGER
-    DIM FormDragOffX AS INTEGER
-    DIM FormDragOffY AS INTEGER
+    ' Form designer — single in-memory form for now; multi-form is
+    ' a follow-up. SelWidget is the index of the currently-selected
+    ' widget on the form (-1 = none). FormDragOffX / Y store the
+    ' cursor's offset within the widget when the move-drag started,
+    ' so motion translates 1:1. CurrentFormPath is the .dbproj this
+    ' form was loaded from (or will be saved to).
+    DIM Form            AS DesignForm
+    DIM SelWidget       AS INTEGER
+    DIM FormDragOffX    AS INTEGER
+    DIM FormDragOffY    AS INTEGER
+    DIM CurrentFormPath AS STRING
 
     ' Files queued for restoration on startup, drained one at a
     ' time after the corresponding LoadFinishedMsg lands.
@@ -1081,6 +1083,12 @@ END SUB
 ' the LoadFinishedMsg comes back.
 FUNCTION openFile(m AS POINTER TO Model, path AS STRING) AS tea.Cmd
     IF path = "" THEN RETURN NIL
+    ' .dbproj files are forms — load synchronously into m.Form and
+    ' flip ViewMode to "form" instead of creating an editor tab.
+    IF strings.HasSuffix(strings.ToLower(path), ".dbproj") THEN
+        loadFormFromDisk(m, path)
+        RETURN NIL
+    END IF
     ' Already open? Just activate it — no async work needed.
     DIM existing AS INTEGER = findTabIdx(^m, path)
     IF existing >= 0 THEN
@@ -1568,6 +1576,25 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 RETURN m, NIL
             END IF
         END IF
+        ' (4c.2) Form-mode properties click — edit Name / Text / Pos /
+        '        Size by clicking the row.
+        IF m.ViewMode = "form" AND m.SelWidget >= 0 AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width THEN
+            DIM peBodyH AS INTEGER = m.Height - 2
+            IF m.BottomVisible THEN
+                DIM peBot AS INTEGER = 10
+                IF peBot > peBodyH - 4 THEN peBot = peBodyH - 4
+                IF peBot < 3 THEN peBot = 3
+                peBodyH = peBodyH - peBot
+            END IF
+            DIM peRemain AS INTEGER = peBodyH - 1
+            DIM peListH  AS INTEGER = peRemain / 2
+            DIM pePropTop AS INTEGER = 2 + peListH + 1
+            DIM peRel AS INTEGER = mcMsg.Y - pePropTop
+            IF peRel >= 1 AND peRel <= 4 THEN
+                formClickPropAt(@m, peRel)
+                RETURN m, NIL
+            END IF
+        END IF
         ' (4d) Form-canvas click — select a widget or arm a move-drag.
         IF m.ViewMode = "form" AND mcMsg.Y >= 2 AND mcMsg.Y < m.Height - 1 AND mcMsg.X >= m.LeftW AND mcMsg.X < m.Width - m.RightW THEN
             DIM fcx AS INTEGER
@@ -1915,6 +1942,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF key = "ctrl+s" THEN
+            ' In form mode, Ctrl+S saves the .dbproj instead of the
+            ' code buffer. saveForm pops a Save As prompt when the
+            ' form has no path yet.
+            IF m.ViewMode = "form" THEN
+                saveForm(@m)
+                RETURN m, NIL
+            END IF
             ' Save-As fallback when the buffer has no on-disk path yet.
             IF hasActiveTab(m) AND m.Tabs[m.TabIdx].Path = "" THEN
                 showInputModal(@m, "Save As", "Path:", "untitled.dbas", "saveas")
