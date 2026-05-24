@@ -37,14 +37,144 @@ CONST cStatusFg  AS STRING = "#8087a2"   ' statusbar text (dimmer)
 CONST cHotkey    AS STRING = "#f5a97f"   ' warm peach for hotkey letters
 
 ' -------------------------------------------------------------------------
+' Tree model. The project tree on the left is a flat list of "visible"
+' nodes — i.e. the result of walking the filesystem and skipping every
+' child whose parent folder isn't currently expanded. Whenever the user
+' expands or collapses a folder we just rebuild this flat list.
+'
+' Expanded paths are tracked in a separate parallel list; treating them
+' as a set keeps the recursive walk simple (membership check at each
+' folder).
+' -------------------------------------------------------------------------
+
+TYPE TreeNode
+    DIM Path   AS STRING                 ' relative path from project root
+    DIM Name   AS STRING                 ' display name (basename only)
+    DIM Depth  AS INTEGER                ' indent level (0 = root)
+    DIM IsDir  AS BOOLEAN
+END TYPE
+
+' -------------------------------------------------------------------------
 ' Model — the entire IDE state lives here.
 ' -------------------------------------------------------------------------
 
 TYPE Model
-    DIM Width  AS INTEGER                ' terminal width  (WindowSizeMsg)
-    DIM Height AS INTEGER                ' terminal height (WindowSizeMsg)
-    DIM Status AS STRING                 ' message shown in the status bar
+    DIM Width   AS INTEGER               ' terminal width  (WindowSizeMsg)
+    DIM Height  AS INTEGER               ' terminal height (WindowSizeMsg)
+    DIM Status  AS STRING                ' message shown in the status bar
+
+    ' Project tree state.
+    DIM TreeRoot     AS STRING           ' filesystem root for the tree
+    DIM TreeExpanded AS []STRING         ' paths the user has opened
+    DIM TreeNodes    AS []TreeNode       ' flattened visible-node list
+    DIM TreeSelected AS INTEGER          ' cursor index into TreeNodes
+    DIM TreeOffset   AS INTEGER          ' vertical scroll offset
 END TYPE
+
+' setExpanded — toggle whether `path` is in the TreeExpanded "set".
+' Adds the path if it isn't there yet; removes it if it is. The set
+' is just a list because the typical number of expanded folders is
+' tiny so a linear scan is fine.
+SUB setExpanded(m AS POINTER TO Model, path AS STRING, on AS BOOLEAN)
+    DIM newList AS []STRING
+    DIM found   AS BOOLEAN = FALSE
+    DIM i       AS INTEGER
+    FOR i = 0 TO LEN(m.TreeExpanded) - 1
+        IF m.TreeExpanded[i] = path THEN
+            found = TRUE
+            ' Skip — we'll re-add below only when `on` is TRUE.
+        ELSE
+            newList = APPEND(newList, m.TreeExpanded[i])
+        END IF
+    NEXT i
+    IF on THEN newList = APPEND(newList, path)
+    _ = found
+    m.TreeExpanded = newList
+END SUB
+
+' isExpanded — TRUE when the path is currently expanded.
+FUNCTION isExpanded(m AS Model, path AS STRING) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.TreeExpanded) - 1
+        IF m.TreeExpanded[i] = path THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' joinPath — small "a"+"/"+"b" helper. Avoids filepath.Join because
+' "Base"/"Dir"/etc. are reserved DBasic identifiers.
+FUNCTION joinPath(a AS STRING, b AS STRING) AS STRING
+    IF a = "" THEN RETURN b
+    IF b = "" THEN RETURN a
+    IF strings.HasSuffix(a, "/") THEN RETURN a + b
+    RETURN a + "/" + b
+END FUNCTION
+
+' walkInto — recursive worker for buildTreeNodes. Appends every visible
+' descendant of `dir` to `out` at the given depth. Dotfiles are skipped
+' (no need to look at .git or editor backups in the tree).
+SUB walkInto(m AS Model, out AS POINTER TO []TreeNode, dir AS STRING, depth AS INTEGER)
+    DIM entries AS []os.DirEntry
+    DIM err     AS ERROR
+    entries, err = os.ReadDir(dir)
+    IF err <> NIL THEN RETURN
+
+    ' Two passes so directories appear before files at each level.
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(entries) - 1
+        DIM nm AS STRING = entries[i].Name()
+        IF strings.HasPrefix(nm, ".") THEN
+            ' dotfile — skip
+        ELSEIF entries[i].IsDir() THEN
+            DIM child AS TreeNode
+            child.Path  = joinPath(dir, nm)
+            child.Name  = nm
+            child.Depth = depth
+            child.IsDir = TRUE
+            ^out = APPEND(^out, child)
+            ' Recurse only when the folder is expanded.
+            IF isExpanded(m, child.Path) THEN
+                walkInto(m, out, child.Path, depth + 1)
+            END IF
+        END IF
+    NEXT i
+    FOR i = 0 TO LEN(entries) - 1
+        DIM nm2 AS STRING = entries[i].Name()
+        IF NOT strings.HasPrefix(nm2, ".") AND NOT entries[i].IsDir() THEN
+            DIM file AS TreeNode
+            file.Path  = joinPath(dir, nm2)
+            file.Name  = nm2
+            file.Depth = depth
+            file.IsDir = FALSE
+            ^out = APPEND(^out, file)
+        END IF
+    NEXT i
+END SUB
+
+' buildTreeNodes — rebuild m.TreeNodes from the current expansion set.
+' Always includes a root node at depth 0 representing the project
+' directory itself (always "expanded" — it's just a visual anchor).
+SUB buildTreeNodes(m AS POINTER TO Model)
+    DIM nodes AS []TreeNode
+    ' Root row: always shown, always treated as expanded.
+    DIM root AS TreeNode
+    root.Path  = m.TreeRoot
+    root.Name  = baseName(m.TreeRoot) + "/"
+    root.Depth = 0
+    root.IsDir = TRUE
+    nodes = APPEND(nodes, root)
+    walkInto(^m, @nodes, m.TreeRoot, 1)
+    m.TreeNodes = nodes
+END SUB
+
+' baseName — last "/"-separated segment of a path. "examples/dbtui"
+' returns "dbtui". Used for the tree root row's display name.
+FUNCTION baseName(p AS STRING) AS STRING
+    IF p = "" OR p = "." THEN RETURN "project"
+    DIM idx AS INTEGER = strings.LastIndex(p, "/")
+    IF idx < 0 THEN RETURN p
+    RETURN Mid(p, idx + 2, LEN(p) - idx - 1)
+END FUNCTION
 
 ' newModel — initial state on program start.
 FUNCTION newModel() AS Model
@@ -52,6 +182,17 @@ FUNCTION newModel() AS Model
     m.Width = 0
     m.Height = 0
     m.Status = "DBtui — F10:Menu  F5:Run  F7:Code  F12:Console  |  q:Quit"
+    ' Project tree rooted at the current working directory.
+    DIM cwd AS STRING
+    DIM err AS ERROR
+    cwd, err = os.Getwd()
+    IF err <> NIL THEN cwd = "."
+    m.TreeRoot = cwd
+    ' Pre-expand the root so the first-level entries show on startup.
+    m.TreeExpanded = APPEND(m.TreeExpanded, cwd)
+    buildTreeNodes(@m)
+    m.TreeSelected = 0
+    m.TreeOffset = 0
     RETURN m
 END FUNCTION
 
@@ -75,13 +216,42 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     END IF
 
-    ' Key press — only q (quit) for now.
+    ' Key press dispatch. For now everything goes to the tree pane;
+    ' once we have multiple focusable panes we'll route by focus.
     DIM k AS tea.KeyPressMsg
     DIM kOk AS BOOLEAN
     k, kOk = msg.(tea.KeyPressMsg)
     IF kOk THEN
         DIM key AS STRING = k.String()
         IF key = "q" OR key = "ctrl+c" THEN RETURN m, tea.Quit
+
+        ' --- Tree navigation ------------------------------------------
+        IF key = "up" THEN
+            IF m.TreeSelected > 0 THEN m.TreeSelected = m.TreeSelected - 1
+            RETURN m, NIL
+        END IF
+        IF key = "down" THEN
+            IF m.TreeSelected < LEN(m.TreeNodes) - 1 THEN m.TreeSelected = m.TreeSelected + 1
+            RETURN m, NIL
+        END IF
+        ' Enter on a folder toggles expansion; on a file just sets the
+        ' status (real "open in editor" comes when the middle pane
+        ' learns to display code).
+        IF key = "enter" OR key = "space" THEN
+            IF m.TreeSelected >= 0 AND m.TreeSelected < LEN(m.TreeNodes) THEN
+                DIM node AS TreeNode = m.TreeNodes[m.TreeSelected]
+                IF node.IsDir AND node.Depth > 0 THEN
+                    setExpanded(@m, node.Path, NOT isExpanded(m, node.Path))
+                    buildTreeNodes(@m)
+                    IF m.TreeSelected >= LEN(m.TreeNodes) THEN
+                        m.TreeSelected = LEN(m.TreeNodes) - 1
+                    END IF
+                ELSEIF NOT node.IsDir THEN
+                    m.Status = "open: " + node.Path
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
     END IF
 
     RETURN m, NIL
@@ -136,10 +306,54 @@ FUNCTION titledBox(title AS STRING, body AS STRING, width AS INTEGER, height AS 
     RETURN top + "\n" + bodyBox.Render(body)
 END FUNCTION
 
+' nodeGlyph — the leading symbol for a tree row. "▾" = expanded folder,
+' "▸" = collapsed folder, "◇" = leaf file. Matches the original DBtui.
+FUNCTION nodeGlyph(m AS Model, n AS TreeNode) AS STRING
+    IF n.IsDir THEN
+        IF isExpanded(m, n.Path) THEN RETURN "▾"
+        RETURN "▸"
+    END IF
+    RETURN "◇"
+END FUNCTION
+
+' renderTreeBody — produce the multi-line, indented + glyphed body for
+' the tree. The selected row is rendered with a highlight bar (cursor
+' "▶ " prefix + accent background so it stands out even without
+' terminal-cursor positioning).
+FUNCTION renderTreeBody(m AS Model, innerW AS INTEGER, innerH AS INTEGER) AS STRING
+    IF innerW < 1 THEN innerW = 1
+    DIM cursorStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#2d4f67")).Foreground(lipgloss.Color(cFg)).Bold(TRUE).Width(innerW)
+    DIM defStyle    AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(innerW)
+    DIM lines AS []STRING
+    DIM total AS INTEGER = LEN(m.TreeNodes)
+    DIM startI AS INTEGER = m.TreeOffset
+    IF startI < 0 THEN startI = 0
+    DIM endI AS INTEGER = startI + innerH
+    IF endI > total THEN endI = total
+    DIM i AS INTEGER
+    FOR i = startI TO endI - 1
+        DIM n AS TreeNode = m.TreeNodes[i]
+        DIM indent AS STRING = strings.Repeat("  ", n.Depth)
+        DIM line   AS STRING = indent + nodeGlyph(m, n) + " " + n.Name
+        IF i = m.TreeSelected THEN
+            lines = APPEND(lines, cursorStyle.Render(line))
+        ELSE
+            lines = APPEND(lines, defStyle.Render(line))
+        END IF
+    NEXT i
+    ' Pad with empty rows so the box always renders innerH lines.
+    DO WHILE LEN(lines) < innerH
+        lines = APPEND(lines, defStyle.Render(""))
+    LOOP
+    RETURN strings.Join(lines, "\n")
+END FUNCTION
+
 ' renderLeftPane — Project tree column. Focused = TRUE so it gets the
 ' square-corner border (matches the original's startup focus state).
-FUNCTION renderLeftPane(width AS INTEGER, height AS INTEGER) AS STRING
-    DIM body AS STRING = "▾ myproject/\n  ▾ forms/\n    ▸ ★ frmStart.dbf\n    ◇ frmStart.dbas\n  ▾ modules/\n    ◇ main.dbas"
+FUNCTION renderLeftPane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
+    ' titledBox renders a top row + 3-sided body box. The body box's
+    ' inner area is (width-2) chars wide × (height-2) rows tall.
+    DIM body AS STRING = renderTreeBody(m, width - 2, height - 2)
     RETURN titledBox("Project", body, width, height, TRUE)
 END FUNCTION
 
@@ -204,7 +418,7 @@ FUNCTION (m AS Model) View() AS tea.View
 
     DIM menu  AS STRING = renderMenuBar(w)
     DIM stat  AS STRING = renderStatusBar(w, m.Status)
-    DIM left  AS STRING = renderLeftPane(leftW, bodyH)
+    DIM left  AS STRING = renderLeftPane(m, leftW, bodyH)
     DIM mid   AS STRING = renderMiddlePane(midW, bodyH)
     DIM right AS STRING = renderRightPane(rightW, bodyH)
     DIM body  AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
