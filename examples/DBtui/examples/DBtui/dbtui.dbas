@@ -19,6 +19,7 @@
 
 IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "charm.land/bubbles/v2/textarea" AS textarea
+IMPORT "charm.land/bubbles/v2/textinput" AS textinput
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 IMPORT "fmt"
 IMPORT "os"
@@ -140,16 +141,21 @@ TYPE Model
     DIM HoverX AS INTEGER
     DIM HoverY AS INTEGER
 
-    ' Generic modal dialog state. When ModalActive is TRUE the
-    ' renderer overlays a framed Yes/No-style dialog and Update
-    ' intercepts keystrokes for navigation + commit.
+    ' Generic modal dialog state. Two flavours:
+    '   • button modal  → ModalIsInput=FALSE; user picks one of
+    '     ModalButtons via arrows + Enter.
+    '   • input modal   → ModalIsInput=TRUE;  user types into
+    '     ModalInput (a bubbles textinput) and commits with Enter.
+    ' ModalContext tells dispatchModalClose what was being asked so
+    ' the same handler can serve several dialog kinds.
     DIM ModalActive  AS BOOLEAN
     DIM ModalTitle   AS STRING
     DIM ModalMessage AS STRING
     DIM ModalButtons AS []STRING
     DIM ModalIdx     AS INTEGER
-    DIM ModalContext AS STRING           ' free-text tag so the close
-                                         ' handler knows what was asked
+    DIM ModalContext AS STRING
+    DIM ModalIsInput AS BOOLEAN
+    DIM ModalInput   AS textinput.Model
 END TYPE
 
 ' setExpanded — toggle whether `path` is in the TreeExpanded "set".
@@ -319,8 +325,13 @@ END FUNCTION
 FUNCTION buildMenus() AS []MenuDef
     DIM menus AS []MenuDef
     DIM fileItems AS []MenuItem
-    fileItems = APPEND(fileItems, mkItem("(S)ave        Ctrl+S", "file.save"))
+    fileItems = APPEND(fileItems, mkItem("(N)ew         Ctrl+N", "file.new"))
+    fileItems = APPEND(fileItems, mkItem("(O)pen        Ctrl+O", "file.open"))
     fileItems = APPEND(fileItems, mkSep())
+    fileItems = APPEND(fileItems, mkItem("(S)ave        Ctrl+S", "file.save"))
+    fileItems = APPEND(fileItems, mkItem("Save (A)s          ", "file.saveas"))
+    fileItems = APPEND(fileItems, mkSep())
+    fileItems = APPEND(fileItems, mkItem("(C)lose       Ctrl+W", "file.close"))
     fileItems = APPEND(fileItems, mkItem("(Q)uit             q", "file.quit"))
     menus = APPEND(menus, mkMenu("(F)ile", fileItems))
 
@@ -477,7 +488,7 @@ SUB saveCurrent(m AS POINTER TO Model)
     m.Status = fmt.Sprintf("saved %s (%d bytes)", path, LEN(body))
 END SUB
 
-' showModal — pop a modal dialog with `title`, `message`, and a
+' showModal — pop a button-style modal with `title`, `message`, and a
 ' comma-separated `buttonsCSV` (e.g. "Discard,Cancel"). `context` is
 ' a free-text tag forwarded to dispatchModalClose so the same handler
 ' can serve multiple dialog kinds. The active modal is rendered as a
@@ -496,13 +507,32 @@ SUB showModal(m AS POINTER TO Model, title AS STRING, message AS STRING, buttons
     m.ModalButtons = buttons
     m.ModalIdx = 0
     m.ModalContext = context
+    m.ModalIsInput = FALSE
+    m.ModalActive = TRUE
+END SUB
+
+' showInputModal — pop an input-style modal with `title`, a one-line
+' `prompt` shown above the field, and `defaultText` pre-filled in
+' the textinput. Enter commits; Esc cancels. dispatchModalClose
+' receives the typed text via its `input` parameter.
+SUB showInputModal(m AS POINTER TO Model, title AS STRING, prompt AS STRING, defaultText AS STRING, context AS STRING)
+    m.ModalTitle = title
+    m.ModalMessage = prompt
+    m.ModalContext = context
+    m.ModalIsInput = TRUE
+    m.ModalInput = textinput.New()
+    m.ModalInput.Placeholder = ""
+    m.ModalInput.SetValue(defaultText)
+    m.ModalInput.CursorEnd()
+    DIM fcmd AS tea.Cmd = m.ModalInput.Focus()
+    _ = fcmd
     m.ModalActive = TRUE
 END SUB
 
 ' dispatchModalClose — called by Update when the user commits a modal
 ' choice. Returns TRUE if the program should terminate immediately
 ' after this call (e.g. "Discard" on the quit-confirm modal).
-FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING) AS BOOLEAN
+FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STRING) AS BOOLEAN
     IF m.ModalContext = "quit" THEN
         IF button = "Discard" THEN RETURN TRUE
         m.Status = "quit cancelled"
@@ -521,9 +551,50 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING) AS BOOLEAN
         END IF
         RETURN FALSE
     END IF
+    ' "open" — input modal asking for a file path. Empty/whitespace
+    ' aborts; otherwise hand the path off to openFile.
+    IF m.ModalContext = "open" THEN
+        DIM p AS STRING = strings.TrimSpace(text)
+        IF p <> "" THEN openFile(m, p)
+        RETURN FALSE
+    END IF
+    ' "saveas" — input modal asking where to write the active tab.
+    ' Updates the tab's Path then re-uses saveCurrent.
+    IF m.ModalContext = "saveas" THEN
+        DIM sp AS STRING = strings.TrimSpace(text)
+        IF sp = "" OR NOT hasActiveTab(^m) THEN RETURN FALSE
+        m.Tabs[m.TabIdx].Path = sp
+        saveCurrent(m)
+        RETURN FALSE
+    END IF
+    ' "new" — input modal asking for a name for the fresh buffer.
+    ' Pushes a tab with empty contents at that path (or "untitled"
+    ' when the user just hits Enter).
+    IF m.ModalContext = "new" THEN
+        DIM np AS STRING = strings.TrimSpace(text)
+        IF np = "" THEN np = "untitled"
+        newEmptyTab(m, np)
+        RETURN FALSE
+    END IF
     m.Status = "modal " + m.ModalContext + " → " + button
     RETURN FALSE
 END FUNCTION
+
+' newEmptyTab — create a fresh empty tab with `path` as its title.
+' The file isn't touched on disk until the user saves. Used by
+' both File → New and Ctrl+N.
+SUB newEmptyTab(m AS POINTER TO Model, path AS STRING)
+    DIM t AS Tab
+    t.Path = path
+    t.Editor = newTextarea()
+    t.Dirty = FALSE
+    IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
+    m.Tabs = APPEND(m.Tabs, t)
+    m.TabIdx = LEN(m.Tabs) - 1
+    m.ViewMode = "code"
+    setFocus(m, "editor")
+    m.Status = "new file: " + path
+END SUB
 
 ' -------------------------------------------------------------------------
 ' Run / Check — shell out to the `dbasic` CLI on the active tab.
@@ -656,7 +727,37 @@ END FUNCTION
 ' action handler. Centralised here so other paths (keyboard shortcuts
 ' or buttons later) can invoke the same code.
 SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
+    IF action = "file.new" THEN
+        showInputModal(m, "New File", "Name for the new buffer:", "untitled.dbas", "new")
+        RETURN
+    END IF
+    IF action = "file.open" THEN
+        DIM cwd AS STRING
+        DIM cwdErr AS ERROR
+        cwd, cwdErr = os.Getwd()
+        IF cwdErr <> NIL THEN cwd = "."
+        showInputModal(m, "Open File", "Path:", cwd + "/", "open")
+        RETURN
+    END IF
+    IF action = "file.saveas" THEN
+        IF NOT hasActiveTab(^m) THEN
+            m.Status = "nothing to save"
+            RETURN
+        END IF
+        showInputModal(m, "Save As", "Path:", m.Tabs[m.TabIdx].Path, "saveas")
+        RETURN
+    END IF
+    IF action = "file.close" THEN
+        IF hasActiveTab(^m) THEN _ = tryCloseTab(m, m.TabIdx)
+        RETURN
+    END IF
     IF action = "file.save" THEN
+        ' Saving a brand-new (no-path) buffer falls through to
+        ' Save As so the user is prompted for a destination.
+        IF hasActiveTab(^m) AND m.Tabs[m.TabIdx].Path = "" THEN
+            showInputModal(m, "Save As", "Path:", "untitled.dbas", "saveas")
+            RETURN
+        END IF
         saveCurrent(m)
         RETURN
     END IF
@@ -987,9 +1088,27 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF m.ModalActive THEN
             IF key = "esc" THEN
                 m.ModalActive = FALSE
-                m.Status = "modal cancelled"
+                m.ModalIsInput = FALSE
+                m.Status = "cancelled"
                 RETURN m, NIL
             END IF
+            ' Input-mode: Enter commits the typed text; anything else
+            ' goes into the textinput.
+            IF m.ModalIsInput THEN
+                IF key = "enter" THEN
+                    DIM typed AS STRING = m.ModalInput.Value()
+                    m.ModalActive = FALSE
+                    m.ModalIsInput = FALSE
+                    IF dispatchModalClose(@m, "", typed) THEN RETURN m, tea.Quit
+                    RETURN m, NIL
+                END IF
+                DIM newTi AS textinput.Model
+                DIM tiCmd AS tea.Cmd
+                newTi, tiCmd = m.ModalInput.Update(msg)
+                m.ModalInput = newTi
+                RETURN m, tiCmd
+            END IF
+            ' Button-mode: arrows / Tab to cycle, Enter / Space commits.
             IF key = "left" OR key = "up" OR key = "shift+tab" THEN
                 m.ModalIdx = m.ModalIdx - 1
                 IF m.ModalIdx < 0 THEN m.ModalIdx = LEN(m.ModalButtons) - 1
@@ -1006,7 +1125,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     pick = m.ModalButtons[m.ModalIdx]
                 END IF
                 m.ModalActive = FALSE
-                IF dispatchModalClose(@m, pick) THEN RETURN m, tea.Quit
+                IF dispatchModalClose(@m, pick, "") THEN RETURN m, tea.Quit
                 RETURN m, NIL
             END IF
             ' Swallow other keys while the modal is up.
@@ -1020,7 +1139,24 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF key = "ctrl+s" THEN
-            saveCurrent(@m)
+            ' Save-As fallback when the buffer has no on-disk path yet.
+            IF hasActiveTab(m) AND m.Tabs[m.TabIdx].Path = "" THEN
+                showInputModal(@m, "Save As", "Path:", "untitled.dbas", "saveas")
+            ELSE
+                saveCurrent(@m)
+            END IF
+            RETURN m, NIL
+        END IF
+        IF key = "ctrl+n" THEN
+            showInputModal(@m, "New File", "Name for the new buffer:", "untitled.dbas", "new")
+            RETURN m, NIL
+        END IF
+        IF key = "ctrl+o" THEN
+            DIM cwdOp AS STRING
+            DIM cwdErrOp AS ERROR
+            cwdOp, cwdErrOp = os.Getwd()
+            IF cwdErrOp <> NIL THEN cwdOp = "."
+            showInputModal(@m, "Open File", "Path:", cwdOp + "/", "open")
             RETURN m, NIL
         END IF
 
@@ -1865,30 +2001,38 @@ FUNCTION renderModal(m AS Model) AS STRING
     DIM btnNormal AS lipgloss.Style = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder))
     DIM btnActive AS lipgloss.Style = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Foreground(lipgloss.Color(cBg)).Background(lipgloss.Color(cHotkey)).Bold(TRUE)
 
-    DIM rendered AS []STRING
-    DIM bi AS INTEGER
-    FOR bi = 0 TO LEN(m.ModalButtons) - 1
-        DIM lbl AS STRING = m.ModalButtons[bi]
-        IF bi = m.ModalIdx THEN
-            rendered = APPEND(rendered, btnActive.Render(lbl))
-        ELSE
-            rendered = APPEND(rendered, btnNormal.Render(lbl))
+    ' --- Footer: either an input field (input mode) or button row -
+    DIM footer AS STRING = ""
+    IF m.ModalIsInput THEN
+        m.ModalInput.SetWidth(innerW)
+        DIM inputBox AS lipgloss.Style = lipgloss.NewStyle().Width(innerW).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent))
+        footer = inputBox.Render(m.ModalInput.View())
+    ELSE
+        DIM rendered AS []STRING
+        DIM bi AS INTEGER
+        FOR bi = 0 TO LEN(m.ModalButtons) - 1
+            DIM lbl AS STRING = m.ModalButtons[bi]
+            IF bi = m.ModalIdx THEN
+                rendered = APPEND(rendered, btnActive.Render(lbl))
+            ELSE
+                rendered = APPEND(rendered, btnNormal.Render(lbl))
+            END IF
+        NEXT bi
+        ' DBasic doesn't support variadic spread (xs...), so dispatch
+        ' by button count. Real dialogs only ever have 1–3 buttons.
+        DIM btnRow AS STRING = ""
+        IF LEN(rendered) = 1 THEN
+            btnRow = rendered[0]
+        ELSEIF LEN(rendered) = 2 THEN
+            btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1])
+        ELSEIF LEN(rendered) >= 3 THEN
+            btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1], "  ", rendered[2])
         END IF
-    NEXT bi
-    ' DBasic doesn't support variadic spread (xs...), so dispatch
-    ' by button count. Real dialogs only ever have 1–3 buttons.
-    DIM btnRow AS STRING = ""
-    IF LEN(rendered) = 1 THEN
-        btnRow = rendered[0]
-    ELSEIF LEN(rendered) = 2 THEN
-        btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1])
-    ELSEIF LEN(rendered) >= 3 THEN
-        btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1], "  ", rendered[2])
+        footer = lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Render(btnRow)
     END IF
-    DIM btnRow2 AS STRING = lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Render(btnRow)
 
-    ' --- Stack title / body / spacer / buttons -------------------
-    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, titleLine, "", bodyBlock, "", btnRow2)
+    ' --- Stack title / body / spacer / footer --------------------
+    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, titleLine, "", bodyBlock, "", footer)
 
     ' --- Outer frame ---------------------------------------------
     DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Background(lipgloss.Color(cBg)).Padding(1, 2)
