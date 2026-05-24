@@ -632,6 +632,8 @@ FUNCTION helpText() AS STRING
     s = s + "  Ctrl+X   Cut         Ctrl+C   Copy\n"
     s = s + "  Ctrl+V   Paste       Ctrl+A   Select all\n"
     s = s + "  Shift+arrows   Extend selection\n"
+    s = s + "  Ctrl+←/→     Jump by word\n"
+    s = s + "  Tab / Shift+Tab on selection  Block indent/dedent\n"
     s = s + "  Ctrl+F   Find        F3   Find next\n"
     s = s + "  Ctrl+H / F4   Replace (all)\n"
     s = s + "  Ctrl+G   Go to line\n"
@@ -701,6 +703,7 @@ FUNCTION isMutatingKey(k AS STRING) AS BOOLEAN
     IF k = "enter"     THEN RETURN TRUE
     IF k = "space"     THEN RETURN TRUE
     IF k = "tab"       THEN RETURN TRUE
+    IF k = "shift+tab" THEN RETURN TRUE
     IF k = "ctrl+v"    THEN RETURN TRUE      ' paste
     IF k = "ctrl+x"    THEN RETURN TRUE      ' cut
     IF k = "ctrl+y"    THEN RETURN TRUE      ' redo (textarea default)
@@ -3985,6 +3988,136 @@ SUB padInsertString(p AS POINTER TO Pad, s AS STRING)
     NEXT i
 END SUB
 
+' padLeadingWhitespace — leading run of spaces / tabs from `line`.
+' Used by Enter's auto-indent so the new line copies the previous
+' line's indent.
+FUNCTION padLeadingWhitespace(line AS STRING) AS STRING
+    DIM i AS INTEGER = 0
+    DO WHILE i < LEN(line)
+        DIM ch AS STRING = Mid(line, i + 1, 1)
+        IF ch <> " " AND ch <> Chr(9) THEN EXIT DO
+        i = i + 1
+    LOOP
+    RETURN Mid(line, 1, i)
+END FUNCTION
+
+' padIsWordCh — TRUE for the alphanumeric/underscore "word" run
+' that Ctrl+arrow navigation hops across.
+FUNCTION padIsWordCh(ch AS STRING) AS BOOLEAN
+    IF isPadLetter(ch) THEN RETURN TRUE
+    IF isPadDigit(ch)  THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' padMoveWordRight — jump cursor to the start of the next word.
+' Crosses the line boundary when called at end of line.
+SUB padMoveWordRight(p AS POINTER TO Pad)
+    DIM line AS STRING = p.Lines[p.Row]
+    DIM n AS INTEGER = LEN(line)
+    IF p.Col >= n THEN
+        IF p.Row < LEN(p.Lines) - 1 THEN
+            p.Row = p.Row + 1
+            p.Col = 0
+        END IF
+        padEnsureVisible(p)
+        RETURN
+    END IF
+    ' Skip the current word run (if we're inside one).
+    DO WHILE p.Col < n AND padIsWordCh(Mid(line, p.Col + 1, 1))
+        p.Col = p.Col + 1
+    LOOP
+    ' Then skip whitespace / punctuation to the next word's start.
+    DO WHILE p.Col < n AND NOT padIsWordCh(Mid(line, p.Col + 1, 1))
+        p.Col = p.Col + 1
+    LOOP
+    padEnsureVisible(p)
+END SUB
+
+' padMoveWordLeft — symmetric backward jump.
+SUB padMoveWordLeft(p AS POINTER TO Pad)
+    IF p.Col = 0 THEN
+        IF p.Row > 0 THEN
+            p.Row = p.Row - 1
+            p.Col = LEN(p.Lines[p.Row])
+        END IF
+        padEnsureVisible(p)
+        RETURN
+    END IF
+    DIM line AS STRING = p.Lines[p.Row]
+    ' Skip whitespace / punctuation backward.
+    DO WHILE p.Col > 0 AND NOT padIsWordCh(Mid(line, p.Col, 1))
+        p.Col = p.Col - 1
+    LOOP
+    ' Skip the word run backward.
+    DO WHILE p.Col > 0 AND padIsWordCh(Mid(line, p.Col, 1))
+        p.Col = p.Col - 1
+    LOOP
+    padEnsureVisible(p)
+END SUB
+
+' padIndentSelection — prepend 4 spaces to each selected line.
+' Caller has already snapped + verified multi-line selection.
+SUB padIndentSelection(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = padSelBounds(p)
+    _ = c0
+    _ = c1
+    DIM i AS INTEGER
+    FOR i = r0 TO r1
+        p.Lines[i] = "    " + p.Lines[i]
+    NEXT i
+    ' Shift the selection bounds + cursor to match.
+    p.SelCol = p.SelCol + 4
+    p.Col    = p.Col + 4
+    padEnsureVisible(p)
+END SUB
+
+' padDedentSelection — drop up to 4 leading spaces from each
+' selected line. Caller has snapped + verified multi-line.
+SUB padDedentSelection(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = padSelBounds(p)
+    _ = c0
+    _ = c1
+    DIM i AS INTEGER
+    FOR i = r0 TO r1
+        DIM stripped AS INTEGER = 0
+        DIM line AS STRING = p.Lines[i]
+        DO WHILE stripped < 4 AND stripped < LEN(line) AND Mid(line, stripped + 1, 1) = " "
+            stripped = stripped + 1
+        LOOP
+        IF stripped > 0 THEN
+            p.Lines[i] = Mid(line, stripped + 1, LEN(line) - stripped)
+            ' Best-effort cursor / anchor adjustment for the start
+            ' and end rows of the selection.
+            IF i = p.SelRow AND p.SelCol >= stripped THEN p.SelCol = p.SelCol - stripped
+            IF i = p.Row    AND p.Col    >= stripped THEN p.Col    = p.Col    - stripped
+        END IF
+    NEXT i
+    padEnsureVisible(p)
+END SUB
+
+' padDedentLine — drop up to 4 leading spaces from the current
+' (non-selection) line. Used by Shift+Tab when no selection.
+SUB padDedentLine(p AS POINTER TO Pad)
+    DIM stripped AS INTEGER = 0
+    DIM line AS STRING = p.Lines[p.Row]
+    DO WHILE stripped < 4 AND stripped < LEN(line) AND Mid(line, stripped + 1, 1) = " "
+        stripped = stripped + 1
+    LOOP
+    IF stripped > 0 THEN
+        p.Lines[p.Row] = Mid(line, stripped + 1, LEN(line) - stripped)
+        IF p.Col >= stripped THEN p.Col = p.Col - stripped
+    END IF
+    padEnsureVisible(p)
+END SUB
+
 ' padToggleComment — flip the leading "' " on the cursor line, or
 ' on every selected line. Sublime-style: if any selected line is
 ' un-commented, the operation comments all of them; otherwise it
@@ -4155,6 +4288,28 @@ FUNCTION (p AS POINTER TO Pad) Update(msg AS tea.Msg) AS tea.Cmd
     IF NOT ok THEN RETURN NIL
     DIM key AS STRING = k.String()
 
+    ' --- Word-jump (Ctrl+arrows) ----------------------------------
+    IF key = "ctrl+right" THEN
+        p.SelActive = FALSE
+        padMoveWordRight(p)
+        RETURN NIL
+    END IF
+    IF key = "ctrl+left" THEN
+        p.SelActive = FALSE
+        padMoveWordLeft(p)
+        RETURN NIL
+    END IF
+    IF key = "ctrl+shift+right" THEN
+        padStartSelectionIfNeeded(p)
+        padMoveWordRight(p)
+        RETURN NIL
+    END IF
+    IF key = "ctrl+shift+left" THEN
+        padStartSelectionIfNeeded(p)
+        padMoveWordLeft(p)
+        RETURN NIL
+    END IF
+
     ' --- Selection-extending keys ---------------------------------
     ' Shift+arrow / Shift+home / Shift+end / Shift+PgUp/PgDn pin
     ' the selection anchor (if not already pinned) then move the
@@ -4276,13 +4431,58 @@ FUNCTION (p AS POINTER TO Pad) Update(msg AS tea.Msg) AS tea.Cmd
     IF key = "enter" THEN
         padSnap(p)
         IF padHasSelection(p) THEN padDeleteSelection(p)
+        ' Auto-indent: copy leading whitespace from the line we're
+        ' leaving onto the new one.
+        DIM indent AS STRING = padLeadingWhitespace(p.Lines[p.Row])
         padInsertNewline(p)
+        IF indent <> "" THEN padInsertChar(p, indent)
         RETURN NIL
     END IF
     IF key = "tab" THEN
+        ' Multi-line selection → block indent. Single-cell selection
+        ' or no selection → insert 4 spaces (replacing the selection
+        ' content first when present).
+        IF padHasSelection(p) THEN
+            DIM tR0 AS INTEGER
+            DIM tC0 AS INTEGER
+            DIM tR1 AS INTEGER
+            DIM tC1 AS INTEGER
+            tR0, tC0, tR1, tC1 = padSelBounds(p)
+            _ = tC0
+            _ = tC1
+            IF tR1 > tR0 THEN
+                padSnap(p)
+                padIndentSelection(p)
+                RETURN NIL
+            END IF
+            padSnap(p)
+            padDeleteSelection(p)
+            padInsertChar(p, "    ")
+            RETURN NIL
+        END IF
         padSnap(p)
-        IF padHasSelection(p) THEN padDeleteSelection(p)
         padInsertChar(p, "    ")
+        RETURN NIL
+    END IF
+    IF key = "shift+tab" THEN
+        ' Multi-line selection → block dedent; otherwise dedent
+        ' the current line by up to 4 leading spaces.
+        IF padHasSelection(p) THEN
+            DIM sR0 AS INTEGER
+            DIM sC0 AS INTEGER
+            DIM sR1 AS INTEGER
+            DIM sC1 AS INTEGER
+            sR0, sC0, sR1, sC1 = padSelBounds(p)
+            _ = sC0
+            _ = sC1
+            IF sR1 > sR0 THEN
+                padSnap(p)
+                padDedentSelection(p)
+                RETURN NIL
+            END IF
+        END IF
+        padSnap(p)
+        padDedentLine(p)
         RETURN NIL
     END IF
     IF key = "space" THEN
@@ -4364,38 +4564,60 @@ FUNCTION (p AS Pad) View() AS STRING
     RETURN strings.Join(rows, "\n")
 END FUNCTION
 
+' padStyleForMode — pick the style for a per-char render "mode".
+' Cursor (100) and selection (101) ride above token kinds (0..4).
+FUNCTION padStyleForMode(mode AS INTEGER) AS lipgloss.Style
+    initPadStyles()
+    IF mode = 100 THEN RETURN padStyleCursor
+    IF mode = 101 THEN RETURN padStyleSelection
+    RETURN styleForToken(mode)
+END FUNCTION
+
 ' padRenderLine — render one source line clipped to [scrollLeft,
 ' scrollLeft+contentW). Walks the token stream char-by-char so the
 ' cursor cell (when this is the cursor row) gets the cursor style
 ' instead of the token's style. selStart..selEnd (in source columns,
 ' or -1, -1 for "no selection on this row") gets a subtle bg tint.
+'
+' Coalesces consecutive chars sharing the same render mode into one
+' Render call — turns a ~40-char line from ~40 ANSI runs into ~6,
+' which makes editor caching and bubbletea diffing much cheaper.
 FUNCTION padRenderLine(line AS STRING, scrollLeft AS INTEGER, contentW AS INTEGER, isCursorRow AS BOOLEAN, cursorCol AS INTEGER, selStart AS INTEGER, selEnd AS INTEGER) AS STRING
     initPadStyles()
     DIM tokens AS []PadToken = tokenizeLine(line)
     DIM out AS STRING = ""
     DIM col AS INTEGER = 0
     DIM visCol AS INTEGER = 0
+    DIM runMode AS INTEGER = 0 - 1
+    DIM runBuf  AS STRING  = ""
     DIM ti AS INTEGER
     FOR ti = 0 TO LEN(tokens) - 1
         DIM tok AS PadToken = tokens[ti]
-        DIM tokStyle AS lipgloss.Style = styleForToken(tok.Kind)
         DIM j AS INTEGER
         FOR j = 0 TO LEN(tok.Text) - 1
             DIM ch AS STRING = Mid(tok.Text, j + 1, 1)
             IF col >= scrollLeft AND visCol < contentW THEN
-                DIM inSel AS BOOLEAN = (selStart >= 0 AND col >= selStart AND col < selEnd)
-                IF isCursorRow AND col = cursorCol THEN
-                    out = out + padStyleCursor.Render(ch)
-                ELSEIF inSel THEN
-                    out = out + padStyleSelection.Render(ch)
+                DIM mode AS INTEGER = tok.Kind
+                IF selStart >= 0 AND col >= selStart AND col < selEnd THEN mode = 101
+                IF isCursorRow AND col = cursorCol THEN mode = 100
+                IF mode = runMode THEN
+                    runBuf = runBuf + ch
                 ELSE
-                    out = out + tokStyle.Render(ch)
+                    IF runMode >= 0 AND runBuf <> "" THEN
+                        out = out + padStyleForMode(runMode).Render(runBuf)
+                    END IF
+                    runMode = mode
+                    runBuf = ch
                 END IF
                 visCol = visCol + 1
             END IF
             col = col + 1
         NEXT j
     NEXT ti
+    ' Flush the trailing run.
+    IF runMode >= 0 AND runBuf <> "" THEN
+        out = out + padStyleForMode(runMode).Render(runBuf)
+    END IF
     ' Cursor past end-of-line — render as a space at cursor pos.
     IF isCursorRow AND cursorCol >= LEN(line) AND visCol < contentW THEN
         DIM padCount AS INTEGER = cursorCol - LEN(line)
