@@ -20,8 +20,12 @@ DIM curFile    AS STRING
 ' props_Change to route an edit commit back to the right widget.
 DIM curSelWidget AS STRING
 
+' Tab index pending close-confirm via gMsgBox.
+DIM pendingCloseIdx AS INTEGER
+
 SUB FormLoad()
     curIdx = 0 - 1
+    pendingCloseIdx = 0 - 1
     tvSetNodes("tree", buildTreeNodes("."))
     gSetItems("props", propsFor(""))
     refreshTabs()
@@ -142,12 +146,40 @@ SUB tabs_Change()
     IF idx >= 0 AND idx < LEN(openFiles) AND idx <> curIdx THEN switchToTab(idx)
 END SUB
 
-' Right-click on a tab fires TabClosed — remove the tab and switch to
-' the neighbor. (No dirty prompt yet; clobbers unsaved edits.)
+' Right-click on a tab fires TabClosed. If the tab is dirty, confirm
+' via gMsgBox before discarding; otherwise close immediately.
 SUB tabs_TabClosed(label AS STRING, idx AS INTEGER)
     _ = label
     IF idx < 0 OR idx >= LEN(openFiles) THEN RETURN
-    ' Remove openFiles[idx], openBufs[idx], openDirty[idx].
+    ' If the editor's CURRENT buffer for the active tab is dirty and
+    ' we're closing that same tab, the snapshot in openDirty hasn't
+    ' caught up to the latest keystroke yet. Sync it.
+    IF idx = curIdx THEN
+        DIM live AS STRING = gGetText("code")
+        DIM snap AS STRING = ""
+        IF idx < LEN(openBufs) THEN snap = openBufs[idx]
+        IF live <> snap THEN
+            DO WHILE LEN(openDirty) <= idx
+                openDirty = APPEND(openDirty, FALSE)
+            LOOP
+            openDirty[idx] = TRUE
+        END IF
+    END IF
+    DIM dirty AS BOOLEAN = FALSE
+    IF idx < LEN(openDirty) THEN dirty = openDirty[idx]
+    IF dirty THEN
+        pendingCloseIdx = idx
+        gMsgBox("Close tab", baseName(openFiles[idx]) + " has unsaved changes. Discard?", "Discard,Cancel", "close-tab")
+        RETURN
+    END IF
+    doCloseTab(idx)
+END SUB
+
+' doCloseTab — actually drop tab idx from openFiles/openBufs/openDirty
+' and switch to a neighbor. Called by tabs_TabClosed (clean tab) and
+' by the gMsgBox "Discard" branch (dirty tab confirmed).
+SUB doCloseTab(idx AS INTEGER)
+    IF idx < 0 OR idx >= LEN(openFiles) THEN RETURN
     DIM newFiles AS []STRING
     DIM newBufs  AS []STRING
     DIM newDirty AS []BOOLEAN
@@ -180,6 +212,32 @@ SUB tabs_TabClosed(label AS STRING, idx AS INTEGER)
     refreshTabs()
     switchToTab(newCur)
 END SUB
+
+' saveCurrent — write the active tab's editor buffer to disk +
+' clear its dirty flag. Returns TRUE on success.
+FUNCTION saveCurrent() AS BOOLEAN
+    IF curFile = "" THEN RETURN FALSE
+    DIM body AS STRING = gGetText("code")
+    DIM err AS ERROR = os.WriteFile(curFile, Encode(body), 0644)
+    IF err <> NIL THEN
+        gSetText("status", "save failed: " + err.Error())
+        RETURN FALSE
+    END IF
+    IF curIdx >= 0 AND curIdx < LEN(openFiles) THEN
+        DO WHILE LEN(openBufs) <= curIdx
+            openBufs = APPEND(openBufs, "")
+        LOOP
+        openBufs[curIdx] = body
+        DO WHILE LEN(openDirty) <= curIdx
+            openDirty = APPEND(openDirty, FALSE)
+        LOOP
+        IF openDirty[curIdx] THEN
+            openDirty[curIdx] = FALSE
+            refreshTabs()
+        END IF
+    END IF
+    RETURN TRUE
+END FUNCTION
 
 ' CodeEditor Change — fires on every keystroke. Update the dirty
 ' flag for the current tab (buffer differs from openBufs snapshot).
@@ -288,11 +346,25 @@ SUB checkBtn_Click()
     gMsgBox("Check", "Run `dbasic check` on " + shorten(curFile, 50) + "?", "Yes,No", "check")
 END SUB
 
-' Run button — build curFile, gExec the result.
+' Run button — save the current tab if dirty, build curFile, gExec
+' the result. Save-before-run ensures the build sees the live buffer.
 SUB runBtn_Click()
     IF curFile = "" THEN
         gMsgBox("Run", "Open a .dbas file first.", "OK", "")
         RETURN
+    END IF
+    DIM isDirty AS BOOLEAN = FALSE
+    IF curIdx >= 0 AND curIdx < LEN(openDirty) THEN isDirty = openDirty[curIdx]
+    IF NOT isDirty THEN
+        ' Even when openDirty says clean, the editor buffer might be
+        ' a hair ahead of openBufs. Compare and save if different.
+        DIM live AS STRING = gGetText("code")
+        DIM snap AS STRING = ""
+        IF curIdx >= 0 AND curIdx < LEN(openBufs) THEN snap = openBufs[curIdx]
+        IF live <> snap THEN isDirty = TRUE
+    END IF
+    IF isDirty THEN
+        IF NOT saveCurrent() THEN RETURN
     END IF
     DIM outBin AS STRING = "/tmp/dbtui_run"
     gSetText("status", "building " + shorten(curFile, 50) + "...")
@@ -308,6 +380,15 @@ SUB runBtn_Click()
 END SUB
 
 SUB gMsgBoxClosed(button AS STRING, context AS STRING)
+    IF context = "close-tab" THEN
+        IF button = "Discard" THEN
+            doCloseTab(pendingCloseIdx)
+        ELSE
+            gSetText("status", "close cancelled")
+        END IF
+        pendingCloseIdx = 0 - 1
+        RETURN
+    END IF
     IF context = "check" AND button = "Yes" THEN
         DIM code AS INTEGER = dbCheck_RunWith(curFile)
         IF code = 0 THEN
@@ -332,27 +413,10 @@ SUB FormKey(key AS STRING)
             gSetText("status", "Ctrl+S: nothing to save")
             RETURN
         END IF
-        DIM body AS STRING = gGetText("code")
-        DIM err AS ERROR = os.WriteFile(curFile, Encode(body), 0644)
-        IF err <> NIL THEN
-            gSetText("status", "save failed: " + err.Error())
-            RETURN
+        IF saveCurrent() THEN
+            DIM size AS INTEGER = LEN(gGetText("code"))
+            gSetText("status", "saved " + shorten(curFile, 60) + " (" + fmt.Sprintf("%d", size) + " bytes)")
         END IF
-        ' Update the on-disk snapshot + clear dirty for the saved tab.
-        IF curIdx >= 0 AND curIdx < LEN(openFiles) THEN
-            DO WHILE LEN(openBufs) <= curIdx
-                openBufs = APPEND(openBufs, "")
-            LOOP
-            openBufs[curIdx] = body
-            DO WHILE LEN(openDirty) <= curIdx
-                openDirty = APPEND(openDirty, FALSE)
-            LOOP
-            IF openDirty[curIdx] THEN
-                openDirty[curIdx] = FALSE
-                refreshTabs()
-            END IF
-        END IF
-        gSetText("status", "saved " + shorten(curFile, 60) + " (" + fmt.Sprintf("%d", LEN(body)) + " bytes)")
         RETURN
     END IF
     IF key = "f5" THEN
