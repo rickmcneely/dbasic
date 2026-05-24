@@ -102,6 +102,29 @@ FUNCTION buildTreeNodes(rootDir AS STRING) AS STRING
     RETURN strings.Join(parts, ";")
 END FUNCTION
 
+' propsFor — format a widget's runtime state as a PropertyGrid Rows
+' string for the right-side panel. Two sections: General + Layout.
+' Pure read-only — write-back wiring is a follow-up.
+FUNCTION propsFor(id AS STRING) AS STRING
+    IF id = "" THEN RETURN "(no selection)||||"
+    DIM kind AS STRING = gGetKind(id)
+    IF kind = "" THEN RETURN "(not found: " + id + ")||||"
+    DIM visStr AS STRING = "false"
+    IF gGetVisible(id) THEN visStr = "true"
+    DIM rows AS []STRING
+    rows = APPEND(rows, "General||||")
+    rows = APPEND(rows, "|Id|" + id + "|")
+    rows = APPEND(rows, "|Kind|" + kind + "|")
+    rows = APPEND(rows, "|Visible|" + visStr + "|bool")
+    rows = APPEND(rows, "|Text|" + gGetText(id) + "|")
+    rows = APPEND(rows, "Layout||||")
+    rows = APPEND(rows, "|X|" + fmt.Sprintf("%d", gGetX(id)) + "|int")
+    rows = APPEND(rows, "|Y|" + fmt.Sprintf("%d", gGetY(id)) + "|int")
+    rows = APPEND(rows, "|Width|" + fmt.Sprintf("%d", gGetW(id)) + "|int")
+    rows = APPEND(rows, "|Height|" + fmt.Sprintf("%d", gGetH(id)) + "|int")
+    RETURN strings.Join(rows, ";")
+END FUNCTION
+
 ' nodePathForLabel — heuristic mapping from a node label back to a
 ' relative path. Tries "<label>" in root, "forms/<label>", and
 ' "modules/<label>"; returns the first one that exists. Empty result

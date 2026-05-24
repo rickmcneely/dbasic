@@ -10,7 +10,16 @@ DIM curFile AS STRING
 
 SUB FormLoad()
     tvSetNodes("tree", buildTreeNodes("."))
+    gSetItems("props", propsFor(""))
     gSetText("status", "Self-hosted DBtui — click a tree node, Ctrl+S saves.")
+END SUB
+
+' Focus / click on any widget — mirror its runtime state into the props
+' panel on the right. Skip the props panel itself so clicking it
+' doesn't replace its own content.
+SUB gOnSelect(id AS STRING)
+    IF id = "props" OR id = "" THEN RETURN
+    gSetItems("props", propsFor(id))
 END SUB
 
 SUB FormResize(w AS INTEGER, h AS INTEGER)

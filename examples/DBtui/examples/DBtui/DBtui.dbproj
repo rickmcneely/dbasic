@@ -7,7 +7,7 @@
       "Name": "frmMain",
       "File": "forms/frmMain.dbf",
       "Code": "forms/frmMain.dbas",
-      "Width": 100,
+      "Width": 110,
       "Height": 30,
       "Title": "DBtui — self-hosted skeleton",
       "ResizableX": true,
@@ -19,16 +19,11 @@
         {
           "Id": "split1",
           "Kind": "SplitPanel",
-          "X": 1, "Y": 1, "Width": 96, "Height": 24,
+          "X": 1, "Y": 1, "Width": 106, "Height": 24,
           "Visible": true,
           "Anchor": "Fill",
           "Style": {"BgColor":"#1a1b2e","FgColor":"#7dcfff","Border":"none","Corner":"square"},
-          "Properties": {
-            "Orientation": "vertical",
-            "Position": 25,
-            "Slot1": "tree",
-            "Slot2": "split2"
-          }
+          "Properties": {"Orientation": "vertical", "Position": 22, "Slot1": "tree", "Slot2": "split2"}
         },
         {
           "Id": "split2",
@@ -36,12 +31,15 @@
           "X": 0, "Y": 0, "Width": 1, "Height": 1,
           "Visible": true,
           "Style": {"BgColor":"#1a1b2e","FgColor":"#7dcfff","Border":"none","Corner":"square"},
-          "Properties": {
-            "Orientation": "horizontal",
-            "Position": 55,
-            "Slot1": "canvas",
-            "Slot2": "code"
-          }
+          "Properties": {"Orientation": "vertical", "Position": 72, "Slot1": "split3", "Slot2": "props"}
+        },
+        {
+          "Id": "split3",
+          "Kind": "SplitPanel",
+          "X": 0, "Y": 0, "Width": 1, "Height": 1,
+          "Visible": true,
+          "Style": {"BgColor":"#1a1b2e","FgColor":"#7dcfff","Border":"none","Corner":"square"},
+          "Properties": {"Orientation": "horizontal", "Position": 55, "Slot1": "canvas", "Slot2": "code"}
         },
         {
           "Id": "tree",
@@ -51,7 +49,7 @@
           "Style": {"BgColor":"#1a1b2e","FgColor":"#e0def4","Border":"normal","Corner":"round"},
           "Properties": {
             "Title": "project",
-            "Nodes": "0|+|DBtui/;1|+|forms/;2|*|frmMain.dbf;2|*|frmMain.dbas;1|+|modules/;2|*|util.dbas;1|*|DBtui.dbproj",
+            "Nodes": "0|+|project/;1|*|loading...",
             "Selected": "0", "Offset": "0"
           }
         },
@@ -73,6 +71,19 @@
             "Value": "' Click a tree node to open it here.\n\nSUB Main()\n    PRINT \"hello from self-hosted DBtui\"\nEND SUB\n",
             "Placeholder": "",
             "Language": "dbasic"
+          }
+        },
+        {
+          "Id": "props",
+          "Kind": "PropertyGrid",
+          "X": 0, "Y": 0, "Width": 1, "Height": 1,
+          "Visible": true, "TabStop": true,
+          "Style": {"BgColor":"#1a1b2e","FgColor":"#e0def4","Border":"normal","Corner":"round"},
+          "Properties": {
+            "Title": "Properties",
+            "Rows": "(none)||||",
+            "Selected": "0",
+            "Offset": "0"
           }
         },
         {
@@ -100,27 +111,19 @@
           "Visible": true,
           "Anchor": "BottomLeft",
           "Style": {"BgColor":"","FgColor":"#8087a2","Border":"none","Corner":"square"},
-          "Properties": {"Text": "Ready. Click a tree node, Ctrl+S saves, Check runs `dbasic check`, Run builds + launches."}
+          "Properties": {"Text": "Ready. Tree click opens, Ctrl+S saves, Check runs `dbasic check`, Run builds + launches."}
         }
       ],
       "Tools": [
         {
           "Id": "dbBuild",
           "Kind": "Process",
-          "Properties": {
-            "Command": "dbasic",
-            "Args": "build",
-            "Cwd": ""
-          }
+          "Properties": {"Command": "dbasic", "Args": "build", "Cwd": ""}
         },
         {
           "Id": "dbCheck",
           "Kind": "Process",
-          "Properties": {
-            "Command": "dbasic",
-            "Args": "check",
-            "Cwd": ""
-          }
+          "Properties": {"Command": "dbasic", "Args": "check", "Cwd": ""}
         }
       ]
     }
