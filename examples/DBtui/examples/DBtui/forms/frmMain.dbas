@@ -1,0 +1,76 @@
+' DBtui — self-hosted skeleton, frmMain event handlers.
+
+IMPORT "fmt"
+IMPORT "os"
+IMPORT "strings"
+
+SUB FormLoad()
+    gSetText("status", "Self-hosted DBtui skeleton — tree | canvas | code | check")
+END SUB
+
+SUB FormResize(w AS INTEGER, h AS INTEGER)
+    gSetText("status", fmt.Sprintf("resized: %dx%d", w, h))
+END SUB
+
+' Tree click — open the selected file in the code editor (if it's
+' a .dbas file) or just echo the path in the status bar.
+SUB tree_NodeSelected(label AS STRING)
+    DIM trimmed AS STRING = strings.TrimSpace(label)
+    IF strings.HasSuffix(trimmed, ".dbas") THEN
+        DIM path AS STRING = ""
+        IF trimmed = "frmMain.dbas" THEN path = "forms/frmMain.dbas"
+        IF trimmed = "util.dbas"    THEN path = "modules/util.dbas"
+        IF path = "" THEN
+            gSetText("status", "selected: " + trimmed + " (no file mapping)")
+            RETURN
+        END IF
+        DIM data AS BYTES
+        DIM err AS ERROR
+        data, err = os.ReadFile(path)
+        IF err <> NIL THEN
+            gSetText("status", "open " + path + ": " + err.Error())
+            RETURN
+        END IF
+        gSetText("code", string(data))
+        gSetText("status", "opened " + shorten(path, 60))
+    ELSE
+        gSetText("status", "selected: " + trimmed)
+    END IF
+END SUB
+
+SUB tree_NodeRightClicked(label AS STRING)
+    gMsgBox("Tree", "Node: " + label, "OK", "tree-node")
+END SUB
+
+' Canvas children placed at startup — gives the FormCanvas something
+' to demo with. User can drag them around.
+SUB canvas_ChildAdded(childId AS STRING)
+    gSetText("status", "added child: " + childId)
+END SUB
+
+SUB canvas_ChildSelected(childId AS STRING)
+    gSetText("status", "canvas selected: " + childId)
+END SUB
+
+SUB canvas_ChildMoved(childId AS STRING)
+    _ = childId
+END SUB
+
+' Check button — confirm + run the dbCheck Process tool, surface the
+' result through gMsgBox.
+SUB checkBtn_Click()
+    gMsgBox("Check", "Run `dbasic check` on forms/frmMain.dbas?", "Yes,No", "check")
+END SUB
+
+SUB gMsgBoxClosed(button AS STRING, context AS STRING)
+    IF context = "check" AND button = "Yes" THEN
+        DIM code AS INTEGER = dbCheck_Run()
+        IF code = 0 THEN
+            gSetText("status", "check OK: " + strings.TrimSpace(dbCheck_Stdout()))
+        ELSE
+            DIM err AS STRING = strings.TrimSpace(dbCheck_Stderr())
+            IF err = "" THEN err = strings.TrimSpace(dbCheck_Stdout())
+            gMsgBox("Check failed", shorten(err, 60), "OK", "check-fail")
+        END IF
+    END IF
+END SUB

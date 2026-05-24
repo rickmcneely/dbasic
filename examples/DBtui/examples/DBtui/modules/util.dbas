@@ -1,0 +1,10 @@
+' DBtui — self-hosted skeleton, util module.
+'
+' Demonstrates that modules in form-based projects compile alongside
+' the form's event handlers.
+
+FUNCTION shorten(s AS STRING, max AS INTEGER) AS STRING
+    IF LEN(s) <= max THEN RETURN s
+    IF max < 4 THEN RETURN Left(s, max)
+    RETURN Left(s, max - 3) + "..."
+END FUNCTION
