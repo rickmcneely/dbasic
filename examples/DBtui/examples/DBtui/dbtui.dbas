@@ -744,6 +744,9 @@ FUNCTION helpText() AS STRING
     s = s + "  Ctrl+Shift+K   Delete line\n"
     s = s + "  Brackets ( [ { auto-pair; cursor on a bracket\n"
     s = s + "    highlights its match.\n"
+    s = s + "  Ctrl+Shift+[ / ]  Fold / unfold\n"
+    s = s + "  Trigger + Tab     Snippet (sub fn iff ife forr\n"
+    s = s + "    wh dol typedef dimm imp sel)\n"
     s = s + "  Esc      Focus tree from editor\n"
     s = s + "  Ctrl+Tab / F6   Cycle focus\n"
     s = s + "\n"
@@ -1988,6 +1991,17 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' Form-mode Delete key drops the selected widget.
         IF key = "delete" AND m.ViewMode = "form" AND m.SelWidget >= 0 THEN
             formDeleteSelected(@m)
+            RETURN m, NIL
+        END IF
+        ' Code-mode fold / unfold at cursor.
+        IF (key = "ctrl+shift+[" OR key = "ctrl+[") AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
+            padFold(@m.Tabs[m.TabIdx].Editor)
+            invalidateEditorCache(@m)
+            RETURN m, NIL
+        END IF
+        IF (key = "ctrl+shift+]" OR key = "ctrl+]") AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
+            padUnfold(@m.Tabs[m.TabIdx].Editor)
+            invalidateEditorCache(@m)
             RETURN m, NIL
         END IF
         ' Find / Goto live alongside the file shortcuts so they work

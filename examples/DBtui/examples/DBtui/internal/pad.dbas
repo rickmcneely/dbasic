@@ -296,6 +296,10 @@ TYPE Pad
     ' the policy; Pad.Update snaps once per user-action keypress.
     DIM UndoStack AS []PadSnapshot
     DIM RedoStack AS []PadSnapshot
+    ' Folding — set of source row indices that are folded "heads"
+    ' (SUB / FUNCTION / TYPE declarations). View skips lines after
+    ' a folded head up to its matching END.
+    DIM FoldedRows AS MAP OF INTEGER TO BOOLEAN
 END TYPE
 
 ' padMouseToRowCol — translate screen coords (mx, my) to a (row, col)
@@ -934,6 +938,131 @@ FUNCTION padBracketMatch(p AS Pad) AS (INTEGER, INTEGER, BOOLEAN)
     RETURN 0, 0, FALSE
 END FUNCTION
 
+' -------------------------------------------------------------------------
+' Folding helpers — collapse SUB / FUNCTION / TYPE bodies.
+' -------------------------------------------------------------------------
+
+' padIsFoldHead — TRUE if `row` starts a fold-able decl (SUB,
+' FUNCTION, TYPE, including the method-receiver forms).
+FUNCTION padIsFoldHead(p AS Pad, row AS INTEGER) AS BOOLEAN
+    IF row < 0 OR row >= LEN(p.Lines) THEN RETURN FALSE
+    DIM line AS STRING = p.Lines[row]
+    IF strings.HasPrefix(line, "SUB ")      THEN RETURN TRUE
+    IF strings.HasPrefix(line, "FUNCTION ") THEN RETURN TRUE
+    IF strings.HasPrefix(line, "TYPE ")     THEN RETURN TRUE
+    IF strings.HasPrefix(line, "SUB (")     THEN RETURN TRUE
+    IF strings.HasPrefix(line, "FUNCTION (") THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' padFindFoldEnd — last row of the fold range that starts at
+' `startRow`. Scans forward for the matching "END SUB / FUNCTION /
+' TYPE" at column 0. Returns startRow when no fold here.
+FUNCTION padFindFoldEnd(p AS Pad, startRow AS INTEGER) AS INTEGER
+    IF NOT padIsFoldHead(p, startRow) THEN RETURN startRow
+    DIM line AS STRING = p.Lines[startRow]
+    DIM kind AS STRING = ""
+    IF strings.HasPrefix(line, "SUB")      THEN kind = "SUB"
+    IF strings.HasPrefix(line, "FUNCTION") THEN kind = "FUNCTION"
+    IF strings.HasPrefix(line, "TYPE")     THEN kind = "TYPE"
+    DIM target AS STRING = "END " + kind
+    DIM i AS INTEGER
+    FOR i = startRow + 1 TO LEN(p.Lines) - 1
+        DIM lt AS STRING = p.Lines[i]
+        IF lt = target THEN RETURN i
+        IF strings.HasPrefix(lt, target + " ") THEN RETURN i
+        IF strings.HasPrefix(lt, target + Chr(9)) THEN RETURN i
+    NEXT i
+    RETURN LEN(p.Lines) - 1
+END FUNCTION
+
+' padFindEnclosingFoldHead — walk backward from `row` to the
+' nearest fold-head row. Returns -1 if none.
+FUNCTION padFindEnclosingFoldHead(p AS Pad, row AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = row TO 0 STEP 0 - 1
+        IF padIsFoldHead(p, i) THEN RETURN i
+    NEXT i
+    RETURN 0 - 1
+END FUNCTION
+
+' padFold / padUnfold — explicit toggles at cursor. padToggleFold
+' figures out which we want based on current state.
+SUB padFold(p AS POINTER TO Pad)
+    DIM head AS INTEGER = padFindEnclosingFoldHead(^p, p.Row)
+    IF head < 0 THEN RETURN
+    p.FoldedRows[head] = TRUE
+    ' If cursor was inside the fold range, move it to the head
+    ' so it stays visible.
+    DIM tail AS INTEGER = padFindFoldEnd(^p, head)
+    IF p.Row > head AND p.Row <= tail THEN
+        p.Row = head
+        p.Col = LEN(p.Lines[head])
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB padUnfold(p AS POINTER TO Pad)
+    DIM head AS INTEGER = padFindEnclosingFoldHead(^p, p.Row)
+    IF head < 0 THEN RETURN
+    p.FoldedRows[head] = FALSE
+    padEnsureVisible(p)
+END SUB
+
+' --- Snippet expansion --------------------------------------------------
+'
+' Tab on a known trigger word at start-of-line (only whitespace
+' before it) deletes the trigger and inserts a snippet body.
+' Triggers are short, lowercase, and uncommon-as-identifiers so
+' accidental expansion is unlikely.
+' -----------------------------------------------------------------------
+
+FUNCTION padSnippetForTrigger(t AS STRING) AS STRING
+    IF t = "sub"  THEN RETURN "SUB Name()\n    \nEND SUB"
+    IF t = "fn"   THEN RETURN "FUNCTION Name() AS INTEGER\n    \n    RETURN 0\nEND FUNCTION"
+    IF t = "iff"  THEN RETURN "IF condition THEN\n    \nEND IF"
+    IF t = "ife"  THEN RETURN "IF condition THEN\n    \nELSE\n    \nEND IF"
+    IF t = "forr" THEN RETURN "FOR i = 1 TO 10\n    \nNEXT i"
+    IF t = "wh"   THEN RETURN "WHILE condition\n    \nWEND"
+    IF t = "dol"  THEN RETURN "DO\n    \nLOOP UNTIL condition"
+    IF t = "typedef" THEN RETURN "TYPE Name\n    DIM Field AS INTEGER\nEND TYPE"
+    IF t = "dimm" THEN RETURN "DIM name AS STRING"
+    IF t = "imp"  THEN RETURN "IMPORT " + Chr(34) + "fmt" + Chr(34)
+    IF t = "sel"  THEN RETURN "SELECT CASE expr\n    CASE 1\n        \n    CASE ELSE\n        \nEND SELECT"
+    RETURN ""
+END FUNCTION
+
+' padTrySnippet — try to expand a trigger word at the cursor.
+' Returns TRUE if a snippet was inserted (caller skips the
+' normal Tab behaviour).
+FUNCTION padTrySnippet(p AS POINTER TO Pad) AS BOOLEAN
+    IF p.Row < 0 OR p.Row >= LEN(p.Lines) THEN RETURN FALSE
+    DIM line AS STRING = p.Lines[p.Row]
+    DIM tStart AS INTEGER = p.Col
+    DO WHILE tStart > 0 AND isPadLetter(Mid(line, tStart, 1))
+        tStart = tStart - 1
+    LOOP
+    DIM word AS STRING = ""
+    IF p.Col > tStart THEN word = Mid(line, tStart + 1, p.Col - tStart)
+    IF word = "" THEN RETURN FALSE
+    DIM body AS STRING = padSnippetForTrigger(strings.ToLower(word))
+    IF body = "" THEN RETURN FALSE
+    ' Only expand when the trigger sits at the start of the line
+    ' (after optional whitespace).
+    DIM before AS STRING = ""
+    IF tStart > 0 THEN before = Mid(line, 1, tStart)
+    DIM beforeTrim AS STRING = strings.TrimLeft(before, " " + Chr(9))
+    IF beforeTrim <> "" THEN RETURN FALSE
+    ' Snap, delete the trigger, then insert the snippet body.
+    padSnap(p)
+    DIM after AS STRING = ""
+    IF p.Col < LEN(line) THEN after = Mid(line, p.Col + 1, LEN(line) - p.Col)
+    p.Lines[p.Row] = before + after
+    p.Col = tStart
+    padInsertString(p, body)
+    RETURN TRUE
+END FUNCTION
+
 ' padToggleComment — flip the leading "' " on the cursor line, or
 ' on every selected line. Sublime-style: if any selected line is
 ' un-commented, the operation comments all of them; otherwise it
@@ -1255,6 +1384,10 @@ FUNCTION (p AS POINTER TO Pad) Update(msg AS tea.Msg) AS tea.Cmd
         RETURN NIL
     END IF
     IF key = "tab" THEN
+        ' Snippet expansion takes priority — if the word before the
+        ' cursor (at start of line) is a known trigger, replace it
+        ' with the snippet body instead of inserting whitespace.
+        IF padTrySnippet(p) THEN RETURN NIL
         ' Multi-line selection → block indent. Single-cell selection
         ' or no selection → insert 4 spaces (replacing the selection
         ' content first when present).
@@ -1378,17 +1511,40 @@ FUNCTION (p AS Pad) View() AS STRING
             bmCol = mc
         END IF
     END IF
+    ' Build the visible row map by walking from ScrollTop and
+    ' skipping over folded ranges. ScrollTop stays source-row-based
+    ' to keep wheel-scroll and cursor math simple.
+    DIM visRows AS []INTEGER
+    DIM si AS INTEGER = p.ScrollTop
+    DO WHILE si < LEN(p.Lines) AND LEN(visRows) < p.ViewH
+        visRows = APPEND(visRows, si)
+        IF p.FoldedRows[si] THEN
+            si = padFindFoldEnd(p, si) + 1
+        ELSE
+            si = si + 1
+        END IF
+    LOOP
     DIM rows AS []STRING
     DIM r AS INTEGER
     FOR r = 0 TO p.ViewH - 1
-        DIM rowIdx AS INTEGER = p.ScrollTop + r
+        DIM rowIdx AS INTEGER = 0 - 1
+        IF r < LEN(visRows) THEN rowIdx = visRows[r]
         DIM isCursorRow AS BOOLEAN = (p.Focused AND rowIdx = p.Row)
         DIM gutter AS STRING
-        IF rowIdx >= LEN(p.Lines) THEN
+        IF rowIdx < 0 OR rowIdx >= LEN(p.Lines) THEN
             gutter = padStyleBg.Render(strings.Repeat(" ", gutterW))
             rows = APPEND(rows, gutter + padStyleBg.Render(strings.Repeat(" ", contentW)))
         ELSE
-            DIM lab AS STRING = fmt.Sprintf("%4d ", rowIdx + 1)
+            ' Fold marker in the leading gutter cell.
+            DIM mark AS STRING = " "
+            IF padIsFoldHead(p, rowIdx) THEN
+                IF p.FoldedRows[rowIdx] THEN
+                    mark = "▸"
+                ELSE
+                    mark = "▾"
+                END IF
+            END IF
+            DIM lab AS STRING = mark + fmt.Sprintf("%3d ", rowIdx + 1)
             IF isCursorRow THEN
                 gutter = padStyleGutterActive.Render(lab)
             ELSE
