@@ -1,0 +1,162 @@
+
+' dispatchAction — resolve the user's menu pick to the underlying
+' action handler. Centralised here so other paths (keyboard shortcuts
+' or buttons later) can invoke the same code.
+SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
+    IF action = "file.new" THEN
+        showInputModal(m, "New File", "Name for the new buffer:", "untitled.dbas", "new")
+        RETURN
+    END IF
+    IF action = "file.open" THEN
+        DIM cwd AS STRING
+        DIM cwdErr AS ERROR
+        cwd, cwdErr = os.Getwd()
+        IF cwdErr <> NIL THEN cwd = "."
+        showInputModal(m, "Open File", "Path:", cwd + "/", "open")
+        RETURN
+    END IF
+    IF action = "file.saveas" THEN
+        IF NOT hasActiveTab(^m) THEN
+            m.Status = "nothing to save"
+            RETURN
+        END IF
+        showInputModal(m, "Save As", "Path:", m.Tabs[m.TabIdx].Path, "saveas")
+        RETURN
+    END IF
+    IF action = "file.close" THEN
+        IF hasActiveTab(^m) THEN _ = tryCloseTab(m, m.TabIdx)
+        RETURN
+    END IF
+    IF action = "file.save" THEN
+        ' Saving a brand-new (no-path) buffer falls through to
+        ' Save As so the user is prompted for a destination.
+        IF hasActiveTab(^m) AND m.Tabs[m.TabIdx].Path = "" THEN
+            showInputModal(m, "Save As", "Path:", "untitled.dbas", "saveas")
+            RETURN
+        END IF
+        saveCurrent(m)
+        RETURN
+    END IF
+    IF action = "file.quit" THEN
+        m.Status = "quitting..."
+        RETURN
+    END IF
+    IF action = "edit.undo" THEN
+        IF hasActiveTab(^m) THEN
+            m.Tabs[m.TabIdx].Editor.Undo()
+            m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(m)
+        END IF
+        RETURN
+    END IF
+    IF action = "edit.redo" THEN
+        IF hasActiveTab(^m) THEN
+            m.Tabs[m.TabIdx].Editor.Redo()
+            m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(m)
+        END IF
+        RETURN
+    END IF
+    IF action = "edit.cut" THEN
+        IF hasActiveTab(^m) THEN
+            DIM ct AS STRING = padSelectionText(@m.Tabs[m.TabIdx].Editor)
+            IF ct <> "" THEN
+                m.Clipboard = ct
+                padSnap(@m.Tabs[m.TabIdx].Editor)
+                padDeleteSelection(@m.Tabs[m.TabIdx].Editor)
+                m.Tabs[m.TabIdx].Dirty = TRUE
+                invalidateEditorCache(m)
+                m.Status = fmt.Sprintf("cut %d chars", LEN(ct))
+            END IF
+        END IF
+        RETURN
+    END IF
+    IF action = "edit.copy" THEN
+        IF hasActiveTab(^m) THEN
+            DIM cp AS STRING = padSelectionText(@m.Tabs[m.TabIdx].Editor)
+            IF cp <> "" THEN
+                m.Clipboard = cp
+                m.Status = fmt.Sprintf("copied %d chars", LEN(cp))
+            END IF
+        END IF
+        RETURN
+    END IF
+    IF action = "edit.paste" THEN
+        IF hasActiveTab(^m) AND m.Clipboard <> "" THEN
+            padSnap(@m.Tabs[m.TabIdx].Editor)
+            padInsertString(@m.Tabs[m.TabIdx].Editor, m.Clipboard)
+            m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(m)
+            m.Status = fmt.Sprintf("pasted %d chars", LEN(m.Clipboard))
+        END IF
+        RETURN
+    END IF
+    IF action = "edit.selectall" THEN
+        IF hasActiveTab(^m) THEN
+            m.Tabs[m.TabIdx].Editor.SelectAll()
+            invalidateEditorCache(m)
+        END IF
+        RETURN
+    END IF
+    IF action = "edit.togglecomment" THEN
+        IF hasActiveTab(^m) THEN
+            padSnap(@m.Tabs[m.TabIdx].Editor)
+            padToggleComment(@m.Tabs[m.TabIdx].Editor)
+            m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(m)
+        END IF
+        RETURN
+    END IF
+    IF action = "edit.find" THEN
+        showInputModal(m, "Find", "Find:", m.FindQuery, "find")
+        RETURN
+    END IF
+    IF action = "edit.findnext" THEN
+        findNextInActive(m, cursorOffset(m) + 1)
+        RETURN
+    END IF
+    IF action = "edit.replace" THEN
+        showInputModal(m, "Replace", "Find:", m.FindQuery, "replace-find")
+        RETURN
+    END IF
+    IF action = "edit.goto" THEN
+        showInputModal(m, "Go To Line", "Line number:", "", "goto")
+        RETURN
+    END IF
+    IF action = "view.form" THEN
+        m.ViewMode = "form"
+        setFocus(m, "tree")
+        m.Status = "form designer"
+        RETURN
+    END IF
+    IF action = "view.code" THEN
+        m.ViewMode = "code"
+        IF hasActiveTab(^m) THEN
+            setFocus(m, "editor")
+            m.Status = "code editor — " + m.Tabs[m.TabIdx].Path
+        ELSE
+            m.Status = "code editor (no files open — pick one from the tree)"
+        END IF
+        RETURN
+    END IF
+    IF action = "run.run" THEN
+        ' Side note: dispatchAction is a SUB so it can't return a Cmd;
+        ' run.run is special-cased in the menubar Enter / mouse-click
+        ' / hotkey paths to invoke doRun() directly.
+        m.Status = "press F5 (or use Run menu) to run"
+        RETURN
+    END IF
+    IF action = "run.check" THEN
+        doCheck(m)
+        RETURN
+    END IF
+    IF action = "help.about" THEN
+        showHelpModal(m)
+        RETURN
+    END IF
+    IF action = "help.keys" THEN
+        showHelpModal(m)
+        RETURN
+    END IF
+    m.Status = "action: " + action
+END SUB

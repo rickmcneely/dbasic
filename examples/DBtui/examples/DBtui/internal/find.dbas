@@ -1,0 +1,157 @@
+' -------------------------------------------------------------------------
+' Cursor / find / goto helpers — work against the active tab's editor.
+' -------------------------------------------------------------------------
+
+' cursorOffset — current cursor position as a byte offset from the
+' start of the buffer. Computed by summing prior line lengths +1
+' (for the implicit '\n') and adding the column inside the line.
+FUNCTION cursorOffset(m AS POINTER TO Model) AS INTEGER
+    IF NOT hasActiveTab(^m) THEN RETURN 0
+    DIM content AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    DIM row AS INTEGER = m.Tabs[m.TabIdx].Editor.Line()
+    DIM col AS INTEGER = m.Tabs[m.TabIdx].Editor.Column()
+    DIM lines AS []STRING = strings.Split(content, "\n")
+    DIM off AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO row - 1
+        IF i < LEN(lines) THEN off = off + LEN(lines[i]) + 1
+    NEXT i
+    off = off + col
+    RETURN off
+END FUNCTION
+
+' moveCursorToOffset — translate a byte offset back to (row, col)
+' and walk the textarea cursor to that spot. textarea exposes
+' MoveToBegin/CursorDown/SetCursorColumn but no "set absolute"
+' helper, so we have to drive it step-by-step.
+SUB moveCursorToOffset(m AS POINTER TO Model, offset AS INTEGER)
+    IF NOT hasActiveTab(^m) THEN RETURN
+    DIM content AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    IF offset < 0 THEN offset = 0
+    IF offset > LEN(content) THEN offset = LEN(content)
+    DIM row AS INTEGER = 0
+    DIM col AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO offset - 1
+        IF Mid(content, i + 1, 1) = "\n" THEN
+            row = row + 1
+            col = 0
+        ELSE
+            col = col + 1
+        END IF
+    NEXT i
+    m.Tabs[m.TabIdx].Editor.MoveToBegin()
+    DIM r AS INTEGER
+    FOR r = 0 TO row - 1
+        m.Tabs[m.TabIdx].Editor.CursorDown()
+    NEXT r
+    m.Tabs[m.TabIdx].Editor.SetCursorColumn(col)
+END SUB
+
+' findNextInActive — search the active tab's content for FindQuery,
+' starting at byte offset `fromOff`. Wraps around to the top of the
+' buffer if nothing is found in the tail. Status bar reports the
+' outcome (hit, wrapped, or not-found).
+SUB findNextInActive(m AS POINTER TO Model, fromOff AS INTEGER)
+    IF NOT hasActiveTab(^m) THEN
+        m.Status = "no file open to search"
+        RETURN
+    END IF
+    IF m.FindQuery = "" THEN
+        m.Status = "Ctrl+F to set a find query"
+        RETURN
+    END IF
+    DIM content AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    IF fromOff < 0 THEN fromOff = 0
+    IF fromOff > LEN(content) THEN fromOff = LEN(content)
+    DIM tail AS STRING = ""
+    IF fromOff < LEN(content) THEN tail = Mid(content, fromOff + 1, LEN(content) - fromOff)
+    DIM rel AS INTEGER = strings.Index(tail, m.FindQuery)
+    DIM abs AS INTEGER = 0 - 1
+    DIM wrapped AS BOOLEAN = FALSE
+    IF rel >= 0 THEN
+        abs = fromOff + rel
+    ELSE
+        abs = strings.Index(content, m.FindQuery)
+        wrapped = TRUE
+    END IF
+    IF abs < 0 THEN
+        m.Status = "not found: " + m.FindQuery
+        RETURN
+    END IF
+    moveCursorToOffset(m, abs)
+    invalidateEditorCache(m)
+    setFocus(m, "editor")
+    IF wrapped THEN
+        m.Status = "wrapped — '" + m.FindQuery + "'"
+    ELSE
+        m.Status = "found '" + m.FindQuery + "' (F3 = next)"
+    END IF
+END SUB
+
+' replaceAllInActive — bulk replace every occurrence of `find` with
+' `replace` in the active tab's buffer. Status bar reports the
+' match count (or "no matches"). Marks the buffer dirty and
+' invalidates the editor cache so the next render shows the
+' updated text. v1 has no per-match interactive walk — Replace All
+' is the only mode for now.
+SUB replaceAllInActive(m AS POINTER TO Model, find AS STRING, replace AS STRING)
+    IF NOT hasActiveTab(^m) THEN
+        m.Status = "no file open"
+        RETURN
+    END IF
+    IF find = "" THEN
+        m.Status = "empty find pattern"
+        RETURN
+    END IF
+    DIM content AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    DIM count AS INTEGER = strings.Count(content, find)
+    IF count = 0 THEN
+        m.Status = "no matches: " + find
+        RETURN
+    END IF
+    DIM updated AS STRING = strings.ReplaceAll(content, find, replace)
+    m.Tabs[m.TabIdx].Editor.SetValue(updated)
+    m.Tabs[m.TabIdx].Editor.MoveToBegin()
+    m.Tabs[m.TabIdx].Dirty = TRUE
+    invalidateEditorCache(m)
+    m.Status = "replaced " + fmt.Sprintf("%d", count) + " occurrence(s)"
+END SUB
+
+' gotoLine — jump the cursor to the start of line `line` (1-based)
+' in the active tab AND scroll so that line lands at the *top* of
+' the viewport (matching VBDOS / VS Code behaviour).
+'
+' textarea doesn't expose a scroll-offset setter — but it auto-
+' scrolls to keep the cursor visible. So the trick is:
+'   1. drive the cursor down to (target + viewH - 1)   →  textarea
+'      scrolls so that line is at the bottom of the viewport.
+'   2. walk back up to the actual target               →  cursor
+'      moves from bottom of viewport to top, no further scroll.
+SUB gotoLine(m AS POINTER TO Model, line AS INTEGER)
+    IF NOT hasActiveTab(^m) THEN RETURN
+    DIM lineCount AS INTEGER = m.Tabs[m.TabIdx].Editor.LineCount()
+    DIM viewH AS INTEGER = m.Tabs[m.TabIdx].Editor.Height()
+    IF viewH < 1 THEN viewH = 1
+    IF line < 1 THEN line = 1
+    IF line > lineCount THEN line = lineCount
+    ' 0-based indices for textarea.
+    DIM target AS INTEGER = line - 1
+    DIM anchor AS INTEGER = target + viewH - 1
+    IF anchor > lineCount - 1 THEN anchor = lineCount - 1
+    ' Phase 1: reset to top, then walk down to the anchor.
+    m.Tabs[m.TabIdx].Editor.MoveToBegin()
+    DIM i AS INTEGER
+    FOR i = 0 TO anchor - 1
+        m.Tabs[m.TabIdx].Editor.CursorDown()
+    NEXT i
+    ' Phase 2: walk up to the target — viewport stays put.
+    DIM up AS INTEGER = anchor - target
+    FOR i = 0 TO up - 1
+        m.Tabs[m.TabIdx].Editor.CursorUp()
+    NEXT i
+    m.Tabs[m.TabIdx].Editor.SetCursorColumn(0)
+    invalidateEditorCache(m)
+    setFocus(m, "editor")
+    m.Status = "line " + fmt.Sprintf("%d", line)
+END SUB

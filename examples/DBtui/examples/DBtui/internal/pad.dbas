@@ -1,0 +1,1252 @@
+' =========================================================================
+' Pad — custom code editor (replaces bubbles textarea).
+'
+' Owns its own line buffer, cursor, and scroll offsets so we get:
+'   * per-token syntax highlighting (the bubbles textarea only
+'     supports line-level styles)
+'   * predictable performance (no MemoCache surprises, no goroutines
+'     for cursor blink)
+'   * tighter cursor-position math (Line / Column are O(1) field reads)
+'
+' Public method surface mirrors the names we used to call on the
+' textarea — SetValue / Value / Line / Column / LineCount / Height /
+' SetWidth / SetHeight / Focus / Blur / MoveToBegin / CursorUp /
+' CursorDown / CursorStart / CursorEnd / SetCursorColumn / Update /
+' View — so most call sites change only by virtue of holding a Pad
+' field instead of a textarea.Model.
+' =========================================================================
+
+' Token kinds emitted by tokenizeLine.
+CONST tkPlain   AS INTEGER = 0
+CONST tkKeyword AS INTEGER = 1
+CONST tkString  AS INTEGER = 2
+CONST tkComment AS INTEGER = 3
+CONST tkNumber  AS INTEGER = 4
+
+TYPE PadToken
+    DIM Kind AS INTEGER
+    DIM Text AS STRING
+END TYPE
+
+' Lazily-initialised keyword set; populated on first tokenize call.
+DIM padKeywords AS MAP OF STRING TO BOOLEAN
+
+SUB initPadKeywords()
+    IF LEN(padKeywords) > 0 THEN RETURN
+    DIM kw AS []STRING
+    kw = APPEND(kw, "AND")
+    kw = APPEND(kw, "ANY")
+    kw = APPEND(kw, "AS")
+    kw = APPEND(kw, "BASE")
+    kw = APPEND(kw, "BOOLEAN")
+    kw = APPEND(kw, "BSTRING")
+    kw = APPEND(kw, "BYREF")
+    kw = APPEND(kw, "BYTES")
+    kw = APPEND(kw, "BYVAL")
+    kw = APPEND(kw, "CALL")
+    kw = APPEND(kw, "CASE")
+    kw = APPEND(kw, "CHAN")
+    kw = APPEND(kw, "CHANNEL")
+    kw = APPEND(kw, "CONST")
+    kw = APPEND(kw, "DECLARE")
+    kw = APPEND(kw, "DEFER")
+    kw = APPEND(kw, "DIM")
+    kw = APPEND(kw, "DO")
+    kw = APPEND(kw, "DOUBLE")
+    kw = APPEND(kw, "ELSE")
+    kw = APPEND(kw, "ELSEIF")
+    kw = APPEND(kw, "EMBED")
+    kw = APPEND(kw, "END")
+    kw = APPEND(kw, "ENDIF")
+    kw = APPEND(kw, "ERROR")
+    kw = APPEND(kw, "EXIT")
+    kw = APPEND(kw, "EXPLICIT")
+    kw = APPEND(kw, "FALSE")
+    kw = APPEND(kw, "FOR")
+    kw = APPEND(kw, "FROM")
+    kw = APPEND(kw, "FUNCTION")
+    kw = APPEND(kw, "GOFUNC")
+    kw = APPEND(kw, "GOSUB")
+    kw = APPEND(kw, "GOTO")
+    kw = APPEND(kw, "IF")
+    kw = APPEND(kw, "IMPLEMENTS")
+    kw = APPEND(kw, "IMPORT")
+    kw = APPEND(kw, "INCLUDE")
+    kw = APPEND(kw, "INPUT")
+    kw = APPEND(kw, "INTEGER")
+    kw = APPEND(kw, "JSON")
+    kw = APPEND(kw, "LET")
+    kw = APPEND(kw, "LONG")
+    kw = APPEND(kw, "LOOP")
+    kw = APPEND(kw, "MAKE_CHAN")
+    kw = APPEND(kw, "MAP")
+    kw = APPEND(kw, "MOD")
+    kw = APPEND(kw, "NEXT")
+    kw = APPEND(kw, "NIL")
+    kw = APPEND(kw, "NOT")
+    kw = APPEND(kw, "OF")
+    kw = APPEND(kw, "ONERR")
+    kw = APPEND(kw, "OPTION")
+    kw = APPEND(kw, "OR")
+    kw = APPEND(kw, "POINTER")
+    kw = APPEND(kw, "PRESERVE")
+    kw = APPEND(kw, "PRINT")
+    kw = APPEND(kw, "RECEIVE")
+    kw = APPEND(kw, "REDIM")
+    kw = APPEND(kw, "REM")
+    kw = APPEND(kw, "RETURN")
+    kw = APPEND(kw, "SELECT")
+    kw = APPEND(kw, "SEND")
+    kw = APPEND(kw, "SHARED")
+    kw = APPEND(kw, "SINGLE")
+    kw = APPEND(kw, "SPAWN")
+    kw = APPEND(kw, "STATIC")
+    kw = APPEND(kw, "STEP")
+    kw = APPEND(kw, "STRING")
+    kw = APPEND(kw, "SUB")
+    kw = APPEND(kw, "THEN")
+    kw = APPEND(kw, "TO")
+    kw = APPEND(kw, "TRUE")
+    kw = APPEND(kw, "TYPE")
+    kw = APPEND(kw, "UNTIL")
+    kw = APPEND(kw, "WEND")
+    kw = APPEND(kw, "WHILE")
+    kw = APPEND(kw, "WITH")
+    kw = APPEND(kw, "XOR")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(kw) - 1
+        padKeywords[kw[i]] = TRUE
+    NEXT i
+END SUB
+
+' Pre-built styles. lipgloss style construction allocates, so we
+' build each one once and reuse on every render.
+DIM padStylesReady AS BOOLEAN
+DIM padStyleKeyword AS lipgloss.Style
+DIM padStyleString  AS lipgloss.Style
+DIM padStyleComment AS lipgloss.Style
+DIM padStyleNumber  AS lipgloss.Style
+DIM padStylePlain   AS lipgloss.Style
+DIM padStyleCursor  AS lipgloss.Style
+DIM padStyleBg      AS lipgloss.Style
+DIM padStyleGutter  AS lipgloss.Style
+DIM padStyleGutterActive AS lipgloss.Style
+DIM padStyleSelection AS lipgloss.Style
+
+SUB initPadStyles()
+    IF padStylesReady THEN RETURN
+    padStyleKeyword = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#7dcfff")).Bold(TRUE)
+    padStyleString  = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#9ece6a"))
+    padStyleComment = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#565f89")).Italic(TRUE)
+    padStyleNumber  = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#ff9e64"))
+    padStylePlain   = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg))
+    padStyleCursor  = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    padStyleBg      = lipgloss.NewStyle().Background(lipgloss.Color(cBg))
+    padStyleGutter  = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#565f89"))
+    padStyleGutterActive = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
+    padStyleSelection = lipgloss.NewStyle().Background(lipgloss.Color("#3b3d5e")).Foreground(lipgloss.Color(cFg))
+    padStylesReady = TRUE
+END SUB
+
+FUNCTION styleForToken(k AS INTEGER) AS lipgloss.Style
+    initPadStyles()
+    IF k = tkKeyword THEN RETURN padStyleKeyword
+    IF k = tkString  THEN RETURN padStyleString
+    IF k = tkComment THEN RETURN padStyleComment
+    IF k = tkNumber  THEN RETURN padStyleNumber
+    RETURN padStylePlain
+END FUNCTION
+
+' Character-class helpers — byte-wise comparisons since DBasic
+' strings compare lexicographically.
+FUNCTION isPadLetter(ch AS STRING) AS BOOLEAN
+    IF ch = "" THEN RETURN FALSE
+    IF ch >= "A" AND ch <= "Z" THEN RETURN TRUE
+    IF ch >= "a" AND ch <= "z" THEN RETURN TRUE
+    IF ch = "_" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+FUNCTION isPadDigit(ch AS STRING) AS BOOLEAN
+    IF ch = "" THEN RETURN FALSE
+    IF ch >= "0" AND ch <= "9" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+FUNCTION isPadIdent(ch AS STRING) AS BOOLEAN
+    IF isPadLetter(ch) THEN RETURN TRUE
+    IF isPadDigit(ch)  THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' tokenizeLine — single-line lexer. Returns the line's runs of
+' (kind, text) so the renderer can colour each token independently.
+' Recognises: ' comments (to EOL), " string literals, decimal
+' numbers, identifiers (matched against the keyword set), and
+' everything else as tkPlain.
+FUNCTION tokenizeLine(line AS STRING) AS []PadToken
+    initPadKeywords()
+    DIM out AS []PadToken
+    DIM n AS INTEGER = LEN(line)
+    DIM i AS INTEGER = 0
+    DIM j AS INTEGER = 0     ' shared cursor — DBasic codegen would
+                             ' otherwise drop re-DIM j in each branch
+    DIM quote AS STRING = Chr(34)
+    DO WHILE i < n
+        DIM ch AS STRING = Mid(line, i + 1, 1)
+        IF ch = "'" THEN
+            ' Single-quote comment to end of line.
+            DIM tk AS PadToken
+            tk.Kind = tkComment
+            tk.Text = Mid(line, i + 1, n - i)
+            out = APPEND(out, tk)
+            i = n
+        ELSEIF ch = quote THEN
+            j = i + 1
+            DO WHILE j < n
+                IF Mid(line, j + 1, 1) = quote THEN
+                    j = j + 1
+                    EXIT DO
+                END IF
+                j = j + 1
+            LOOP
+            DIM tks AS PadToken
+            tks.Kind = tkString
+            tks.Text = Mid(line, i + 1, j - i)
+            out = APPEND(out, tks)
+            i = j
+        ELSEIF isPadDigit(ch) THEN
+            j = i
+            DO WHILE j < n
+                DIM cj AS STRING = Mid(line, j + 1, 1)
+                IF NOT (isPadDigit(cj) OR cj = ".") THEN EXIT DO
+                j = j + 1
+            LOOP
+            DIM tkn AS PadToken
+            tkn.Kind = tkNumber
+            tkn.Text = Mid(line, i + 1, j - i)
+            out = APPEND(out, tkn)
+            i = j
+        ELSEIF isPadLetter(ch) THEN
+            j = i
+            DO WHILE j < n
+                IF NOT isPadIdent(Mid(line, j + 1, 1)) THEN EXIT DO
+                j = j + 1
+            LOOP
+            DIM word AS STRING = Mid(line, i + 1, j - i)
+            DIM upper AS STRING = strings.ToUpper(word)
+            DIM kind AS INTEGER = tkPlain
+            IF padKeywords[upper] THEN kind = tkKeyword
+            DIM tki AS PadToken
+            tki.Kind = kind
+            tki.Text = word
+            out = APPEND(out, tki)
+            i = j
+            ' REM keyword starts a comment-to-EOL.
+            IF upper = "REM" THEN
+                DIM tkr AS PadToken
+                tkr.Kind = tkComment
+                tkr.Text = Mid(line, i + 1, n - i)
+                out = APPEND(out, tkr)
+                i = n
+            END IF
+        ELSE
+            DIM tkp AS PadToken
+            tkp.Kind = tkPlain
+            tkp.Text = ch
+            out = APPEND(out, tkp)
+            i = i + 1
+        END IF
+    LOOP
+    RETURN out
+END FUNCTION
+
+' PadSnapshot — captures buffer + cursor for one step of the undo /
+' redo stack. Store the whole buffer as a single string (cheap to
+' snapshot, immutable, GC-friendly) rather than copying the line
+' slice element-by-element.
+TYPE PadSnapshot
+    DIM Value AS STRING
+    DIM Row   AS INTEGER
+    DIM Col   AS INTEGER
+END TYPE
+
+' Pad — editor TYPE. One per Tab. Width/height of the viewport are
+' stored as ViewW/ViewH so the Width()/Height() methods (kept for
+' bubbles-textarea call-site compatibility) don't collide with
+' field names in the generated Go code.
+TYPE Pad
+    DIM Lines      AS []STRING     ' one entry per logical line
+    DIM Row        AS INTEGER      ' 0-based cursor row
+    DIM Col        AS INTEGER      ' 0-based cursor column (in bytes)
+    DIM ScrollTop  AS INTEGER      ' first visible row
+    DIM ScrollLeft AS INTEGER      ' first visible column
+    DIM ViewW      AS INTEGER      ' viewport width  (cells)
+    DIM ViewH      AS INTEGER      ' viewport height (rows)
+    DIM Focused    AS BOOLEAN
+    ' Selection state. SelActive=TRUE means (SelRow, SelCol) is the
+    ' anchor; the cursor (Row, Col) is the moving end. Shift+arrows
+    ' extend, plain arrows clear.
+    DIM SelActive AS BOOLEAN
+    DIM SelRow    AS INTEGER
+    DIM SelCol    AS INTEGER
+    ' Undo / redo stacks of buffer snapshots. Snap-before-mutate is
+    ' the policy; Pad.Update snaps once per user-action keypress.
+    DIM UndoStack AS []PadSnapshot
+    DIM RedoStack AS []PadSnapshot
+END TYPE
+
+' newPad — empty single-line buffer with sane defaults.
+FUNCTION newPad() AS Pad
+    DIM p AS Pad
+    p.Lines = APPEND(p.Lines, "")
+    p.ViewW = 80
+    p.ViewH = 24
+    RETURN p
+END FUNCTION
+
+' --- Getters (value receivers — pure reads) ------------------------------
+
+FUNCTION (p AS Pad) Value() AS STRING
+    RETURN strings.Join(p.Lines, "\n")
+END FUNCTION
+
+FUNCTION (p AS Pad) Line() AS INTEGER
+    RETURN p.Row
+END FUNCTION
+
+FUNCTION (p AS Pad) Column() AS INTEGER
+    RETURN p.Col
+END FUNCTION
+
+FUNCTION (p AS Pad) LineCount() AS INTEGER
+    RETURN LEN(p.Lines)
+END FUNCTION
+
+FUNCTION (p AS Pad) Height() AS INTEGER
+    RETURN p.ViewH
+END FUNCTION
+
+' --- Setters / cursor ops (pointer receivers — mutate) -------------------
+
+SUB (p AS POINTER TO Pad) SetValue(s AS STRING)
+    p.Lines = strings.Split(s, "\n")
+    IF LEN(p.Lines) = 0 THEN p.Lines = APPEND(p.Lines, "")
+    p.Row = 0
+    p.Col = 0
+    p.ScrollTop = 0
+    p.ScrollLeft = 0
+END SUB
+
+SUB (p AS POINTER TO Pad) SetWidth(w AS INTEGER)
+    p.ViewW = w
+END SUB
+
+SUB (p AS POINTER TO Pad) SetHeight(h AS INTEGER)
+    p.ViewH = h
+END SUB
+
+FUNCTION (p AS POINTER TO Pad) Focus() AS tea.Cmd
+    p.Focused = TRUE
+    RETURN NIL
+END FUNCTION
+
+SUB (p AS POINTER TO Pad) Blur()
+    p.Focused = FALSE
+END SUB
+
+SUB padEnsureVisible(p AS POINTER TO Pad)
+    IF p.Row < p.ScrollTop THEN p.ScrollTop = p.Row
+    IF p.Row >= p.ScrollTop + p.ViewH THEN p.ScrollTop = p.Row - p.ViewH + 1
+    IF p.ScrollTop < 0 THEN p.ScrollTop = 0
+    DIM contentW AS INTEGER = p.ViewW - 5
+    IF contentW < 1 THEN contentW = 1
+    IF p.Col < p.ScrollLeft THEN p.ScrollLeft = p.Col
+    IF p.Col >= p.ScrollLeft + contentW THEN p.ScrollLeft = p.Col - contentW + 1
+    IF p.ScrollLeft < 0 THEN p.ScrollLeft = 0
+END SUB
+
+SUB (p AS POINTER TO Pad) MoveToBegin()
+    p.Row = 0
+    p.Col = 0
+    p.ScrollTop = 0
+    p.ScrollLeft = 0
+END SUB
+
+SUB (p AS POINTER TO Pad) MoveToEnd()
+    p.Row = LEN(p.Lines) - 1
+    IF p.Row < 0 THEN p.Row = 0
+    p.Col = LEN(p.Lines[p.Row])
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorUp()
+    IF p.Row > 0 THEN
+        p.Row = p.Row - 1
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorDown()
+    IF p.Row < LEN(p.Lines) - 1 THEN
+        p.Row = p.Row + 1
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorLeft()
+    IF p.Col > 0 THEN
+        p.Col = p.Col - 1
+    ELSEIF p.Row > 0 THEN
+        p.Row = p.Row - 1
+        p.Col = LEN(p.Lines[p.Row])
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorRight()
+    IF p.Col < LEN(p.Lines[p.Row]) THEN
+        p.Col = p.Col + 1
+    ELSEIF p.Row < LEN(p.Lines) - 1 THEN
+        p.Row = p.Row + 1
+        p.Col = 0
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorStart()
+    p.Col = 0
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorEnd()
+    p.Col = LEN(p.Lines[p.Row])
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) SetCursorColumn(col AS INTEGER)
+    IF col < 0 THEN col = 0
+    IF col > LEN(p.Lines[p.Row]) THEN col = LEN(p.Lines[p.Row])
+    p.Col = col
+    padEnsureVisible(p)
+END SUB
+
+' --- Snapshot / undo / redo ----------------------------------------------
+
+' padSnap — push the current buffer + cursor onto the undo stack
+' (capped at 50 entries) and clear the redo stack. Called by Pad.Update
+' once per mutating user action so undo restores the pre-keypress
+' state rather than something halfway through a multi-step edit.
+SUB padSnap(p AS POINTER TO Pad)
+    DIM s AS PadSnapshot
+    s.Value = strings.Join(p.Lines, "\n")
+    s.Row = p.Row
+    s.Col = p.Col
+    p.UndoStack = APPEND(p.UndoStack, s)
+    IF LEN(p.UndoStack) > 50 THEN
+        DIM trimmed AS []PadSnapshot
+        DIM j AS INTEGER
+        FOR j = LEN(p.UndoStack) - 50 TO LEN(p.UndoStack) - 1
+            trimmed = APPEND(trimmed, p.UndoStack[j])
+        NEXT j
+        p.UndoStack = trimmed
+    END IF
+    DIM empty AS []PadSnapshot
+    p.RedoStack = empty
+END SUB
+
+SUB padRestore(p AS POINTER TO Pad, s AS PadSnapshot)
+    p.Lines = strings.Split(s.Value, "\n")
+    p.Row = s.Row
+    p.Col = s.Col
+    p.SelActive = FALSE
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) Undo()
+    IF LEN(p.UndoStack) = 0 THEN RETURN
+    DIM cur AS PadSnapshot
+    cur.Value = strings.Join(p.Lines, "\n")
+    cur.Row = p.Row
+    cur.Col = p.Col
+    p.RedoStack = APPEND(p.RedoStack, cur)
+    DIM last AS INTEGER = LEN(p.UndoStack) - 1
+    DIM s AS PadSnapshot = p.UndoStack[last]
+    DIM keep AS []PadSnapshot
+    DIM i AS INTEGER
+    FOR i = 0 TO last - 1
+        keep = APPEND(keep, p.UndoStack[i])
+    NEXT i
+    p.UndoStack = keep
+    padRestore(p, s)
+END SUB
+
+SUB (p AS POINTER TO Pad) Redo()
+    IF LEN(p.RedoStack) = 0 THEN RETURN
+    DIM cur AS PadSnapshot
+    cur.Value = strings.Join(p.Lines, "\n")
+    cur.Row = p.Row
+    cur.Col = p.Col
+    p.UndoStack = APPEND(p.UndoStack, cur)
+    DIM last AS INTEGER = LEN(p.RedoStack) - 1
+    DIM s AS PadSnapshot = p.RedoStack[last]
+    DIM keep AS []PadSnapshot
+    DIM i AS INTEGER
+    FOR i = 0 TO last - 1
+        keep = APPEND(keep, p.RedoStack[i])
+    NEXT i
+    p.RedoStack = keep
+    padRestore(p, s)
+END SUB
+
+' --- Selection -----------------------------------------------------------
+
+' padHasSelection — TRUE when SelActive AND the selection actually
+' covers at least one character. Equal anchor/cursor counts as none.
+FUNCTION padHasSelection(p AS POINTER TO Pad) AS BOOLEAN
+    IF NOT p.SelActive THEN RETURN FALSE
+    IF p.SelRow = p.Row AND p.SelCol = p.Col THEN RETURN FALSE
+    RETURN TRUE
+END FUNCTION
+
+' padSelBounds — return normalised (r0, c0, r1, c1): the start
+' (closer to BOF) and end (closer to EOF) of the selection.
+FUNCTION padSelBounds(p AS POINTER TO Pad) AS (INTEGER, INTEGER, INTEGER, INTEGER)
+    DIM r0 AS INTEGER = p.SelRow
+    DIM c0 AS INTEGER = p.SelCol
+    DIM r1 AS INTEGER = p.Row
+    DIM c1 AS INTEGER = p.Col
+    IF r0 > r1 OR (r0 = r1 AND c0 > c1) THEN
+        DIM tr AS INTEGER = r0
+        DIM tc AS INTEGER = c0
+        r0 = r1
+        c0 = c1
+        r1 = tr
+        c1 = tc
+    END IF
+    RETURN r0, c0, r1, c1
+END FUNCTION
+
+' padSelectionText — the substring covered by the current selection.
+FUNCTION padSelectionText(p AS POINTER TO Pad) AS STRING
+    IF NOT padHasSelection(p) THEN RETURN ""
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = padSelBounds(p)
+    IF r0 = r1 THEN
+        DIM oneLine AS STRING = p.Lines[r0]
+        RETURN Mid(oneLine, c0 + 1, c1 - c0)
+    END IF
+    DIM parts AS []STRING
+    DIM first AS STRING = p.Lines[r0]
+    parts = APPEND(parts, Mid(first, c0 + 1, LEN(first) - c0))
+    DIM mi AS INTEGER
+    FOR mi = r0 + 1 TO r1 - 1
+        parts = APPEND(parts, p.Lines[mi])
+    NEXT mi
+    DIM last AS STRING = p.Lines[r1]
+    DIM lastPart AS STRING = ""
+    IF c1 > 0 THEN lastPart = Mid(last, 1, c1)
+    parts = APPEND(parts, lastPart)
+    RETURN strings.Join(parts, "\n")
+END FUNCTION
+
+' padDeleteSelection — remove the selected range from the buffer
+' and leave the cursor at the start. No snap; the caller is
+' expected to snap once for the whole user action.
+SUB padDeleteSelection(p AS POINTER TO Pad)
+    IF NOT padHasSelection(p) THEN RETURN
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = padSelBounds(p)
+    DIM startLine AS STRING = p.Lines[r0]
+    DIM endLine   AS STRING = p.Lines[r1]
+    DIM leftPart  AS STRING = ""
+    DIM rightPart AS STRING = ""
+    IF c0 > 0             THEN leftPart  = Mid(startLine, 1, c0)
+    IF c1 < LEN(endLine)  THEN rightPart = Mid(endLine, c1 + 1, LEN(endLine) - c1)
+    DIM merged AS STRING = leftPart + rightPart
+    DIM newLines AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO r0 - 1
+        newLines = APPEND(newLines, p.Lines[i])
+    NEXT i
+    newLines = APPEND(newLines, merged)
+    FOR i = r1 + 1 TO LEN(p.Lines) - 1
+        newLines = APPEND(newLines, p.Lines[i])
+    NEXT i
+    p.Lines = newLines
+    p.Row = r0
+    p.Col = c0
+    p.SelActive = FALSE
+    padEnsureVisible(p)
+END SUB
+
+' padInsertString — bulk-insert a (possibly multi-line) string at
+' cursor. Replaces an active selection first.
+SUB padInsertString(p AS POINTER TO Pad, s AS STRING)
+    IF s = "" THEN RETURN
+    IF padHasSelection(p) THEN padDeleteSelection(p)
+    DIM lines AS []STRING = strings.Split(s, "\n")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        IF i > 0 THEN padInsertNewline(p)
+        IF lines[i] <> "" THEN padInsertChar(p, lines[i])
+    NEXT i
+END SUB
+
+' padLeadingWhitespace — leading run of spaces / tabs from `line`.
+' Used by Enter's auto-indent so the new line copies the previous
+' line's indent.
+FUNCTION padLeadingWhitespace(line AS STRING) AS STRING
+    DIM i AS INTEGER = 0
+    DO WHILE i < LEN(line)
+        DIM ch AS STRING = Mid(line, i + 1, 1)
+        IF ch <> " " AND ch <> Chr(9) THEN EXIT DO
+        i = i + 1
+    LOOP
+    RETURN Mid(line, 1, i)
+END FUNCTION
+
+' padIsWordCh — TRUE for the alphanumeric/underscore "word" run
+' that Ctrl+arrow navigation hops across.
+FUNCTION padIsWordCh(ch AS STRING) AS BOOLEAN
+    IF isPadLetter(ch) THEN RETURN TRUE
+    IF isPadDigit(ch)  THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' padMoveWordRight — jump cursor to the start of the next word.
+' Crosses the line boundary when called at end of line.
+SUB padMoveWordRight(p AS POINTER TO Pad)
+    DIM line AS STRING = p.Lines[p.Row]
+    DIM n AS INTEGER = LEN(line)
+    IF p.Col >= n THEN
+        IF p.Row < LEN(p.Lines) - 1 THEN
+            p.Row = p.Row + 1
+            p.Col = 0
+        END IF
+        padEnsureVisible(p)
+        RETURN
+    END IF
+    ' Skip the current word run (if we're inside one).
+    DO WHILE p.Col < n AND padIsWordCh(Mid(line, p.Col + 1, 1))
+        p.Col = p.Col + 1
+    LOOP
+    ' Then skip whitespace / punctuation to the next word's start.
+    DO WHILE p.Col < n AND NOT padIsWordCh(Mid(line, p.Col + 1, 1))
+        p.Col = p.Col + 1
+    LOOP
+    padEnsureVisible(p)
+END SUB
+
+' padMoveWordLeft — symmetric backward jump.
+SUB padMoveWordLeft(p AS POINTER TO Pad)
+    IF p.Col = 0 THEN
+        IF p.Row > 0 THEN
+            p.Row = p.Row - 1
+            p.Col = LEN(p.Lines[p.Row])
+        END IF
+        padEnsureVisible(p)
+        RETURN
+    END IF
+    DIM line AS STRING = p.Lines[p.Row]
+    ' Skip whitespace / punctuation backward.
+    DO WHILE p.Col > 0 AND NOT padIsWordCh(Mid(line, p.Col, 1))
+        p.Col = p.Col - 1
+    LOOP
+    ' Skip the word run backward.
+    DO WHILE p.Col > 0 AND padIsWordCh(Mid(line, p.Col, 1))
+        p.Col = p.Col - 1
+    LOOP
+    padEnsureVisible(p)
+END SUB
+
+' padIndentSelection — prepend 4 spaces to each selected line.
+' Caller has already snapped + verified multi-line selection.
+SUB padIndentSelection(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = padSelBounds(p)
+    _ = c0
+    _ = c1
+    DIM i AS INTEGER
+    FOR i = r0 TO r1
+        p.Lines[i] = "    " + p.Lines[i]
+    NEXT i
+    ' Shift the selection bounds + cursor to match.
+    p.SelCol = p.SelCol + 4
+    p.Col    = p.Col + 4
+    padEnsureVisible(p)
+END SUB
+
+' padDedentSelection — drop up to 4 leading spaces from each
+' selected line. Caller has snapped + verified multi-line.
+SUB padDedentSelection(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER
+    DIM c0 AS INTEGER
+    DIM r1 AS INTEGER
+    DIM c1 AS INTEGER
+    r0, c0, r1, c1 = padSelBounds(p)
+    _ = c0
+    _ = c1
+    DIM i AS INTEGER
+    FOR i = r0 TO r1
+        DIM stripped AS INTEGER = 0
+        DIM line AS STRING = p.Lines[i]
+        DO WHILE stripped < 4 AND stripped < LEN(line) AND Mid(line, stripped + 1, 1) = " "
+            stripped = stripped + 1
+        LOOP
+        IF stripped > 0 THEN
+            p.Lines[i] = Mid(line, stripped + 1, LEN(line) - stripped)
+            ' Best-effort cursor / anchor adjustment for the start
+            ' and end rows of the selection.
+            IF i = p.SelRow AND p.SelCol >= stripped THEN p.SelCol = p.SelCol - stripped
+            IF i = p.Row    AND p.Col    >= stripped THEN p.Col    = p.Col    - stripped
+        END IF
+    NEXT i
+    padEnsureVisible(p)
+END SUB
+
+' padDedentLine — drop up to 4 leading spaces from the current
+' (non-selection) line. Used by Shift+Tab when no selection.
+SUB padDedentLine(p AS POINTER TO Pad)
+    DIM stripped AS INTEGER = 0
+    DIM line AS STRING = p.Lines[p.Row]
+    DO WHILE stripped < 4 AND stripped < LEN(line) AND Mid(line, stripped + 1, 1) = " "
+        stripped = stripped + 1
+    LOOP
+    IF stripped > 0 THEN
+        p.Lines[p.Row] = Mid(line, stripped + 1, LEN(line) - stripped)
+        IF p.Col >= stripped THEN p.Col = p.Col - stripped
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+' padToggleComment — flip the leading "' " on the cursor line, or
+' on every selected line. Sublime-style: if any selected line is
+' un-commented, the operation comments all of them; otherwise it
+' uncomments. The caller is expected to snap before calling.
+SUB padToggleComment(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER = p.Row
+    DIM r1 AS INTEGER = p.Row
+    IF padHasSelection(p) THEN
+        DIM sR0 AS INTEGER
+        DIM sC0 AS INTEGER
+        DIM sR1 AS INTEGER
+        DIM sC1 AS INTEGER
+        sR0, sC0, sR1, sC1 = padSelBounds(p)
+        _ = sC0
+        _ = sC1
+        r0 = sR0
+        r1 = sR1
+    END IF
+    ' Pass 1 — decide direction. "All commented" → uncomment.
+    DIM allCommented AS BOOLEAN = TRUE
+    DIM i AS INTEGER
+    FOR i = r0 TO r1
+        DIM trimmed AS STRING = strings.TrimLeft(p.Lines[i], " \t")
+        IF NOT strings.HasPrefix(trimmed, "'") THEN allCommented = FALSE
+    NEXT i
+    ' Pass 2 — apply.
+    FOR i = r0 TO r1
+        DIM line AS STRING = p.Lines[i]
+        IF allCommented THEN
+            ' Find the first "'" and drop it (plus one space if it
+            ' was the one we ourselves inserted on comment).
+            DIM qIdx AS INTEGER = strings.Index(line, "'")
+            IF qIdx >= 0 THEN
+                DIM before AS STRING = ""
+                DIM after  AS STRING = ""
+                IF qIdx > 0 THEN before = Mid(line, 1, qIdx)
+                IF qIdx + 1 < LEN(line) THEN after = Mid(line, qIdx + 2, LEN(line) - qIdx - 1)
+                IF Mid(after, 1, 1) = " " THEN after = Mid(after, 2, LEN(after) - 1)
+                p.Lines[i] = before + after
+            END IF
+        ELSE
+            p.Lines[i] = "' " + line
+        END IF
+    NEXT i
+    padEnsureVisible(p)
+END SUB
+
+' SelectAll — anchor at (0,0), cursor at end of buffer.
+SUB (p AS POINTER TO Pad) SelectAll()
+    p.SelRow = 0
+    p.SelCol = 0
+    p.Row = LEN(p.Lines) - 1
+    IF p.Row < 0 THEN p.Row = 0
+    p.Col = LEN(p.Lines[p.Row])
+    p.SelActive = TRUE
+    padEnsureVisible(p)
+END SUB
+
+' padStartSelectionIfNeeded — called before a shift+arrow move so
+' the anchor pins to the current cursor position once.
+SUB padStartSelectionIfNeeded(p AS POINTER TO Pad)
+    IF NOT p.SelActive THEN
+        p.SelRow = p.Row
+        p.SelCol = p.Col
+        p.SelActive = TRUE
+    END IF
+END SUB
+
+' --- Insert / delete -----------------------------------------------------
+
+SUB padInsertChar(p AS POINTER TO Pad, ch AS STRING)
+    DIM line AS STRING = p.Lines[p.Row]
+    DIM leftPart  AS STRING = ""
+    DIM rightPart AS STRING = ""
+    IF p.Col > 0          THEN leftPart  = Mid(line, 1, p.Col)
+    IF p.Col < LEN(line)  THEN rightPart = Mid(line, p.Col + 1, LEN(line) - p.Col)
+    p.Lines[p.Row] = leftPart + ch + rightPart
+    p.Col = p.Col + LEN(ch)
+    padEnsureVisible(p)
+END SUB
+
+SUB padInsertNewline(p AS POINTER TO Pad)
+    DIM line AS STRING = p.Lines[p.Row]
+    DIM leftPart  AS STRING = ""
+    DIM rightPart AS STRING = ""
+    IF p.Col > 0         THEN leftPart  = Mid(line, 1, p.Col)
+    IF p.Col < LEN(line) THEN rightPart = Mid(line, p.Col + 1, LEN(line) - p.Col)
+    p.Lines[p.Row] = leftPart
+    DIM newLines AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO p.Row
+        newLines = APPEND(newLines, p.Lines[i])
+    NEXT i
+    newLines = APPEND(newLines, rightPart)
+    FOR i = p.Row + 1 TO LEN(p.Lines) - 1
+        newLines = APPEND(newLines, p.Lines[i])
+    NEXT i
+    p.Lines = newLines
+    p.Row = p.Row + 1
+    p.Col = 0
+    padEnsureVisible(p)
+END SUB
+
+SUB padDeleteBackward(p AS POINTER TO Pad)
+    IF p.Col > 0 THEN
+        DIM line AS STRING = p.Lines[p.Row]
+        DIM leftPart  AS STRING = ""
+        DIM rightPart AS STRING = ""
+        IF p.Col > 1         THEN leftPart  = Mid(line, 1, p.Col - 1)
+        IF p.Col < LEN(line) THEN rightPart = Mid(line, p.Col + 1, LEN(line) - p.Col)
+        p.Lines[p.Row] = leftPart + rightPart
+        p.Col = p.Col - 1
+    ELSEIF p.Row > 0 THEN
+        DIM prev AS STRING = p.Lines[p.Row - 1]
+        DIM cur  AS STRING = p.Lines[p.Row]
+        p.Lines[p.Row - 1] = prev + cur
+        DIM newLines AS []STRING
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(p.Lines) - 1
+            IF i <> p.Row THEN newLines = APPEND(newLines, p.Lines[i])
+        NEXT i
+        p.Lines = newLines
+        p.Row = p.Row - 1
+        p.Col = LEN(prev)
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB padDeleteForward(p AS POINTER TO Pad)
+    DIM line AS STRING = p.Lines[p.Row]
+    IF p.Col < LEN(line) THEN
+        DIM leftPart  AS STRING = ""
+        DIM rightPart AS STRING = ""
+        IF p.Col > 0             THEN leftPart  = Mid(line, 1, p.Col)
+        IF p.Col + 1 < LEN(line) THEN rightPart = Mid(line, p.Col + 2, LEN(line) - p.Col - 1)
+        p.Lines[p.Row] = leftPart + rightPart
+    ELSEIF p.Row < LEN(p.Lines) - 1 THEN
+        DIM nextLine AS STRING = p.Lines[p.Row + 1]
+        p.Lines[p.Row] = line + nextLine
+        DIM newLines AS []STRING
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(p.Lines) - 1
+            IF i <> p.Row + 1 THEN newLines = APPEND(newLines, p.Lines[i])
+        NEXT i
+        p.Lines = newLines
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+' Update — dispatch a tea message into the editor. Pointer receiver
+' so mutations land in the caller's Pad. Returns a Cmd (currently
+' always NIL — no cursor blink to schedule) to match the bubbles
+' textarea call shape.
+FUNCTION (p AS POINTER TO Pad) Update(msg AS tea.Msg) AS tea.Cmd
+    ' Bracketed-paste support. Snap once, replace any selection,
+    ' then bulk-insert the pasted text.
+    DIM pst AS tea.PasteMsg
+    DIM pok AS BOOLEAN
+    pst, pok = msg.(tea.PasteMsg)
+    IF pok THEN
+        padSnap(p)
+        padInsertString(p, pst.String())
+        RETURN NIL
+    END IF
+    DIM k AS tea.KeyPressMsg
+    DIM ok AS BOOLEAN
+    k, ok = msg.(tea.KeyPressMsg)
+    IF NOT ok THEN RETURN NIL
+    DIM key AS STRING = k.String()
+
+    ' --- Word-jump (Ctrl+arrows) ----------------------------------
+    IF key = "ctrl+right" THEN
+        p.SelActive = FALSE
+        padMoveWordRight(p)
+        RETURN NIL
+    END IF
+    IF key = "ctrl+left" THEN
+        p.SelActive = FALSE
+        padMoveWordLeft(p)
+        RETURN NIL
+    END IF
+    IF key = "ctrl+shift+right" THEN
+        padStartSelectionIfNeeded(p)
+        padMoveWordRight(p)
+        RETURN NIL
+    END IF
+    IF key = "ctrl+shift+left" THEN
+        padStartSelectionIfNeeded(p)
+        padMoveWordLeft(p)
+        RETURN NIL
+    END IF
+
+    ' --- Selection-extending keys ---------------------------------
+    ' Shift+arrow / Shift+home / Shift+end / Shift+PgUp/PgDn pin
+    ' the selection anchor (if not already pinned) then move the
+    ' cursor without clearing.
+    IF key = "shift+up"    THEN
+        padStartSelectionIfNeeded(p)
+        p.CursorUp()
+        RETURN NIL
+    END IF
+    IF key = "shift+down"  THEN
+        padStartSelectionIfNeeded(p)
+        p.CursorDown()
+        RETURN NIL
+    END IF
+    IF key = "shift+left"  THEN
+        padStartSelectionIfNeeded(p)
+        p.CursorLeft()
+        RETURN NIL
+    END IF
+    IF key = "shift+right" THEN
+        padStartSelectionIfNeeded(p)
+        p.CursorRight()
+        RETURN NIL
+    END IF
+    IF key = "shift+home"  THEN
+        padStartSelectionIfNeeded(p)
+        p.CursorStart()
+        RETURN NIL
+    END IF
+    IF key = "shift+end"   THEN
+        padStartSelectionIfNeeded(p)
+        p.CursorEnd()
+        RETURN NIL
+    END IF
+    IF key = "shift+pgup"  THEN
+        padStartSelectionIfNeeded(p)
+        p.Row = p.Row - p.ViewH
+        IF p.Row < 0 THEN p.Row = 0
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+        padEnsureVisible(p)
+        RETURN NIL
+    END IF
+    IF key = "shift+pgdown" THEN
+        padStartSelectionIfNeeded(p)
+        p.Row = p.Row + p.ViewH
+        IF p.Row >= LEN(p.Lines) THEN p.Row = LEN(p.Lines) - 1
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+        padEnsureVisible(p)
+        RETURN NIL
+    END IF
+
+    ' --- Plain navigation keys — clear selection on move ----------
+    IF key = "up" THEN
+        p.SelActive = FALSE
+        p.CursorUp()
+        RETURN NIL
+    END IF
+    IF key = "down" THEN
+        p.SelActive = FALSE
+        p.CursorDown()
+        RETURN NIL
+    END IF
+    IF key = "left" THEN
+        p.SelActive = FALSE
+        p.CursorLeft()
+        RETURN NIL
+    END IF
+    IF key = "right" THEN
+        p.SelActive = FALSE
+        p.CursorRight()
+        RETURN NIL
+    END IF
+    IF key = "home" THEN
+        p.SelActive = FALSE
+        p.CursorStart()
+        RETURN NIL
+    END IF
+    IF key = "end" THEN
+        p.SelActive = FALSE
+        p.CursorEnd()
+        RETURN NIL
+    END IF
+    IF key = "pgup" THEN
+        p.SelActive = FALSE
+        p.Row = p.Row - p.ViewH
+        IF p.Row < 0 THEN p.Row = 0
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+        padEnsureVisible(p)
+        RETURN NIL
+    END IF
+    IF key = "pgdown" THEN
+        p.SelActive = FALSE
+        p.Row = p.Row + p.ViewH
+        IF p.Row >= LEN(p.Lines) THEN p.Row = LEN(p.Lines) - 1
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+        padEnsureVisible(p)
+        RETURN NIL
+    END IF
+
+    ' --- Mutating keys — snap once, then dispatch -----------------
+    IF key = "backspace" THEN
+        padSnap(p)
+        IF padHasSelection(p) THEN
+            padDeleteSelection(p)
+        ELSE
+            padDeleteBackward(p)
+        END IF
+        RETURN NIL
+    END IF
+    IF key = "delete" THEN
+        padSnap(p)
+        IF padHasSelection(p) THEN
+            padDeleteSelection(p)
+        ELSE
+            padDeleteForward(p)
+        END IF
+        RETURN NIL
+    END IF
+    IF key = "enter" THEN
+        padSnap(p)
+        IF padHasSelection(p) THEN padDeleteSelection(p)
+        ' Auto-indent: copy leading whitespace from the line we're
+        ' leaving onto the new one.
+        DIM indent AS STRING = padLeadingWhitespace(p.Lines[p.Row])
+        padInsertNewline(p)
+        IF indent <> "" THEN padInsertChar(p, indent)
+        RETURN NIL
+    END IF
+    IF key = "tab" THEN
+        ' Multi-line selection → block indent. Single-cell selection
+        ' or no selection → insert 4 spaces (replacing the selection
+        ' content first when present).
+        IF padHasSelection(p) THEN
+            DIM tR0 AS INTEGER
+            DIM tC0 AS INTEGER
+            DIM tR1 AS INTEGER
+            DIM tC1 AS INTEGER
+            tR0, tC0, tR1, tC1 = padSelBounds(p)
+            _ = tC0
+            _ = tC1
+            IF tR1 > tR0 THEN
+                padSnap(p)
+                padIndentSelection(p)
+                RETURN NIL
+            END IF
+            padSnap(p)
+            padDeleteSelection(p)
+            padInsertChar(p, "    ")
+            RETURN NIL
+        END IF
+        padSnap(p)
+        padInsertChar(p, "    ")
+        RETURN NIL
+    END IF
+    IF key = "shift+tab" THEN
+        ' Multi-line selection → block dedent; otherwise dedent
+        ' the current line by up to 4 leading spaces.
+        IF padHasSelection(p) THEN
+            DIM sR0 AS INTEGER
+            DIM sC0 AS INTEGER
+            DIM sR1 AS INTEGER
+            DIM sC1 AS INTEGER
+            sR0, sC0, sR1, sC1 = padSelBounds(p)
+            _ = sC0
+            _ = sC1
+            IF sR1 > sR0 THEN
+                padSnap(p)
+                padDedentSelection(p)
+                RETURN NIL
+            END IF
+        END IF
+        padSnap(p)
+        padDedentLine(p)
+        RETURN NIL
+    END IF
+    IF key = "space" THEN
+        padSnap(p)
+        IF padHasSelection(p) THEN padDeleteSelection(p)
+        padInsertChar(p, " ")
+        RETURN NIL
+    END IF
+    IF LEN(key) = 1 THEN
+        padSnap(p)
+        IF padHasSelection(p) THEN padDeleteSelection(p)
+        padInsertChar(p, key)
+    END IF
+    RETURN NIL
+END FUNCTION
+
+' View — render the visible viewport with line-number gutter and
+' cursor highlight. Tokenises every visible line on each call;
+' relies on the outer EditorCacheView cache (in the Model) to keep
+' the cost off the hover path.
+FUNCTION (p AS Pad) View() AS STRING
+    initPadStyles()
+    DIM gutterW  AS INTEGER = 5
+    DIM contentW AS INTEGER = p.ViewW - gutterW
+    IF contentW < 1 THEN contentW = 1
+    ' Pre-resolve selection bounds so each row check is O(1).
+    DIM hasSel AS BOOLEAN = FALSE
+    DIM selR0  AS INTEGER = 0
+    DIM selC0  AS INTEGER = 0
+    DIM selR1  AS INTEGER = 0
+    DIM selC1  AS INTEGER = 0
+    IF p.SelActive AND NOT (p.SelRow = p.Row AND p.SelCol = p.Col) THEN
+        hasSel = TRUE
+        selR0 = p.SelRow
+        selC0 = p.SelCol
+        selR1 = p.Row
+        selC1 = p.Col
+        IF selR0 > selR1 OR (selR0 = selR1 AND selC0 > selC1) THEN
+            DIM tr AS INTEGER = selR0
+            DIM tc AS INTEGER = selC0
+            selR0 = selR1
+            selC0 = selC1
+            selR1 = tr
+            selC1 = tc
+        END IF
+    END IF
+    DIM rows AS []STRING
+    DIM r AS INTEGER
+    FOR r = 0 TO p.ViewH - 1
+        DIM rowIdx AS INTEGER = p.ScrollTop + r
+        DIM isCursorRow AS BOOLEAN = (p.Focused AND rowIdx = p.Row)
+        DIM gutter AS STRING
+        IF rowIdx >= LEN(p.Lines) THEN
+            gutter = padStyleBg.Render(strings.Repeat(" ", gutterW))
+            rows = APPEND(rows, gutter + padStyleBg.Render(strings.Repeat(" ", contentW)))
+        ELSE
+            DIM lab AS STRING = fmt.Sprintf("%4d ", rowIdx + 1)
+            IF isCursorRow THEN
+                gutter = padStyleGutterActive.Render(lab)
+            ELSE
+                gutter = padStyleGutter.Render(lab)
+            END IF
+            ' Compute per-row selection bounds: -1, -1 means no
+            ' selection on this row.
+            DIM lineLen AS INTEGER = LEN(p.Lines[rowIdx])
+            DIM selStart AS INTEGER = 0 - 1
+            DIM selEnd   AS INTEGER = 0 - 1
+            IF hasSel AND rowIdx >= selR0 AND rowIdx <= selR1 THEN
+                selStart = 0
+                selEnd   = lineLen
+                IF rowIdx = selR0 THEN selStart = selC0
+                IF rowIdx = selR1 THEN selEnd   = selC1
+            END IF
+            DIM cursorCol AS INTEGER = p.Col
+            DIM body AS STRING = padRenderLine(p.Lines[rowIdx], p.ScrollLeft, contentW, isCursorRow, cursorCol, selStart, selEnd)
+            rows = APPEND(rows, gutter + body)
+        END IF
+    NEXT r
+    RETURN strings.Join(rows, "\n")
+END FUNCTION
+
+' padStyleForMode — pick the style for a per-char render "mode".
+' Cursor (100) and selection (101) ride above token kinds (0..4).
+FUNCTION padStyleForMode(mode AS INTEGER) AS lipgloss.Style
+    initPadStyles()
+    IF mode = 100 THEN RETURN padStyleCursor
+    IF mode = 101 THEN RETURN padStyleSelection
+    RETURN styleForToken(mode)
+END FUNCTION
+
+' padRenderLine — render one source line clipped to [scrollLeft,
+' scrollLeft+contentW). Walks the token stream char-by-char so the
+' cursor cell (when this is the cursor row) gets the cursor style
+' instead of the token's style. selStart..selEnd (in source columns,
+' or -1, -1 for "no selection on this row") gets a subtle bg tint.
+'
+' Coalesces consecutive chars sharing the same render mode into one
+' Render call — turns a ~40-char line from ~40 ANSI runs into ~6,
+' which makes editor caching and bubbletea diffing much cheaper.
+FUNCTION padRenderLine(line AS STRING, scrollLeft AS INTEGER, contentW AS INTEGER, isCursorRow AS BOOLEAN, cursorCol AS INTEGER, selStart AS INTEGER, selEnd AS INTEGER) AS STRING
+    initPadStyles()
+    DIM tokens AS []PadToken = tokenizeLine(line)
+    DIM out AS STRING = ""
+    DIM col AS INTEGER = 0
+    DIM visCol AS INTEGER = 0
+    DIM runMode AS INTEGER = 0 - 1
+    DIM runBuf  AS STRING  = ""
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(tokens) - 1
+        DIM tok AS PadToken = tokens[ti]
+        DIM j AS INTEGER
+        FOR j = 0 TO LEN(tok.Text) - 1
+            DIM ch AS STRING = Mid(tok.Text, j + 1, 1)
+            IF col >= scrollLeft AND visCol < contentW THEN
+                DIM mode AS INTEGER = tok.Kind
+                IF selStart >= 0 AND col >= selStart AND col < selEnd THEN mode = 101
+                IF isCursorRow AND col = cursorCol THEN mode = 100
+                IF mode = runMode THEN
+                    runBuf = runBuf + ch
+                ELSE
+                    IF runMode >= 0 AND runBuf <> "" THEN
+                        out = out + padStyleForMode(runMode).Render(runBuf)
+                    END IF
+                    runMode = mode
+                    runBuf = ch
+                END IF
+                visCol = visCol + 1
+            END IF
+            col = col + 1
+        NEXT j
+    NEXT ti
+    ' Flush the trailing run.
+    IF runMode >= 0 AND runBuf <> "" THEN
+        out = out + padStyleForMode(runMode).Render(runBuf)
+    END IF
+    ' Cursor past end-of-line — render as a space at cursor pos.
+    IF isCursorRow AND cursorCol >= LEN(line) AND visCol < contentW THEN
+        DIM padCount AS INTEGER = cursorCol - LEN(line)
+        IF padCount < 0 THEN padCount = 0
+        IF padCount > 0 AND visCol + padCount <= contentW THEN
+            out = out + padStyleBg.Render(strings.Repeat(" ", padCount))
+            visCol = visCol + padCount
+        END IF
+        IF visCol < contentW THEN
+            out = out + padStyleCursor.Render(" ")
+            visCol = visCol + 1
+        END IF
+    END IF
+    IF visCol < contentW THEN
+        out = out + padStyleBg.Render(strings.Repeat(" ", contentW - visCol))
+    END IF
+    RETURN out
+END FUNCTION
+

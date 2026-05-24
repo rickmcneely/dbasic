@@ -1,0 +1,714 @@
+' -------------------------------------------------------------------------
+' Render helpers — each returns a styled string. View() composes them.
+' -------------------------------------------------------------------------
+
+' padRight — right-pad s with `fill` characters so its visible width is
+' `width` cells. Uses lipgloss.Width so multi-byte glyphs count as 1.
+FUNCTION padRight(s AS STRING, width AS INTEGER, fill AS STRING) AS STRING
+    DIM cur AS INTEGER = lipgloss.Width(s)
+    IF cur >= width THEN RETURN s
+    RETURN s + strings.Repeat(fill, width - cur)
+END FUNCTION
+
+' renderMenuLabel — render one "(X)label" menu/item label with the
+' hotkey letter restyled. `base` styles non-hotkey chars; `hot`
+' styles the bracketed letter (typically peach + bold + underline).
+FUNCTION renderMenuLabel(label AS STRING, bs AS lipgloss.Style, hot AS lipgloss.Style) AS STRING
+    DIM i AS INTEGER = strings.Index(label, "(")
+    IF i < 0 OR i + 2 >= LEN(label) OR Mid(label, i + 3, 1) <> ")" THEN
+        RETURN bs.Render(label)
+    END IF
+    DIM pre AS STRING = ""
+    IF i > 0 THEN pre = Mid(label, 1, i)
+    DIM letter AS STRING = Mid(label, i + 2, 1)
+    DIM post AS STRING = ""
+    IF i + 3 < LEN(label) THEN post = Mid(label, i + 4, LEN(label) - i - 3)
+    RETURN bs.Render(pre) + hot.Render(letter) + bs.Render(post)
+END FUNCTION
+
+' renderMenuBar — top row. Walks Menus, renders each cell with " label "
+' padding. Three states per cell, in priority order:
+'   active  → inverted accent (the menu's dropdown is open)
+'   hover   → softer accent tint (mouse is on this cell)
+'   default → menubar bg
+' Hotkey letter inside each label is always coloured peach.
+FUNCTION renderMenuBar(m AS Model, width AS INTEGER) AS STRING
+    DIM defBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg)).Bold(TRUE)
+    DIM defHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    DIM hovBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#3b3d5e")).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM hovHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#3b3d5e")).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    DIM selBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM selHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    ' Resolve the hovered cell ONCE per render so the math doesn't
+    ' have to re-walk for every menu item.
+    DIM hoverCell AS INTEGER = 0 - 1
+    IF m.HoverY = 0 THEN hoverCell = menuCellAt(m, m.HoverX)
+    DIM out AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Menus) - 1
+        DIM bs AS lipgloss.Style = defBase
+        DIM hot  AS lipgloss.Style = defHot
+        IF i = m.MenuActive THEN
+            bs = selBase
+            hot  = selHot
+        ELSEIF i = hoverCell THEN
+            bs = hovBase
+            hot  = hovHot
+        END IF
+        DIM lab AS STRING = m.Menus[i].Label
+        out = out + bs.Render(" ") + renderMenuLabel(lab, bs, hot) + bs.Render(" ")
+    NEXT i
+    ' Fill the rest of the row so the bar bg extends to the right edge.
+    DIM consumed AS INTEGER = lipgloss.Width(out)
+    IF consumed < width THEN
+        out = out + defBase.Render(strings.Repeat(" ", width - consumed))
+    END IF
+    RETURN out
+END FUNCTION
+
+' menuCellWidth — visible width (in cells) of one top-menu cell.
+' renderMenuBar pads each cell as " label " — so visible width is
+' LEN(stripped label) + 2 (one leading + one trailing space).
+FUNCTION menuCellWidth(m AS Model, idx AS INTEGER) AS INTEGER
+    IF idx < 0 OR idx >= LEN(m.Menus) THEN RETURN 0
+    RETURN LEN(menuStrip(m.Menus[idx].Label)) + 2
+END FUNCTION
+
+' menuOffsetX — leading X (in cells) of the dropdown for menu `idx`.
+' Sum of preceding menu cell widths so the dropdown opens directly
+' below its parent label.
+FUNCTION menuOffsetX(m AS Model, idx AS INTEGER) AS INTEGER
+    DIM off AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO idx - 1
+        off = off + menuCellWidth(m, i)
+    NEXT i
+    RETURN off
+END FUNCTION
+
+' menuCellAt — return the menu index whose top-row cell contains the
+' screen X column `mx`. Returns -1 when `mx` lands outside any cell
+' (e.g. past the last menu in the filler area).
+FUNCTION menuCellAt(m AS Model, mx AS INTEGER) AS INTEGER
+    DIM off AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Menus) - 1
+        DIM w AS INTEGER = menuCellWidth(m, i)
+        IF mx >= off AND mx < off + w THEN RETURN i
+        off = off + w
+    NEXT i
+    RETURN 0 - 1
+END FUNCTION
+
+' dropdownItemAt — translate a screen (mx,my) inside an open dropdown
+' to an item index, or -1 if outside. The dropdown's framed top
+' border sits at y = 1 (menubar row is y = 0) so item 0 occupies
+' y = 2, item 1 occupies y = 3, etc. The horizontal bounds are
+' [menuOffsetX, menuOffsetX + width).
+FUNCTION dropdownItemAt(m AS Model, mx AS INTEGER, my AS INTEGER) AS INTEGER
+    IF m.MenuActive < 0 OR m.MenuActive >= LEN(m.Menus) THEN RETURN 0 - 1
+    DIM items AS []MenuItem = m.Menus[m.MenuActive].Items
+    ' Recompute the dropdown's drawn width — same formula as the
+    ' renderer: max stripped label length + 2 inner padding, then
+    ' plus 2 for the border.
+    DIM maxW AS INTEGER = 0
+    DIM ix AS INTEGER
+    FOR ix = 0 TO LEN(items) - 1
+        IF NOT items[ix].IsSep THEN
+            DIM w AS INTEGER = LEN(menuStrip(items[ix].Label))
+            IF w > maxW THEN maxW = w
+        END IF
+    NEXT ix
+    IF maxW < 12 THEN maxW = 12
+    DIM outerW AS INTEGER = maxW + 2 + 2
+    DIM x0 AS INTEGER = menuOffsetX(m, m.MenuActive)
+    IF mx < x0 OR mx >= x0 + outerW THEN RETURN 0 - 1
+    ' Item rows start at y=2 (after menubar + dropdown top border).
+    DIM row AS INTEGER = my - 2
+    IF row < 0 OR row >= LEN(items) THEN RETURN 0 - 1
+    IF items[row].IsSep THEN RETURN 0 - 1
+    RETURN row
+END FUNCTION
+
+' tabAtX — translate a screen column on the tabs caption row to a
+' tab index. Returns -1 if `mx` lands on filler dashes or the leading
+' dash. Together with closeXOnTab() below, gives full tab hit-test.
+FUNCTION tabAtX(m AS Model, mx AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        DIM x0 AS INTEGER = tabCellX(m, i)
+        DIM x1 AS INTEGER = x0 + tabCellWidth(m, i)
+        IF mx >= x0 AND mx < x1 THEN RETURN i
+    NEXT i
+    RETURN 0 - 1
+END FUNCTION
+
+' closeXOnTab — TRUE when the screen column `mx` lands exactly on
+' the "✕" glyph for tab `i` (the second-to-last cell of its [...] box).
+FUNCTION closeXOnTab(m AS Model, i AS INTEGER, mx AS INTEGER) AS BOOLEAN
+    IF i < 0 OR i >= LEN(m.Tabs) THEN RETURN FALSE
+    DIM x0 AS INTEGER = tabCellX(m, i)
+    DIM xClose AS INTEGER = x0 + tabCellWidth(m, i) - 3
+    IF mx = xClose THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' treeNodeAt — return the TreeNodes index the user clicked on, or -1
+' if the click landed outside the tree's content area.
+'
+' Coordinate layout: View() composes menubar (y=0), body (y=1..h-2),
+' statusbar (y=h-1). Left pane is `titledBox` at body x=0 — top row
+' at y=1, body content rows start at y=2 and span `bodyH-2` lines
+' (the bodyBox has BorderTop=FALSE so its first row IS the first
+' tree row). Left border is at x=0, right border at x=leftW-1.
+FUNCTION treeNodeAt(m AS Model, mx AS INTEGER, my AS INTEGER, leftW AS INTEGER, bodyH AS INTEGER) AS INTEGER
+    IF mx < 1 OR mx >= leftW - 1 THEN RETURN 0 - 1
+    DIM row AS INTEGER = my - 2
+    IF row < 0 THEN RETURN 0 - 1
+    DIM idx AS INTEGER = m.TreeOffset + row
+    IF idx < 0 OR idx >= LEN(m.TreeNodes) THEN RETURN 0 - 1
+    ' Visible-rows cap so clicks below the last drawn row don't
+    ' resolve to a phantom node.
+    IF row >= bodyH - 2 THEN RETURN 0 - 1
+    RETURN idx
+END FUNCTION
+
+' renderDropdown — produce the framed dropdown for the active menu.
+' Items get hotkey emphasis; the cursor row inverts colors. Separators
+' render as a horizontal line spanning the dropdown's inner width.
+FUNCTION renderDropdown(m AS Model) AS STRING
+    IF m.MenuActive < 0 OR m.MenuActive >= LEN(m.Menus) THEN RETURN ""
+    DIM items AS []MenuItem = m.Menus[m.MenuActive].Items
+    ' Compute width = max item label length + padding.
+    DIM maxW AS INTEGER = 0
+    DIM ix AS INTEGER
+    FOR ix = 0 TO LEN(items) - 1
+        IF NOT items[ix].IsSep THEN
+            DIM w AS INTEGER = LEN(menuStrip(items[ix].Label))
+            IF w > maxW THEN maxW = w
+        END IF
+    NEXT ix
+    IF maxW < 12 THEN maxW = 12
+    DIM inner AS INTEGER = maxW + 2
+
+    DIM rowBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg))
+    DIM rowHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    DIM selBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM selHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cBorder))
+
+    DIM lines AS []STRING
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(items) - 1
+        IF items[j].IsSep THEN
+            lines = APPEND(lines, sepStyle.Render(strings.Repeat("─", inner)))
+        ELSE
+            DIM bs AS lipgloss.Style = rowBase
+            DIM hot  AS lipgloss.Style = rowHot
+            IF j = m.MenuItemIdx THEN
+                bs = selBase
+                hot  = selHot
+            END IF
+            DIM rendered AS STRING = renderMenuLabel(items[j].Label, bs, hot)
+            DIM cur AS INTEGER = lipgloss.Width(rendered)
+            ' Left-pad 1, right-pad to width.
+            DIM padR AS INTEGER = inner - 1 - cur
+            IF padR < 0 THEN padR = 0
+            lines = APPEND(lines, bs.Render(" ") + rendered + bs.Render(strings.Repeat(" ", padR)))
+        END IF
+    NEXT j
+    DIM body AS STRING = strings.Join(lines, "\n")
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cMenuBg))
+    RETURN frame.Render(body)
+END FUNCTION
+
+' hintCell — render one " KEY=label" cell with the key in the hotkey
+' colour and the label in dim menubar text. Used by renderStatusBar
+' to build the right-aligned VBDOS-style strip.
+FUNCTION hintCell(key AS STRING, label AS STRING) AS STRING
+    DIM keyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
+    DIM lblStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg))
+    RETURN keyStyle.Render(key) + lblStyle.Render(" " + label)
+END FUNCTION
+
+' renderStatusBar — bottom row. Layout: status message on the left,
+' optional cursor-position chip in the middle, key-hint strip on
+' the right. The status text truncates with an ellipsis when it
+' would overflow into the position/hints segments so those remain
+' readable at any width.
+FUNCTION renderStatusBar(width AS INTEGER, text AS STRING, pos AS STRING) AS STRING
+    DIM barBg AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg))
+    DIM msgStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cStatusFg)).Italic(TRUE)
+    DIM posStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+
+    ' Build the hint strip. Each cell is two spaces apart.
+    DIM hints AS STRING = ""
+    hints = hints + hintCell("F5", "Run")    + barBg.Render("  ")
+    hints = hints + hintCell("F8", "Check")  + barBg.Render("  ")
+    hints = hints + hintCell("F10", "Menu")  + barBg.Render("  ")
+    hints = hints + hintCell("F12", "Out")   + barBg.Render("  ")
+    hints = hints + hintCell("^S", "Save")   + barBg.Render("  ")
+    hints = hints + hintCell("^F", "Find")   + barBg.Render("  ")
+    hints = hints + hintCell("^O", "Open")   + barBg.Render("  ")
+    hints = hints + hintCell("^W", "Close")
+    DIM hintsW AS INTEGER = lipgloss.Width(hints)
+
+    ' Position chip — rendered when caller passes a non-empty `pos`.
+    DIM posCell AS STRING = ""
+    IF pos <> "" THEN
+        posCell = posStyle.Render(" " + pos + " ") + barBg.Render("  ")
+    END IF
+    DIM posW AS INTEGER = lipgloss.Width(posCell)
+
+    ' Status message, truncated to the remaining width.
+    DIM msgRaw AS STRING = " " + text + " "
+    DIM avail AS INTEGER = width - hintsW - posW - 1
+    IF avail < 4 THEN avail = 4
+    IF lipgloss.Width(msgRaw) > avail THEN
+        msgRaw = Mid(msgRaw, 1, avail - 1) + "…"
+    END IF
+    DIM msgPadded AS STRING = msgStyle.Render(msgRaw) + barBg.Render(strings.Repeat(" ", avail - lipgloss.Width(msgRaw)))
+
+    ' If the terminal is too narrow for any hints, just show the
+    ' status message stretched the full width.
+    IF width < hintsW + posW + 6 THEN
+        RETURN msgStyle.Width(width).Render(" " + text)
+    END IF
+    RETURN msgPadded + posCell + hints
+END FUNCTION
+
+' titledBox — render `body` inside a bordered panel with `title`
+' embedded in the top border. Mirrors the original DBtui's panel
+' style. `focused` selects the border style: TRUE → square corners
+' (the focused panel), FALSE → rounded corners (unfocused panel).
+FUNCTION titledBox(title AS STRING, body AS STRING, width AS INTEGER, height AS INTEGER, focused AS BOOLEAN) AS STRING
+    DIM tl AS STRING = "╭"
+    DIM tr AS STRING = "╮"
+    DIM borderObj AS lipgloss.Border = lipgloss.RoundedBorder()
+    IF focused THEN
+        tl = "┌"
+        tr = "┐"
+        borderObj = lipgloss.NormalBorder()
+    END IF
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    DIM titleStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Italic(TRUE)
+    ' Top row: "{tl}─ title ──...──{tr}" (width chars total)
+    DIM titleLen AS INTEGER = lipgloss.Width(" " + title + " ")
+    DIM dashLen  AS INTEGER = width - 2 - 1 - titleLen
+    IF dashLen < 0 THEN dashLen = 0
+    DIM top AS STRING = borderStyle.Render(tl + "─") + titleStyle.Render(" " + title + " ") + borderStyle.Render(strings.Repeat("─", dashLen) + tr)
+    ' Body box. Width(width) → total visible width includes borders.
+    DIM bodyBox AS lipgloss.Style = lipgloss.NewStyle().Border(borderObj).BorderTop(FALSE).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(height - 1)
+    RETURN top + "\n" + bodyBox.Render(body)
+END FUNCTION
+
+' nodeGlyph — the leading symbol for a tree row. "▾" = expanded folder,
+' "▸" = collapsed folder, "◇" = leaf file. Matches the original DBtui.
+FUNCTION nodeGlyph(m AS Model, n AS TreeNode) AS STRING
+    IF n.IsDir THEN
+        IF isExpanded(m, n.Path) THEN RETURN "▾"
+        RETURN "▸"
+    END IF
+    RETURN "◇"
+END FUNCTION
+
+' renderTreeBody — produce the multi-line, indented + glyphed body for
+' the tree. Row priority:
+'   selected → solid accent bar
+'   hovered  → subtle border-bg tint
+'   default  → fg on background
+FUNCTION renderTreeBody(m AS Model, innerW AS INTEGER, innerH AS INTEGER) AS STRING
+    IF innerW < 1 THEN innerW = 1
+    DIM cursorStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#2d4f67")).Foreground(lipgloss.Color(cFg)).Bold(TRUE).Width(innerW)
+    DIM hoverStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cFg)).Width(innerW)
+    DIM defStyle    AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(innerW)
+    ' Resolve the hovered row ONCE. treeNodeAt expects the left-pane
+    ' width and bodyH = innerH + 2 (it strips the title row + bottom
+    ' border).
+    DIM hoverRow AS INTEGER = treeNodeAt(m, m.HoverX, m.HoverY, m.LeftW, innerH + 2)
+    DIM lines AS []STRING
+    DIM total AS INTEGER = LEN(m.TreeNodes)
+    DIM startI AS INTEGER = m.TreeOffset
+    IF startI < 0 THEN startI = 0
+    DIM endI AS INTEGER = startI + innerH
+    IF endI > total THEN endI = total
+    DIM i AS INTEGER
+    FOR i = startI TO endI - 1
+        DIM n AS TreeNode = m.TreeNodes[i]
+        DIM indent AS STRING = strings.Repeat("  ", n.Depth)
+        DIM line   AS STRING = indent + nodeGlyph(m, n) + " " + n.Name
+        IF i = m.TreeSelected THEN
+            lines = APPEND(lines, cursorStyle.Render(line))
+        ELSEIF i = hoverRow THEN
+            lines = APPEND(lines, hoverStyle.Render(line))
+        ELSE
+            lines = APPEND(lines, defStyle.Render(line))
+        END IF
+    NEXT i
+    ' Pad with empty rows so the box always renders innerH lines.
+    DO WHILE LEN(lines) < innerH
+        lines = APPEND(lines, defStyle.Render(""))
+    LOOP
+    RETURN strings.Join(lines, "\n")
+END FUNCTION
+
+' renderLeftPane — Project tree column. The border style follows
+' keyboard focus: square-corner = focused, rounded = unfocused.
+FUNCTION renderLeftPane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
+    ' titledBox renders a top row + 3-sided body box. The body box's
+    ' inner area is (width-2) chars wide × (height-2) rows tall.
+    DIM body AS STRING = renderTreeBody(m, width - 2, height - 2)
+    DIM treeFocused AS BOOLEAN = (m.FocusedPane = "tree")
+    RETURN titledBox("Project", body, width, height, treeFocused)
+END FUNCTION
+
+' tabLabel — display label for tab `i`: basename, dirty-prefixed with
+' "*" when unsaved. Centralised so render + hit-test math agree on
+' visible-cell width.
+FUNCTION tabLabel(m AS Model, i AS INTEGER) AS STRING
+    IF i < 0 OR i >= LEN(m.Tabs) THEN RETURN ""
+    DIM marker AS STRING = ""
+    IF m.Tabs[i].Dirty THEN marker = "*"
+    RETURN marker + baseName(m.Tabs[i].Path)
+END FUNCTION
+
+' tabCellWidth — total visible cells one tab occupies on the caption
+' row. Format is "[ LABEL ✕ ]" so it's lipgloss.Width(label) + 6 (one
+' bracket, space, label, space, glyph, space, bracket = 6 fixed).
+FUNCTION tabCellWidth(m AS Model, i AS INTEGER) AS INTEGER
+    RETURN lipgloss.Width(tabLabel(m, i)) + 6
+END FUNCTION
+
+' tabCellX — leading X offset (in cells) where tab `i`'s "[" sits.
+' Caption begins with one "─" so the first tab starts at column 1.
+FUNCTION tabCellX(m AS Model, i AS INTEGER) AS INTEGER
+    DIM x AS INTEGER = 1
+    DIM j AS INTEGER
+    FOR j = 0 TO i - 1
+        x = x + tabCellWidth(m, j)
+    NEXT j
+    RETURN x
+END FUNCTION
+
+' renderTabsCaption — caption row when in code mode with at least one
+' tab: leading dash, "[ name ✕ ]" per tab (active one accented), then
+' filler dashes to width. Replaces the plain captionin code mode so
+' the tabs and the right pane's [Widgets][Tools] strip share a row.
+FUNCTION renderTabsCaption(m AS Model, width AS INTEGER) AS STRING
+    DIM dashStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
+    DIM defBase   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cMenuFg))
+    DIM actBase   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM closeStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cHotkey))
+
+    DIM out AS STRING = dashStyle.Render("─")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        DIM bs AS lipgloss.Style = defBase
+        IF i = m.TabIdx THEN bs = actBase
+        out = out + dashStyle.Render("[") + bs.Render(" " + tabLabel(m, i) + " ") + closeStyle.Render("✕") + dashStyle.Render(" ]")
+    NEXT i
+    RETURN padRight(out, width, dashStyle.Render("─"))
+END FUNCTION
+
+' renderMiddlePane — editor area. No outer panel frame in the original
+' DBtui; just a caption line + the editor surface beneath. In form
+' mode the caption is a single "Form Designer" title; in code mode
+' the caption becomes the tab strip (rendered by renderTabsCaption).
+FUNCTION renderMiddlePane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
+    DIM dashStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+
+    ' --- Caption -----------------------------------------------------
+    DIM caption AS STRING
+    IF m.ViewMode = "code" AND LEN(m.Tabs) > 0 THEN
+        caption = renderTabsCaption(m, width)
+    ELSEIF m.ViewMode = "code" THEN
+        caption = padRight(dashStyle.Render("─[ ") + titleStyle.Render("Code Editor") + dashStyle.Render(" ]"), width, dashStyle.Render("─"))
+    ELSE
+        caption = padRight(dashStyle.Render("─[ ") + titleStyle.Render("Form Designer — frmStart") + dashStyle.Render(" ]"), width, dashStyle.Render("─"))
+    END IF
+
+    ' --- Body --------------------------------------------------------
+    DIM bodyH AS INTEGER = height - 1
+    IF bodyH < 1 THEN bodyH = 1
+    DIM bodyStr AS STRING
+    IF m.ViewMode = "code" AND hasActiveTab(m) THEN
+        ' Prefer the cached textarea View() — refreshEditorCache
+        ' is the only place that calls the (expensive) live View().
+        ' Fall back to live render when the cache is stale or empty
+        ' so correctness is never sacrificed for the perf win.
+        IF m.EditorCacheView <> "" AND NOT m.EditorCacheDirty AND m.EditorCacheW = width AND m.EditorCacheH = bodyH THEN
+            bodyStr = m.EditorCacheView
+        ELSE
+            m.Tabs[m.TabIdx].Editor.SetWidth(width)
+            m.Tabs[m.TabIdx].Editor.SetHeight(bodyH)
+            bodyStr = m.Tabs[m.TabIdx].Editor.View()
+        END IF
+    ELSEIF m.ViewMode = "code" THEN
+        DIM emptyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder)).Width(width).Height(bodyH).Align(lipgloss.Center, lipgloss.Center)
+        bodyStr = emptyStyle.Render("(no files open — pick one from the tree)")
+    ELSE
+        DIM placeholder AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder)).Width(width).Height(bodyH).Align(lipgloss.Center, lipgloss.Center)
+        bodyStr = placeholder.Render("(form designer — coming soon; press F7 or Enter on a tree file to code)")
+    END IF
+    RETURN caption + "\n" + bodyStr
+END FUNCTION
+
+' rightPaneWidgets / rightPaneTools — the two label strings, kept as
+' module-level constants so the render and hit-test code share one
+' source of truth on their visible widths.
+CONST rpLeftPad AS STRING  = "[ "
+CONST rpTabSep  AS STRING  = " ] [ "
+CONST rpRightPad AS STRING = " ]"
+
+' rightTabsBounds — return the [start,end) screen-cell ranges for the
+' [Widgets] and [Tools] tab labels on the right-pane caption row.
+' `xOrigin` is the absolute X where the right pane starts. The tab
+' strip is right-aligned so the labels sit flush against
+' `xOrigin + width`. Order returned: wStart, wEnd, tStart, tEnd.
+FUNCTION rightTabsBounds(xOrigin AS INTEGER, width AS INTEGER, widgetsLabel AS STRING, toolsLabel AS STRING) AS (INTEGER, INTEGER, INTEGER, INTEGER)
+    DIM full AS STRING = rpLeftPad + widgetsLabel + rpTabSep + toolsLabel + rpRightPad
+    DIM totalW AS INTEGER = lipgloss.Width(full)
+    DIM stripX AS INTEGER = xOrigin + width - totalW
+    DIM wX0 AS INTEGER = stripX + lipgloss.Width(rpLeftPad)
+    DIM wX1 AS INTEGER = wX0 + lipgloss.Width(widgetsLabel)
+    DIM tX0 AS INTEGER = wX1 + lipgloss.Width(rpTabSep)
+    DIM tX1 AS INTEGER = tX0 + lipgloss.Width(toolsLabel)
+    RETURN wX0, wX1, tX0, tX1
+END FUNCTION
+
+' renderRightPane — Widgets/Tools tabs strip + Widgets list, stacked
+' over a Properties box. Both panels unfocused → rounded corners.
+' The tabs row is right-aligned so "[ Widgets ] [ Tools ]" sits flush
+' against the trailing dashes of the middle pane's caption (matching
+' the original DBtui).
+'
+' `xOrigin` is the absolute screen-X where this pane starts; we need
+' it to translate the per-region hover position back to local rows.
+FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigin AS INTEGER) AS STRING
+    DIM dashStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
+    DIM tabStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM hovTabStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Underline(TRUE)
+    DIM bracket  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
+
+    ' --- Tab strip ---------------------------------------------------
+    DIM widgetsLbl AS STRING = "Widgets"
+    DIM toolsLbl   AS STRING = "Tools"
+    DIM wS AS INTEGER
+    DIM wE AS INTEGER
+    DIM tS AS INTEGER
+    DIM tE AS INTEGER
+    wS, wE, tS, tE = rightTabsBounds(xOrigin, width, widgetsLbl, toolsLbl)
+    ' Pick per-label style based on hover.
+    DIM widgetsStyled AS lipgloss.Style = tabStyle
+    DIM toolsStyled   AS lipgloss.Style = tabStyle
+    IF m.HoverY = 1 AND m.HoverX >= wS AND m.HoverX < wE THEN widgetsStyled = hovTabStyle
+    IF m.HoverY = 1 AND m.HoverX >= tS AND m.HoverX < tE THEN toolsStyled   = hovTabStyle
+    DIM tabLabels AS STRING = bracket.Render(rpLeftPad) + widgetsStyled.Render(widgetsLbl) + bracket.Render(rpTabSep) + toolsStyled.Render(toolsLbl) + bracket.Render(rpRightPad)
+    DIM dashW AS INTEGER = width - lipgloss.Width(tabLabels)
+    IF dashW < 0 THEN dashW = 0
+    DIM tabs AS STRING = dashStyle.Render(strings.Repeat("─", dashW)) + tabLabels
+
+    ' --- Pane geometry -----------------------------------------------
+    DIM remain  AS INTEGER = height - 1
+    DIM listH   AS INTEGER = remain / 2
+    DIM propsH  AS INTEGER = remain - listH
+
+    ' --- Widgets list (placeholder rows; hover restyles per row) -----
+    ' The listBox has a rounded border so the inner area is (width-2)
+    ' chars wide × (listH-2) rows tall. Its top border sits at body
+    ' y = 2 (menubar y=0, tabs y=1), so list rows occupy y = 3..3+listH-3.
+    DIM widgetNames AS []STRING
+    widgetNames = APPEND(widgetNames, "Button")
+    widgetNames = APPEND(widgetNames, "Checkbox")
+    widgetNames = APPEND(widgetNames, "CodeEditor")
+    widgetNames = APPEND(widgetNames, "ComboBox")
+    widgetNames = APPEND(widgetNames, "FormCanvas")
+    DIM listInnerW AS INTEGER = width - 2
+    DIM listFirstY AS INTEGER = 3
+    DIM listVisible AS INTEGER = listH - 2
+    DIM listRowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(listInnerW)
+    DIM listHoverStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Width(listInnerW)
+    DIM listLines AS []STRING
+    DIM li AS INTEGER
+    FOR li = 0 TO listVisible - 1
+        DIM txt AS STRING = ""
+        IF li < LEN(widgetNames) THEN txt = " " + widgetNames[li]
+        DIM rowY AS INTEGER = listFirstY + li
+        IF m.HoverY = rowY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND li < LEN(widgetNames) THEN
+            listLines = APPEND(listLines, listHoverStyle.Render(txt))
+        ELSE
+            listLines = APPEND(listLines, listRowStyle.Render(txt))
+        END IF
+    NEXT li
+    DIM listBody AS STRING = strings.Join(listLines, "\n")
+    DIM listBox  AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(listH)
+
+    ' --- Properties panel (placeholder rows; hover restyle per row) --
+    ' titledBox draws title at the top of the panel, so property rows
+    ' start one cell below that. The panel begins at y = 2 + listH;
+    ' first row sits at y = 2 + listH + 1.
+    DIM propRows AS []STRING
+    propRows = APPEND(propRows, "Name      lblTitle")
+    propRows = APPEND(propRows, "Visible   [x] true")
+    propRows = APPEND(propRows, "Text      Label")
+    DIM propsInnerW AS INTEGER = width - 2
+    DIM propsFirstY AS INTEGER = 2 + listH + 1
+    DIM propsVisible AS INTEGER = propsH - 2
+    DIM propRowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(propsInnerW)
+    DIM propHoverStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Width(propsInnerW)
+    DIM propLines AS []STRING
+    DIM pi AS INTEGER
+    FOR pi = 0 TO propsVisible - 1
+        DIM ptxt AS STRING = ""
+        IF pi < LEN(propRows) THEN ptxt = " " + propRows[pi]
+        DIM propY AS INTEGER = propsFirstY + pi
+        IF m.HoverY = propY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND pi < LEN(propRows) THEN
+            propLines = APPEND(propLines, propHoverStyle.Render(ptxt))
+        ELSE
+            propLines = APPEND(propLines, propRowStyle.Render(ptxt))
+        END IF
+    NEXT pi
+    DIM propsBody   AS STRING = strings.Join(propLines, "\n")
+    DIM propsTitled AS STRING = titledBox("Properties", propsBody, width, propsH, FALSE)
+
+    RETURN lipgloss.JoinVertical(lipgloss.Left, tabs, listBox.Render(listBody), propsTitled)
+END FUNCTION
+
+' -------------------------------------------------------------------------
+' renderModal — build the centered confirmation dialog string.
+'
+' Returns "" when no modal is currently active. Otherwise returns a
+' rounded-border box containing the title (highlighted), one or more
+' message lines (word-wrapped to a reasonable width), and a row of
+' buttons with the currently-selected button inverted.
+'
+' The composition is done with lipgloss styles only — placement
+' (centering) is handled in View() via the lipgloss.Compositor, so
+' this helper only needs to worry about the *contents* of the box.
+' -------------------------------------------------------------------------
+FUNCTION renderModal(m AS Model) AS STRING
+    IF NOT m.ModalActive THEN RETURN ""
+
+    ' --- Dimensions -----------------------------------------------
+    ' A simple readable width that fits typical confirm-dialog text
+    ' without spanning the whole screen.
+    DIM innerW AS INTEGER = 48
+
+    ' --- Title row ------------------------------------------------
+    ' Background is set on every inner style so lipgloss's padding-
+    ' to-Width fills the empty cells with the modal's bg instead of
+    ' letting the underlying terminal bg leak through.
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Bold(TRUE).Foreground(lipgloss.Color(cHotkey)).Width(innerW).Align(lipgloss.Center)
+    DIM titleLine AS STRING = titleStyle.Render(m.ModalTitle)
+
+    ' --- Message body --------------------------------------------
+    ' Two-pass layout: explicit \n line breaks are preserved (so
+    ' multi-line compiler output renders verbatim); any single line
+    ' wider than innerW gets soft-wrapped on spaces.
+    DIM msgLines AS []STRING
+    DIM rawLines AS []STRING = strings.Split(m.ModalMessage, "\n")
+    DIM rl AS INTEGER
+    FOR rl = 0 TO LEN(rawLines) - 1
+        DIM rawLine AS STRING = rawLines[rl]
+        IF rawLine = "" THEN
+            msgLines = APPEND(msgLines, "")
+        ELSEIF lipgloss.Width(rawLine) <= innerW THEN
+            msgLines = APPEND(msgLines, rawLine)
+        ELSE
+            DIM words AS []STRING = strings.Fields(rawLine)
+            DIM cur AS STRING = ""
+            DIM wi AS INTEGER
+            FOR wi = 0 TO LEN(words) - 1
+                DIM word AS STRING = words[wi]
+                IF cur = "" THEN
+                    cur = word
+                ELSEIF LEN(cur) + 1 + LEN(word) <= innerW THEN
+                    cur = cur + " " + word
+                ELSE
+                    msgLines = APPEND(msgLines, cur)
+                    cur = word
+                END IF
+            NEXT wi
+            IF cur <> "" THEN msgLines = APPEND(msgLines, cur)
+        END IF
+    NEXT rl
+
+    DIM bodyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg)).Width(innerW)
+    DIM bodyText AS STRING = strings.Join(msgLines, "\n")
+    DIM bodyBlock AS STRING = bodyStyle.Render(bodyText)
+
+    ' --- Button row ----------------------------------------------
+    ' Each button is rendered as " label "; the active one (matching
+    ' ModalIdx) is reverse-video so it reads as the default action.
+    ' Both styles carry the modal bg so the border padding cells
+    ' match the surrounding modal surface.
+    DIM btnNormal AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg)).Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder))
+    DIM btnActive AS lipgloss.Style = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Foreground(lipgloss.Color(cBg)).Background(lipgloss.Color(cHotkey)).Bold(TRUE)
+
+    ' --- Footer: either an input field (input mode) or button row -
+    DIM footer AS STRING = ""
+    IF m.ModalIsInput THEN
+        m.ModalInput.SetWidth(innerW)
+        DIM inputBox AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent))
+        footer = inputBox.Render(m.ModalInput.View())
+    ELSE
+        DIM rendered AS []STRING
+        DIM bi AS INTEGER
+        FOR bi = 0 TO LEN(m.ModalButtons) - 1
+            DIM lbl AS STRING = m.ModalButtons[bi]
+            IF bi = m.ModalIdx THEN
+                rendered = APPEND(rendered, btnActive.Render(lbl))
+            ELSE
+                rendered = APPEND(rendered, btnNormal.Render(lbl))
+            END IF
+        NEXT bi
+        ' DBasic doesn't support variadic spread (xs...), so dispatch
+        ' by button count. Real dialogs only ever have 1–3 buttons.
+        DIM btnRow AS STRING = ""
+        IF LEN(rendered) = 1 THEN
+            btnRow = rendered[0]
+        ELSEIF LEN(rendered) = 2 THEN
+            btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1])
+        ELSEIF LEN(rendered) >= 3 THEN
+            btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1], "  ", rendered[2])
+        END IF
+        footer = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Align(lipgloss.Center).Render(btnRow)
+    END IF
+
+    ' --- Spacer rows — explicit bg-filled blank line so the empty
+    '     rows between title / body / footer match the modal surface.
+    DIM spacer AS STRING = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Render(" ")
+
+    ' --- Stack title / body / spacer / footer --------------------
+    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, titleLine, spacer, bodyBlock, spacer, footer)
+
+    ' --- Outer frame ---------------------------------------------
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Background(lipgloss.Color(cBg)).Padding(1, 2)
+    RETURN frame.Render(stacked)
+END FUNCTION
+
+' -------------------------------------------------------------------------
+' renderBottomPane — bordered pane showing the tail of BottomBody.
+' Always shows the most recent lines that fit; long output scrolls
+' the old lines off the top. Title (e.g. "Output") sits in the
+' top border like other titledBoxes.
+' -------------------------------------------------------------------------
+FUNCTION renderBottomPane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
+    DIM title AS STRING = m.BottomTitle
+    IF title = "" THEN title = "Output"
+    DIM rawLines AS []STRING = strings.Split(m.BottomBody, "\n")
+    ' Inner area height inside titledBox: height - 2 (top title row +
+    ' bottom border). Show the last N lines that fit.
+    DIM visible AS INTEGER = height - 2
+    IF visible < 1 THEN visible = 1
+    DIM startI AS INTEGER = 0
+    IF LEN(rawLines) > visible THEN startI = LEN(rawLines) - visible
+    DIM showLines AS []STRING
+    DIM i AS INTEGER
+    FOR i = startI TO LEN(rawLines) - 1
+        showLines = APPEND(showLines, rawLines[i])
+    NEXT i
+    DIM body AS STRING = strings.Join(showLines, "\n")
+    RETURN titledBox(title, body, width, height, FALSE)
+END FUNCTION

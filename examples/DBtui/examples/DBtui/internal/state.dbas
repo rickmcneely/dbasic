@@ -1,0 +1,82 @@
+' -------------------------------------------------------------------------
+' Persisted state I/O.
+' -------------------------------------------------------------------------
+
+' statePath — absolute path of the JSON state file. Empty when the
+' user's HOME isn't resolvable (we silently degrade — no persistence
+' rather than crashing or writing somewhere weird).
+FUNCTION statePath() AS STRING
+    DIM home AS STRING
+    DIM err  AS ERROR
+    home, err = os.UserHomeDir()
+    IF err <> NIL OR home = "" THEN RETURN ""
+    RETURN joinPath(home, ".dbtui-state.json")
+END FUNCTION
+
+' loadState — read + parse ~/.dbtui-state.json. Returns a zero-value
+' PersistedState on any error (file missing, bad JSON, etc.); the
+' caller is expected to just use the defaults in that case.
+FUNCTION loadState() AS PersistedState
+    DIM zero AS PersistedState
+    DIM p AS STRING = statePath()
+    IF p = "" THEN RETURN zero
+    DIM data AS BYTES
+    DIM rerr AS ERROR
+    data, rerr = os.ReadFile(p)
+    IF rerr <> NIL THEN RETURN zero
+    DIM s AS PersistedState
+    DIM jerr AS ERROR = encjson.Unmarshal(data, @s)
+    IF jerr <> NIL THEN RETURN zero
+    RETURN s
+END FUNCTION
+
+' captureState — snapshot the Model fields we want to persist.
+FUNCTION captureState(m AS POINTER TO Model) AS PersistedState
+    DIM s AS PersistedState
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        ' Only persist tabs whose Path is set — fresh "untitled"
+        ' buffers have no on-disk identity and can't be restored.
+        IF m.Tabs[i].Path <> "" THEN s.Open = APPEND(s.Open, m.Tabs[i].Path)
+    NEXT i
+    s.Active = m.TabIdx
+    IF s.Active >= LEN(s.Open) THEN s.Active = 0
+    IF s.Active < 0 THEN s.Active = 0
+    s.LeftW = m.LeftW
+    s.RightW = m.RightW
+    s.BottomVisible = m.BottomVisible
+    s.Recent = m.Recent
+    RETURN s
+END FUNCTION
+
+' saveState — JSON-marshal and write the state file. Errors are
+' swallowed; quitting shouldn't fail because we couldn't write a
+' preferences file.
+SUB saveState(m AS POINTER TO Model)
+    DIM p AS STRING = statePath()
+    IF p = "" THEN RETURN
+    DIM s AS PersistedState = captureState(m)
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = encjson.MarshalIndent(s, "", "  ")
+    IF err <> NIL THEN RETURN
+    _ = os.WriteFile(p, data, 0644)
+END SUB
+
+' pushRecent — move `path` to the front of the recent-files list,
+' dedupe earlier entries, and cap the list at 10 paths. Triggers a
+' menu rebuild so the new ordering shows up next time the File
+' menu is opened.
+SUB pushRecent(m AS POINTER TO Model, path AS STRING)
+    IF path = "" THEN RETURN
+    DIM newList AS []STRING
+    newList = APPEND(newList, path)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Recent) - 1
+        IF m.Recent[i] <> path AND LEN(newList) < 10 THEN
+            newList = APPEND(newList, m.Recent[i])
+        END IF
+    NEXT i
+    m.Recent = newList
+    m.Menus = buildMenus(^m)
+END SUB
