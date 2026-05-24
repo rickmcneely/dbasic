@@ -21,6 +21,7 @@ IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "charm.land/bubbles/v2/textarea" AS textarea
 IMPORT "charm.land/bubbles/v2/textinput" AS textinput
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "encoding/json" AS encjson
 IMPORT "fmt"
 IMPORT "os"
 IMPORT "os/exec" AS osexec
@@ -91,6 +92,22 @@ TYPE Tab
     DIM Path   AS STRING                 ' file path on disk
     DIM Editor AS textarea.Model         ' per-tab editor state
     DIM Dirty  AS BOOLEAN                ' buffer differs from disk
+END TYPE
+
+' -------------------------------------------------------------------------
+' Persisted state — JSON-marshalled to ~/.dbtui-state.json on quit
+' and read back on startup. Captures enough to drop the user back
+' where they left off: open tabs (paths), active tab, splitter
+' widths, bottom-pane visibility, and the recent-files list.
+' -------------------------------------------------------------------------
+
+TYPE PersistedState
+    DIM Open          AS []STRING
+    DIM Active        AS INTEGER
+    DIM LeftW         AS INTEGER
+    DIM RightW        AS INTEGER
+    DIM BottomVisible AS BOOLEAN
+    DIM Recent        AS []STRING
 END TYPE
 
 ' -------------------------------------------------------------------------
@@ -167,6 +184,16 @@ TYPE Model
     ' is being dragged), or "splitR" (right splitter). When non-empty,
     ' MouseMotionMsg updates the corresponding width.
     DIM DragMode AS STRING
+
+    ' Recent files list (most recent first), persisted to
+    ' ~/.dbtui-state.json. Surfaced under the File menu so the
+    ' last few files are one keystroke away.
+    DIM Recent AS []STRING
+
+    ' Files queued for restoration on startup, drained one at a
+    ' time after the corresponding LoadFinishedMsg lands.
+    DIM PendingOpens   AS []STRING
+    DIM PendingActive  AS INTEGER
 
     ' Cached textarea.View() output. Re-rendering the editor is the
     ' single most expensive thing View() does, and bubbletea calls
@@ -359,11 +386,26 @@ END FUNCTION
 
 ' buildMenus — define the menubar's contents. The "(X)" letters mark
 ' the hotkey for each menu/item. Actions are dispatched in dispatchAction.
-FUNCTION buildMenus() AS []MenuDef
+' Takes Model so it can splice in the dynamic Recent files list.
+FUNCTION buildMenus(m AS Model) AS []MenuDef
     DIM menus AS []MenuDef
     DIM fileItems AS []MenuItem
     fileItems = APPEND(fileItems, mkItem("(N)ew         Ctrl+N", "file.new"))
     fileItems = APPEND(fileItems, mkItem("(O)pen        Ctrl+O", "file.open"))
+    ' Recent files — top 5 paths, numbered hotkeys (1..5). The
+    ' action carries the path so dispatchAction can route it.
+    IF LEN(m.Recent) > 0 THEN
+        fileItems = APPEND(fileItems, mkSep())
+        DIM r AS INTEGER
+        DIM lim AS INTEGER = LEN(m.Recent)
+        IF lim > 5 THEN lim = 5
+        FOR r = 0 TO lim - 1
+            DIM nLbl AS STRING = strconv.Itoa(r + 1)
+            DIM disp AS STRING = baseName(m.Recent[r])
+            DIM label AS STRING = "(" + nLbl + ") " + disp
+            fileItems = APPEND(fileItems, mkItem(label, "file.recent:" + m.Recent[r]))
+        NEXT r
+    END IF
     fileItems = APPEND(fileItems, mkSep())
     fileItems = APPEND(fileItems, mkItem("(S)ave        Ctrl+S", "file.save"))
     fileItems = APPEND(fileItems, mkItem("Save (A)s          ", "file.saveas"))
@@ -1030,6 +1072,89 @@ SUB doCheck(m AS POINTER TO Model)
     m.Status = "check failed — see Output pane (F12)"
 END SUB
 
+' -------------------------------------------------------------------------
+' Persisted state I/O.
+' -------------------------------------------------------------------------
+
+' statePath — absolute path of the JSON state file. Empty when the
+' user's HOME isn't resolvable (we silently degrade — no persistence
+' rather than crashing or writing somewhere weird).
+FUNCTION statePath() AS STRING
+    DIM home AS STRING
+    DIM err  AS ERROR
+    home, err = os.UserHomeDir()
+    IF err <> NIL OR home = "" THEN RETURN ""
+    RETURN joinPath(home, ".dbtui-state.json")
+END FUNCTION
+
+' loadState — read + parse ~/.dbtui-state.json. Returns a zero-value
+' PersistedState on any error (file missing, bad JSON, etc.); the
+' caller is expected to just use the defaults in that case.
+FUNCTION loadState() AS PersistedState
+    DIM zero AS PersistedState
+    DIM p AS STRING = statePath()
+    IF p = "" THEN RETURN zero
+    DIM data AS BYTES
+    DIM rerr AS ERROR
+    data, rerr = os.ReadFile(p)
+    IF rerr <> NIL THEN RETURN zero
+    DIM s AS PersistedState
+    DIM jerr AS ERROR = encjson.Unmarshal(data, @s)
+    IF jerr <> NIL THEN RETURN zero
+    RETURN s
+END FUNCTION
+
+' captureState — snapshot the Model fields we want to persist.
+FUNCTION captureState(m AS POINTER TO Model) AS PersistedState
+    DIM s AS PersistedState
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        ' Only persist tabs whose Path is set — fresh "untitled"
+        ' buffers have no on-disk identity and can't be restored.
+        IF m.Tabs[i].Path <> "" THEN s.Open = APPEND(s.Open, m.Tabs[i].Path)
+    NEXT i
+    s.Active = m.TabIdx
+    IF s.Active >= LEN(s.Open) THEN s.Active = 0
+    IF s.Active < 0 THEN s.Active = 0
+    s.LeftW = m.LeftW
+    s.RightW = m.RightW
+    s.BottomVisible = m.BottomVisible
+    s.Recent = m.Recent
+    RETURN s
+END FUNCTION
+
+' saveState — JSON-marshal and write the state file. Errors are
+' swallowed; quitting shouldn't fail because we couldn't write a
+' preferences file.
+SUB saveState(m AS POINTER TO Model)
+    DIM p AS STRING = statePath()
+    IF p = "" THEN RETURN
+    DIM s AS PersistedState = captureState(m)
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = encjson.MarshalIndent(s, "", "  ")
+    IF err <> NIL THEN RETURN
+    _ = os.WriteFile(p, data, 0644)
+END SUB
+
+' pushRecent — move `path` to the front of the recent-files list,
+' dedupe earlier entries, and cap the list at 10 paths. Triggers a
+' menu rebuild so the new ordering shows up next time the File
+' menu is opened.
+SUB pushRecent(m AS POINTER TO Model, path AS STRING)
+    IF path = "" THEN RETURN
+    DIM newList AS []STRING
+    newList = APPEND(newList, path)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Recent) - 1
+        IF m.Recent[i] <> path AND LEN(newList) < 10 THEN
+            newList = APPEND(newList, m.Recent[i])
+        END IF
+    NEXT i
+    m.Recent = newList
+    m.Menus = buildMenus(^m)
+END SUB
+
 ' anyDirtyTab — TRUE if any open tab has unsaved changes. Drives the
 ' quit-confirm prompt so closing the whole app doesn't silently throw
 ' away buffers in inactive tabs.
@@ -1287,8 +1412,18 @@ FUNCTION newModel() AS Model
     ' Default splitter widths mirror the original DBtui's defaults.
     m.LeftW  = 28
     m.RightW = 32
-    ' Menubar definitions + closed-state.
-    m.Menus = buildMenus()
+    ' Restore persisted state (recent files, splitter widths, bottom
+    ' pane visibility, list of files to reopen). Failures are silent
+    ' — defaults are already in place.
+    DIM saved AS PersistedState = loadState()
+    m.Recent = saved.Recent
+    IF saved.LeftW  >= 15 THEN m.LeftW  = saved.LeftW
+    IF saved.RightW >= 15 THEN m.RightW = saved.RightW
+    m.BottomVisible = saved.BottomVisible
+    m.PendingOpens  = saved.Open
+    m.PendingActive = saved.Active
+    ' Menubar definitions (uses Recent we just loaded) + closed-state.
+    m.Menus = buildMenus(m)
     m.MenuActive = 0 - 1
     m.MenuItemIdx = 0
     RETURN m
@@ -1299,6 +1434,14 @@ END FUNCTION
 ' -------------------------------------------------------------------------
 
 FUNCTION (m AS Model) Init() AS tea.Cmd
+    ' Init has a value receiver so we can't mutate the model here;
+    ' just point the worker's package-level slot at the first
+    ' pending file and fire it. The LoadFinishedMsg handler does
+    ' the actual dequeue + drains the rest of the queue.
+    IF LEN(m.PendingOpens) > 0 THEN
+        pendingLoadPath = m.PendingOpens[0]
+        RETURN loadFileWorker
+    END IF
     RETURN NIL
 END FUNCTION
 
@@ -1329,6 +1472,26 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF lfOk THEN
         completeFileLoad(@m, lfMsg.Path, lfMsg.Data, lfMsg.Err)
         invalidateEditorCache(@m)
+        ' Record successful open in recent-files (skip errors).
+        IF lfMsg.Err = NIL THEN pushRecent(@m, lfMsg.Path)
+        ' If this load was a session restore, drain the next one.
+        IF LEN(m.PendingOpens) > 0 AND m.PendingOpens[0] = lfMsg.Path THEN
+            DIM rest AS []STRING
+            DIM j AS INTEGER
+            FOR j = 1 TO LEN(m.PendingOpens) - 1
+                rest = APPEND(rest, m.PendingOpens[j])
+            NEXT j
+            m.PendingOpens = rest
+            IF LEN(m.PendingOpens) > 0 THEN
+                pendingLoadPath = m.PendingOpens[0]
+                m.Loading = m.PendingOpens[0]
+                RETURN m, loadFileWorker
+            END IF
+            ' Queue empty — switch to the saved active tab.
+            IF m.PendingActive >= 0 AND m.PendingActive < LEN(m.Tabs) THEN
+                switchToTab(@m, m.PendingActive)
+            END IF
+        END IF
         RETURN m, NIL
     END IF
 
@@ -1470,12 +1633,20 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 DIM ddAct AS STRING = ddItems[ddIt].Action
                 m.MenuActive = 0 - 1
                 IF ddAct = "file.quit" THEN
-                    IF tryQuit(@m) THEN RETURN m, tea.Quit
+                    IF tryQuit(@m) THEN
+                        saveState(@m)
+                        RETURN m, tea.Quit
+                    END IF
                     RETURN m, NIL
                 END IF
                 IF ddAct = "run.run" THEN
                     DIM ddRunCmd AS tea.Cmd = doRun(@m)
                     RETURN m, ddRunCmd
+                END IF
+                IF strings.HasPrefix(ddAct, "file.recent:") THEN
+                    DIM ddRpath AS STRING = Mid(ddAct, 14, LEN(ddAct) - 13)
+                    DIM ddRcmd AS tea.Cmd = openFile(@m, ddRpath)
+                    RETURN m, ddRcmd
                 END IF
                 dispatchAction(@m, ddAct)
                 RETURN m, NIL
@@ -1619,7 +1790,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' Global shortcuts first — apply regardless of which pane is
         ' "logically focused".
         IF key = "ctrl+c" THEN
-            IF tryQuit(@m) THEN RETURN m, tea.Quit
+            IF tryQuit(@m) THEN
+                saveState(@m)
+                RETURN m, tea.Quit
+            END IF
             RETURN m, NIL
         END IF
         IF key = "ctrl+s" THEN
@@ -1715,12 +1889,20 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     DIM act AS STRING = items[m.MenuItemIdx].Action
                     m.MenuActive = 0 - 1
                     IF act = "file.quit" THEN
-                        IF tryQuit(@m) THEN RETURN m, tea.Quit
+                        IF tryQuit(@m) THEN
+                            saveState(@m)
+                            RETURN m, tea.Quit
+                        END IF
                         RETURN m, NIL
                     END IF
                     IF act = "run.run" THEN
                         DIM enRunCmd AS tea.Cmd = doRun(@m)
                         RETURN m, enRunCmd
+                    END IF
+                    IF strings.HasPrefix(act, "file.recent:") THEN
+                        DIM enRpath AS STRING = Mid(act, 14, LEN(act) - 13)
+                        DIM enRcmd AS tea.Cmd = openFile(@m, enRpath)
+                        RETURN m, enRcmd
                     END IF
                     dispatchAction(@m, act)
                 END IF
@@ -1735,12 +1917,20 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                         DIM act2 AS STRING = itemsK[ii].Action
                         m.MenuActive = 0 - 1
                         IF act2 = "file.quit" THEN
-                            IF tryQuit(@m) THEN RETURN m, tea.Quit
+                            IF tryQuit(@m) THEN
+                                saveState(@m)
+                                RETURN m, tea.Quit
+                            END IF
                             RETURN m, NIL
                         END IF
                         IF act2 = "run.run" THEN
                             DIM hkRunCmd AS tea.Cmd = doRun(@m)
                             RETURN m, hkRunCmd
+                        END IF
+                        IF strings.HasPrefix(act2, "file.recent:") THEN
+                            DIM hkRpath AS STRING = Mid(act2, 14, LEN(act2) - 13)
+                            DIM hkRcmd AS tea.Cmd = openFile(@m, hkRpath)
+                            RETURN m, hkRcmd
                         END IF
                         dispatchAction(@m, act2)
                         RETURN m, NIL
@@ -1896,7 +2086,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' --- Tree navigation (runs when the tree pane is focused) -----
         IF m.FocusedPane <> "tree" THEN RETURN m, NIL
         IF key = "q" THEN
-            IF tryQuit(@m) THEN RETURN m, tea.Quit
+            IF tryQuit(@m) THEN
+                saveState(@m)
+                RETURN m, tea.Quit
+            END IF
             RETURN m, NIL
         END IF
         IF key = "up" THEN
