@@ -132,6 +132,13 @@ TYPE Model
     ' the textarea's blinking cursor.
     DIM FocusedPane AS STRING
 
+    ' Mouse hover position, in screen cells, updated on every
+    ' MouseMotionMsg. -1 means "no hover" (e.g. before any motion
+    ' has been received). Hit-test helpers consume HoverX/HoverY
+    ' to restyle the row / cell currently under the pointer.
+    DIM HoverX AS INTEGER
+    DIM HoverY AS INTEGER
+
     ' Generic modal dialog state. When ModalActive is TRUE the
     ' renderer overlays a framed Yes/No-style dialog and Update
     ' intercepts keystrokes for navigation + commit.
@@ -653,6 +660,9 @@ FUNCTION newModel() AS Model
     ' Tree starts focused — the tree is always available and the
     ' editor doesn't exist yet.
     m.FocusedPane = "tree"
+    ' No hover known until the first MouseMotionMsg arrives.
+    m.HoverX = 0 - 1
+    m.HoverY = 0 - 1
     ' Menubar definitions + closed-state.
     m.Menus = buildMenus()
     m.MenuActive = 0 - 1
@@ -688,6 +698,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mmOk AS BOOLEAN
     mmMsg, mmOk = msg.(tea.MouseMotionMsg)
     IF mmOk THEN
+        ' Record the live hover position. Every render frame queries
+        ' (HoverX, HoverY) so the row / cell under the pointer gets
+        ' restyled — no extra repaint signal required because
+        ' bubbletea re-renders on every message anyway.
+        m.HoverX = mmMsg.X
+        m.HoverY = mmMsg.Y
         IF m.MenuActive >= 0 AND mmMsg.Y = 0 THEN
             DIM newMi AS INTEGER = menuCellAt(m, mmMsg.X)
             IF newMi >= 0 AND newMi <> m.MenuActive THEN
@@ -1087,13 +1103,22 @@ FUNCTION renderMenuLabel(label AS STRING, bs AS lipgloss.Style, hot AS lipgloss.
 END FUNCTION
 
 ' renderMenuBar — top row. Walks Menus, renders each cell with " label "
-' padding; the active menu (if any) gets the inverted bg. Hotkey letter
-' inside each label is colored peach.
+' padding. Three states per cell, in priority order:
+'   active  → inverted accent (the menu's dropdown is open)
+'   hover   → softer accent tint (mouse is on this cell)
+'   default → menubar bg
+' Hotkey letter inside each label is always coloured peach.
 FUNCTION renderMenuBar(m AS Model, width AS INTEGER) AS STRING
     DIM defBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg)).Bold(TRUE)
     DIM defHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    DIM hovBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#3b3d5e")).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM hovHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#3b3d5e")).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
     DIM selBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
     DIM selHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    ' Resolve the hovered cell ONCE per render so the math doesn't
+    ' have to re-walk for every menu item.
+    DIM hoverCell AS INTEGER = 0 - 1
+    IF m.HoverY = 0 THEN hoverCell = menuCellAt(m, m.HoverX)
     DIM out AS STRING = ""
     DIM i AS INTEGER
     FOR i = 0 TO LEN(m.Menus) - 1
@@ -1102,6 +1127,9 @@ FUNCTION renderMenuBar(m AS Model, width AS INTEGER) AS STRING
         IF i = m.MenuActive THEN
             bs = selBase
             hot  = selHot
+        ELSEIF i = hoverCell THEN
+            bs = hovBase
+            hot  = hovHot
         END IF
         DIM lab AS STRING = m.Menus[i].Label
         out = out + bs.Render(" ") + renderMenuLabel(lab, bs, hot) + bs.Render(" ")
@@ -1312,13 +1340,18 @@ FUNCTION nodeGlyph(m AS Model, n AS TreeNode) AS STRING
 END FUNCTION
 
 ' renderTreeBody — produce the multi-line, indented + glyphed body for
-' the tree. The selected row is rendered with a highlight bar (cursor
-' "▶ " prefix + accent background so it stands out even without
-' terminal-cursor positioning).
+' the tree. Row priority:
+'   selected → solid accent bar
+'   hovered  → subtle border-bg tint
+'   default  → fg on background
 FUNCTION renderTreeBody(m AS Model, innerW AS INTEGER, innerH AS INTEGER) AS STRING
     IF innerW < 1 THEN innerW = 1
     DIM cursorStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#2d4f67")).Foreground(lipgloss.Color(cFg)).Bold(TRUE).Width(innerW)
+    DIM hoverStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cFg)).Width(innerW)
     DIM defStyle    AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(innerW)
+    ' Resolve the hovered row ONCE. treeNodeAt expects leftW=28,
+    ' bodyH = innerH + 2 (it strips the title row + bottom border).
+    DIM hoverRow AS INTEGER = treeNodeAt(m, m.HoverX, m.HoverY, 28, innerH + 2)
     DIM lines AS []STRING
     DIM total AS INTEGER = LEN(m.TreeNodes)
     DIM startI AS INTEGER = m.TreeOffset
@@ -1332,6 +1365,8 @@ FUNCTION renderTreeBody(m AS Model, innerW AS INTEGER, innerH AS INTEGER) AS STR
         DIM line   AS STRING = indent + nodeGlyph(m, n) + " " + n.Name
         IF i = m.TreeSelected THEN
             lines = APPEND(lines, cursorStyle.Render(line))
+        ELSEIF i = hoverRow THEN
+            lines = APPEND(lines, hoverStyle.Render(line))
         ELSE
             lines = APPEND(lines, defStyle.Render(line))
         END IF
@@ -1438,29 +1473,124 @@ FUNCTION renderMiddlePane(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
     RETURN caption + "\n" + bodyStr
 END FUNCTION
 
+' rightPaneWidgets / rightPaneTools — the two label strings, kept as
+' module-level constants so the render and hit-test code share one
+' source of truth on their visible widths.
+CONST rpLeftPad AS STRING  = "[ "
+CONST rpTabSep  AS STRING  = " ] [ "
+CONST rpRightPad AS STRING = " ]"
+
+' rightTabsBounds — return the [start,end) screen-cell ranges for the
+' [Widgets] and [Tools] tab labels on the right-pane caption row.
+' `xOrigin` is the absolute X where the right pane starts. The tab
+' strip is right-aligned so the labels sit flush against
+' `xOrigin + width`. Order returned: wStart, wEnd, tStart, tEnd.
+FUNCTION rightTabsBounds(xOrigin AS INTEGER, width AS INTEGER, widgetsLabel AS STRING, toolsLabel AS STRING) AS (INTEGER, INTEGER, INTEGER, INTEGER)
+    DIM full AS STRING = rpLeftPad + widgetsLabel + rpTabSep + toolsLabel + rpRightPad
+    DIM totalW AS INTEGER = lipgloss.Width(full)
+    DIM stripX AS INTEGER = xOrigin + width - totalW
+    DIM wX0 AS INTEGER = stripX + lipgloss.Width(rpLeftPad)
+    DIM wX1 AS INTEGER = wX0 + lipgloss.Width(widgetsLabel)
+    DIM tX0 AS INTEGER = wX1 + lipgloss.Width(rpTabSep)
+    DIM tX1 AS INTEGER = tX0 + lipgloss.Width(toolsLabel)
+    RETURN wX0, wX1, tX0, tX1
+END FUNCTION
+
 ' renderRightPane — Widgets/Tools tabs strip + Widgets list, stacked
 ' over a Properties box. Both panels unfocused → rounded corners.
 ' The tabs row is right-aligned so "[ Widgets ] [ Tools ]" sits flush
 ' against the trailing dashes of the middle pane's caption (matching
 ' the original DBtui).
-FUNCTION renderRightPane(width AS INTEGER, height AS INTEGER) AS STRING
-    ' Tabs row: leading dashes (so the row reads as a continuation of
-    ' the middle pane's caption) then the tab labels, flush against
-    ' the right edge. Matches the original DBtui.
+'
+' `xOrigin` is the absolute screen-X where this pane starts; we need
+' it to translate the per-region hover position back to local rows.
+FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigin AS INTEGER) AS STRING
     DIM dashStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
     DIM tabStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
-    DIM tabLabels AS STRING = "[ Widgets ] [ Tools ]"
-    DIM labelW AS INTEGER = lipgloss.Width(tabLabels)
-    DIM dashW  AS INTEGER = width - labelW
+    DIM hovTabStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Underline(TRUE)
+    DIM bracket  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
+
+    ' --- Tab strip ---------------------------------------------------
+    DIM widgetsLbl AS STRING = "Widgets"
+    DIM toolsLbl   AS STRING = "Tools"
+    DIM wS AS INTEGER
+    DIM wE AS INTEGER
+    DIM tS AS INTEGER
+    DIM tE AS INTEGER
+    wS, wE, tS, tE = rightTabsBounds(xOrigin, width, widgetsLbl, toolsLbl)
+    ' Pick per-label style based on hover.
+    DIM widgetsStyled AS lipgloss.Style = tabStyle
+    DIM toolsStyled   AS lipgloss.Style = tabStyle
+    IF m.HoverY = 1 AND m.HoverX >= wS AND m.HoverX < wE THEN widgetsStyled = hovTabStyle
+    IF m.HoverY = 1 AND m.HoverX >= tS AND m.HoverX < tE THEN toolsStyled   = hovTabStyle
+    DIM tabLabels AS STRING = bracket.Render(rpLeftPad) + widgetsStyled.Render(widgetsLbl) + bracket.Render(rpTabSep) + toolsStyled.Render(toolsLbl) + bracket.Render(rpRightPad)
+    DIM dashW AS INTEGER = width - lipgloss.Width(tabLabels)
     IF dashW < 0 THEN dashW = 0
-    DIM tabs AS STRING = dashStyle.Render(strings.Repeat("─", dashW)) + tabStyle.Render(tabLabels)
+    DIM tabs AS STRING = dashStyle.Render(strings.Repeat("─", dashW)) + tabLabels
+
+    ' --- Pane geometry -----------------------------------------------
     DIM remain  AS INTEGER = height - 1
     DIM listH   AS INTEGER = remain / 2
     DIM propsH  AS INTEGER = remain - listH
-    DIM listBody  AS STRING = "Button\nCheckbox\nCodeEditor\nComboBox\nFormCanvas"
-    DIM propsBody AS STRING = "Name      lblTitle\nVisible   [x] true\nText      Label"
+
+    ' --- Widgets list (placeholder rows; hover restyles per row) -----
+    ' The listBox has a rounded border so the inner area is (width-2)
+    ' chars wide × (listH-2) rows tall. Its top border sits at body
+    ' y = 2 (menubar y=0, tabs y=1), so list rows occupy y = 3..3+listH-3.
+    DIM widgetNames AS []STRING
+    widgetNames = APPEND(widgetNames, "Button")
+    widgetNames = APPEND(widgetNames, "Checkbox")
+    widgetNames = APPEND(widgetNames, "CodeEditor")
+    widgetNames = APPEND(widgetNames, "ComboBox")
+    widgetNames = APPEND(widgetNames, "FormCanvas")
+    DIM listInnerW AS INTEGER = width - 2
+    DIM listFirstY AS INTEGER = 3
+    DIM listVisible AS INTEGER = listH - 2
+    DIM listRowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(listInnerW)
+    DIM listHoverStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Width(listInnerW)
+    DIM listLines AS []STRING
+    DIM li AS INTEGER
+    FOR li = 0 TO listVisible - 1
+        DIM txt AS STRING = ""
+        IF li < LEN(widgetNames) THEN txt = " " + widgetNames[li]
+        DIM rowY AS INTEGER = listFirstY + li
+        IF m.HoverY = rowY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND li < LEN(widgetNames) THEN
+            listLines = APPEND(listLines, listHoverStyle.Render(txt))
+        ELSE
+            listLines = APPEND(listLines, listRowStyle.Render(txt))
+        END IF
+    NEXT li
+    DIM listBody AS STRING = strings.Join(listLines, "\n")
     DIM listBox  AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(listH)
+
+    ' --- Properties panel (placeholder rows; hover restyle per row) --
+    ' titledBox draws title at the top of the panel, so property rows
+    ' start one cell below that. The panel begins at y = 2 + listH;
+    ' first row sits at y = 2 + listH + 1.
+    DIM propRows AS []STRING
+    propRows = APPEND(propRows, "Name      lblTitle")
+    propRows = APPEND(propRows, "Visible   [x] true")
+    propRows = APPEND(propRows, "Text      Label")
+    DIM propsInnerW AS INTEGER = width - 2
+    DIM propsFirstY AS INTEGER = 2 + listH + 1
+    DIM propsVisible AS INTEGER = propsH - 2
+    DIM propRowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(propsInnerW)
+    DIM propHoverStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Width(propsInnerW)
+    DIM propLines AS []STRING
+    DIM pi AS INTEGER
+    FOR pi = 0 TO propsVisible - 1
+        DIM ptxt AS STRING = ""
+        IF pi < LEN(propRows) THEN ptxt = " " + propRows[pi]
+        DIM propY AS INTEGER = propsFirstY + pi
+        IF m.HoverY = propY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND pi < LEN(propRows) THEN
+            propLines = APPEND(propLines, propHoverStyle.Render(ptxt))
+        ELSE
+            propLines = APPEND(propLines, propRowStyle.Render(ptxt))
+        END IF
+    NEXT pi
+    DIM propsBody   AS STRING = strings.Join(propLines, "\n")
     DIM propsTitled AS STRING = titledBox("Properties", propsBody, width, propsH, FALSE)
+
     RETURN lipgloss.JoinVertical(lipgloss.Left, tabs, listBox.Render(listBody), propsTitled)
 END FUNCTION
 
@@ -1575,7 +1705,7 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM stat  AS STRING = renderStatusBar(w, m.Status)
     DIM left  AS STRING = renderLeftPane(m, leftW, bodyH)
     DIM mid   AS STRING = renderMiddlePane(m, midW, bodyH)
-    DIM right AS STRING = renderRightPane(rightW, bodyH)
+    DIM right AS STRING = renderRightPane(m, rightW, bodyH, leftW + midW)
     DIM body  AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
     DIM full  AS STRING = lipgloss.JoinVertical(lipgloss.Left, menu, body, stat)
 
