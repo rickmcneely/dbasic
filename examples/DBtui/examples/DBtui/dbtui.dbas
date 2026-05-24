@@ -18,7 +18,6 @@
 '    DBtui — F10:Menu  F5:Run  ...                              <- statusbar
 
 IMPORT "charm.land/bubbletea/v2" AS tea
-IMPORT "charm.land/bubbles/v2/textarea" AS textarea
 IMPORT "charm.land/bubbles/v2/textinput" AS textinput
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 IMPORT "encoding/json" AS encjson
@@ -90,7 +89,7 @@ END TYPE
 
 TYPE Tab
     DIM Path   AS STRING                 ' file path on disk
-    DIM Editor AS textarea.Model         ' per-tab editor state
+    DIM Editor AS Pad                    ' per-tab editor state
     DIM Dirty  AS BOOLEAN                ' buffer differs from disk
 END TYPE
 
@@ -694,14 +693,11 @@ FUNCTION isMutatingKey(k AS STRING) AS BOOLEAN
     RETURN FALSE
 END FUNCTION
 
-' newTextarea — fresh, empty textarea.Model configured the way every
-' tab wants. Centralised so all tabs look identical at birth.
-FUNCTION newTextarea() AS textarea.Model
-    DIM ed AS textarea.Model = textarea.New()
-    ed.Prompt = ""
-    ed.ShowLineNumbers = TRUE
-    ed.Placeholder = ""
-    RETURN ed
+' newTextarea — fresh, empty Pad configured the way every tab
+' wants. Kept under the old name so call sites don't have to
+' change just because we swapped out the bubbles textarea.
+FUNCTION newTextarea() AS Pad
+    RETURN newPad()
 END FUNCTION
 
 ' -------------------------------------------------------------------------
@@ -2267,10 +2263,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             ' files feel laggy. This catches the common edit keys —
             ' single chars, structural keys, paste/cut/undo/redo.
             DIM mutates AS BOOLEAN = isMutatingKey(key)
-            DIM newEd AS textarea.Model
-            DIM eCmd  AS tea.Cmd
-            newEd, eCmd = m.Tabs[m.TabIdx].Editor.Update(msg)
-            m.Tabs[m.TabIdx].Editor = newEd
+            DIM eCmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Update(msg)
             IF mutates THEN m.Tabs[m.TabIdx].Dirty = TRUE
             ' Any editor.Update may have moved the cursor or content,
             ' so the cached View() output is now stale.
@@ -3166,6 +3159,668 @@ FUNCTION (m AS Model) View() AS tea.View
     v.AltScreen = TRUE
     v.MouseMode = tea.MouseModeAllMotion
     RETURN v
+END FUNCTION
+
+' =========================================================================
+' Pad — custom code editor (replaces bubbles textarea).
+'
+' Owns its own line buffer, cursor, and scroll offsets so we get:
+'   * per-token syntax highlighting (the bubbles textarea only
+'     supports line-level styles)
+'   * predictable performance (no MemoCache surprises, no goroutines
+'     for cursor blink)
+'   * tighter cursor-position math (Line / Column are O(1) field reads)
+'
+' Public method surface mirrors the names we used to call on the
+' textarea — SetValue / Value / Line / Column / LineCount / Height /
+' SetWidth / SetHeight / Focus / Blur / MoveToBegin / CursorUp /
+' CursorDown / CursorStart / CursorEnd / SetCursorColumn / Update /
+' View — so most call sites change only by virtue of holding a Pad
+' field instead of a textarea.Model.
+' =========================================================================
+
+' Token kinds emitted by tokenizeLine.
+CONST tkPlain   AS INTEGER = 0
+CONST tkKeyword AS INTEGER = 1
+CONST tkString  AS INTEGER = 2
+CONST tkComment AS INTEGER = 3
+CONST tkNumber  AS INTEGER = 4
+
+TYPE PadToken
+    DIM Kind AS INTEGER
+    DIM Text AS STRING
+END TYPE
+
+' Lazily-initialised keyword set; populated on first tokenize call.
+DIM padKeywords AS MAP OF STRING TO BOOLEAN
+
+SUB initPadKeywords()
+    IF LEN(padKeywords) > 0 THEN RETURN
+    DIM kw AS []STRING
+    kw = APPEND(kw, "AND")
+    kw = APPEND(kw, "ANY")
+    kw = APPEND(kw, "AS")
+    kw = APPEND(kw, "BASE")
+    kw = APPEND(kw, "BOOLEAN")
+    kw = APPEND(kw, "BSTRING")
+    kw = APPEND(kw, "BYREF")
+    kw = APPEND(kw, "BYTES")
+    kw = APPEND(kw, "BYVAL")
+    kw = APPEND(kw, "CALL")
+    kw = APPEND(kw, "CASE")
+    kw = APPEND(kw, "CHAN")
+    kw = APPEND(kw, "CHANNEL")
+    kw = APPEND(kw, "CONST")
+    kw = APPEND(kw, "DECLARE")
+    kw = APPEND(kw, "DEFER")
+    kw = APPEND(kw, "DIM")
+    kw = APPEND(kw, "DO")
+    kw = APPEND(kw, "DOUBLE")
+    kw = APPEND(kw, "ELSE")
+    kw = APPEND(kw, "ELSEIF")
+    kw = APPEND(kw, "EMBED")
+    kw = APPEND(kw, "END")
+    kw = APPEND(kw, "ENDIF")
+    kw = APPEND(kw, "ERROR")
+    kw = APPEND(kw, "EXIT")
+    kw = APPEND(kw, "EXPLICIT")
+    kw = APPEND(kw, "FALSE")
+    kw = APPEND(kw, "FOR")
+    kw = APPEND(kw, "FROM")
+    kw = APPEND(kw, "FUNCTION")
+    kw = APPEND(kw, "GOFUNC")
+    kw = APPEND(kw, "GOSUB")
+    kw = APPEND(kw, "GOTO")
+    kw = APPEND(kw, "IF")
+    kw = APPEND(kw, "IMPLEMENTS")
+    kw = APPEND(kw, "IMPORT")
+    kw = APPEND(kw, "INCLUDE")
+    kw = APPEND(kw, "INPUT")
+    kw = APPEND(kw, "INTEGER")
+    kw = APPEND(kw, "JSON")
+    kw = APPEND(kw, "LET")
+    kw = APPEND(kw, "LONG")
+    kw = APPEND(kw, "LOOP")
+    kw = APPEND(kw, "MAKE_CHAN")
+    kw = APPEND(kw, "MAP")
+    kw = APPEND(kw, "MOD")
+    kw = APPEND(kw, "NEXT")
+    kw = APPEND(kw, "NIL")
+    kw = APPEND(kw, "NOT")
+    kw = APPEND(kw, "OF")
+    kw = APPEND(kw, "ONERR")
+    kw = APPEND(kw, "OPTION")
+    kw = APPEND(kw, "OR")
+    kw = APPEND(kw, "POINTER")
+    kw = APPEND(kw, "PRESERVE")
+    kw = APPEND(kw, "PRINT")
+    kw = APPEND(kw, "RECEIVE")
+    kw = APPEND(kw, "REDIM")
+    kw = APPEND(kw, "REM")
+    kw = APPEND(kw, "RETURN")
+    kw = APPEND(kw, "SELECT")
+    kw = APPEND(kw, "SEND")
+    kw = APPEND(kw, "SHARED")
+    kw = APPEND(kw, "SINGLE")
+    kw = APPEND(kw, "SPAWN")
+    kw = APPEND(kw, "STATIC")
+    kw = APPEND(kw, "STEP")
+    kw = APPEND(kw, "STRING")
+    kw = APPEND(kw, "SUB")
+    kw = APPEND(kw, "THEN")
+    kw = APPEND(kw, "TO")
+    kw = APPEND(kw, "TRUE")
+    kw = APPEND(kw, "TYPE")
+    kw = APPEND(kw, "UNTIL")
+    kw = APPEND(kw, "WEND")
+    kw = APPEND(kw, "WHILE")
+    kw = APPEND(kw, "WITH")
+    kw = APPEND(kw, "XOR")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(kw) - 1
+        padKeywords[kw[i]] = TRUE
+    NEXT i
+END SUB
+
+' Pre-built styles. lipgloss style construction allocates, so we
+' build each one once and reuse on every render.
+DIM padStylesReady AS BOOLEAN
+DIM padStyleKeyword AS lipgloss.Style
+DIM padStyleString  AS lipgloss.Style
+DIM padStyleComment AS lipgloss.Style
+DIM padStyleNumber  AS lipgloss.Style
+DIM padStylePlain   AS lipgloss.Style
+DIM padStyleCursor  AS lipgloss.Style
+DIM padStyleBg      AS lipgloss.Style
+DIM padStyleGutter  AS lipgloss.Style
+DIM padStyleGutterActive AS lipgloss.Style
+
+SUB initPadStyles()
+    IF padStylesReady THEN RETURN
+    padStyleKeyword = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#7dcfff")).Bold(TRUE)
+    padStyleString  = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#9ece6a"))
+    padStyleComment = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#565f89")).Italic(TRUE)
+    padStyleNumber  = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#ff9e64"))
+    padStylePlain   = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg))
+    padStyleCursor  = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    padStyleBg      = lipgloss.NewStyle().Background(lipgloss.Color(cBg))
+    padStyleGutter  = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#565f89"))
+    padStyleGutterActive = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
+    padStylesReady = TRUE
+END SUB
+
+FUNCTION styleForToken(k AS INTEGER) AS lipgloss.Style
+    initPadStyles()
+    IF k = tkKeyword THEN RETURN padStyleKeyword
+    IF k = tkString  THEN RETURN padStyleString
+    IF k = tkComment THEN RETURN padStyleComment
+    IF k = tkNumber  THEN RETURN padStyleNumber
+    RETURN padStylePlain
+END FUNCTION
+
+' Character-class helpers — byte-wise comparisons since DBasic
+' strings compare lexicographically.
+FUNCTION isPadLetter(ch AS STRING) AS BOOLEAN
+    IF ch = "" THEN RETURN FALSE
+    IF ch >= "A" AND ch <= "Z" THEN RETURN TRUE
+    IF ch >= "a" AND ch <= "z" THEN RETURN TRUE
+    IF ch = "_" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+FUNCTION isPadDigit(ch AS STRING) AS BOOLEAN
+    IF ch = "" THEN RETURN FALSE
+    IF ch >= "0" AND ch <= "9" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+FUNCTION isPadIdent(ch AS STRING) AS BOOLEAN
+    IF isPadLetter(ch) THEN RETURN TRUE
+    IF isPadDigit(ch)  THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' tokenizeLine — single-line lexer. Returns the line's runs of
+' (kind, text) so the renderer can colour each token independently.
+' Recognises: ' comments (to EOL), " string literals, decimal
+' numbers, identifiers (matched against the keyword set), and
+' everything else as tkPlain.
+FUNCTION tokenizeLine(line AS STRING) AS []PadToken
+    initPadKeywords()
+    DIM out AS []PadToken
+    DIM n AS INTEGER = LEN(line)
+    DIM i AS INTEGER = 0
+    DIM j AS INTEGER = 0     ' shared cursor — DBasic codegen would
+                             ' otherwise drop re-DIM j in each branch
+    DIM quote AS STRING = Chr(34)
+    DO WHILE i < n
+        DIM ch AS STRING = Mid(line, i + 1, 1)
+        IF ch = "'" THEN
+            ' Single-quote comment to end of line.
+            DIM tk AS PadToken
+            tk.Kind = tkComment
+            tk.Text = Mid(line, i + 1, n - i)
+            out = APPEND(out, tk)
+            i = n
+        ELSEIF ch = quote THEN
+            j = i + 1
+            DO WHILE j < n
+                IF Mid(line, j + 1, 1) = quote THEN
+                    j = j + 1
+                    EXIT DO
+                END IF
+                j = j + 1
+            LOOP
+            DIM tks AS PadToken
+            tks.Kind = tkString
+            tks.Text = Mid(line, i + 1, j - i)
+            out = APPEND(out, tks)
+            i = j
+        ELSEIF isPadDigit(ch) THEN
+            j = i
+            DO WHILE j < n
+                DIM cj AS STRING = Mid(line, j + 1, 1)
+                IF NOT (isPadDigit(cj) OR cj = ".") THEN EXIT DO
+                j = j + 1
+            LOOP
+            DIM tkn AS PadToken
+            tkn.Kind = tkNumber
+            tkn.Text = Mid(line, i + 1, j - i)
+            out = APPEND(out, tkn)
+            i = j
+        ELSEIF isPadLetter(ch) THEN
+            j = i
+            DO WHILE j < n
+                IF NOT isPadIdent(Mid(line, j + 1, 1)) THEN EXIT DO
+                j = j + 1
+            LOOP
+            DIM word AS STRING = Mid(line, i + 1, j - i)
+            DIM upper AS STRING = strings.ToUpper(word)
+            DIM kind AS INTEGER = tkPlain
+            IF padKeywords[upper] THEN kind = tkKeyword
+            DIM tki AS PadToken
+            tki.Kind = kind
+            tki.Text = word
+            out = APPEND(out, tki)
+            i = j
+            ' REM keyword starts a comment-to-EOL.
+            IF upper = "REM" THEN
+                DIM tkr AS PadToken
+                tkr.Kind = tkComment
+                tkr.Text = Mid(line, i + 1, n - i)
+                out = APPEND(out, tkr)
+                i = n
+            END IF
+        ELSE
+            DIM tkp AS PadToken
+            tkp.Kind = tkPlain
+            tkp.Text = ch
+            out = APPEND(out, tkp)
+            i = i + 1
+        END IF
+    LOOP
+    RETURN out
+END FUNCTION
+
+' Pad — editor TYPE. One per Tab. Width/height of the viewport are
+' stored as ViewW/ViewH so the Width()/Height() methods (kept for
+' bubbles-textarea call-site compatibility) don't collide with
+' field names in the generated Go code.
+TYPE Pad
+    DIM Lines      AS []STRING     ' one entry per logical line
+    DIM Row        AS INTEGER      ' 0-based cursor row
+    DIM Col        AS INTEGER      ' 0-based cursor column (in bytes)
+    DIM ScrollTop  AS INTEGER      ' first visible row
+    DIM ScrollLeft AS INTEGER      ' first visible column
+    DIM ViewW      AS INTEGER      ' viewport width  (cells)
+    DIM ViewH      AS INTEGER      ' viewport height (rows)
+    DIM Focused    AS BOOLEAN
+END TYPE
+
+' newPad — empty single-line buffer with sane defaults.
+FUNCTION newPad() AS Pad
+    DIM p AS Pad
+    p.Lines = APPEND(p.Lines, "")
+    p.ViewW = 80
+    p.ViewH = 24
+    RETURN p
+END FUNCTION
+
+' --- Getters (value receivers — pure reads) ------------------------------
+
+FUNCTION (p AS Pad) Value() AS STRING
+    RETURN strings.Join(p.Lines, "\n")
+END FUNCTION
+
+FUNCTION (p AS Pad) Line() AS INTEGER
+    RETURN p.Row
+END FUNCTION
+
+FUNCTION (p AS Pad) Column() AS INTEGER
+    RETURN p.Col
+END FUNCTION
+
+FUNCTION (p AS Pad) LineCount() AS INTEGER
+    RETURN LEN(p.Lines)
+END FUNCTION
+
+FUNCTION (p AS Pad) Height() AS INTEGER
+    RETURN p.ViewH
+END FUNCTION
+
+' --- Setters / cursor ops (pointer receivers — mutate) -------------------
+
+SUB (p AS POINTER TO Pad) SetValue(s AS STRING)
+    p.Lines = strings.Split(s, "\n")
+    IF LEN(p.Lines) = 0 THEN p.Lines = APPEND(p.Lines, "")
+    p.Row = 0
+    p.Col = 0
+    p.ScrollTop = 0
+    p.ScrollLeft = 0
+END SUB
+
+SUB (p AS POINTER TO Pad) SetWidth(w AS INTEGER)
+    p.ViewW = w
+END SUB
+
+SUB (p AS POINTER TO Pad) SetHeight(h AS INTEGER)
+    p.ViewH = h
+END SUB
+
+FUNCTION (p AS POINTER TO Pad) Focus() AS tea.Cmd
+    p.Focused = TRUE
+    RETURN NIL
+END FUNCTION
+
+SUB (p AS POINTER TO Pad) Blur()
+    p.Focused = FALSE
+END SUB
+
+SUB padEnsureVisible(p AS POINTER TO Pad)
+    IF p.Row < p.ScrollTop THEN p.ScrollTop = p.Row
+    IF p.Row >= p.ScrollTop + p.ViewH THEN p.ScrollTop = p.Row - p.ViewH + 1
+    IF p.ScrollTop < 0 THEN p.ScrollTop = 0
+    DIM contentW AS INTEGER = p.ViewW - 5
+    IF contentW < 1 THEN contentW = 1
+    IF p.Col < p.ScrollLeft THEN p.ScrollLeft = p.Col
+    IF p.Col >= p.ScrollLeft + contentW THEN p.ScrollLeft = p.Col - contentW + 1
+    IF p.ScrollLeft < 0 THEN p.ScrollLeft = 0
+END SUB
+
+SUB (p AS POINTER TO Pad) MoveToBegin()
+    p.Row = 0
+    p.Col = 0
+    p.ScrollTop = 0
+    p.ScrollLeft = 0
+END SUB
+
+SUB (p AS POINTER TO Pad) MoveToEnd()
+    p.Row = LEN(p.Lines) - 1
+    IF p.Row < 0 THEN p.Row = 0
+    p.Col = LEN(p.Lines[p.Row])
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorUp()
+    IF p.Row > 0 THEN
+        p.Row = p.Row - 1
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorDown()
+    IF p.Row < LEN(p.Lines) - 1 THEN
+        p.Row = p.Row + 1
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorLeft()
+    IF p.Col > 0 THEN
+        p.Col = p.Col - 1
+    ELSEIF p.Row > 0 THEN
+        p.Row = p.Row - 1
+        p.Col = LEN(p.Lines[p.Row])
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorRight()
+    IF p.Col < LEN(p.Lines[p.Row]) THEN
+        p.Col = p.Col + 1
+    ELSEIF p.Row < LEN(p.Lines) - 1 THEN
+        p.Row = p.Row + 1
+        p.Col = 0
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorStart()
+    p.Col = 0
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) CursorEnd()
+    p.Col = LEN(p.Lines[p.Row])
+    padEnsureVisible(p)
+END SUB
+
+SUB (p AS POINTER TO Pad) SetCursorColumn(col AS INTEGER)
+    IF col < 0 THEN col = 0
+    IF col > LEN(p.Lines[p.Row]) THEN col = LEN(p.Lines[p.Row])
+    p.Col = col
+    padEnsureVisible(p)
+END SUB
+
+' --- Insert / delete -----------------------------------------------------
+
+SUB padInsertChar(p AS POINTER TO Pad, ch AS STRING)
+    DIM line AS STRING = p.Lines[p.Row]
+    DIM leftPart  AS STRING = ""
+    DIM rightPart AS STRING = ""
+    IF p.Col > 0          THEN leftPart  = Mid(line, 1, p.Col)
+    IF p.Col < LEN(line)  THEN rightPart = Mid(line, p.Col + 1, LEN(line) - p.Col)
+    p.Lines[p.Row] = leftPart + ch + rightPart
+    p.Col = p.Col + LEN(ch)
+    padEnsureVisible(p)
+END SUB
+
+SUB padInsertNewline(p AS POINTER TO Pad)
+    DIM line AS STRING = p.Lines[p.Row]
+    DIM leftPart  AS STRING = ""
+    DIM rightPart AS STRING = ""
+    IF p.Col > 0         THEN leftPart  = Mid(line, 1, p.Col)
+    IF p.Col < LEN(line) THEN rightPart = Mid(line, p.Col + 1, LEN(line) - p.Col)
+    p.Lines[p.Row] = leftPart
+    DIM newLines AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO p.Row
+        newLines = APPEND(newLines, p.Lines[i])
+    NEXT i
+    newLines = APPEND(newLines, rightPart)
+    FOR i = p.Row + 1 TO LEN(p.Lines) - 1
+        newLines = APPEND(newLines, p.Lines[i])
+    NEXT i
+    p.Lines = newLines
+    p.Row = p.Row + 1
+    p.Col = 0
+    padEnsureVisible(p)
+END SUB
+
+SUB padDeleteBackward(p AS POINTER TO Pad)
+    IF p.Col > 0 THEN
+        DIM line AS STRING = p.Lines[p.Row]
+        DIM leftPart  AS STRING = ""
+        DIM rightPart AS STRING = ""
+        IF p.Col > 1         THEN leftPart  = Mid(line, 1, p.Col - 1)
+        IF p.Col < LEN(line) THEN rightPart = Mid(line, p.Col + 1, LEN(line) - p.Col)
+        p.Lines[p.Row] = leftPart + rightPart
+        p.Col = p.Col - 1
+    ELSEIF p.Row > 0 THEN
+        DIM prev AS STRING = p.Lines[p.Row - 1]
+        DIM cur  AS STRING = p.Lines[p.Row]
+        p.Lines[p.Row - 1] = prev + cur
+        DIM newLines AS []STRING
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(p.Lines) - 1
+            IF i <> p.Row THEN newLines = APPEND(newLines, p.Lines[i])
+        NEXT i
+        p.Lines = newLines
+        p.Row = p.Row - 1
+        p.Col = LEN(prev)
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+SUB padDeleteForward(p AS POINTER TO Pad)
+    DIM line AS STRING = p.Lines[p.Row]
+    IF p.Col < LEN(line) THEN
+        DIM leftPart  AS STRING = ""
+        DIM rightPart AS STRING = ""
+        IF p.Col > 0             THEN leftPart  = Mid(line, 1, p.Col)
+        IF p.Col + 1 < LEN(line) THEN rightPart = Mid(line, p.Col + 2, LEN(line) - p.Col - 1)
+        p.Lines[p.Row] = leftPart + rightPart
+    ELSEIF p.Row < LEN(p.Lines) - 1 THEN
+        DIM nextLine AS STRING = p.Lines[p.Row + 1]
+        p.Lines[p.Row] = line + nextLine
+        DIM newLines AS []STRING
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(p.Lines) - 1
+            IF i <> p.Row + 1 THEN newLines = APPEND(newLines, p.Lines[i])
+        NEXT i
+        p.Lines = newLines
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+' Update — dispatch a tea message into the editor. Pointer receiver
+' so mutations land in the caller's Pad. Returns a Cmd (currently
+' always NIL — no cursor blink to schedule) to match the bubbles
+' textarea call shape.
+FUNCTION (p AS POINTER TO Pad) Update(msg AS tea.Msg) AS tea.Cmd
+    ' Bracketed-paste support.
+    DIM pst AS tea.PasteMsg
+    DIM pok AS BOOLEAN
+    pst, pok = msg.(tea.PasteMsg)
+    IF pok THEN
+        ' PasteMsg in bubbletea v2 is a struct wrapping the pasted
+        ' text; calling .String() materialises it.
+        DIM s AS STRING = pst.String()
+        DIM lines AS []STRING = strings.Split(s, "\n")
+        DIM li AS INTEGER
+        FOR li = 0 TO LEN(lines) - 1
+            IF li > 0 THEN padInsertNewline(p)
+            IF lines[li] <> "" THEN padInsertChar(p, lines[li])
+        NEXT li
+        RETURN NIL
+    END IF
+    DIM k AS tea.KeyPressMsg
+    DIM ok AS BOOLEAN
+    k, ok = msg.(tea.KeyPressMsg)
+    IF NOT ok THEN RETURN NIL
+    DIM key AS STRING = k.String()
+    IF key = "up" THEN
+        p.CursorUp()
+        RETURN NIL
+    END IF
+    IF key = "down" THEN
+        p.CursorDown()
+        RETURN NIL
+    END IF
+    IF key = "left" THEN
+        p.CursorLeft()
+        RETURN NIL
+    END IF
+    IF key = "right" THEN
+        p.CursorRight()
+        RETURN NIL
+    END IF
+    IF key = "home" THEN
+        p.CursorStart()
+        RETURN NIL
+    END IF
+    IF key = "end" THEN
+        p.CursorEnd()
+        RETURN NIL
+    END IF
+    IF key = "pgup" THEN
+        p.Row = p.Row - p.ViewH
+        IF p.Row < 0 THEN p.Row = 0
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+        padEnsureVisible(p)
+        RETURN NIL
+    END IF
+    IF key = "pgdown" THEN
+        p.Row = p.Row + p.ViewH
+        IF p.Row >= LEN(p.Lines) THEN p.Row = LEN(p.Lines) - 1
+        IF p.Col > LEN(p.Lines[p.Row]) THEN p.Col = LEN(p.Lines[p.Row])
+        padEnsureVisible(p)
+        RETURN NIL
+    END IF
+    IF key = "backspace" THEN
+        padDeleteBackward(p)
+        RETURN NIL
+    END IF
+    IF key = "delete" THEN
+        padDeleteForward(p)
+        RETURN NIL
+    END IF
+    IF key = "enter" THEN
+        padInsertNewline(p)
+        RETURN NIL
+    END IF
+    IF key = "tab" THEN
+        padInsertChar(p, "    ")
+        RETURN NIL
+    END IF
+    IF key = "space" THEN
+        padInsertChar(p, " ")
+        RETURN NIL
+    END IF
+    IF LEN(key) = 1 THEN padInsertChar(p, key)
+    RETURN NIL
+END FUNCTION
+
+' View — render the visible viewport with line-number gutter and
+' cursor highlight. Tokenises every visible line on each call;
+' relies on the outer EditorCacheView cache (in the Model) to keep
+' the cost off the hover path.
+FUNCTION (p AS Pad) View() AS STRING
+    initPadStyles()
+    DIM gutterW  AS INTEGER = 5
+    DIM contentW AS INTEGER = p.ViewW - gutterW
+    IF contentW < 1 THEN contentW = 1
+    DIM rows AS []STRING
+    DIM r AS INTEGER
+    FOR r = 0 TO p.ViewH - 1
+        DIM rowIdx AS INTEGER = p.ScrollTop + r
+        DIM isCursorRow AS BOOLEAN = (p.Focused AND rowIdx = p.Row)
+        DIM gutter AS STRING
+        IF rowIdx >= LEN(p.Lines) THEN
+            gutter = padStyleBg.Render(strings.Repeat(" ", gutterW))
+            rows = APPEND(rows, gutter + padStyleBg.Render(strings.Repeat(" ", contentW)))
+        ELSE
+            DIM lab AS STRING = fmt.Sprintf("%4d ", rowIdx + 1)
+            IF isCursorRow THEN
+                gutter = padStyleGutterActive.Render(lab)
+            ELSE
+                gutter = padStyleGutter.Render(lab)
+            END IF
+            DIM cursorCol AS INTEGER = p.Col
+            DIM body AS STRING = padRenderLine(p.Lines[rowIdx], p.ScrollLeft, contentW, isCursorRow, cursorCol)
+            rows = APPEND(rows, gutter + body)
+        END IF
+    NEXT r
+    RETURN strings.Join(rows, "\n")
+END FUNCTION
+
+' padRenderLine — render one source line clipped to [scrollLeft,
+' scrollLeft+contentW). Walks the token stream char-by-char so the
+' cursor cell (when this is the cursor row) gets the cursor style
+' instead of the token's style. Pads to contentW with bg fill.
+FUNCTION padRenderLine(line AS STRING, scrollLeft AS INTEGER, contentW AS INTEGER, isCursorRow AS BOOLEAN, cursorCol AS INTEGER) AS STRING
+    initPadStyles()
+    DIM tokens AS []PadToken = tokenizeLine(line)
+    DIM out AS STRING = ""
+    DIM col AS INTEGER = 0
+    DIM visCol AS INTEGER = 0
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(tokens) - 1
+        DIM tok AS PadToken = tokens[ti]
+        DIM tokStyle AS lipgloss.Style = styleForToken(tok.Kind)
+        DIM j AS INTEGER
+        FOR j = 0 TO LEN(tok.Text) - 1
+            DIM ch AS STRING = Mid(tok.Text, j + 1, 1)
+            IF col >= scrollLeft AND visCol < contentW THEN
+                IF isCursorRow AND col = cursorCol THEN
+                    out = out + padStyleCursor.Render(ch)
+                ELSE
+                    out = out + tokStyle.Render(ch)
+                END IF
+                visCol = visCol + 1
+            END IF
+            col = col + 1
+        NEXT j
+    NEXT ti
+    ' Cursor past end-of-line — render as a space at cursor pos.
+    IF isCursorRow AND cursorCol >= LEN(line) AND visCol < contentW THEN
+        DIM padCount AS INTEGER = cursorCol - LEN(line)
+        IF padCount < 0 THEN padCount = 0
+        IF padCount > 0 AND visCol + padCount <= contentW THEN
+            out = out + padStyleBg.Render(strings.Repeat(" ", padCount))
+            visCol = visCol + padCount
+        END IF
+        IF visCol < contentW THEN
+            out = out + padStyleCursor.Render(" ")
+            visCol = visCol + 1
+        END IF
+    END IF
+    IF visCol < contentW THEN
+        out = out + padStyleBg.Render(strings.Repeat(" ", contentW - visCol))
+    END IF
+    RETURN out
 END FUNCTION
 
 ' -------------------------------------------------------------------------
