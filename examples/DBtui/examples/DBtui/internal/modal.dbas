@@ -173,21 +173,21 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
     IF m.ModalContext = "saveform" THEN
         DIM sfPath AS STRING = strings.TrimSpace(text)
         IF sfPath = "" THEN RETURN FALSE, NIL
-        m.CurrentFormPath = sfPath
+        m.Tabs[m.TabIdx].Path = sfPath
         saveForm(m)
         RETURN FALSE, NIL
     END IF
     ' "wprop:*" — widget property edits from clicks on the
     ' Properties panel rows in form mode.
     IF m.ModalContext = "wprop:name" THEN
-        IF m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
-            m.Form.Widgets[m.SelWidget].Name = strings.TrimSpace(text)
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Name = strings.TrimSpace(text)
         END IF
         RETURN FALSE, NIL
     END IF
     IF m.ModalContext = "wprop:text" THEN
-        IF m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
-            m.Form.Widgets[m.SelWidget].Text = text
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Text = text
         END IF
         RETURN FALSE, NIL
     END IF
@@ -196,11 +196,11 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         DIM pY AS INTEGER
         DIM pok AS BOOLEAN
         pX, pY, pok = parseTwoInts(text)
-        IF pok AND m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
+        IF pok AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
             IF pX < 0 THEN pX = 0
             IF pY < 0 THEN pY = 0
-            m.Form.Widgets[m.SelWidget].X = pX
-            m.Form.Widgets[m.SelWidget].Y = pY
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].X = pX
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Y = pY
         END IF
         RETURN FALSE, NIL
     END IF
@@ -209,11 +209,11 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         DIM sH AS INTEGER
         DIM sok AS BOOLEAN
         sW, sH, sok = parseTwoInts(text)
-        IF sok AND m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
+        IF sok AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
             IF sW < 1 THEN sW = 1
             IF sH < 1 THEN sH = 1
-            m.Form.Widgets[m.SelWidget].W = sW
-            m.Form.Widgets[m.SelWidget].H = sH
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].W = sW
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].H = sH
         END IF
         RETURN FALSE, NIL
     END IF

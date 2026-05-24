@@ -90,7 +90,10 @@ END TYPE
 
 TYPE Tab
     DIM Path        AS STRING            ' file path on disk
-    DIM Editor      AS Pad               ' per-tab editor state
+    DIM Kind        AS STRING            ' "code" (.dbas) or "form" (.dbproj)
+    DIM Editor      AS Pad               ' per-tab editor state (code tabs)
+    DIM Form        AS DesignForm        ' per-tab form (form tabs)
+    DIM SelWidget   AS INTEGER           ' selected widget index in Form (-1 = none)
     DIM Dirty       AS BOOLEAN           ' buffer differs from disk
     DIM LoadedMtime AS time.Time         ' mtime when last read / saved
 END TYPE
@@ -261,17 +264,12 @@ TYPE Model
     ' the state so it survives restarts.
     DIM ClosedTabs AS []STRING
 
-    ' Form designer — single in-memory form for now; multi-form is
-    ' a follow-up. SelWidget is the index of the currently-selected
-    ' widget on the form (-1 = none). FormDragOffX / Y store the
-    ' cursor's offset within the widget when the move-drag started,
-    ' so motion translates 1:1. CurrentFormPath is the .dbproj this
-    ' form was loaded from (or will be saved to).
-    DIM Form            AS DesignForm
-    DIM SelWidget       AS INTEGER
+    ' Form designer — Form / SelWidget live on each Tab now. Drag
+    ' state is still transient on Model: it only matters for the
+    ' duration of a single drag, regardless of which tab owns the
+    ' Form being dragged in.
     DIM FormDragOffX    AS INTEGER
     DIM FormDragOffY    AS INTEGER
-    DIM CurrentFormPath AS STRING
 
     ' Files queued for restoration on startup, drained one at a
     ' time after the corresponding LoadFinishedMsg lands.
@@ -615,6 +613,14 @@ SUB switchToTab(m AS POINTER TO Model, idx AS INTEGER)
         m.Tabs[m.TabIdx].Editor.Blur()
     END IF
     m.TabIdx = idx
+    ' ViewMode follows the tab's kind — switching to a form tab
+    ' lands you in form view; switching to a code tab lands in
+    ' code view. Defaults to "code" for older tabs without Kind.
+    IF m.Tabs[m.TabIdx].Kind = "form" THEN
+        m.ViewMode = "form"
+    ELSE
+        m.ViewMode = "code"
+    END IF
     IF m.FocusedPane = "editor" AND m.ViewMode = "code" THEN
         DIM fcmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
         _ = fcmd
@@ -937,7 +943,9 @@ INCLUDE "internal/modal.dbas"
 SUB newEmptyTab(m AS POINTER TO Model, path AS STRING)
     DIM t AS Tab
     t.Path = path
+    t.Kind = "code"
     t.Editor = newTextarea()
+    t.SelWidget = 0 - 1
     t.Dirty = FALSE
     IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
     m.Tabs = APPEND(m.Tabs, t)
@@ -1057,6 +1065,8 @@ SUB completeFileLoad(m AS POINTER TO Model, path AS STRING, data AS BYTES, err A
     END IF
     DIM t AS Tab
     t.Path = path
+    t.Kind = "code"
+    t.SelWidget = 0 - 1
     t.Editor = newTextarea()
     t.Editor.SetValue(string(data))
     ' SetValue lands the cursor at the END. MoveToBegin is the
@@ -1139,9 +1149,8 @@ FUNCTION newModel() AS Model
     ' Tree starts focused — the tree is always available and the
     ' editor doesn't exist yet.
     m.FocusedPane = "tree"
-    ' Empty form designer state.
-    m.Form.Title = "frmStart"
-    m.SelWidget = 0 - 1
+    ' Form designer state now lives per-tab on Tab.Form / Tab.SelWidget;
+    ' nothing to initialise globally.
     ' No hover known until the first MouseMotionMsg arrives.
     m.HoverX = 0 - 1
     m.HoverY = 0 - 1
@@ -1305,7 +1314,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         ' Form-canvas move-drag: cursor moves the selected widget.
-        IF m.DragMode = "formMove" AND m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
+        IF m.DragMode = "formMove" AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
             DIM fmx AS INTEGER
             DIM fmy AS INTEGER
             fmx, fmy = formScreenToCanvas(m, mmMsg.X, mmMsg.Y)
@@ -1313,8 +1322,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM ny AS INTEGER = fmy - m.FormDragOffY
             IF nx < 0 THEN nx = 0
             IF ny < 0 THEN ny = 0
-            m.Form.Widgets[m.SelWidget].X = nx
-            m.Form.Widgets[m.SelWidget].Y = ny
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].X = nx
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Y = ny
             invalidateEditorCache(@m)
             RETURN m, NIL
         END IF
@@ -1581,7 +1590,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         ' (4c.2) Form-mode properties click — edit Name / Text / Pos /
         '        Size by clicking the row.
-        IF m.ViewMode = "form" AND m.SelWidget >= 0 AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width THEN
+        IF m.ViewMode = "form" AND m.Tabs[m.TabIdx].SelWidget >= 0 AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width THEN
             DIM peBodyH AS INTEGER = m.Height - 2
             IF m.BottomVisible THEN
                 DIM peBot AS INTEGER = 10
@@ -1604,13 +1613,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM fcy AS INTEGER
             fcx, fcy = formScreenToCanvas(m, mcMsg.X, mcMsg.Y)
             DIM hit AS INTEGER = formWidgetAt(m, fcx, fcy)
-            m.SelWidget = hit
+            m.Tabs[m.TabIdx].SelWidget = hit
             IF hit >= 0 THEN
                 ' Arm a move-drag — record the cursor's offset within
                 ' the widget so the drag motion translates 1:1.
                 m.DragMode = "formMove"
-                m.FormDragOffX = fcx - m.Form.Widgets[hit].X
-                m.FormDragOffY = fcy - m.Form.Widgets[hit].Y
+                m.FormDragOffX = fcx - m.Tabs[m.TabIdx].Form.Widgets[hit].X
+                m.FormDragOffY = fcy - m.Tabs[m.TabIdx].Form.Widgets[hit].Y
             ELSE
                 m.Status = "no widget under cursor"
             END IF
@@ -1989,7 +1998,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, rcCmd
         END IF
         ' Form-mode Delete key drops the selected widget.
-        IF key = "delete" AND m.ViewMode = "form" AND m.SelWidget >= 0 THEN
+        IF key = "delete" AND m.ViewMode = "form" AND m.Tabs[m.TabIdx].SelWidget >= 0 THEN
             formDeleteSelected(@m)
             RETURN m, NIL
         END IF

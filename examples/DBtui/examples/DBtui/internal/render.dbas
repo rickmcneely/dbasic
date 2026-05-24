@@ -568,8 +568,8 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     '     the panel, so property rows start one cell below that.
     DIM propRows AS []STRING
     IF m.ViewMode = "form" THEN
-        IF m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
-            DIM sw AS DesignWidget = m.Form.Widgets[m.SelWidget]
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            DIM sw AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
             propRows = APPEND(propRows, "Kind   " + sw.Kind)
             propRows = APPEND(propRows, "Name   " + sw.Name)
             propRows = APPEND(propRows, "Text   " + sw.Text)

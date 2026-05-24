@@ -56,8 +56,8 @@ SUB formAddWidget(m AS POINTER TO Model, kind AS STRING)
         DIM cand AS STRING = prefix + strconv.Itoa(n)
         DIM clash AS BOOLEAN = FALSE
         DIM i AS INTEGER
-        FOR i = 0 TO LEN(m.Form.Widgets) - 1
-            IF m.Form.Widgets[i].Name = cand THEN clash = TRUE
+        FOR i = 0 TO LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1
+            IF m.Tabs[m.TabIdx].Form.Widgets[i].Name = cand THEN clash = TRUE
         NEXT i
         IF NOT clash THEN
             w.Name = cand
@@ -66,23 +66,23 @@ SUB formAddWidget(m AS POINTER TO Model, kind AS STRING)
         n = n + 1
     LOOP
     w.X = 2
-    w.Y = 1 + LEN(m.Form.Widgets)
+    w.Y = 1 + LEN(m.Tabs[m.TabIdx].Form.Widgets)
     IF w.Y < 1 THEN w.Y = 1
-    m.Form.Widgets = APPEND(m.Form.Widgets, w)
-    m.SelWidget = LEN(m.Form.Widgets) - 1
+    m.Tabs[m.TabIdx].Form.Widgets = APPEND(m.Tabs[m.TabIdx].Form.Widgets, w)
+    m.Tabs[m.TabIdx].SelWidget = LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1
     m.Status = "added " + w.Name
 END SUB
 
 ' formDeleteSelected — drop the currently-selected widget.
 SUB formDeleteSelected(m AS POINTER TO Model)
-    IF m.SelWidget < 0 OR m.SelWidget >= LEN(m.Form.Widgets) THEN RETURN
+    IF m.Tabs[m.TabIdx].SelWidget < 0 OR m.Tabs[m.TabIdx].SelWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
     DIM kept AS []DesignWidget
     DIM i AS INTEGER
-    FOR i = 0 TO LEN(m.Form.Widgets) - 1
-        IF i <> m.SelWidget THEN kept = APPEND(kept, m.Form.Widgets[i])
+    FOR i = 0 TO LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1
+        IF i <> m.Tabs[m.TabIdx].SelWidget THEN kept = APPEND(kept, m.Tabs[m.TabIdx].Form.Widgets[i])
     NEXT i
-    m.Form.Widgets = kept
-    m.SelWidget = 0 - 1
+    m.Tabs[m.TabIdx].Form.Widgets = kept
+    m.Tabs[m.TabIdx].SelWidget = 0 - 1
     m.Status = "widget deleted"
 END SUB
 
@@ -115,12 +115,12 @@ END FUNCTION
 ' later (drawn-on-top) widgets win.
 FUNCTION formWidgetAt(m AS Model, cx AS INTEGER, cy AS INTEGER) AS INTEGER
     DIM i AS INTEGER
-    FOR i = LEN(m.Form.Widgets) - 1 TO 0 STEP 0 - 1
+    FOR i = LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1 TO 0 STEP 0 - 1
         DIM x0 AS INTEGER
         DIM y0 AS INTEGER
         DIM x1 AS INTEGER
         DIM y1 AS INTEGER
-        x0, y0, x1, y1 = widgetBox(m.Form.Widgets[i])
+        x0, y0, x1, y1 = widgetBox(m.Tabs[m.TabIdx].Form.Widgets[i])
         IF cx >= x0 AND cx < x1 AND cy >= y0 AND cy < y1 THEN RETURN i
     NEXT i
     RETURN 0 - 1
@@ -138,6 +138,11 @@ END FUNCTION
 ' renderFormCanvas — middle-pane body when ViewMode = "form".
 ' Renders the title row then paints each widget at its (X, Y).
 FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
+    ' No active tab → return a blank canvas instead of crashing.
+    IF NOT hasActiveTab(m) THEN
+        DIM bg AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder)).Width(width).Height(height).Align(lipgloss.Center, lipgloss.Center)
+        RETURN bg.Render("(no form open — open a .dbproj from the tree)")
+    END IF
     DIM cellBg AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg))
     DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Width(width)
     DIM widStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg))
@@ -168,10 +173,10 @@ FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
     NEXT r
     ' Paint widgets.
     DIM wi AS INTEGER
-    FOR wi = 0 TO LEN(m.Form.Widgets) - 1
-        DIM w AS DesignWidget = m.Form.Widgets[wi]
+    FOR wi = 0 TO LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1
+        DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[wi]
         DIM txt AS STRING = widgetVisibleText(w)
-        DIM isSel AS BOOLEAN = (wi = m.SelWidget)
+        DIM isSel AS BOOLEAN = (wi = m.Tabs[m.TabIdx].SelWidget)
         DIM ci AS INTEGER
         FOR ci = 0 TO LEN(txt) - 1
             DIM pCol AS INTEGER = w.X + ci
@@ -184,7 +189,7 @@ FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
     NEXT wi
     ' Render rows.
     DIM lines AS []STRING
-    DIM titleLine AS STRING = titleStyle.Render(" " + m.Form.Title)
+    DIM titleLine AS STRING = titleStyle.Render(" " + m.Tabs[m.TabIdx].Form.Title)
     lines = APPEND(lines, titleLine)
     FOR r = 0 TO gridH - 1
         DIM out AS STRING = ""
@@ -238,35 +243,43 @@ SUB loadFormFromDisk(m AS POINTER TO Model, path AS STRING)
         m.Status = "bad .dbproj: " + jerr.Error()
         RETURN
     END IF
-    m.Form = f
-    m.CurrentFormPath = path
-    m.SelWidget = 0 - 1
+    ' Build a new Form tab. Blur whatever editor was active.
+    IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
+    DIM t AS Tab
+    t.Path = path
+    t.Kind = "form"
+    t.Form = f
+    t.SelWidget = 0 - 1
+    m.Tabs = APPEND(m.Tabs, t)
+    m.TabIdx = LEN(m.Tabs) - 1
     m.ViewMode = "form"
     setFocus(m, "tree")
+    rebuildMenus(m)
     invalidateEditorCache(m)
     m.Status = "loaded form " + path
 END SUB
 
-' saveForm — JSON-marshal m.Form to m.CurrentFormPath. Empty path
-' pops a Save As prompt (modal context "saveform").
+' saveForm — JSON-marshal the active tab's Form to its Path. Empty
+' path pops a Save As prompt (modal context "saveform").
 SUB saveForm(m AS POINTER TO Model)
-    IF m.CurrentFormPath = "" THEN
+    IF NOT hasActiveTab(^m) THEN RETURN
+    IF m.Tabs[m.TabIdx].Path = "" THEN
         showInputModal(m, "Save Form", "Path:", "form.dbproj", "saveform")
         RETURN
     END IF
     DIM data AS BYTES
     DIM merr AS ERROR
-    data, merr = encjson.MarshalIndent(m.Form, "", "  ")
+    data, merr = encjson.MarshalIndent(m.Tabs[m.TabIdx].Form, "", "  ")
     IF merr <> NIL THEN
         m.Status = "marshal failed: " + merr.Error()
         RETURN
     END IF
-    DIM werr AS ERROR = os.WriteFile(m.CurrentFormPath, data, 0644)
+    DIM werr AS ERROR = os.WriteFile(m.Tabs[m.TabIdx].Path, data, 0644)
     IF werr <> NIL THEN
         m.Status = "save failed: " + werr.Error()
         RETURN
     END IF
-    m.Status = fmt.Sprintf("saved form %s (%d bytes)", m.CurrentFormPath, LEN(data))
+    m.Status = fmt.Sprintf("saved form %s (%d bytes)", m.Tabs[m.TabIdx].Path, LEN(data))
 END SUB
 
 ' -------------------------------------------------------------------------
@@ -283,8 +296,8 @@ END SUB
 '   3  Pos (X, Y)  editable
 '   4  Size (W, H) editable
 SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
-    IF m.SelWidget < 0 OR m.SelWidget >= LEN(m.Form.Widgets) THEN RETURN
-    DIM w AS DesignWidget = m.Form.Widgets[m.SelWidget]
+    IF m.Tabs[m.TabIdx].SelWidget < 0 OR m.Tabs[m.TabIdx].SelWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
     IF rowIdx = 1 THEN
         showInputModal(m, "Edit Name", "Name:", w.Name, "wprop:name")
     ELSEIF rowIdx = 2 THEN
@@ -415,14 +428,14 @@ END FUNCTION
 ' doFormRun — F5 in form mode. Saves the .dbproj if a path is set,
 ' regenerates the partner .dbas, hands the terminal to dbasic run.
 FUNCTION doFormRun(m AS POINTER TO Model) AS tea.Cmd
-    IF m.CurrentFormPath = "" THEN
+    IF m.Tabs[m.TabIdx].Path = "" THEN
         m.Status = "save the form first (Ctrl+S)"
         RETURN NIL
     END IF
     saveForm(m)
-    DIM stem AS STRING = strings.TrimSuffix(m.CurrentFormPath, ".dbproj")
+    DIM stem AS STRING = strings.TrimSuffix(m.Tabs[m.TabIdx].Path, ".dbproj")
     DIM outPath AS STRING = stem + ".dbas"
-    DIM code AS STRING = generateFormDbas(m.Form)
+    DIM code AS STRING = generateFormDbas(m.Tabs[m.TabIdx].Form)
     DIM werr AS ERROR = os.WriteFile(outPath, Encode(code), 0644)
     IF werr <> NIL THEN
         m.Status = "write " + outPath + ": " + werr.Error()
