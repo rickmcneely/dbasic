@@ -2,6 +2,7 @@
 
 IMPORT "fmt"
 IMPORT "os"
+IMPORT "strconv"
 IMPORT "strings"
 
 ' Open-file state. openFiles is the list of paths shown in the tab
@@ -10,6 +11,10 @@ IMPORT "strings"
 DIM openFiles AS []STRING
 DIM curIdx    AS INTEGER
 DIM curFile   AS STRING
+
+' Last widget reflected into the Properties panel — used by
+' props_Change to route an edit commit back to the right widget.
+DIM curSelWidget AS STRING
 
 SUB FormLoad()
     curIdx = 0 - 1
@@ -25,6 +30,7 @@ END SUB
 
 SUB gOnSelect(id AS STRING)
     IF id = "props" OR id = "" THEN RETURN
+    curSelWidget = id
     gSetItems("props", propsFor(id))
 END SUB
 
@@ -117,8 +123,73 @@ SUB canvas_ChildMoved(childId AS STRING)
     _ = childId
 END SUB
 
-' PropertyGrid placeholder.
+' Property edit commit — read each row out of the grid and apply
+' relevant fields back to curSelWidget. Only X/Y/Width/Height/Text/
+' Visible are wired (and X/Y/W/H get clobbered each frame for slot
+' widgets owned by a SplitPanel, so editing non-slot widgets works
+' best). Status reflects what changed.
 SUB props_Change()
+    IF curSelWidget = "" OR curSelWidget = "props" THEN RETURN
+    DIM target AS STRING = curSelWidget
+    DIM applied AS []STRING
+    DIM xs AS STRING = pgValueFor("props", "X")
+    IF xs <> "" THEN
+        DIM xv AS INTEGER
+        DIM xerr AS ERROR
+        xv, xerr = strconv.Atoi(strings.TrimSpace(xs))
+        IF xerr = NIL AND xv <> gGetX(target) THEN
+            gSetX(target, xv)
+            applied = APPEND(applied, fmt.Sprintf("X=%d", xv))
+        END IF
+    END IF
+    DIM ys AS STRING = pgValueFor("props", "Y")
+    IF ys <> "" THEN
+        DIM yv AS INTEGER
+        DIM yerr AS ERROR
+        yv, yerr = strconv.Atoi(strings.TrimSpace(ys))
+        IF yerr = NIL AND yv <> gGetY(target) THEN
+            gSetY(target, yv)
+            applied = APPEND(applied, fmt.Sprintf("Y=%d", yv))
+        END IF
+    END IF
+    DIM ws AS STRING = pgValueFor("props", "Width")
+    IF ws <> "" THEN
+        DIM wv AS INTEGER
+        DIM werr AS ERROR
+        wv, werr = strconv.Atoi(strings.TrimSpace(ws))
+        IF werr = NIL AND wv <> gGetW(target) THEN
+            gSetW(target, wv)
+            applied = APPEND(applied, fmt.Sprintf("W=%d", wv))
+        END IF
+    END IF
+    DIM hs AS STRING = pgValueFor("props", "Height")
+    IF hs <> "" THEN
+        DIM hv AS INTEGER
+        DIM herr AS ERROR
+        hv, herr = strconv.Atoi(strings.TrimSpace(hs))
+        IF herr = NIL AND hv <> gGetH(target) THEN
+            gSetH(target, hv)
+            applied = APPEND(applied, fmt.Sprintf("H=%d", hv))
+        END IF
+    END IF
+    DIM textVal AS STRING = pgValueFor("props", "Text")
+    IF textVal <> gGetText(target) THEN
+        gSetText(target, textVal)
+        applied = APPEND(applied, "Text")
+    END IF
+    DIM visStr AS STRING = pgValueFor("props", "Visible")
+    DIM visNew AS BOOLEAN = (strings.ToLower(strings.TrimSpace(visStr)) = "true")
+    IF visNew <> gGetVisible(target) THEN
+        gSetVisible(target, visNew)
+        applied = APPEND(applied, fmt.Sprintf("Visible=%v", visNew))
+    END IF
+    IF LEN(applied) > 0 THEN
+        gSetText("status", target + ": " + strings.Join(applied, ", "))
+        ' Re-render the panel from the now-mutated widget so the user
+        ' sees their change reflected (and stale int parsing doesn't
+        ' re-apply on subsequent commits).
+        gSetItems("props", propsFor(target))
+    END IF
 END SUB
 
 ' Check button.
