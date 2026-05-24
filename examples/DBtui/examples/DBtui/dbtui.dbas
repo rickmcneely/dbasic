@@ -444,6 +444,8 @@ FUNCTION buildMenus(m AS Model) AS []MenuDef
     editItems = APPEND(editItems, mkItem("(R)eplace     Ctrl+H", "edit.replace"))
     editItems = APPEND(editItems, mkSep())
     editItems = APPEND(editItems, mkItem("(G)o to Line  Ctrl+G", "edit.goto"))
+    editItems = APPEND(editItems, mkSep())
+    editItems = APPEND(editItems, mkItem("Toggle Co(m)ment Ctrl+/", "edit.togglecomment"))
     menus = APPEND(menus, mkMenu("(E)dit", editItems))
 
     DIM viewItems AS []MenuItem
@@ -633,6 +635,7 @@ FUNCTION helpText() AS STRING
     s = s + "  Ctrl+F   Find        F3   Find next\n"
     s = s + "  Ctrl+H / F4   Replace (all)\n"
     s = s + "  Ctrl+G   Go to line\n"
+    s = s + "  Ctrl+/   Toggle comment\n"
     s = s + "  Esc      Focus tree from editor\n"
     s = s + "  Ctrl+Tab / F6   Cycle focus\n"
     s = s + "\n"
@@ -894,9 +897,54 @@ SUB setFocus(m AS POINTER TO Model, pane AS STRING)
     invalidateEditorCache(m)
 END SUB
 
+' applyFormatter — run `dbasic fmt -w <path>` on disk, then reload
+' the formatted content into the editor (preserving the cursor
+' as best we can). No-op on non-.dbas files and on fmt errors.
+' Pushes pre-format state onto the undo stack so Ctrl+Z reverts
+' the reformat.
+SUB applyFormatter(m AS POINTER TO Model, path AS STRING)
+    IF NOT strings.HasSuffix(strings.ToLower(path), ".dbas") THEN RETURN
+    DIM fcmd AS POINTER TO osexec.Cmd = osexec.Command("dbasic", "fmt", "-w", path)
+    DIM fOut AS BYTES
+    DIM fErr AS ERROR
+    fOut, fErr = fcmd.CombinedOutput()
+    _ = fOut
+    IF fErr <> NIL THEN
+        m.Status = m.Status + " (fmt failed)"
+        RETURN
+    END IF
+    DIM data AS BYTES
+    DIM rerr AS ERROR
+    data, rerr = os.ReadFile(path)
+    IF rerr <> NIL THEN RETURN
+    DIM newContent AS STRING = string(data)
+    DIM oldContent AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    IF newContent = oldContent THEN RETURN
+    ' Reflow → undo-able. Snap before we overwrite the buffer.
+    DIM curRow AS INTEGER = m.Tabs[m.TabIdx].Editor.Row
+    DIM curCol AS INTEGER = m.Tabs[m.TabIdx].Editor.Column()
+    DIM curScroll AS INTEGER = m.Tabs[m.TabIdx].Editor.ScrollTop
+    padSnap(@m.Tabs[m.TabIdx].Editor)
+    m.Tabs[m.TabIdx].Editor.SetValue(newContent)
+    ' Restore cursor clamped to the new line count / line length.
+    DIM lc AS INTEGER = m.Tabs[m.TabIdx].Editor.LineCount()
+    IF curRow >= lc THEN curRow = lc - 1
+    IF curRow < 0  THEN curRow = 0
+    m.Tabs[m.TabIdx].Editor.Row = curRow
+    DIM lineLen AS INTEGER = LEN(m.Tabs[m.TabIdx].Editor.Lines[curRow])
+    IF curCol > lineLen THEN curCol = lineLen
+    m.Tabs[m.TabIdx].Editor.Col = curCol
+    m.Tabs[m.TabIdx].Editor.ScrollTop = curScroll
+    padEnsureVisible(@m.Tabs[m.TabIdx].Editor)
+    m.Tabs[m.TabIdx].Dirty = FALSE
+    invalidateEditorCache(m)
+    m.Status = m.Status + " (fmt)"
+END SUB
+
 ' saveCurrent — write the active tab's buffer to its Path on disk.
-' Status reports the byte count on success or the error on failure.
-' No-op (with explanatory status) when there is no active tab.
+' For .dbas files, also run `dbasic fmt -w` and reload the
+' formatted output so the editor stays in sync. Status reports
+' the byte count on success or the error on failure.
 SUB saveCurrent(m AS POINTER TO Model)
     IF NOT hasActiveTab(^m) THEN
         m.Status = "nothing open to save"
@@ -911,6 +959,7 @@ SUB saveCurrent(m AS POINTER TO Model)
     END IF
     m.Tabs[m.TabIdx].Dirty = FALSE
     m.Status = fmt.Sprintf("saved %s (%d bytes)", path, LEN(body))
+    applyFormatter(m, path)
 END SUB
 
 ' showModal — pop a button-style modal with `title`, `message`, and a
@@ -1461,6 +1510,15 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
     IF action = "edit.selectall" THEN
         IF hasActiveTab(^m) THEN
             m.Tabs[m.TabIdx].Editor.SelectAll()
+            invalidateEditorCache(m)
+        END IF
+        RETURN
+    END IF
+    IF action = "edit.togglecomment" THEN
+        IF hasActiveTab(^m) THEN
+            padSnap(@m.Tabs[m.TabIdx].Editor)
+            padToggleComment(@m.Tabs[m.TabIdx].Editor)
+            m.Tabs[m.TabIdx].Dirty = TRUE
             invalidateEditorCache(m)
         END IF
         RETURN
@@ -2117,6 +2175,15 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF key = "ctrl+y" AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
             m.Tabs[m.TabIdx].Editor.Redo()
+            m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(@m)
+            RETURN m, NIL
+        END IF
+        ' Comment toggle. Some terminals deliver Ctrl+/ as Ctrl+_
+        ' (BS / underscore mapping), so accept both.
+        IF (key = "ctrl+/" OR key = "ctrl+_") AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
+            padSnap(@m.Tabs[m.TabIdx].Editor)
+            padToggleComment(@m.Tabs[m.TabIdx].Editor)
             m.Tabs[m.TabIdx].Dirty = TRUE
             invalidateEditorCache(@m)
             RETURN m, NIL
@@ -3916,6 +3983,53 @@ SUB padInsertString(p AS POINTER TO Pad, s AS STRING)
         IF i > 0 THEN padInsertNewline(p)
         IF lines[i] <> "" THEN padInsertChar(p, lines[i])
     NEXT i
+END SUB
+
+' padToggleComment — flip the leading "' " on the cursor line, or
+' on every selected line. Sublime-style: if any selected line is
+' un-commented, the operation comments all of them; otherwise it
+' uncomments. The caller is expected to snap before calling.
+SUB padToggleComment(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER = p.Row
+    DIM r1 AS INTEGER = p.Row
+    IF padHasSelection(p) THEN
+        DIM sR0 AS INTEGER
+        DIM sC0 AS INTEGER
+        DIM sR1 AS INTEGER
+        DIM sC1 AS INTEGER
+        sR0, sC0, sR1, sC1 = padSelBounds(p)
+        _ = sC0
+        _ = sC1
+        r0 = sR0
+        r1 = sR1
+    END IF
+    ' Pass 1 — decide direction. "All commented" → uncomment.
+    DIM allCommented AS BOOLEAN = TRUE
+    DIM i AS INTEGER
+    FOR i = r0 TO r1
+        DIM trimmed AS STRING = strings.TrimLeft(p.Lines[i], " \t")
+        IF NOT strings.HasPrefix(trimmed, "'") THEN allCommented = FALSE
+    NEXT i
+    ' Pass 2 — apply.
+    FOR i = r0 TO r1
+        DIM line AS STRING = p.Lines[i]
+        IF allCommented THEN
+            ' Find the first "'" and drop it (plus one space if it
+            ' was the one we ourselves inserted on comment).
+            DIM qIdx AS INTEGER = strings.Index(line, "'")
+            IF qIdx >= 0 THEN
+                DIM before AS STRING = ""
+                DIM after  AS STRING = ""
+                IF qIdx > 0 THEN before = Mid(line, 1, qIdx)
+                IF qIdx + 1 < LEN(line) THEN after = Mid(line, qIdx + 2, LEN(line) - qIdx - 1)
+                IF Mid(after, 1, 1) = " " THEN after = Mid(after, 2, LEN(after) - 1)
+                p.Lines[i] = before + after
+            END IF
+        ELSE
+            p.Lines[i] = "' " + line
+        END IF
+    NEXT i
+    padEnsureVisible(p)
 END SUB
 
 ' SelectAll — anchor at (0,0), cursor at end of buffer.
