@@ -2,6 +2,91 @@
 ' Cursor / find / goto helpers — work against the active tab's editor.
 ' -------------------------------------------------------------------------
 
+' OutlineEntry — one top-level declaration in the buffer. Powers the
+' right-pane outline list; each row knows where to jump to.
+TYPE OutlineEntry
+    DIM Kind AS STRING                ' "SUB" / "FUNCTION" / "TYPE"
+    DIM Name AS STRING
+    DIM Row  AS INTEGER               ' 0-based line index
+END TYPE
+
+' extractDeclName — given the text after the SUB/FUNCTION/TYPE
+' keyword, return the declared name (skipping any optional method
+' receiver in parentheses). "" when nothing parses.
+FUNCTION extractDeclName(rest AS STRING) AS STRING
+    DIM s AS STRING = strings.TrimLeft(rest, " " + Chr(9))
+    ' Skip "(...)" method receiver if present.
+    IF strings.HasPrefix(s, "(") THEN
+        DIM depth AS INTEGER = 0
+        DIM i AS INTEGER = 0
+        DO WHILE i < LEN(s)
+            DIM ch AS STRING = Mid(s, i + 1, 1)
+            IF ch = "(" THEN depth = depth + 1
+            IF ch = ")" THEN
+                depth = depth - 1
+                IF depth = 0 THEN
+                    s = Mid(s, i + 2, LEN(s) - i - 1)
+                    EXIT DO
+                END IF
+            END IF
+            i = i + 1
+        LOOP
+        s = strings.TrimLeft(s, " " + Chr(9))
+    END IF
+    ' Read identifier-class chars.
+    DIM endIx AS INTEGER = 0
+    DO WHILE endIx < LEN(s)
+        IF NOT padIsWordCh(Mid(s, endIx + 1, 1)) THEN EXIT DO
+        endIx = endIx + 1
+    LOOP
+    IF endIx = 0 THEN RETURN ""
+    RETURN Mid(s, 1, endIx)
+END FUNCTION
+
+' scanOutline — walk lines top-to-bottom collecting top-level
+' SUB / FUNCTION / TYPE declarations. Skips indented lines so
+' nested TYPE fields aren't picked up.
+FUNCTION scanOutline(lines AS []STRING) AS []OutlineEntry
+    DIM out AS []OutlineEntry
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        ' Top-level only: leading char must not be whitespace.
+        DIM raw AS STRING = lines[i]
+        IF LEN(raw) = 0 THEN
+            ' empty line, skip
+        ELSE
+            DIM first AS STRING = Mid(raw, 1, 1)
+            IF first = " " OR first = Chr(9) THEN
+                ' indented, skip
+            ELSE
+                DIM kind AS STRING = ""
+                DIM rest AS STRING = ""
+                IF strings.HasPrefix(raw, "SUB ") THEN
+                    kind = "SUB"
+                    rest = Mid(raw, 5, LEN(raw) - 4)
+                ELSEIF strings.HasPrefix(raw, "FUNCTION ") THEN
+                    kind = "FUNCTION"
+                    rest = Mid(raw, 10, LEN(raw) - 9)
+                ELSEIF strings.HasPrefix(raw, "TYPE ") THEN
+                    kind = "TYPE"
+                    rest = Mid(raw, 6, LEN(raw) - 5)
+                END IF
+                IF kind <> "" THEN
+                    DIM name AS STRING = extractDeclName(rest)
+                    IF name <> "" THEN
+                        DIM e AS OutlineEntry
+                        e.Kind = kind
+                        e.Name = name
+                        e.Row  = i
+                        out = APPEND(out, e)
+                    END IF
+                END IF
+            END IF
+        END IF
+    NEXT i
+    RETURN out
+END FUNCTION
+
 ' cursorOffset — current cursor position as a byte offset from the
 ' start of the buffer. Computed by summing prior line lengths +1
 ' (for the implicit '\n') and adding the column inside the line.

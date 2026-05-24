@@ -492,7 +492,7 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     DIM bracket  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
 
     ' --- Tab strip ---------------------------------------------------
-    DIM widgetsLbl AS STRING = "Widgets"
+    DIM widgetsLbl AS STRING = "Outline"
     DIM toolsLbl   AS STRING = "Tools"
     DIM wS AS INTEGER
     DIM wE AS INTEGER
@@ -514,28 +514,33 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     DIM listH   AS INTEGER = remain / 2
     DIM propsH  AS INTEGER = remain - listH
 
-    ' --- Widgets list (placeholder rows; hover restyles per row) -----
+    ' --- Outline list (SUB / FUNCTION / TYPE from active buffer) -----
     ' The listBox has a rounded border so the inner area is (width-2)
-    ' chars wide × (listH-2) rows tall. Its top border sits at body
-    ' y = 2 (menubar y=0, tabs y=1), so list rows occupy y = 3..3+listH-3.
-    DIM widgetNames AS []STRING
-    widgetNames = APPEND(widgetNames, "Button")
-    widgetNames = APPEND(widgetNames, "Checkbox")
-    widgetNames = APPEND(widgetNames, "CodeEditor")
-    widgetNames = APPEND(widgetNames, "ComboBox")
-    widgetNames = APPEND(widgetNames, "FormCanvas")
+    ' chars wide × (listH-2) rows tall. Top border at body y = 2,
+    ' so visible entries occupy y = 3..3+listH-3.
+    DIM outline AS []OutlineEntry
+    IF hasActiveTab(m) THEN
+        outline = scanOutline(m.Tabs[m.TabIdx].Editor.Lines)
+    END IF
     DIM listInnerW AS INTEGER = width - 2
     DIM listFirstY AS INTEGER = 3
     DIM listVisible AS INTEGER = listH - 2
     DIM listRowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(listInnerW)
     DIM listHoverStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Width(listInnerW)
+    DIM listKindStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
     DIM listLines AS []STRING
     DIM li AS INTEGER
     FOR li = 0 TO listVisible - 1
         DIM txt AS STRING = ""
-        IF li < LEN(widgetNames) THEN txt = " " + widgetNames[li]
+        IF li < LEN(outline) THEN
+            DIM mark AS STRING = "?"
+            IF outline[li].Kind = "SUB"      THEN mark = "S"
+            IF outline[li].Kind = "FUNCTION" THEN mark = "F"
+            IF outline[li].Kind = "TYPE"     THEN mark = "T"
+            txt = " " + mark + "  " + outline[li].Name
+        END IF
         DIM rowY AS INTEGER = listFirstY + li
-        IF m.HoverY = rowY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND li < LEN(widgetNames) THEN
+        IF m.HoverY = rowY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND li < LEN(outline) THEN
             listLines = APPEND(listLines, listHoverStyle.Render(txt))
         ELSE
             listLines = APPEND(listLines, listRowStyle.Render(txt))
@@ -543,6 +548,7 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     NEXT li
     DIM listBody AS STRING = strings.Join(listLines, "\n")
     DIM listBox  AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(listH)
+    _ = listKindStyle  ' reserved for future per-token styling
 
     ' --- Properties panel (placeholder rows; hover restyle per row) --
     ' titledBox draws title at the top of the panel, so property rows

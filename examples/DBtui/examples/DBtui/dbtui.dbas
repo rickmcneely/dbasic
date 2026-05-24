@@ -1356,6 +1356,30 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             END IF
             RETURN m, NIL
         END IF
+        ' (4b) Outline list click — jump to the matching SUB /
+        '      FUNCTION / TYPE declaration in the active buffer.
+        '      The outline lives inside the right pane's listBox
+        '      whose rows start at y = 3 and span listH - 2 rows.
+        IF mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width AND mcMsg.Y >= 3 AND hasActiveTab(m) THEN
+            DIM oBodyH AS INTEGER = m.Height - 2
+            IF m.BottomVisible THEN
+                DIM oBot AS INTEGER = 10
+                IF oBot > oBodyH - 4 THEN oBot = oBodyH - 4
+                IF oBot < 3 THEN oBot = 3
+                oBodyH = oBodyH - oBot
+            END IF
+            DIM oRemain AS INTEGER = oBodyH - 1
+            DIM oListH  AS INTEGER = oRemain / 2
+            DIM oRelRow AS INTEGER = mcMsg.Y - 3
+            IF oRelRow >= 0 AND oRelRow < oListH - 2 THEN
+                DIM oOutline AS []OutlineEntry = scanOutline(m.Tabs[m.TabIdx].Editor.Lines)
+                IF oRelRow < LEN(oOutline) THEN
+                    gotoLine(@m, oOutline[oRelRow].Row + 1)
+                    setFocus(@m, "editor")
+                    RETURN m, NIL
+                END IF
+            END IF
+        END IF
         ' (5) Click landed in the middle pane (between left and right
         '     panes, below the tabs row) while code mode is active —
         '     focus the editor, position the cursor at the click,
