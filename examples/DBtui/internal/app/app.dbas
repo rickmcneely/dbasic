@@ -591,12 +591,49 @@ SUB openCodeForFormPath(m AS POINTER TO Model, codePath AS STRING)
     FOR i = 0 TO LEN(m.Tree.Project.Forms) - 1
         IF m.Tree.Project.Forms[i].Code = codePath THEN idx = i
     NEXT i
-    IF idx < 0 THEN
-        m.StatusBar.Message = "⚠ no form for " + codePath
+    IF idx >= 0 THEN
+        loadFormByPath(m, m.Tree.Project.Forms[idx].File)
+        enterCodeMode(m)
         RETURN
     END IF
-    loadFormByPath(m, m.Tree.Project.Forms[idx].File)
-    enterCodeMode(m)
+    ' Not a form's code file — try matching a Module. Modules don't
+    ' have a form context, so just load the file into the editor.
+    DIM mi AS INTEGER
+    FOR mi = 0 TO LEN(m.Tree.Project.Modules) - 1
+        IF m.Tree.Project.Modules[mi].File = codePath THEN
+            openModuleInEditor(m, codePath)
+            RETURN
+        END IF
+    NEXT mi
+    m.StatusBar.Message = "⚠ no form or module for " + codePath
+END SUB
+
+' openModuleInEditor — load a standalone .dbas module file into the
+' code editor. Skips the form-tied stub seeding in enterCodeMode and
+' just dumps file content (or a minimal header for new files).
+SUB openModuleInEditor(m AS POINTER TO Model, modulePath AS STRING)
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile(modulePath)
+    DIM body AS STRING
+    IF err <> NIL THEN
+        body = "' Module — " + modulePath + "\n\n"
+        WriteFile(modulePath, body)
+    ELSE
+        body = string(data)
+    END IF
+    m.Editor.Reset()
+    m.Editor.SetValue(body)
+    DO WHILE m.Editor.Line() > 0
+        m.Editor.CursorUp()
+    LOOP
+    m.Editor.CursorStart()
+    DIM eCmd AS tea.Cmd = m.Editor.Focus()
+    _ = eCmd
+    m.CodePath = modulePath
+    m.CodeMode = TRUE
+    m.CodeScroll = 0
+    m.StatusBar.Message = "Module: " + modulePath + "  —  F7: back to canvas  Ctrl+S: save"
 END SUB
 
 SUB selectToolByName(m AS POINTER TO Model, formPath AS STRING, nodeName AS STRING)
@@ -1513,6 +1550,21 @@ FUNCTION dispatchFileAction(m AS POINTER TO Model, action AS STRING) AS tea.Cmd
         m.Tree.buildFromProject()
         m.Tree.rebuildLines()
         m.StatusBar.Message = "new form: " + nm
+        RETURN NIL
+    END IF
+    IF action = "file.newmodule" THEN
+        DIM mnm AS STRING = fmt.Sprintf("mod%d", LEN(m.Tree.Project.Modules) + 1)
+        DIM mp AS STRING = "modules/" + mnm + ".dbas"
+        DIM modEntry AS Module
+        modEntry.Name = mnm
+        modEntry.File = mp
+        m.Tree.Project.Modules = APPEND(m.Tree.Project.Modules, modEntry)
+        ' Seed the file so the tree-open path doesn't trigger a stub
+        ' overwrite race with the editor's auto-create.
+        WriteFile(mp, "' Module — " + mp + "\n\n")
+        m.Tree.buildFromProject()
+        m.Tree.rebuildLines()
+        openModuleInEditor(m, mp)
         RETURN NIL
     END IF
 

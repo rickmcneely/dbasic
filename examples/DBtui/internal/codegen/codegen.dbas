@@ -3765,7 +3765,44 @@ FUNCTION emitPropertyGridRender() AS STRING
 END FUNCTION
 
 ' GenerateProgram is the public entry point. Returns the .dbas source.
+' generateModuleOnlyProgram emits a no-form program. Modules are
+' inlined verbatim; one of them is expected to define SUB Main() so
+' the program has an entry point. Useful for self-hosted "tool" apps
+' that don't use bubbletea / widgets.
+FUNCTION generateModuleOnlyProgram(p AS Project) AS STRING
+    DIM s AS STRING = ""
+    s = s + "' DBtui-generated module-only program for " + p.Name + ".\n"
+    s = s + "' Do not edit — regenerated from " + p.Name + ".dbproj.\n\n"
+    DIM mi AS INTEGER
+    DIM mainSeen AS BOOLEAN = FALSE
+    FOR mi = 0 TO LEN(p.Modules) - 1
+        DIM mcode AS STRING = readUserCode(p.Modules[mi].File)
+        IF mcode <> "" THEN
+            s = s + "' ---- Module: " + p.Modules[mi].File + " ----\n"
+            s = s + mcode
+            IF NOT strings.HasSuffix(mcode, "\n") THEN s = s + "\n"
+            s = s + "\n"
+            DIM msubs AS []STRING = findDefinedSubs(mcode)
+            DIM mj AS INTEGER
+            FOR mj = 0 TO LEN(msubs) - 1
+                IF msubs[mj] = "Main" THEN mainSeen = TRUE
+            NEXT mj
+        END IF
+    NEXT mi
+    IF NOT mainSeen THEN
+        s = s + "' ---- Generated SUB Main stub (no module provided one) ----\n"
+        s = s + "SUB Main()\n"
+        s = s + "END SUB\n"
+    END IF
+    RETURN s
+END FUNCTION
+
 FUNCTION GenerateProgram(p AS Project) AS STRING
+    ' Form-less projects ("pure library" / tools) emit a minimal program
+    ' that just inlines every module + relies on one of them defining
+    ' SUB Main(). No bubbletea, no widget state.
+    IF LEN(p.Forms) = 0 THEN RETURN generateModuleOnlyProgram(p)
+
     ' Find the start form (or the first form if none is named).
     DIM startIdx AS INTEGER = -1
     DIM i AS INTEGER
@@ -3778,6 +3815,21 @@ FUNCTION GenerateProgram(p AS Project) AS STRING
 
     DIM userCode AS STRING = readUserCode(form.Code)
     DIM defined AS []STRING = findDefinedSubs(userCode)
+    ' Pre-load every project module so we know its SUB names before
+    ' emitStubs decides which auto-stubs to skip.
+    DIM moduleCodes AS []STRING
+    DIM moduleFiles AS []STRING
+    DIM mi AS INTEGER
+    FOR mi = 0 TO LEN(p.Modules) - 1
+        DIM mcode AS STRING = readUserCode(p.Modules[mi].File)
+        moduleCodes = APPEND(moduleCodes, mcode)
+        moduleFiles = APPEND(moduleFiles, p.Modules[mi].File)
+        DIM msubs AS []STRING = findDefinedSubs(mcode)
+        DIM mj AS INTEGER
+        FOR mj = 0 TO LEN(msubs) - 1
+            defined = APPEND(defined, msubs[mj])
+        NEXT mj
+    NEXT mi
 
     DIM s AS STRING = ""
     s = s + emitHeader(p)
@@ -3807,6 +3859,17 @@ FUNCTION GenerateProgram(p AS Project) AS STRING
         IF NOT strings.HasSuffix(userCode, "\n") THEN s = s + "\n"
         s = s + "\n"
     END IF
+    ' Append each module source verbatim. Modules contribute SUBs/
+    ' FUNCTIONs/TYPEs that the form code (or other modules) can call.
+    DIM ki AS INTEGER
+    FOR ki = 0 TO LEN(moduleCodes) - 1
+        IF moduleCodes[ki] <> "" THEN
+            s = s + "' ---- Module: " + moduleFiles[ki] + " ----\n"
+            s = s + moduleCodes[ki]
+            IF NOT strings.HasSuffix(moduleCodes[ki], "\n") THEN s = s + "\n"
+            s = s + "\n"
+        END IF
+    NEXT ki
     s = s + emitStubs(form, defined)
     s = s + emitToolStubs(form, defined)
     s = s + emitMain()

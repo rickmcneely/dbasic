@@ -93,6 +93,7 @@ FUNCTION NewMenuBar() AS MenuBar
     APPEND(fileItems, mkItem("Save (A)s       ", "a", "file.saveas"))
     APPEND(fileItems, mkSep())
     APPEND(fileItems, mkItem("New (F)orm      ", "f", "file.newform"))
+    APPEND(fileItems, mkItem("New (M)odule    ", "m", "file.newmodule"))
     APPEND(fileItems, mkSep())
     APPEND(fileItems, mkItem("(Q)uit       Ctrl+Q", "q", "file.quit"))
 
