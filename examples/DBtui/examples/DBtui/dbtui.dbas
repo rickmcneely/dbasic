@@ -144,6 +144,11 @@ TYPE Model
     ' Last find query — F3 repeats it from the current cursor.
     DIM FindQuery AS STRING
 
+    ' "Loading <path>" message shown while an async file load is in
+    ' flight. Cleared when the LoadFinishedMsg lands. Empty string =
+    ' no load in progress.
+    DIM Loading AS STRING
+
     ' Cached textarea.View() output. Re-rendering the editor is the
     ' single most expensive thing View() does, and bubbletea calls
     ' View() after every Update — including every mouse-motion
@@ -705,11 +710,11 @@ END SUB
 ' dispatchModalClose — called by Update when the user commits a modal
 ' choice. Returns TRUE if the program should terminate immediately
 ' after this call (e.g. "Discard" on the quit-confirm modal).
-FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STRING) AS BOOLEAN
+FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STRING) AS (BOOLEAN, tea.Cmd)
     IF m.ModalContext = "quit" THEN
-        IF button = "Discard" THEN RETURN TRUE
+        IF button = "Discard" THEN RETURN TRUE, NIL
         m.Status = "quit cancelled"
-        RETURN FALSE
+        RETURN FALSE, NIL
     END IF
     ' "closetab:<idx>" — Discard removes the tab; Cancel keeps it.
     IF strings.HasPrefix(m.ModalContext, "closetab:") THEN
@@ -722,23 +727,24 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         ELSE
             m.Status = "close cancelled"
         END IF
-        RETURN FALSE
+        RETURN FALSE, NIL
     END IF
     ' "open" — input modal asking for a file path. Empty/whitespace
-    ' aborts; otherwise hand the path off to openFile.
+    ' aborts; otherwise hand the path off to openFile (async).
     IF m.ModalContext = "open" THEN
         DIM p AS STRING = strings.TrimSpace(text)
-        IF p <> "" THEN openFile(m, p)
-        RETURN FALSE
+        DIM oCmd AS tea.Cmd = NIL
+        IF p <> "" THEN oCmd = openFile(m, p)
+        RETURN FALSE, oCmd
     END IF
     ' "saveas" — input modal asking where to write the active tab.
     ' Updates the tab's Path then re-uses saveCurrent.
     IF m.ModalContext = "saveas" THEN
         DIM sp AS STRING = strings.TrimSpace(text)
-        IF sp = "" OR NOT hasActiveTab(^m) THEN RETURN FALSE
+        IF sp = "" OR NOT hasActiveTab(^m) THEN RETURN FALSE, NIL
         m.Tabs[m.TabIdx].Path = sp
         saveCurrent(m)
-        RETURN FALSE
+        RETURN FALSE, NIL
     END IF
     ' "new" — input modal asking for a name for the fresh buffer.
     ' Pushes a tab with empty contents at that path (or "untitled"
@@ -747,7 +753,7 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         DIM np AS STRING = strings.TrimSpace(text)
         IF np = "" THEN np = "untitled"
         newEmptyTab(m, np)
-        RETURN FALSE
+        RETURN FALSE, NIL
     END IF
     ' "find" — saves the query and runs a fresh search from the top
     ' of the buffer (Ctrl+F always restarts the search; F3 continues).
@@ -755,11 +761,11 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         DIM fq AS STRING = text
         IF fq = "" THEN
             m.Status = "find cancelled"
-            RETURN FALSE
+            RETURN FALSE, NIL
         END IF
         m.FindQuery = fq
         findNextInActive(m, 0)
-        RETURN FALSE
+        RETURN FALSE, NIL
     END IF
     ' "goto" — input modal asking for a 1-based line number.
     IF m.ModalContext = "goto" THEN
@@ -768,13 +774,13 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         ln, lnErr = strconv.Atoi(strings.TrimSpace(text))
         IF lnErr <> NIL THEN
             m.Status = "not a line number: " + text
-            RETURN FALSE
+            RETURN FALSE, NIL
         END IF
         gotoLine(m, ln)
-        RETURN FALSE
+        RETURN FALSE, NIL
     END IF
     m.Status = "modal " + m.ModalContext + " → " + button
-    RETURN FALSE
+    RETURN FALSE, NIL
 END FUNCTION
 
 ' newEmptyTab — create a fresh empty tab with `path` as its title.
@@ -1001,52 +1007,100 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
     m.Status = "action: " + action
 END SUB
 
-' openFile — open `path` in the code editor. If a tab for that path
-' is already open, just switch to it. Otherwise create a fresh tab,
-' load the file's bytes into its editor, and make it active.
-' ViewMode is flipped to "code" so the editor surface becomes
-' visible. On read error the status line surfaces the message.
-SUB openFile(m AS POINTER TO Model, path AS STRING)
-    ' Already open? Just activate it (cheap, preserves cursor).
+' -------------------------------------------------------------------------
+' Async file loading.
+'
+' os.ReadFile + textarea.SetValue on a sizable .dbas file can take
+' long enough to look like the IDE is frozen. We move the work to
+' a bubbletea Cmd so the main loop keeps drawing while the bytes
+' are read in a goroutine; the result comes back as a
+' LoadFinishedMsg that the Update handler turns into a tab.
+'
+' DBasic doesn't have closures, so the load goroutine grabs its
+' arguments from a package-level "pending" slot. Only one load
+' can be in flight at a time, but in this single-user IDE the
+' worst case is a second load winning the race — acceptable.
+' -------------------------------------------------------------------------
+
+TYPE LoadFinishedMsg
+    DIM Path AS STRING
+    DIM Data AS BYTES
+    DIM Err  AS ERROR
+END TYPE
+
+DIM pendingLoadPath AS STRING
+
+' loadFileWorker — runs in a bubbletea-spawned goroutine; reads the
+' bytes for `pendingLoadPath` and packages them as a LoadFinishedMsg
+' for the main Update loop.
+FUNCTION loadFileWorker() AS tea.Msg
+    DIM p AS STRING = pendingLoadPath
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile(p)
+    DIM lf AS LoadFinishedMsg
+    lf.Path = p
+    lf.Data = data
+    lf.Err  = err
+    RETURN lf
+END FUNCTION
+
+' completeFileLoad — main-thread handler for LoadFinishedMsg. Builds
+' the new tab, attaches its editor, and clears the loading state.
+SUB completeFileLoad(m AS POINTER TO Model, path AS STRING, data AS BYTES, err AS ERROR)
+    m.Loading = ""
+    IF err <> NIL THEN
+        m.Status = "open " + path + ": " + err.Error()
+        RETURN
+    END IF
+    ' Race protection: skip the tab build if the user already opened
+    ' the same file by some other path while we were loading.
+    IF findTabIdx(^m, path) >= 0 THEN
+        m.Status = "already open: " + path
+        RETURN
+    END IF
+    DIM t AS Tab
+    t.Path = path
+    t.Editor = newTextarea()
+    t.Editor.SetValue(string(data))
+    ' SetValue lands the cursor at the END; walk back to the top so
+    ' the user sees the start of the file first.
+    DO WHILE t.Editor.Line() > 0
+        t.Editor.CursorUp()
+    LOOP
+    t.Editor.CursorStart()
+    t.Dirty = FALSE
+    IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
+    m.Tabs = APPEND(m.Tabs, t)
+    m.TabIdx = LEN(m.Tabs) - 1
+    m.ViewMode = "code"
+    setFocus(m, "editor")
+    invalidateEditorCache(m)
+    m.Status = "opened " + path
+END SUB
+
+' openFile — kick off an async load of `path`. Returns NIL when the
+' file is already open (instant path) or when path is empty.
+' Otherwise returns the worker Cmd; the actual tab is built when
+' the LoadFinishedMsg comes back.
+FUNCTION openFile(m AS POINTER TO Model, path AS STRING) AS tea.Cmd
+    IF path = "" THEN RETURN NIL
+    ' Already open? Just activate it — no async work needed.
     DIM existing AS INTEGER = findTabIdx(^m, path)
     IF existing >= 0 THEN
         m.ViewMode = "code"
         switchToTab(m, existing)
         setFocus(m, "editor")
         m.Status = "switched to " + path
-        RETURN
+        RETURN NIL
     END IF
-    ' Read the file once, up front — if it fails we abandon the open
-    ' rather than leaving an empty tab behind.
-    DIM data AS BYTES
-    DIM err  AS ERROR
-    data, err = os.ReadFile(path)
-    IF err <> NIL THEN
-        m.Status = "open " + path + ": " + err.Error()
-        RETURN
-    END IF
-    ' Build a fresh tab with its own editor.
-    DIM t AS Tab
-    t.Path = path
-    t.Editor = newTextarea()
-    t.Editor.SetValue(string(data))
-    ' SetValue lands the cursor at the END of the buffer; walk back to
-    ' the top so the user sees the start of the file first.
-    DO WHILE t.Editor.Line() > 0
-        t.Editor.CursorUp()
-    LOOP
-    t.Editor.CursorStart()
-    t.Dirty = FALSE
-    ' Blur whatever editor was active before pushing.
-    IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
-    m.Tabs = APPEND(m.Tabs, t)
-    m.TabIdx = LEN(m.Tabs) - 1
-    m.ViewMode = "code"
-    ' Focus the new editor pane so the user can start typing right away.
-    setFocus(m, "editor")
-    invalidateEditorCache(m)
-    m.Status = "opened " + path
-END SUB
+    ' Show a visible "loading" indicator immediately so the user
+    ' knows the click registered, then hand the slow part off.
+    m.Loading = path
+    m.Status = "loading " + path + "..."
+    pendingLoadPath = path
+    RETURN loadFileWorker
+END FUNCTION
 
 ' newModel — initial state on program start.
 FUNCTION newModel() AS Model
@@ -1107,6 +1161,19 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Height = sz.Height
         ' New dimensions → cached editor view almost certainly
         ' wrong; force a refresh on the next paint.
+        invalidateEditorCache(@m)
+        RETURN m, NIL
+    END IF
+
+    ' --- Async file load finished --------------------------------
+    ' Background goroutine started by openFile() posts a
+    ' LoadFinishedMsg when its os.ReadFile returns. Build the new
+    ' tab from the freshly read bytes and clear the loading state.
+    DIM lfMsg AS LoadFinishedMsg
+    DIM lfOk  AS BOOLEAN
+    lfMsg, lfOk = msg.(LoadFinishedMsg)
+    IF lfOk THEN
+        completeFileLoad(@m, lfMsg.Path, lfMsg.Data, lfMsg.Err)
         invalidateEditorCache(@m)
         RETURN m, NIL
     END IF
@@ -1278,7 +1345,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     END IF
                     ensureSelectedVisible(@m)
                 ELSEIF NOT clickNode.IsDir THEN
-                    openFile(@m, clickNode.Path)
+                    DIM mcOpenCmd AS tea.Cmd = openFile(@m, clickNode.Path)
+                    RETURN m, mcOpenCmd
                 END IF
             END IF
             RETURN m, NIL
@@ -1314,8 +1382,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     DIM typed AS STRING = m.ModalInput.Value()
                     m.ModalActive = FALSE
                     m.ModalIsInput = FALSE
-                    IF dispatchModalClose(@m, "", typed) THEN RETURN m, tea.Quit
-                    RETURN m, NIL
+                    DIM quit AS BOOLEAN
+                    DIM mcCmd AS tea.Cmd
+                    quit, mcCmd = dispatchModalClose(@m, "", typed)
+                    IF quit THEN RETURN m, tea.Quit
+                    RETURN m, mcCmd
                 END IF
                 DIM newTi AS textinput.Model
                 DIM tiCmd AS tea.Cmd
@@ -1340,8 +1411,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     pick = m.ModalButtons[m.ModalIdx]
                 END IF
                 m.ModalActive = FALSE
-                IF dispatchModalClose(@m, pick, "") THEN RETURN m, tea.Quit
-                RETURN m, NIL
+                DIM bQuit AS BOOLEAN
+                DIM bCmd AS tea.Cmd
+                bQuit, bCmd = dispatchModalClose(@m, pick, "")
+                IF bQuit THEN RETURN m, tea.Quit
+                RETURN m, bCmd
             END IF
             ' Swallow other keys while the modal is up.
             RETURN m, NIL
@@ -1638,7 +1712,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     END IF
                     ensureSelectedVisible(@m)
                 ELSEIF NOT node.IsDir THEN
-                    openFile(@m, node.Path)
+                    DIM kbOpenCmd AS tea.Cmd = openFile(@m, node.Path)
+                    RETURN m, kbOpenCmd
                 END IF
             END IF
             RETURN m, NIL
@@ -2360,6 +2435,26 @@ FUNCTION (m AS Model) View() AS tea.View
             DIM comp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer, ddLayer)
             full = comp.Render()
         END IF
+    END IF
+
+    ' --- Loading overlay (Z=3, above modal and dropdown) ----------
+    ' Shown while an async openFile is in flight. Small framed box
+    ' centered on the screen so the user knows their click landed
+    ' even when the file is too large to load instantly.
+    IF m.Loading <> "" THEN
+        DIM ldText AS STRING = "Loading " + m.Loading + "..."
+        DIM ldBox AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Padding(0, 3)
+        DIM ldOut AS STRING = ldBox.Render(ldText)
+        DIM ldW AS INTEGER = lipgloss.Width(ldOut)
+        DIM ldH AS INTEGER = lipgloss.Height(ldOut)
+        DIM ldX AS INTEGER = (w - ldW) / 2
+        DIM ldY AS INTEGER = (h - ldH) / 2
+        IF ldX < 0 THEN ldX = 0
+        IF ldY < 0 THEN ldY = 0
+        DIM bgL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+        DIM ldL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(ldOut).X(ldX).Y(ldY).Z(3)
+        DIM ldComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgL, ldL)
+        full = ldComp.Render()
     END IF
 
     ' --- Modal overlay (Z=2 so it floats above an open dropdown) ---
