@@ -236,6 +236,11 @@ TYPE Widget
     ' --- SplitPanel slots (container mode) -------------------------
     DIM SpSlot1 AS STRING                    ' widget id docked left/top of divider
     DIM SpSlot2 AS STRING                    ' widget id docked right/bottom of divider
+
+    ' --- Process tool (non-visual subprocess invoker) ---------------
+    DIM PrCommand AS STRING                  ' executable path or name on PATH
+    DIM PrArgs    AS STRING                  ' comma-separated extra args
+    DIM PrCwd     AS STRING                  ' optional working directory
 END TYPE
 
 ' ----------------------------------------------------------------------
@@ -410,6 +415,7 @@ FUNCTION SetWidgetProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY)
     IF w.Kind = WidgetKindTextArea    THEN RETURN SetTextAreaProperty(w, name, value)
     IF w.Kind = WidgetKindCodeEditor  THEN RETURN SetCodeEditorProperty(w, name, value)
     IF w.Kind = WidgetKindFormCanvas  THEN RETURN SetFormCanvasProperty(w, name, value)
+    IF w.Kind = "Process"             THEN RETURN SetProcessProperty(w, name, value)
     IF w.Kind = WidgetKindSplitPanel  THEN RETURN SetSplitPanelProperty(w, name, value)
     IF w.Kind = WidgetKindPropertyGrid THEN RETURN SetPropertyGridProperty(w, name, value)
     IF w.Kind = WidgetKindToolbar     THEN RETURN SetToolbarProperty(w, name, value)
@@ -525,6 +531,11 @@ FUNCTION WidgetToEntry(w AS Widget) AS WidgetEntry
         props["ShowGrid"] = w.FcShowGrid
         props["GridDot"]  = w.FcGridDot
     END IF
+    IF w.Kind = "Process" THEN
+        props["Command"] = w.PrCommand
+        props["Args"]    = w.PrArgs
+        props["Cwd"]     = w.PrCwd
+    END IF
     IF w.Kind = WidgetKindSplitPanel THEN
         props["Orientation"] = w.LstItems
         props["Position"]    = w.LstIdx
@@ -580,6 +591,9 @@ SUB ApplyEntryProperties(w AS POINTER TO Widget, e AS WidgetEntry)
     keys = APPEND(keys, "GridDot")
     keys = APPEND(keys, "Slot1")
     keys = APPEND(keys, "Slot2")
+    keys = APPEND(keys, "Command")
+    keys = APPEND(keys, "Args")
+    keys = APPEND(keys, "Cwd")
     DIM i AS INTEGER
     FOR i = 0 TO LEN(keys) - 1
         DIM k AS STRING = keys[i]

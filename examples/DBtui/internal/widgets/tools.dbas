@@ -17,6 +17,7 @@ END TYPE
 FUNCTION DefaultToolRegistry() AS ToolRegistry
     DIM r AS ToolRegistry
     r.Kinds = APPEND(r.Kinds, ToolKindFileDialog)
+    r.Kinds = APPEND(r.Kinds, ToolKindProcess)
     sort.Strings(r.Kinds)
     RETURN r
 END FUNCTION
@@ -43,6 +44,17 @@ FUNCTION (r AS ToolRegistry) Create(kind AS STRING, id AS STRING) AS (ToolEntry,
         props["ButtonText"]  = "..."
         t.Properties = props
         RETURN t, NIL
+    END IF
+    IF kind = ToolKindProcess THEN
+        DIM pt AS ToolEntry
+        pt.Id = id
+        pt.Kind = kind
+        DIM pprops AS MAP OF STRING TO ANY
+        pprops["Command"] = ""
+        pprops["Args"]    = ""
+        pprops["Cwd"]     = ""
+        pt.Properties = pprops
+        RETURN pt, NIL
     END IF
     DIM zero AS ToolEntry
     RETURN zero, NewError("unknown tool kind: " + kind)

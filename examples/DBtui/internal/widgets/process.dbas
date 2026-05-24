@@ -1,0 +1,66 @@
+' DBtui — internal/widgets/process.dbas
+'
+' Process — non-visual subprocess invoker. Lives in form.Tools (like
+' FileDialog), appears in the project tree under tools/, and is
+' invoked at runtime as <id>_Run(). On success the generated runtime
+' stashes the captured stdout / stderr in package vars so the calling
+' code can read them via <id>_Stdout() / <id>_Stderr().
+'
+' Properties:
+'   Command — executable path or PATH-lookup name (e.g. "dbasic" or "/bin/ls")
+'   Args    — default args, comma-separated (e.g. "build,myproj.dbas")
+'   Cwd     — optional working directory (empty = inherit)
+'
+' Runtime API (emitted per-instance):
+'   FUNCTION <id>_Run() AS INTEGER                    — runs with default args, returns exit code
+'   FUNCTION <id>_RunWith(extra AS STRING) AS INTEGER — appends comma-separated extra args first
+'   FUNCTION <id>_Stdout() AS STRING                  — combined stdout from the last run
+'   FUNCTION <id>_Stderr() AS STRING                  — combined stderr from the last run
+
+CONST ToolKindProcess AS STRING = "Process"
+
+FUNCTION NewProcess(id AS STRING) AS Widget
+    DIM w AS Widget
+    w.Id = id
+    w.Kind = ToolKindProcess
+    w.PrCommand = ""
+    w.PrArgs = ""
+    w.PrCwd = ""
+    RETURN w
+END FUNCTION
+
+FUNCTION ProcessProperties(w AS Widget) AS []Property
+    DIM out AS []Property
+    out = APPEND(out, StringProp("Command", w.PrCommand))
+    out = APPEND(out, StringProp("Args", w.PrArgs))
+    out = APPEND(out, StringProp("Cwd", w.PrCwd))
+    RETURN out
+END FUNCTION
+
+FUNCTION SetProcessProperty(w AS POINTER TO Widget, name AS STRING, value AS ANY) AS ERROR
+    IF name = "Command" THEN
+        DIM s AS STRING
+        DIM err AS ERROR
+        s, err = coerceString(name, value)
+        IF err <> NIL THEN RETURN err
+        w.PrCommand = s
+        RETURN NIL
+    END IF
+    IF name = "Args" THEN
+        DIM a AS STRING
+        DIM aerr AS ERROR
+        a, aerr = coerceString(name, value)
+        IF aerr <> NIL THEN RETURN aerr
+        w.PrArgs = a
+        RETURN NIL
+    END IF
+    IF name = "Cwd" THEN
+        DIM c AS STRING
+        DIM cerr AS ERROR
+        c, cerr = coerceString(name, value)
+        IF cerr <> NIL THEN RETURN cerr
+        w.PrCwd = c
+        RETURN NIL
+    END IF
+    RETURN NewError("unknown Process property: " + name)
+END FUNCTION

@@ -2848,6 +2848,7 @@ END FUNCTION
 '     emitFileSelectedStubs supplies an empty stub).
 FUNCTION emitTools(form AS Form) AS STRING
     DIM s AS STRING = ""
+    DIM hasProcess AS BOOLEAN = FALSE
     DIM i AS INTEGER
     FOR i = 0 TO LEN(form.Tools) - 1
         DIM t AS ToolEntry = form.Tools[i]
@@ -2856,6 +2857,7 @@ FUNCTION emitTools(form AS Form) AS STRING
             s = s + "    gPendingDialog = " + dbasStr(t.Id) + "\n"
             s = s + "END SUB\n\n"
         END IF
+        IF t.Kind = "Process" THEN hasProcess = TRUE
     NEXT i
     s = s + "SUB dispatchFileSelected(toolId AS STRING, path AS STRING)\n"
     FOR i = 0 TO LEN(form.Tools) - 1
@@ -2865,6 +2867,98 @@ FUNCTION emitTools(form AS Form) AS STRING
         END IF
     NEXT i
     s = s + "END SUB\n\n"
+    IF hasProcess THEN s = s + emitProcessRuntime(form)
+    RETURN s
+END FUNCTION
+
+' emitProcessRuntime — per-Process-tool Run/Stdout/Stderr/ExitCode API.
+' Synchronous: <id>_Run blocks until the subprocess exits, captures
+' stdout+stderr separately, returns the exit code. Subsequent calls
+' to <id>_Stdout / <id>_Stderr / <id>_ExitCode read the last result.
+FUNCTION emitProcessRuntime(form AS Form) AS STRING
+    DIM s AS STRING = ""
+    s = s + "' --- Process tool runtime --------------------------------------\n"
+    s = s + "IMPORT \"bytes\"\n"
+    s = s + "IMPORT \"os/exec\" AS osexec\n"
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(form.Tools) - 1
+        DIM t AS ToolEntry = form.Tools[i]
+        IF t.Kind <> "Process" THEN
+        ELSE
+        DIM defaultCmd AS STRING = getToolStr(t, "Command")
+        DIM defaultArgs AS STRING = getToolStr(t, "Args")
+        DIM defaultCwd AS STRING = getToolStr(t, "Cwd")
+        DIM stOut AS STRING = "g_" + t.Id + "_stdout"
+        DIM stErr AS STRING = "g_" + t.Id + "_stderr"
+        DIM stExit AS STRING = "g_" + t.Id + "_exit"
+        s = s + "DIM " + stOut + " AS STRING\n"
+        s = s + "DIM " + stErr + " AS STRING\n"
+        s = s + "DIM " + stExit + " AS INTEGER\n\n"
+        s = s + "FUNCTION " + t.Id + "_Stdout() AS STRING\n"
+        s = s + "    RETURN " + stOut + "\n"
+        s = s + "END FUNCTION\n\n"
+        s = s + "FUNCTION " + t.Id + "_Stderr() AS STRING\n"
+        s = s + "    RETURN " + stErr + "\n"
+        s = s + "END FUNCTION\n\n"
+        s = s + "FUNCTION " + t.Id + "_ExitCode() AS INTEGER\n"
+        s = s + "    RETURN " + stExit + "\n"
+        s = s + "END FUNCTION\n\n"
+        s = s + "FUNCTION " + t.Id + "_RunWith(extraArgs AS STRING) AS INTEGER\n"
+        s = s + "    DIM cmdPath AS STRING = " + dbasStr(defaultCmd) + "\n"
+        s = s + "    IF cmdPath = \"\" THEN\n"
+        s = s + "        " + stErr + " = \"Process " + t.Id + ": Command not configured\"\n"
+        s = s + "        " + stExit + " = 0 - 1\n"
+        s = s + "        RETURN " + stExit + "\n"
+        s = s + "    END IF\n"
+        s = s + "    DIM allArgs AS []STRING\n"
+        s = s + "    DIM dArgs AS STRING = " + dbasStr(defaultArgs) + "\n"
+        s = s + "    IF dArgs <> \"\" THEN\n"
+        s = s + "        DIM dParts AS []STRING = strings.Split(dArgs, \",\")\n"
+        s = s + "        DIM di AS INTEGER\n"
+        s = s + "        FOR di = 0 TO LEN(dParts) - 1\n"
+        s = s + "            DIM dp AS STRING = strings.TrimSpace(dParts[di])\n"
+        s = s + "            IF dp <> \"\" THEN allArgs = APPEND(allArgs, dp)\n"
+        s = s + "        NEXT di\n"
+        s = s + "    END IF\n"
+        s = s + "    IF extraArgs <> \"\" THEN\n"
+        s = s + "        DIM eParts AS []STRING = strings.Split(extraArgs, \",\")\n"
+        s = s + "        DIM ei AS INTEGER\n"
+        s = s + "        FOR ei = 0 TO LEN(eParts) - 1\n"
+        s = s + "            DIM ep AS STRING = strings.TrimSpace(eParts[ei])\n"
+        s = s + "            IF ep <> \"\" THEN allArgs = APPEND(allArgs, ep)\n"
+        s = s + "        NEXT ei\n"
+        s = s + "    END IF\n"
+        s = s + "    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command(cmdPath)\n"
+        s = s + "    DIM ai AS INTEGER\n"
+        s = s + "    FOR ai = 0 TO LEN(allArgs) - 1\n"
+        s = s + "        cmd.Args = APPEND(cmd.Args, allArgs[ai])\n"
+        s = s + "    NEXT ai\n"
+        s = s + "    DIM cwd AS STRING = " + dbasStr(defaultCwd) + "\n"
+        s = s + "    IF cwd <> \"\" THEN cmd.Dir = cwd\n"
+        s = s + "    DIM outBuf AS bytes.Buffer\n"
+        s = s + "    DIM errBuf AS bytes.Buffer\n"
+        s = s + "    cmd.Stdout = @outBuf\n"
+        s = s + "    cmd.Stderr = @errBuf\n"
+        s = s + "    DIM runErr AS ERROR = cmd.Run()\n"
+        s = s + "    " + stOut + " = outBuf.String()\n"
+        s = s + "    " + stErr + " = errBuf.String()\n"
+        s = s + "    IF runErr <> NIL THEN\n"
+        s = s + "        IF cmd.ProcessState <> NIL THEN\n"
+        s = s + "            " + stExit + " = cmd.ProcessState.ExitCode()\n"
+        s = s + "        ELSE\n"
+        s = s + "            " + stExit + " = 0 - 1\n"
+        s = s + "            IF " + stErr + " = \"\" THEN " + stErr + " = runErr.Error()\n"
+        s = s + "        END IF\n"
+        s = s + "    ELSE\n"
+        s = s + "        " + stExit + " = 0\n"
+        s = s + "    END IF\n"
+        s = s + "    RETURN " + stExit + "\n"
+        s = s + "END FUNCTION\n\n"
+        s = s + "FUNCTION " + t.Id + "_Run() AS INTEGER\n"
+        s = s + "    RETURN " + t.Id + "_RunWith(\"\")\n"
+        s = s + "END FUNCTION\n\n"
+        END IF
+    NEXT i
     RETURN s
 END FUNCTION
 
