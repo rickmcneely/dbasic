@@ -125,6 +125,13 @@ TYPE Model
     DIM MenuActive  AS INTEGER           ' -1 = closed; else top-menu index
     DIM MenuItemIdx AS INTEGER           ' cursor inside the open dropdown
 
+    ' Focused pane — which panel "owns" the keyboard right now. Valid
+    ' values: "tree" or "editor". Tab/Shift+Tab cycles between them;
+    ' clicks on a pane re-focus it. The focused pane gets a sharper
+    ' border (titledBox(..., focused=TRUE)) and, for the editor,
+    ' the textarea's blinking cursor.
+    DIM FocusedPane AS STRING
+
     ' Generic modal dialog state. When ModalActive is TRUE the
     ' renderer overlays a framed Yes/No-style dialog and Update
     ' intercepts keystrokes for navigation + commit.
@@ -337,8 +344,9 @@ FUNCTION findTabIdx(m AS Model, path AS STRING) AS INTEGER
     RETURN 0 - 1
 END FUNCTION
 
-' switchToTab — make tab `idx` active. Focuses its editor (when in
-' code mode) and blurs the previous one. No-op if idx is out of range.
+' switchToTab — make tab `idx` active. Focuses its editor when the
+' editor pane is already the focused one; otherwise just swaps the
+' active buffer (leaves cursor in tree). No-op if idx is out of range.
 SUB switchToTab(m AS POINTER TO Model, idx AS INTEGER)
     IF idx < 0 OR idx >= LEN(m.Tabs) THEN RETURN
     ' Blur the previous tab's editor so only one shows a cursor.
@@ -346,7 +354,7 @@ SUB switchToTab(m AS POINTER TO Model, idx AS INTEGER)
         m.Tabs[m.TabIdx].Editor.Blur()
     END IF
     m.TabIdx = idx
-    IF m.ViewMode = "code" THEN
+    IF m.FocusedPane = "editor" AND m.ViewMode = "code" THEN
         DIM fcmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
         _ = fcmd
     END IF
@@ -365,15 +373,17 @@ SUB closeTab(m AS POINTER TO Model, idx AS INTEGER)
     NEXT i
     m.Tabs = keep
     IF LEN(m.Tabs) = 0 THEN
-        ' Nothing left — drop back to the form-designer placeholder.
+        ' Nothing left — drop back to the form-designer placeholder
+        ' and refocus the tree (since there's no editor to land in).
         m.TabIdx = 0 - 1
         m.ViewMode = "form"
+        setFocus(m, "tree")
         m.Status = "all files closed"
         RETURN
     END IF
     ' Clamp the active index. Prefer staying near the closed tab.
     IF m.TabIdx >= LEN(m.Tabs) THEN m.TabIdx = LEN(m.Tabs) - 1
-    IF m.ViewMode = "code" THEN
+    IF m.FocusedPane = "editor" AND m.ViewMode = "code" THEN
         DIM fcmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
         _ = fcmd
     END IF
@@ -388,6 +398,23 @@ FUNCTION newTextarea() AS textarea.Model
     ed.Placeholder = ""
     RETURN ed
 END FUNCTION
+
+' setFocus — shift keyboard focus to `pane` ("tree" or "editor").
+' Handles editor Focus()/Blur() so only the focused pane shows a
+' cursor. Asking for "editor" focus when no editor is available
+' silently falls back to "tree" — the safe pane is always available.
+SUB setFocus(m AS POINTER TO Model, pane AS STRING)
+    IF pane = "editor" AND hasActiveTab(^m) AND m.ViewMode = "code" THEN
+        DIM cmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
+        _ = cmd
+        m.FocusedPane = "editor"
+        RETURN
+    END IF
+    ' Default: focus the tree (always available). Blur any tab editor
+    ' so the cursor doesn't keep blinking in an inactive pane.
+    IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
+    m.FocusedPane = "tree"
+END SUB
 
 ' saveCurrent — write the active tab's buffer to its Path on disk.
 ' Status reports the byte count on success or the error on failure.
@@ -517,15 +544,14 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
     END IF
     IF action = "view.form" THEN
         m.ViewMode = "form"
-        IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
+        setFocus(m, "tree")
         m.Status = "form designer"
         RETURN
     END IF
     IF action = "view.code" THEN
         m.ViewMode = "code"
         IF hasActiveTab(^m) THEN
-            DIM cmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
-            _ = cmd
+            setFocus(m, "editor")
             m.Status = "code editor — " + m.Tabs[m.TabIdx].Path
         ELSE
             m.Status = "code editor (no files open — pick one from the tree)"
@@ -562,6 +588,7 @@ SUB openFile(m AS POINTER TO Model, path AS STRING)
     IF existing >= 0 THEN
         m.ViewMode = "code"
         switchToTab(m, existing)
+        setFocus(m, "editor")
         m.Status = "switched to " + path
         RETURN
     END IF
@@ -590,9 +617,9 @@ SUB openFile(m AS POINTER TO Model, path AS STRING)
     IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
     m.Tabs = APPEND(m.Tabs, t)
     m.TabIdx = LEN(m.Tabs) - 1
-    DIM cmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
-    _ = cmd
     m.ViewMode = "code"
+    ' Focus the new editor pane so the user can start typing right away.
+    setFocus(m, "editor")
     m.Status = "opened " + path
 END SUB
 
@@ -611,13 +638,21 @@ FUNCTION newModel() AS Model
     ' Pre-expand the root so the first-level entries show on startup.
     m.TreeExpanded = APPEND(m.TreeExpanded, cwd)
     buildTreeNodes(@m)
+    ' Start with the cursor on the first child of the root (or on the
+    ' root row itself when the project is empty). This way the user's
+    ' first Enter does something visible — opening or expanding —
+    ' instead of being a no-op on the bare root row.
     m.TreeSelected = 0
+    IF LEN(m.TreeNodes) > 1 THEN m.TreeSelected = 1
     m.TreeOffset = 0
     ' No tabs open at startup. The middle pane shows the form
     ' designer until the user opens a file from the tree (which
     ' creates the first tab) or presses F7.
     m.ViewMode = "form"
     m.TabIdx = 0 - 1
+    ' Tree starts focused — the tree is always available and the
+    ' editor doesn't exist yet.
+    m.FocusedPane = "tree"
     ' Menubar definitions + closed-state.
     m.Menus = buildMenus()
     m.MenuActive = 0 - 1
@@ -718,6 +753,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         ' (3) Tabs caption row (y = 1) in code mode with open tabs.
+        '     Clicking a tab also focuses the editor pane.
         IF mcMsg.Y = 1 AND m.ViewMode = "code" AND LEN(m.Tabs) > 0 THEN
             DIM tabHit AS INTEGER = tabAtX(m, mcMsg.X)
             IF tabHit >= 0 THEN
@@ -725,9 +761,44 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     _ = tryCloseTab(@m, tabHit)
                 ELSE
                     switchToTab(@m, tabHit)
+                    setFocus(@m, "editor")
                 END IF
                 RETURN m, NIL
             END IF
+        END IF
+        ' (4) Project-tree click — same layout math View() uses for
+        ' the left pane (leftW = 28, bodyH = h - 2). Clicking the tree
+        ' focuses it; a click on the already-selected row opens the
+        ' file (or toggles the folder).
+        DIM treeBodyH AS INTEGER = m.Height - 2
+        IF treeBodyH < 4 THEN treeBodyH = 4
+        DIM treeHit AS INTEGER = treeNodeAt(m, mcMsg.X, mcMsg.Y, 28, treeBodyH)
+        IF treeHit >= 0 THEN
+            DIM alreadyOn AS BOOLEAN = (m.TreeSelected = treeHit)
+            m.TreeSelected = treeHit
+            setFocus(@m, "tree")
+            ' First click selects; second click on the same row commits.
+            ' Feels natural for both navigation and double-clickers.
+            IF alreadyOn THEN
+                DIM clickNode AS TreeNode = m.TreeNodes[treeHit]
+                IF clickNode.IsDir AND clickNode.Depth > 0 THEN
+                    setExpanded(@m, clickNode.Path, NOT isExpanded(m, clickNode.Path))
+                    buildTreeNodes(@m)
+                    IF m.TreeSelected >= LEN(m.TreeNodes) THEN
+                        m.TreeSelected = LEN(m.TreeNodes) - 1
+                    END IF
+                ELSEIF NOT clickNode.IsDir THEN
+                    openFile(@m, clickNode.Path)
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
+        ' (5) Click landed in the middle pane (between left and right
+        '     panes, below the tabs row) while code mode is active —
+        '     focus the editor so the next keystroke lands there.
+        IF mcMsg.Y >= 2 AND mcMsg.Y < m.Height - 1 AND mcMsg.X >= 28 AND mcMsg.X < m.Width - 32 AND m.ViewMode = "code" AND hasActiveTab(m) THEN
+            setFocus(@m, "editor")
+            RETURN m, NIL
         END IF
     END IF
 
@@ -877,15 +948,33 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
 
         IF key = "f7" THEN
             ' Toggle between form-design view and code editor view.
+            ' Focus follows the view: form → tree, code → editor (if
+            ' a file is open) or tree (otherwise).
             IF m.ViewMode = "code" THEN
                 m.ViewMode = "form"
-                IF hasActiveTab(m) THEN m.Tabs[m.TabIdx].Editor.Blur()
+                setFocus(@m, "tree")
             ELSE
                 m.ViewMode = "code"
                 IF hasActiveTab(m) THEN
-                    DIM fcmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
-                    _ = fcmd
+                    setFocus(@m, "editor")
+                ELSE
+                    setFocus(@m, "tree")
                 END IF
+            END IF
+            RETURN m, NIL
+        END IF
+
+        ' --- Focus cycle ----------------------------------------------
+        ' Tab / Shift+Tab toggles focus between tree and editor without
+        ' changing ViewMode — so you can browse files while the editor
+        ' still shows your current buffer. Only meaningful when there
+        ' is an editor to switch *to*. F6 is an alias for users who
+        ' want to keep plain Tab available inside the editor.
+        IF (key = "tab" OR key = "shift+tab" OR key = "f6") AND hasActiveTab(m) AND m.ViewMode = "code" THEN
+            IF m.FocusedPane = "tree" THEN
+                setFocus(@m, "editor")
+            ELSE
+                setFocus(@m, "tree")
             END IF
             RETURN m, NIL
         END IF
@@ -912,14 +1001,16 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             END IF
         END IF
 
-        ' When the code editor is showing AND a file is open, route
-        ' keystrokes into the active tab's editor so typing, arrows,
-        ' Ctrl+arrow, etc. behave like a normal editor. Esc exits
-        ' back to tree-focus / form view.
-        IF m.ViewMode = "code" AND hasActiveTab(m) THEN
+        ' --- Editor routing -------------------------------------------
+        ' When the editor pane is focused (regardless of ViewMode
+        ' guard, which the focus helper already respects), route
+        ' keystrokes into the active tab's editor. Esc moves focus
+        ' back to the tree but leaves the editor visible — F7
+        ' (or "Form Designer" from the View menu) is how you switch
+        ' away from code mode entirely.
+        IF m.FocusedPane = "editor" AND hasActiveTab(m) AND m.ViewMode = "code" THEN
             IF key = "esc" THEN
-                m.ViewMode = "form"
-                m.Tabs[m.TabIdx].Editor.Blur()
+                setFocus(@m, "tree")
                 RETURN m, NIL
             END IF
             DIM prevBuf AS STRING = m.Tabs[m.TabIdx].Editor.Value()
@@ -931,7 +1022,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, eCmd
         END IF
 
-        ' --- Tree navigation (only when not in code mode) -------------
+        ' --- Tree navigation (runs when the tree pane is focused) -----
+        IF m.FocusedPane <> "tree" THEN RETURN m, NIL
         IF key = "q" THEN
             IF tryQuit(@m) THEN RETURN m, tea.Quit
             RETURN m, NIL
@@ -1109,6 +1201,26 @@ FUNCTION closeXOnTab(m AS Model, i AS INTEGER, mx AS INTEGER) AS BOOLEAN
     RETURN FALSE
 END FUNCTION
 
+' treeNodeAt — return the TreeNodes index the user clicked on, or -1
+' if the click landed outside the tree's content area.
+'
+' Coordinate layout: View() composes menubar (y=0), body (y=1..h-2),
+' statusbar (y=h-1). Left pane is `titledBox` at body x=0 — top row
+' at y=1, body content rows start at y=2 and span `bodyH-2` lines
+' (the bodyBox has BorderTop=FALSE so its first row IS the first
+' tree row). Left border is at x=0, right border at x=leftW-1.
+FUNCTION treeNodeAt(m AS Model, mx AS INTEGER, my AS INTEGER, leftW AS INTEGER, bodyH AS INTEGER) AS INTEGER
+    IF mx < 1 OR mx >= leftW - 1 THEN RETURN 0 - 1
+    DIM row AS INTEGER = my - 2
+    IF row < 0 THEN RETURN 0 - 1
+    DIM idx AS INTEGER = m.TreeOffset + row
+    IF idx < 0 OR idx >= LEN(m.TreeNodes) THEN RETURN 0 - 1
+    ' Visible-rows cap so clicks below the last drawn row don't
+    ' resolve to a phantom node.
+    IF row >= bodyH - 2 THEN RETURN 0 - 1
+    RETURN idx
+END FUNCTION
+
 ' renderDropdown — produce the framed dropdown for the active menu.
 ' Items get hotkey emphasis; the cursor row inverts colors. Separators
 ' render as a horizontal line spanning the dropdown's inner width.
@@ -1231,13 +1343,14 @@ FUNCTION renderTreeBody(m AS Model, innerW AS INTEGER, innerH AS INTEGER) AS STR
     RETURN strings.Join(lines, "\n")
 END FUNCTION
 
-' renderLeftPane — Project tree column. Focused = TRUE so it gets the
-' square-corner border (matches the original's startup focus state).
+' renderLeftPane — Project tree column. The border style follows
+' keyboard focus: square-corner = focused, rounded = unfocused.
 FUNCTION renderLeftPane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
     ' titledBox renders a top row + 3-sided body box. The body box's
     ' inner area is (width-2) chars wide × (height-2) rows tall.
     DIM body AS STRING = renderTreeBody(m, width - 2, height - 2)
-    RETURN titledBox("Project", body, width, height, TRUE)
+    DIM treeFocused AS BOOLEAN = (m.FocusedPane = "tree")
+    RETURN titledBox("Project", body, width, height, treeFocused)
 END FUNCTION
 
 ' tabLabel — display label for tab `i`: basename, dirty-prefixed with
