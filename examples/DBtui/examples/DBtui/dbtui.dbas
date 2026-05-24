@@ -144,6 +144,16 @@ TYPE Model
     ' Last find query — F3 repeats it from the current cursor.
     DIM FindQuery AS STRING
 
+    ' Cached textarea.View() output. Re-rendering the editor is the
+    ' single most expensive thing View() does, and bubbletea calls
+    ' View() after every Update — including every mouse-motion
+    ' event. Caching the output and only refreshing it when the
+    ' editor's state actually changed makes hover feel snappy.
+    DIM EditorCacheView AS STRING
+    DIM EditorCacheW    AS INTEGER
+    DIM EditorCacheH    AS INTEGER
+    DIM EditorCacheDirty AS BOOLEAN
+
     ' Generic modal dialog state. Two flavours:
     '   • button modal  → ModalIsInput=FALSE; user picks one of
     '     ModalButtons via arrows + Enter.
@@ -414,6 +424,7 @@ SUB switchToTab(m AS POINTER TO Model, idx AS INTEGER)
         DIM fcmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
         _ = fcmd
     END IF
+    invalidateEditorCache(m)
 END SUB
 
 ' closeTab — drop tab `idx` from the list. Adjusts TabIdx so it still
@@ -443,6 +454,34 @@ SUB closeTab(m AS POINTER TO Model, idx AS INTEGER)
         DIM fcmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
         _ = fcmd
     END IF
+    invalidateEditorCache(m)
+END SUB
+
+' invalidateEditorCache — flag the cached editor view as stale so
+' the next render rebuilds it. Called from anywhere the editor's
+' state could have changed (typing, tab switch, focus, file
+' open/close, find/goto cursor jumps, window resize).
+SUB invalidateEditorCache(m AS POINTER TO Model)
+    m.EditorCacheDirty = TRUE
+END SUB
+
+' refreshEditorCache — re-render the active tab's textarea into
+' the cache at the given pane dimensions. Cheap to call repeatedly:
+' returns immediately when the cache is already fresh AND sized
+' for `width` × `height`.
+SUB refreshEditorCache(m AS POINTER TO Model, width AS INTEGER, height AS INTEGER)
+    IF NOT hasActiveTab(^m) THEN
+        m.EditorCacheView = ""
+        m.EditorCacheDirty = FALSE
+        RETURN
+    END IF
+    IF NOT m.EditorCacheDirty AND m.EditorCacheW = width AND m.EditorCacheH = height THEN RETURN
+    m.Tabs[m.TabIdx].Editor.SetWidth(width)
+    m.Tabs[m.TabIdx].Editor.SetHeight(height)
+    m.EditorCacheView = m.Tabs[m.TabIdx].Editor.View()
+    m.EditorCacheW = width
+    m.EditorCacheH = height
+    m.EditorCacheDirty = FALSE
 END SUB
 
 ' newTextarea — fresh, empty textarea.Model configured the way every
@@ -537,6 +576,7 @@ SUB findNextInActive(m AS POINTER TO Model, fromOff AS INTEGER)
         RETURN
     END IF
     moveCursorToOffset(m, abs)
+    invalidateEditorCache(m)
     setFocus(m, "editor")
     IF wrapped THEN
         m.Status = "wrapped — '" + m.FindQuery + "'"
@@ -546,18 +586,39 @@ SUB findNextInActive(m AS POINTER TO Model, fromOff AS INTEGER)
 END SUB
 
 ' gotoLine — jump the cursor to the start of line `line` (1-based)
-' in the active tab. Out-of-range values are clamped.
+' in the active tab AND scroll so that line lands at the *top* of
+' the viewport (matching VBDOS / VS Code behaviour).
+'
+' textarea doesn't expose a scroll-offset setter — but it auto-
+' scrolls to keep the cursor visible. So the trick is:
+'   1. drive the cursor down to (target + viewH - 1)   →  textarea
+'      scrolls so that line is at the bottom of the viewport.
+'   2. walk back up to the actual target               →  cursor
+'      moves from bottom of viewport to top, no further scroll.
 SUB gotoLine(m AS POINTER TO Model, line AS INTEGER)
     IF NOT hasActiveTab(^m) THEN RETURN
-    IF line < 1 THEN line = 1
     DIM lineCount AS INTEGER = m.Tabs[m.TabIdx].Editor.LineCount()
+    DIM viewH AS INTEGER = m.Tabs[m.TabIdx].Editor.Height()
+    IF viewH < 1 THEN viewH = 1
+    IF line < 1 THEN line = 1
     IF line > lineCount THEN line = lineCount
+    ' 0-based indices for textarea.
+    DIM target AS INTEGER = line - 1
+    DIM anchor AS INTEGER = target + viewH - 1
+    IF anchor > lineCount - 1 THEN anchor = lineCount - 1
+    ' Phase 1: reset to top, then walk down to the anchor.
     m.Tabs[m.TabIdx].Editor.MoveToBegin()
     DIM i AS INTEGER
-    FOR i = 0 TO line - 2
+    FOR i = 0 TO anchor - 1
         m.Tabs[m.TabIdx].Editor.CursorDown()
     NEXT i
+    ' Phase 2: walk up to the target — viewport stays put.
+    DIM up AS INTEGER = anchor - target
+    FOR i = 0 TO up - 1
+        m.Tabs[m.TabIdx].Editor.CursorUp()
+    NEXT i
     m.Tabs[m.TabIdx].Editor.SetCursorColumn(0)
+    invalidateEditorCache(m)
     setFocus(m, "editor")
     m.Status = "line " + fmt.Sprintf("%d", line)
 END SUB
@@ -571,12 +632,14 @@ SUB setFocus(m AS POINTER TO Model, pane AS STRING)
         DIM cmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
         _ = cmd
         m.FocusedPane = "editor"
+        invalidateEditorCache(m)
         RETURN
     END IF
     ' Default: focus the tree (always available). Blur any tab editor
     ' so the cursor doesn't keep blinking in an inactive pane.
     IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
     m.FocusedPane = "tree"
+    invalidateEditorCache(m)
 END SUB
 
 ' saveCurrent — write the active tab's buffer to its Path on disk.
@@ -727,6 +790,7 @@ SUB newEmptyTab(m AS POINTER TO Model, path AS STRING)
     m.TabIdx = LEN(m.Tabs) - 1
     m.ViewMode = "code"
     setFocus(m, "editor")
+    invalidateEditorCache(m)
     m.Status = "new file: " + path
 END SUB
 
@@ -980,6 +1044,7 @@ SUB openFile(m AS POINTER TO Model, path AS STRING)
     m.ViewMode = "code"
     ' Focus the new editor pane so the user can start typing right away.
     setFocus(m, "editor")
+    invalidateEditorCache(m)
     m.Status = "opened " + path
 END SUB
 
@@ -1040,6 +1105,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF szOk THEN
         m.Width = sz.Width
         m.Height = sz.Height
+        ' New dimensions → cached editor view almost certainly
+        ' wrong; force a refresh on the next paint.
+        invalidateEditorCache(@m)
         RETURN m, NIL
     END IF
 
@@ -1068,10 +1136,23 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mmOk AS BOOLEAN
     mmMsg, mmOk = msg.(tea.MouseMotionMsg)
     IF mmOk THEN
-        ' Record the live hover position. Every render frame queries
-        ' (HoverX, HoverY) so the row / cell under the pointer gets
-        ' restyled — no extra repaint signal required because
-        ' bubbletea re-renders on every message anyway.
+        ' Drop identical-cell events early. bubbletea v2 in
+        ' MouseModeAllMotion floods us with events as the pointer
+        ' moves; deduping makes hover feel snappy.
+        IF mmMsg.X = m.HoverX AND mmMsg.Y = m.HoverY THEN RETURN m, NIL
+        ' Populate the editor view cache on the FIRST motion after a
+        ' state change. This is the chokepoint that prevents the
+        ' textarea.View() cost from re-running on every subsequent
+        ' motion event (which is what made hover feel sluggish).
+        IF m.EditorCacheDirty THEN
+            DIM emidW AS INTEGER = m.Width - 28 - 32
+            IF emidW < 20 THEN emidW = 20
+            DIM ebodyH AS INTEGER = m.Height - 2
+            IF ebodyH < 4 THEN ebodyH = 4
+            refreshEditorCache(@m, emidW, ebodyH - 1)
+        END IF
+        ' Record the live hover position so renderers can restyle the
+        ' cell under the pointer on this frame.
         m.HoverX = mmMsg.X
         m.HoverY = mmMsg.Y
         IF m.MenuActive >= 0 AND mmMsg.Y = 0 THEN
@@ -1440,6 +1521,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     setFocus(@m, "tree")
                 END IF
             END IF
+            invalidateEditorCache(@m)
             RETURN m, NIL
         END IF
 
@@ -1498,6 +1580,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             newEd, eCmd = m.Tabs[m.TabIdx].Editor.Update(msg)
             m.Tabs[m.TabIdx].Editor = newEd
             IF newEd.Value() <> prevBuf THEN m.Tabs[m.TabIdx].Dirty = TRUE
+            ' Any editor.Update may have moved the cursor or content,
+            ' so the cached View() output is now stale.
+            invalidateEditorCache(@m)
             RETURN m, eCmd
         END IF
 
@@ -1989,10 +2074,17 @@ FUNCTION renderMiddlePane(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
     IF bodyH < 1 THEN bodyH = 1
     DIM bodyStr AS STRING
     IF m.ViewMode = "code" AND hasActiveTab(m) THEN
-        ' Size the active tab's textarea to fit, then render.
-        m.Tabs[m.TabIdx].Editor.SetWidth(width)
-        m.Tabs[m.TabIdx].Editor.SetHeight(bodyH)
-        bodyStr = m.Tabs[m.TabIdx].Editor.View()
+        ' Prefer the cached textarea View() — refreshEditorCache
+        ' is the only place that calls the (expensive) live View().
+        ' Fall back to live render when the cache is stale or empty
+        ' so correctness is never sacrificed for the perf win.
+        IF m.EditorCacheView <> "" AND NOT m.EditorCacheDirty AND m.EditorCacheW = width AND m.EditorCacheH = bodyH THEN
+            bodyStr = m.EditorCacheView
+        ELSE
+            m.Tabs[m.TabIdx].Editor.SetWidth(width)
+            m.Tabs[m.TabIdx].Editor.SetHeight(bodyH)
+            bodyStr = m.Tabs[m.TabIdx].Editor.View()
+        END IF
     ELSEIF m.ViewMode = "code" THEN
         DIM emptyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder)).Width(width).Height(bodyH).Align(lipgloss.Center, lipgloss.Center)
         bodyStr = emptyStyle.Render("(no files open — pick one from the tree)")
