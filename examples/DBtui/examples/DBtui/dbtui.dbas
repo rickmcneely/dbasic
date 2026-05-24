@@ -22,6 +22,7 @@ IMPORT "charm.land/bubbles/v2/textarea" AS textarea
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 IMPORT "fmt"
 IMPORT "os"
+IMPORT "os/exec" AS osexec
 IMPORT "strconv"
 IMPORT "strings"
 
@@ -247,6 +248,40 @@ SUB buildTreeNodes(m AS POINTER TO Model)
     m.TreeNodes = nodes
 END SUB
 
+' treeInnerH — number of rows the tree body has room to draw. View()
+' uses bodyH = m.Height - 2 for the left pane, and titledBox eats two
+' more rows (top title + bottom border), so the tree body is height-4.
+' Floor at 1 so the math never goes negative when the window is tiny.
+FUNCTION treeInnerH(m AS Model) AS INTEGER
+    DIM h AS INTEGER = m.Height - 4
+    IF h < 1 THEN h = 1
+    RETURN h
+END FUNCTION
+
+' ensureSelectedVisible — slide TreeOffset so TreeSelected stays
+' inside the visible window. Called from every nav action that
+' moves the cursor (arrow keys, click, expand-rebuild). The two
+' branches handle "cursor scrolled off the top" vs "off the bottom".
+SUB ensureSelectedVisible(m AS POINTER TO Model)
+    DIM innerH AS INTEGER = treeInnerH(^m)
+    IF m.TreeSelected < m.TreeOffset THEN
+        m.TreeOffset = m.TreeSelected
+    ELSEIF m.TreeSelected >= m.TreeOffset + innerH THEN
+        m.TreeOffset = m.TreeSelected - innerH + 1
+    END IF
+    IF m.TreeOffset < 0 THEN m.TreeOffset = 0
+END SUB
+
+' clampTreeOffset — used by the wheel-scroll path so the offset
+' never runs past the end of the node list. Doesn't move the
+' cursor — wheel scroll is independent of selection.
+SUB clampTreeOffset(m AS POINTER TO Model)
+    DIM maxOff AS INTEGER = LEN(m.TreeNodes) - treeInnerH(^m)
+    IF maxOff < 0 THEN maxOff = 0
+    IF m.TreeOffset > maxOff THEN m.TreeOffset = maxOff
+    IF m.TreeOffset < 0 THEN m.TreeOffset = 0
+END SUB
+
 ' baseName — last "/"-separated segment of a path. "examples/dbtui"
 ' returns "dbtui". Used for the tree root row's display name.
 FUNCTION baseName(p AS STRING) AS STRING
@@ -296,7 +331,7 @@ FUNCTION buildMenus() AS []MenuDef
 
     DIM runItems AS []MenuItem
     runItems = APPEND(runItems, mkItem("(R)un             F5", "run.run"))
-    runItems = APPEND(runItems, mkItem("(C)heck           F6", "run.check"))
+    runItems = APPEND(runItems, mkItem("(C)heck           F8", "run.check"))
     menus = APPEND(menus, mkMenu("(R)un", runItems))
 
     DIM helpItems AS []MenuItem
@@ -490,6 +525,86 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING) AS BOOLEAN
     RETURN FALSE
 END FUNCTION
 
+' -------------------------------------------------------------------------
+' Run / Check — shell out to the `dbasic` CLI on the active tab.
+'
+' "Run" uses tea.ExecProcess so the child program gets the full terminal
+' (interactive output, colour, raw keys). bubbletea suspends, the child
+' runs to completion, then bubbletea resumes and dispatches
+' RunFinishedMsg with the exit error (or NIL on success).
+'
+' "Check" runs synchronously — `dbasic check` is quick (~100ms) and we
+' want the result inline in the IDE rather than taking over the screen.
+' On failure the (truncated) compiler output goes into a popup modal.
+' -------------------------------------------------------------------------
+
+TYPE RunFinishedMsg
+    DIM Err AS ERROR
+END TYPE
+
+' runFinishedHandler — tea.ExecProcess callback. Wraps the child's
+' exit error in a RunFinishedMsg so Update can react in the regular
+' message-dispatch flow (status bar, future result panes, etc.).
+FUNCTION runFinishedHandler(err AS ERROR) AS tea.Msg
+    DIM msg AS RunFinishedMsg
+    msg.Err = err
+    RETURN msg
+END FUNCTION
+
+' doRun — save the active tab, then hand the terminal to
+' `dbasic run <path>`. Returns the Cmd so the caller can hand it
+' straight back to bubbletea.
+FUNCTION doRun(m AS POINTER TO Model) AS tea.Cmd
+    IF NOT hasActiveTab(^m) THEN
+        m.Status = "nothing to run"
+        RETURN NIL
+    END IF
+    saveCurrent(m)
+    DIM path AS STRING = m.Tabs[m.TabIdx].Path
+    m.Status = "running: dbasic run " + path
+    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command("dbasic", "run", path)
+    RETURN tea.ExecProcess(cmd, runFinishedHandler)
+END FUNCTION
+
+' truncateOutput — cap compiler output at ~12 lines so the modal
+' stays readable. Appends a "...+N more lines" footer when the
+' source is longer.
+FUNCTION truncateOutput(s AS STRING, maxLines AS INTEGER) AS STRING
+    DIM lines AS []STRING = strings.Split(s, "\n")
+    IF LEN(lines) <= maxLines THEN RETURN s
+    DIM out AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO maxLines - 1
+        out = APPEND(out, lines[i])
+    NEXT i
+    out = APPEND(out, fmt.Sprintf("... +%d more lines", LEN(lines) - maxLines))
+    RETURN strings.Join(out, "\n")
+END FUNCTION
+
+' doCheck — save + sync `dbasic check`. On success: status bar
+' confirmation. On failure: pop a modal with the truncated output.
+SUB doCheck(m AS POINTER TO Model)
+    IF NOT hasActiveTab(^m) THEN
+        m.Status = "nothing to check"
+        RETURN
+    END IF
+    saveCurrent(m)
+    DIM path AS STRING = m.Tabs[m.TabIdx].Path
+    m.Status = "checking " + path + "..."
+    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command("dbasic", "check", path)
+    DIM outBytes AS BYTES
+    DIM err AS ERROR
+    outBytes, err = cmd.CombinedOutput()
+    DIM out AS STRING = strings.TrimSpace(string(outBytes))
+    IF err = NIL THEN
+        m.Status = "check ok: " + path
+        RETURN
+    END IF
+    IF out = "" THEN out = err.Error()
+    out = truncateOutput(out, 12)
+    showModal(m, "Check failed: " + path, out, "OK", "check")
+END SUB
+
 ' anyDirtyTab — TRUE if any open tab has unsaved changes. Drives the
 ' quit-confirm prompt so closing the whole app doesn't silently throw
 ' away buffers in inactive tabs.
@@ -566,11 +681,14 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
         RETURN
     END IF
     IF action = "run.run" THEN
-        m.Status = "run: not wired yet"
+        ' Side note: dispatchAction is a SUB so it can't return a Cmd;
+        ' run.run is special-cased in the menubar Enter / mouse-click
+        ' / hotkey paths to invoke doRun() directly.
+        m.Status = "press F5 (or use Run menu) to run"
         RETURN
     END IF
     IF action = "run.check" THEN
-        m.Status = "check: not wired yet"
+        doCheck(m)
         RETURN
     END IF
     IF action = "help.about" THEN
@@ -690,6 +808,23 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     END IF
 
+    ' --- Run-finished message -------------------------------------
+    ' tea.ExecProcess calls runFinishedHandler when the child exits
+    ' and posts a RunFinishedMsg into our message loop. Status bar
+    ' is the simplest place to surface it; a bottom output pane can
+    ' do something fancier later.
+    DIM rfMsg AS RunFinishedMsg
+    DIM rfOk  AS BOOLEAN
+    rfMsg, rfOk = msg.(RunFinishedMsg)
+    IF rfOk THEN
+        IF rfMsg.Err = NIL THEN
+            m.Status = "run finished"
+        ELSE
+            m.Status = "run failed: " + rfMsg.Err.Error()
+        END IF
+        RETURN m, NIL
+    END IF
+
     ' --- Mouse motion (hover) -------------------------------------
     ' When a menu is open, sliding the cursor sideways across the
     ' menubar swings the active menu to whichever cell sits under
@@ -721,6 +856,24 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     END IF
 
+    ' --- Mouse wheel ----------------------------------------------
+    ' Wheel inside the left pane scrolls the tree (independent of
+    ' the selection cursor). Wheel elsewhere falls through — the
+    ' textarea handles its own wheel in editor-routing later.
+    DIM mwMsg AS tea.MouseWheelMsg
+    DIM mwOk AS BOOLEAN
+    mwMsg, mwOk = msg.(tea.MouseWheelMsg)
+    IF mwOk AND mwMsg.X < 28 THEN
+        DIM step AS INTEGER = 3
+        IF mwMsg.Button = tea.MouseWheelUp THEN
+            m.TreeOffset = m.TreeOffset - step
+        ELSE
+            m.TreeOffset = m.TreeOffset + step
+        END IF
+        clampTreeOffset(@m)
+        RETURN m, NIL
+    END IF
+
     ' --- Mouse click ----------------------------------------------
     ' Left-click hit-tests in priority order:
     '   1. dropdown items (when a menu is open)
@@ -741,6 +894,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 IF ddAct = "file.quit" THEN
                     IF tryQuit(@m) THEN RETURN m, tea.Quit
                     RETURN m, NIL
+                END IF
+                IF ddAct = "run.run" THEN
+                    DIM ddRunCmd AS tea.Cmd = doRun(@m)
+                    RETURN m, ddRunCmd
                 END IF
                 dispatchAction(@m, ddAct)
                 RETURN m, NIL
@@ -803,6 +960,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     IF m.TreeSelected >= LEN(m.TreeNodes) THEN
                         m.TreeSelected = LEN(m.TreeNodes) - 1
                     END IF
+                    ensureSelectedVisible(@m)
                 ELSEIF NOT clickNode.IsDir THEN
                     openFile(@m, clickNode.Path)
                 END IF
@@ -904,6 +1062,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                         IF tryQuit(@m) THEN RETURN m, tea.Quit
                         RETURN m, NIL
                     END IF
+                    IF act = "run.run" THEN
+                        DIM enRunCmd AS tea.Cmd = doRun(@m)
+                        RETURN m, enRunCmd
+                    END IF
                     dispatchAction(@m, act)
                 END IF
                 RETURN m, NIL
@@ -919,6 +1081,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                         IF act2 = "file.quit" THEN
                             IF tryQuit(@m) THEN RETURN m, tea.Quit
                             RETURN m, NIL
+                        END IF
+                        IF act2 = "run.run" THEN
+                            DIM hkRunCmd AS tea.Cmd = doRun(@m)
+                            RETURN m, hkRunCmd
                         END IF
                         dispatchAction(@m, act2)
                         RETURN m, NIL
@@ -960,6 +1126,19 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     RETURN m, NIL
                 END IF
             NEXT altMi
+        END IF
+
+        ' F5 = Run (saves + tea.ExecProcess). F8 = Check (saves +
+        ' sync exec; pops a modal on failure). Both routes pre-empt
+        ' the editor-routing block below so they work regardless of
+        ' which pane is focused.
+        IF key = "f5" THEN
+            DIM runCmd AS tea.Cmd = doRun(@m)
+            RETURN m, runCmd
+        END IF
+        IF key = "f8" THEN
+            doCheck(@m)
+            RETURN m, NIL
         END IF
 
         IF key = "f7" THEN
@@ -1046,10 +1225,35 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF key = "up" THEN
             IF m.TreeSelected > 0 THEN m.TreeSelected = m.TreeSelected - 1
+            ensureSelectedVisible(@m)
             RETURN m, NIL
         END IF
         IF key = "down" THEN
             IF m.TreeSelected < LEN(m.TreeNodes) - 1 THEN m.TreeSelected = m.TreeSelected + 1
+            ensureSelectedVisible(@m)
+            RETURN m, NIL
+        END IF
+        ' Home / End / PageUp / PageDown — useful in long trees.
+        IF key = "home" THEN
+            m.TreeSelected = 0
+            ensureSelectedVisible(@m)
+            RETURN m, NIL
+        END IF
+        IF key = "end" THEN
+            m.TreeSelected = LEN(m.TreeNodes) - 1
+            ensureSelectedVisible(@m)
+            RETURN m, NIL
+        END IF
+        IF key = "pgup" THEN
+            m.TreeSelected = m.TreeSelected - treeInnerH(m)
+            IF m.TreeSelected < 0 THEN m.TreeSelected = 0
+            ensureSelectedVisible(@m)
+            RETURN m, NIL
+        END IF
+        IF key = "pgdown" THEN
+            m.TreeSelected = m.TreeSelected + treeInnerH(m)
+            IF m.TreeSelected >= LEN(m.TreeNodes) THEN m.TreeSelected = LEN(m.TreeNodes) - 1
+            ensureSelectedVisible(@m)
             RETURN m, NIL
         END IF
         ' Enter on a folder toggles expansion; on a file opens it in
@@ -1063,6 +1267,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     IF m.TreeSelected >= LEN(m.TreeNodes) THEN
                         m.TreeSelected = LEN(m.TreeNodes) - 1
                     END IF
+                    ensureSelectedVisible(@m)
                 ELSEIF NOT node.IsDir THEN
                     openFile(@m, node.Path)
                 END IF
@@ -1619,26 +1824,36 @@ FUNCTION renderModal(m AS Model) AS STRING
     DIM titleLine AS STRING = titleStyle.Render(m.ModalTitle)
 
     ' --- Message body --------------------------------------------
-    ' Hand-roll a soft word wrap so we do not bring in another
-    ' import. Splits on spaces and accumulates words up to innerW.
+    ' Two-pass layout: explicit \n line breaks are preserved (so
+    ' multi-line compiler output renders verbatim); any single line
+    ' wider than innerW gets soft-wrapped on spaces.
     DIM msgLines AS []STRING
-    DIM words AS []STRING = strings.Fields(m.ModalMessage)
-    DIM cur AS STRING = ""
-    DIM wi AS INTEGER
-    FOR wi = 0 TO LEN(words) - 1
-        DIM word AS STRING = words[wi]
-        IF cur = "" THEN
-            cur = word
+    DIM rawLines AS []STRING = strings.Split(m.ModalMessage, "\n")
+    DIM rl AS INTEGER
+    FOR rl = 0 TO LEN(rawLines) - 1
+        DIM rawLine AS STRING = rawLines[rl]
+        IF rawLine = "" THEN
+            msgLines = APPEND(msgLines, "")
+        ELSEIF lipgloss.Width(rawLine) <= innerW THEN
+            msgLines = APPEND(msgLines, rawLine)
         ELSE
-            IF LEN(cur) + 1 + LEN(word) <= innerW THEN
-                cur = cur + " " + word
-            ELSE
-                msgLines = APPEND(msgLines, cur)
-                cur = word
-            END IF
+            DIM words AS []STRING = strings.Fields(rawLine)
+            DIM cur AS STRING = ""
+            DIM wi AS INTEGER
+            FOR wi = 0 TO LEN(words) - 1
+                DIM word AS STRING = words[wi]
+                IF cur = "" THEN
+                    cur = word
+                ELSEIF LEN(cur) + 1 + LEN(word) <= innerW THEN
+                    cur = cur + " " + word
+                ELSE
+                    msgLines = APPEND(msgLines, cur)
+                    cur = word
+                END IF
+            NEXT wi
+            IF cur <> "" THEN msgLines = APPEND(msgLines, cur)
         END IF
-    NEXT wi
-    IF cur <> "" THEN msgLines = APPEND(msgLines, cur)
+    NEXT rl
 
     DIM bodyStyle AS lipgloss.Style = lipgloss.NewStyle().Width(innerW)
     DIM bodyText AS STRING = strings.Join(msgLines, "\n")
