@@ -18,6 +18,7 @@
 '    DBtui — F10:Menu  F5:Run  ...                              <- statusbar
 
 IMPORT "charm.land/bubbletea/v2" AS tea
+IMPORT "charm.land/bubbles/v2/textarea" AS textarea
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 IMPORT "fmt"
 IMPORT "os"
@@ -69,6 +70,13 @@ TYPE Model
     DIM TreeNodes    AS []TreeNode       ' flattened visible-node list
     DIM TreeSelected AS INTEGER          ' cursor index into TreeNodes
     DIM TreeOffset   AS INTEGER          ' vertical scroll offset
+
+    ' Middle pane state — code editor backed by a bubbles textarea +
+    ' a "ViewMode" toggle. "form" shows the form-designer placeholder;
+    ' "code" shows the textarea. F7 flips between the two.
+    DIM Editor   AS textarea.Model
+    DIM ViewMode AS STRING               ' "form" or "code"
+    DIM CurFile  AS STRING               ' path of the file currently in Editor
 END TYPE
 
 ' setExpanded — toggle whether `path` is in the TreeExpanded "set".
@@ -176,6 +184,32 @@ FUNCTION baseName(p AS STRING) AS STRING
     RETURN Mid(p, idx + 2, LEN(p) - idx - 1)
 END FUNCTION
 
+' openFile — read `path` off disk into the code editor, switch
+' ViewMode to "code", and remember the file path for the status bar
+' + future Save. On read error the status line surfaces the message.
+SUB openFile(m AS POINTER TO Model, path AS STRING)
+    DIM data AS BYTES
+    DIM err  AS ERROR
+    data, err = os.ReadFile(path)
+    IF err <> NIL THEN
+        m.Status = "open " + path + ": " + err.Error()
+        RETURN
+    END IF
+    m.Editor.Reset()
+    m.Editor.SetValue(string(data))
+    ' SetValue lands the cursor at the END of the buffer; walk back to
+    ' the top so the user sees the start of the file first.
+    DO WHILE m.Editor.Line() > 0
+        m.Editor.CursorUp()
+    LOOP
+    m.Editor.CursorStart()
+    DIM cmd AS tea.Cmd = m.Editor.Focus()
+    _ = cmd
+    m.CurFile = path
+    m.ViewMode = "code"
+    m.Status = "opened " + path
+END SUB
+
 ' newModel — initial state on program start.
 FUNCTION newModel() AS Model
     DIM m AS Model
@@ -193,6 +227,14 @@ FUNCTION newModel() AS Model
     buildTreeNodes(@m)
     m.TreeSelected = 0
     m.TreeOffset = 0
+    ' Editor starts empty in form-design mode. F7 / opening a file
+    ' from the tree flips into code mode.
+    m.Editor = textarea.New()
+    m.Editor.Prompt = ""
+    m.Editor.ShowLineNumbers = TRUE
+    m.Editor.Placeholder = "(open a file from the tree to view its source)"
+    m.ViewMode = "form"
+    m.CurFile = ""
     RETURN m
 END FUNCTION
 
@@ -216,16 +258,47 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     END IF
 
-    ' Key press dispatch. For now everything goes to the tree pane;
-    ' once we have multiple focusable panes we'll route by focus.
+    ' Key press dispatch.
     DIM k AS tea.KeyPressMsg
     DIM kOk AS BOOLEAN
     k, kOk = msg.(tea.KeyPressMsg)
     IF kOk THEN
         DIM key AS STRING = k.String()
-        IF key = "q" OR key = "ctrl+c" THEN RETURN m, tea.Quit
 
-        ' --- Tree navigation ------------------------------------------
+        ' Global shortcuts first — apply regardless of which pane is
+        ' "logically focused".
+        IF key = "ctrl+c" THEN RETURN m, tea.Quit
+        IF key = "f7" THEN
+            ' Toggle between form-design view and code editor view.
+            IF m.ViewMode = "code" THEN
+                m.ViewMode = "form"
+                m.Editor.Blur()
+            ELSE
+                m.ViewMode = "code"
+                DIM fcmd AS tea.Cmd = m.Editor.Focus()
+                _ = fcmd
+            END IF
+            RETURN m, NIL
+        END IF
+
+        ' When the code editor is showing, route keystrokes to it so
+        ' typing, arrows, Ctrl+arrow, etc. behave like a normal editor.
+        ' Esc exits back to tree-focus / form view.
+        IF m.ViewMode = "code" THEN
+            IF key = "esc" THEN
+                m.ViewMode = "form"
+                m.Editor.Blur()
+                RETURN m, NIL
+            END IF
+            DIM newEd AS textarea.Model
+            DIM eCmd  AS tea.Cmd
+            newEd, eCmd = m.Editor.Update(msg)
+            m.Editor = newEd
+            RETURN m, eCmd
+        END IF
+
+        ' --- Tree navigation (only when not in code mode) -------------
+        IF key = "q" THEN RETURN m, tea.Quit
         IF key = "up" THEN
             IF m.TreeSelected > 0 THEN m.TreeSelected = m.TreeSelected - 1
             RETURN m, NIL
@@ -234,9 +307,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             IF m.TreeSelected < LEN(m.TreeNodes) - 1 THEN m.TreeSelected = m.TreeSelected + 1
             RETURN m, NIL
         END IF
-        ' Enter on a folder toggles expansion; on a file just sets the
-        ' status (real "open in editor" comes when the middle pane
-        ' learns to display code).
+        ' Enter on a folder toggles expansion; on a file opens it in
+        ' the code editor and flips ViewMode to "code".
         IF key = "enter" OR key = "space" THEN
             IF m.TreeSelected >= 0 AND m.TreeSelected < LEN(m.TreeNodes) THEN
                 DIM node AS TreeNode = m.TreeNodes[m.TreeSelected]
@@ -247,7 +319,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                         m.TreeSelected = LEN(m.TreeNodes) - 1
                     END IF
                 ELSEIF NOT node.IsDir THEN
-                    m.Status = "open: " + node.Path
+                    openFile(@m, node.Path)
                 END IF
             END IF
             RETURN m, NIL
@@ -359,14 +431,41 @@ END FUNCTION
 
 ' renderMiddlePane — editor area. No outer panel frame in the original
 ' DBtui; just a caption line + the editor surface beneath. The caption
-' is "─[ Form Designer — frmStart ]" padded with dashes to fill width.
-FUNCTION renderMiddlePane(width AS INTEGER, height AS INTEGER) AS STRING
+' title switches with ViewMode ("Form Designer — <form>" vs
+' "Code Editor — <path>") and the body either shows the form-designer
+' placeholder or the bubbles textarea's View().
+FUNCTION renderMiddlePane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
     DIM dashStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
     DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
-    DIM caption AS STRING = dashStyle.Render("─[ ") + titleStyle.Render("Form Designer — frmStart") + dashStyle.Render(" ]")
+
+    ' Caption text picks the mode-appropriate title.
+    DIM titleText AS STRING
+    IF m.ViewMode = "code" THEN
+        IF m.CurFile <> "" THEN
+            titleText = "Code Editor — " + m.CurFile
+        ELSE
+            titleText = "Code Editor"
+        END IF
+    ELSE
+        titleText = "Form Designer — frmStart"
+    END IF
+    DIM caption AS STRING = dashStyle.Render("─[ ") + titleStyle.Render(titleText) + dashStyle.Render(" ]")
     caption = padRight(caption, width, dashStyle.Render("─"))
-    DIM bodyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(width).Height(height - 1)
-    RETURN caption + "\n" + bodyStyle.Render("")
+
+    ' Body — either placeholder (form mode) or live textarea view.
+    DIM bodyH AS INTEGER = height - 1
+    IF bodyH < 1 THEN bodyH = 1
+    DIM bodyStr AS STRING
+    IF m.ViewMode = "code" THEN
+        ' Size the textarea to fit the available area, then render.
+        m.Editor.SetWidth(width)
+        m.Editor.SetHeight(bodyH)
+        bodyStr = m.Editor.View()
+    ELSE
+        DIM placeholder AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder)).Width(width).Height(bodyH).Align(lipgloss.Center, lipgloss.Center)
+        bodyStr = placeholder.Render("(form designer — coming soon; press F7 or Enter on a tree file to code)")
+    END IF
+    RETURN caption + "\n" + bodyStr
 END FUNCTION
 
 ' renderRightPane — Widgets/Tools tabs strip + Widgets list, stacked
@@ -419,7 +518,7 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM menu  AS STRING = renderMenuBar(w)
     DIM stat  AS STRING = renderStatusBar(w, m.Status)
     DIM left  AS STRING = renderLeftPane(m, leftW, bodyH)
-    DIM mid   AS STRING = renderMiddlePane(midW, bodyH)
+    DIM mid   AS STRING = renderMiddlePane(m, midW, bodyH)
     DIM right AS STRING = renderRightPane(rightW, bodyH)
     DIM body  AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
     DIM full  AS STRING = lipgloss.JoinVertical(lipgloss.Left, menu, body, stat)
