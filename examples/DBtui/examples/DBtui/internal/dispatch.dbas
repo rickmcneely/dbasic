@@ -164,3 +164,36 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
     END IF
     m.Status = "action: " + action
 END SUB
+
+' invokeAction — wrapper around dispatchAction that handles the
+' four "needs a Cmd or tea.Quit" actions (file.quit, run.run,
+' file.recent:*, window.switch:*) the same way the menu commit
+' sites do. Returns (shouldQuit, cmd). Used by the Command Palette
+' so the palette doesn't have to duplicate that logic.
+FUNCTION invokeAction(m AS POINTER TO Model, action AS STRING) AS (BOOLEAN, tea.Cmd)
+    IF action = "file.quit" THEN
+        IF tryQuit(m) THEN
+            saveState(m)
+            RETURN TRUE, NIL
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF action = "run.run" THEN
+        DIM rc AS tea.Cmd = doRun(m)
+        RETURN FALSE, rc
+    END IF
+    IF strings.HasPrefix(action, "file.recent:") THEN
+        DIM rp AS STRING = Mid(action, 14, LEN(action) - 13)
+        DIM oc AS tea.Cmd = openFile(m, rp)
+        RETURN FALSE, oc
+    END IF
+    IF strings.HasPrefix(action, "window.switch:") THEN
+        DIM widx AS INTEGER
+        DIM werr AS ERROR
+        widx, werr = strconv.Atoi(Mid(action, 15, LEN(action) - 14))
+        IF werr = NIL THEN switchToTab(m, widx)
+        RETURN FALSE, NIL
+    END IF
+    dispatchAction(m, action)
+    RETURN FALSE, NIL
+END FUNCTION

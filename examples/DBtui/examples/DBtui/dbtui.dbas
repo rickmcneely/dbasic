@@ -193,6 +193,16 @@ TYPE Model
     DIM PendingGotoPath AS STRING
     DIM PendingGotoLine AS INTEGER
 
+    ' Command palette (Ctrl+Shift+P) — modal listing every menu
+    ' action, fuzzy-filtered as the user types. Enter invokes;
+    ' Esc cancels.
+    DIM CmdPaletteActive   AS BOOLEAN
+    DIM CmdPaletteInput    AS textinput.Model
+    DIM CmdPaletteItems    AS []CmdPaletteItem
+    DIM CmdPaletteFiltered AS []CmdPaletteItem
+    DIM CmdPaletteIdx      AS INTEGER
+    DIM CmdPaletteOffset   AS INTEGER
+
     ' "Loading <path>" message shown while an async file load is in
     ' flight. Cleared when the LoadFinishedMsg lands. Empty string =
     ' no load in progress.
@@ -640,6 +650,7 @@ FUNCTION helpText() AS STRING
     s = s + "FILE\n"
     s = s + "  Ctrl+N   New file\n"
     s = s + "  Ctrl+O   Open file       Ctrl+P   Quick switcher\n"
+    s = s + "  Ctrl+Shift+P   Command palette\n"
     s = s + "  Ctrl+S   Save (Save As if no path)\n"
     s = s + "  Ctrl+W   Close tab\n"
     s = s + "  q / Ctrl+C   Quit\n"
@@ -1510,6 +1521,43 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, qsTiCmd
         END IF
 
+        ' --- Command palette: type to filter, ↑/↓ to navigate -------
+        IF m.CmdPaletteActive THEN
+            IF key = "esc" THEN
+                m.CmdPaletteActive = FALSE
+                RETURN m, NIL
+            END IF
+            IF key = "enter" THEN
+                m.CmdPaletteActive = FALSE
+                IF m.CmdPaletteIdx >= 0 AND m.CmdPaletteIdx < LEN(m.CmdPaletteFiltered) THEN
+                    DIM cpAction AS STRING = m.CmdPaletteFiltered[m.CmdPaletteIdx].Action
+                    DIM cpQuit AS BOOLEAN
+                    DIM cpCmd  AS tea.Cmd
+                    cpQuit, cpCmd = invokeAction(@m, cpAction)
+                    IF cpQuit THEN RETURN m, tea.Quit
+                    RETURN m, cpCmd
+                END IF
+                RETURN m, NIL
+            END IF
+            IF key = "up" THEN
+                m.CmdPaletteIdx = m.CmdPaletteIdx - 1
+                IF m.CmdPaletteIdx < 0 THEN m.CmdPaletteIdx = 0
+                RETURN m, NIL
+            END IF
+            IF key = "down" THEN
+                m.CmdPaletteIdx = m.CmdPaletteIdx + 1
+                IF m.CmdPaletteIdx >= LEN(m.CmdPaletteFiltered) THEN m.CmdPaletteIdx = LEN(m.CmdPaletteFiltered) - 1
+                IF m.CmdPaletteIdx < 0 THEN m.CmdPaletteIdx = 0
+                RETURN m, NIL
+            END IF
+            DIM cpNewTi AS textinput.Model
+            DIM cpTiCmd AS tea.Cmd
+            cpNewTi, cpTiCmd = m.CmdPaletteInput.Update(msg)
+            m.CmdPaletteInput = cpNewTi
+            cmdPaletteFilter(@m)
+            RETURN m, cpTiCmd
+        END IF
+
         ' --- Modal dialog takes priority over everything else ---------
         IF m.ModalActive THEN
             IF key = "esc" THEN
@@ -1727,6 +1775,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF key = "ctrl+shift+f" THEN
             showInputModal(@m, "Find in Files", "Search:", "", "findinfiles")
+            RETURN m, NIL
+        END IF
+        IF key = "ctrl+shift+p" THEN
+            openCommandPalette(@m)
             RETURN m, NIL
         END IF
         ' Find / Goto live alongside the file shortcuts so they work
@@ -2163,6 +2215,23 @@ FUNCTION (m AS Model) View() AS tea.View
         END IF
     END IF
 
+    ' --- Command palette overlay (Z=4) ----------------------------
+    IF m.CmdPaletteActive THEN
+        DIM cp AS STRING = renderCommandPalette(m)
+        IF cp <> "" THEN
+            DIM cpW AS INTEGER = lipgloss.Width(cp)
+            DIM cpH AS INTEGER = lipgloss.Height(cp)
+            DIM cpX AS INTEGER = (w - cpW) / 2
+            DIM cpY AS INTEGER = (h - cpH) / 2
+            IF cpX < 0 THEN cpX = 0
+            IF cpY < 0 THEN cpY = 0
+            DIM cpBg AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM cpL  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(cp).X(cpX).Y(cpY).Z(4)
+            DIM cpCmp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(cpBg, cpL)
+            full = cpCmp.Render()
+        END IF
+    END IF
+
     ' --- Loading overlay (Z=3, above modal and dropdown) ----------
     ' Shown while an async openFile is in flight. Small framed box
     ' centered on the screen so the user knows their click landed
@@ -2209,6 +2278,7 @@ FUNCTION (m AS Model) View() AS tea.View
 END FUNCTION
 
 INCLUDE "internal/quickopen.dbas"
+INCLUDE "internal/palette.dbas"
 
 ' -------------------------------------------------------------------------
 ' Main — wire up bubbletea and run.

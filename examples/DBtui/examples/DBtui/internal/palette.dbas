@@ -1,0 +1,114 @@
+' -------------------------------------------------------------------------
+' Command palette — Ctrl+Shift+P modal listing every menu action.
+'
+' Walks the live m.Menus structure once per invocation to collect
+' (label, action) pairs, then filters live as the user types. Enter
+' invokes the picked action through invokeAction so the file.quit /
+' run.run / file.recent / window.switch special cases stay in one
+' place.
+' -------------------------------------------------------------------------
+
+TYPE CmdPaletteItem
+    DIM Label  AS STRING       ' "File: New", "Edit: Find", ...
+    DIM Action AS STRING       ' "file.new", "edit.find", ...
+END TYPE
+
+' buildCmdPaletteItems — flatten the menubar into a flat command list.
+' Separator items are skipped; menu names are joined to the item
+' label with ": " so search by both works ("File: New" matches "file"
+' OR "new").
+FUNCTION buildCmdPaletteItems(menus AS []MenuDef) AS []CmdPaletteItem
+    DIM out AS []CmdPaletteItem
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(menus) - 1
+        DIM menuName AS STRING = menuStrip(menus[i].Label)
+        DIM j AS INTEGER
+        FOR j = 0 TO LEN(menus[i].Items) - 1
+            DIM it AS MenuItem = menus[i].Items[j]
+            IF NOT it.IsSep AND it.Action <> "" THEN
+                DIM item AS CmdPaletteItem
+                item.Label  = menuName + ": " + menuStrip(it.Label)
+                item.Action = it.Action
+                out = APPEND(out, item)
+            END IF
+        NEXT j
+    NEXT i
+    RETURN out
+END FUNCTION
+
+' cmdPaletteFilter — rebuild CmdPaletteFiltered from CmdPaletteInput.
+' Case-insensitive substring; empty query matches everything.
+SUB cmdPaletteFilter(m AS POINTER TO Model)
+    DIM q AS STRING = strings.ToLower(strings.TrimSpace(m.CmdPaletteInput.Value()))
+    DIM filtered AS []CmdPaletteItem
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.CmdPaletteItems) - 1
+        DIM lbl AS STRING = strings.ToLower(m.CmdPaletteItems[i].Label)
+        IF q = "" OR strings.Contains(lbl, q) THEN
+            filtered = APPEND(filtered, m.CmdPaletteItems[i])
+        END IF
+    NEXT i
+    m.CmdPaletteFiltered = filtered
+    IF m.CmdPaletteIdx >= LEN(filtered) THEN m.CmdPaletteIdx = LEN(filtered) - 1
+    IF m.CmdPaletteIdx < 0 THEN m.CmdPaletteIdx = 0
+    m.CmdPaletteOffset = 0
+END SUB
+
+' openCommandPalette — re-walk the menus + show the modal.
+SUB openCommandPalette(m AS POINTER TO Model)
+    m.CmdPaletteItems    = buildCmdPaletteItems(m.Menus)
+    m.CmdPaletteFiltered = m.CmdPaletteItems
+    m.CmdPaletteIdx      = 0
+    m.CmdPaletteOffset   = 0
+    m.CmdPaletteInput    = textinput.New()
+    m.CmdPaletteInput.Placeholder = "type a command…"
+    DIM fcmd AS tea.Cmd = m.CmdPaletteInput.Focus()
+    _ = fcmd
+    m.CmdPaletteActive = TRUE
+END SUB
+
+' renderCommandPalette — framed centred modal (same shape as the
+' Quick Switcher) with title, input, scrollable list, footer hint.
+FUNCTION renderCommandPalette(m AS Model) AS STRING
+    DIM innerW AS INTEGER = 50
+    DIM listH  AS INTEGER = 12
+
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Bold(TRUE).Foreground(lipgloss.Color(cHotkey)).Width(innerW).Align(lipgloss.Center)
+    DIM countStr AS STRING = fmt.Sprintf(" (%d / %d)", LEN(m.CmdPaletteFiltered), LEN(m.CmdPaletteItems))
+    DIM title AS STRING = titleStyle.Render("Command Palette" + countStr)
+
+    m.CmdPaletteInput.SetWidth(innerW)
+    DIM inputBox AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent))
+    DIM inField AS STRING = inputBox.Render(m.CmdPaletteInput.View())
+
+    DIM start AS INTEGER = m.CmdPaletteOffset
+    IF m.CmdPaletteIdx < start THEN start = m.CmdPaletteIdx
+    IF m.CmdPaletteIdx >= start + listH THEN start = m.CmdPaletteIdx - listH + 1
+    IF start < 0 THEN start = 0
+    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg)).Width(innerW)
+    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE).Width(innerW)
+    DIM rows AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO listH - 1
+        DIM idx AS INTEGER = start + i
+        DIM txt AS STRING = ""
+        IF idx < LEN(m.CmdPaletteFiltered) THEN
+            txt = " " + m.CmdPaletteFiltered[idx].Label
+        END IF
+        IF idx = m.CmdPaletteIdx AND idx < LEN(m.CmdPaletteFiltered) THEN
+            rows = APPEND(rows, selStyle.Render(txt))
+        ELSE
+            rows = APPEND(rows, rowStyle.Render(txt))
+        END IF
+    NEXT i
+    DIM list AS STRING = strings.Join(rows, "\n")
+
+    DIM hintStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cStatusFg)).Italic(TRUE).Width(innerW).Align(lipgloss.Center)
+    DIM hint AS STRING = hintStyle.Render("Enter: run    Esc: cancel    ↑↓: select")
+
+    DIM spacer AS STRING = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Render(" ")
+
+    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, title, spacer, inField, spacer, list, spacer, hint)
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Background(lipgloss.Color(cBg)).Padding(1, 2)
+    RETURN frame.Render(stacked)
+END FUNCTION
