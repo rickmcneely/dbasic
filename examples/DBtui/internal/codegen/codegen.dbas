@@ -450,6 +450,19 @@ FUNCTION emitStubs(form AS Form, defined AS []STRING) AS STRING
                 END IF
             NEXT ev
         END IF
+        IF w.Kind = WidgetKindTabStrip THEN
+            DIM tsClose AS STRING = w.Id + "_TabClosed"
+            IF NOT subDefined(tsClose, defined) THEN
+                IF NOT emitted THEN
+                    s = s + "' Auto-stubs for handlers not yet defined in the form's code file.\n"
+                    emitted = TRUE
+                END IF
+                s = s + "SUB " + tsClose + "(label AS STRING, idx AS INTEGER)\n"
+                s = s + "    _ = label\n"
+                s = s + "    _ = idx\n"
+                s = s + "END SUB\n\n"
+            END IF
+        END IF
         IF w.Kind = WidgetKindTreeView THEN
             DIM tvEvs AS []STRING
             tvEvs = APPEND(tvEvs, "NodeSelected")
@@ -1673,9 +1686,14 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "                    IF tcLocalX >= tcPos AND tcLocalX < tcPos + tcLen THEN tcHit = tcI\n"
     s = s + "                    tcPos = tcPos + tcLen\n"
     s = s + "                NEXT tcI\n"
-    s = s + "                IF tcHit >= 0 AND tcHit <> m.Widgets[hitIdx].Selected THEN\n"
-    s = s + "                    m.Widgets[hitIdx].Selected = tcHit\n"
-    s = s + "                    dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                IF tcHit >= 0 THEN\n"
+    s = s + "                    IF mcMsg.Button = tea.MouseRight THEN\n"
+    s = s + "                        DIM tcLab AS STRING = tcItems[tcHit]\n"
+    s = s + "                        tsDispatchTabClosed(m.Widgets[hitIdx].Id, tcLab, tcHit)\n"
+    s = s + "                    ELSEIF tcHit <> m.Widgets[hitIdx].Selected THEN\n"
+    s = s + "                        m.Widgets[hitIdx].Selected = tcHit\n"
+    s = s + "                        dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                    END IF\n"
     s = s + "                END IF\n"
     s = s + "            ELSEIF mk = \"ScrollPane\" THEN\n"
     s = s + "                DIM spClickY AS INTEGER = (mcMsg.Y - 1) - m.Widgets[hitIdx].Y - 1\n"
@@ -4114,6 +4132,25 @@ FUNCTION emitSplitPanelLayout() AS STRING
     RETURN s
 END FUNCTION
 
+' emitTabStripAPI emits a tsDispatchTabClosed router so right-click
+' on a tab routes to <tabsId>_TabClosed(label, index).
+FUNCTION emitTabStripAPI(form AS Form) AS STRING
+    DIM s AS STRING = ""
+    s = s + "' --- TabStrip dispatch -----------------------------------------\n"
+    s = s + "SUB tsDispatchTabClosed(tabsId AS STRING, label AS STRING, idx AS INTEGER)\n"
+    DIM fi AS INTEGER
+    FOR fi = 0 TO LEN(form.Widgets) - 1
+        DIM fw AS WidgetEntry = form.Widgets[fi]
+        IF fw.Kind = WidgetKindTabStrip THEN
+            s = s + "    IF tabsId = " + dbasStr(fw.Id) + " THEN " + fw.Id + "_TabClosed(label, idx)\n"
+        END IF
+    NEXT fi
+    s = s + "    _ = label\n"
+    s = s + "    _ = idx\n"
+    s = s + "END SUB\n\n"
+    RETURN s
+END FUNCTION
+
 ' emitTreeViewAPI emits the runtime API + event dispatchers for any
 ' TreeView widgets on the form. User code can call tvSetNodes /
 ' tvGetSelected / tvNodeCount / tvExpand / tvCollapse; NodeSelected
@@ -4352,6 +4389,7 @@ FUNCTION GenerateProgram(p AS Project) AS STRING
     s = s + emitSplitPanelLayout()
     s = s + emitAnchorLayout()
     s = s + emitTreeViewAPI(form)
+    s = s + emitTabStripAPI(form)
     s = s + emitRenderWidget()
     s = s + emitView(form)
     s = s + emitTools(form)

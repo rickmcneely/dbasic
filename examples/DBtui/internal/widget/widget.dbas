@@ -739,6 +739,7 @@ FUNCTION WidgetEvents(w AS Widget) AS []STRING
     END IF
     IF w.Kind = WidgetKindTabStrip THEN
         out = APPEND(out, "Change")
+        out = APPEND(out, "TabClosed")
         out = APPEND(out, "Click")
         out = APPEND(out, "GotFocus")
         out = APPEND(out, "LostFocus")

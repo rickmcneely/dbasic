@@ -5,12 +5,16 @@ IMPORT "os"
 IMPORT "strconv"
 IMPORT "strings"
 
-' Open-file state. openFiles is the list of paths shown in the tab
-' strip; curIdx is the active tab; curFile mirrors openFiles[curIdx]
-' (kept for save shortcut convenience).
-DIM openFiles AS []STRING
-DIM curIdx    AS INTEGER
-DIM curFile   AS STRING
+' Open-file state. openFiles holds paths; openBufs[i] mirrors the
+' editor content for tab i so switching tabs preserves unsaved edits;
+' openDirty[i] tracks whether the buffer differs from disk for the
+' modified indicator. curIdx is the active tab; curFile mirrors
+' openFiles[curIdx].
+DIM openFiles  AS []STRING
+DIM openBufs   AS []STRING
+DIM openDirty  AS []BOOLEAN
+DIM curIdx     AS INTEGER
+DIM curFile    AS STRING
 
 ' Last widget reflected into the Properties panel — used by
 ' props_Change to route an edit commit back to the right widget.
@@ -34,8 +38,8 @@ SUB gOnSelect(id AS STRING)
     gSetItems("props", propsFor(id))
 END SUB
 
-' refreshTabs — rebuild the TabStrip Items from openFiles. Each tab
-' shows just the base name to keep things short.
+' refreshTabs — rebuild the TabStrip Items from openFiles. Tabs whose
+' buffer differs from disk get a "*" prefix as a modified indicator.
 SUB refreshTabs()
     IF LEN(openFiles) = 0 THEN
         gSetItems("tabs", "(no files)")
@@ -45,7 +49,9 @@ SUB refreshTabs()
     DIM labels AS []STRING
     DIM i AS INTEGER
     FOR i = 0 TO LEN(openFiles) - 1
-        labels = APPEND(labels, baseName(openFiles[i]))
+        DIM lbl AS STRING = baseName(openFiles[i])
+        IF i < LEN(openDirty) AND openDirty[i] THEN lbl = "*" + lbl
+        labels = APPEND(labels, lbl)
     NEXT i
     gSetItems("tabs", strings.Join(labels, ";"))
     IF curIdx < 0 THEN curIdx = 0
@@ -53,19 +59,42 @@ SUB refreshTabs()
     gSetSelected("tabs", curIdx)
 END SUB
 
-' switchToTab — load openFiles[idx] into the editor + update curFile.
+' stashCurrentBuffer — snapshot the editor's current text into
+' openBufs[curIdx] so a tab switch doesn't drop unsaved edits.
+SUB stashCurrentBuffer()
+    IF curIdx < 0 OR curIdx >= LEN(openFiles) THEN RETURN
+    DIM buf AS STRING = gGetText("code")
+    DO WHILE LEN(openBufs) <= curIdx
+        openBufs = APPEND(openBufs, "")
+    LOOP
+    openBufs[curIdx] = buf
+END SUB
+
+' switchToTab — load openBufs[idx] (or disk if no buffer cached) into
+' the editor + update curFile.
 SUB switchToTab(idx AS INTEGER)
     IF idx < 0 OR idx >= LEN(openFiles) THEN RETURN
+    stashCurrentBuffer()
     curIdx = idx
     curFile = openFiles[idx]
-    DIM data AS BYTES
-    DIM err AS ERROR
-    data, err = os.ReadFile(curFile)
-    IF err <> NIL THEN
-        gSetText("status", "open " + curFile + ": " + err.Error())
-        RETURN
+    DIM body AS STRING = ""
+    IF idx < LEN(openBufs) AND openBufs[idx] <> "" THEN
+        body = openBufs[idx]
+    ELSE
+        DIM data AS BYTES
+        DIM err AS ERROR
+        data, err = os.ReadFile(curFile)
+        IF err <> NIL THEN
+            gSetText("status", "open " + curFile + ": " + err.Error())
+            RETURN
+        END IF
+        body = string(data)
+        DO WHILE LEN(openBufs) <= idx
+            openBufs = APPEND(openBufs, "")
+        LOOP
+        openBufs[idx] = body
     END IF
-    gSetText("code", string(data))
+    gSetText("code", body)
     gSetText("status", "opened " + shorten(curFile, 60))
 END SUB
 
@@ -82,6 +111,7 @@ SUB openFile(path AS STRING)
         END IF
     NEXT i
     openFiles = APPEND(openFiles, path)
+    openDirty = APPEND(openDirty, FALSE)
     curIdx = LEN(openFiles) - 1
     refreshTabs()
     switchToTab(curIdx)
@@ -110,6 +140,63 @@ END SUB
 SUB tabs_Change()
     DIM idx AS INTEGER = gGetSelected("tabs")
     IF idx >= 0 AND idx < LEN(openFiles) AND idx <> curIdx THEN switchToTab(idx)
+END SUB
+
+' Right-click on a tab fires TabClosed — remove the tab and switch to
+' the neighbor. (No dirty prompt yet; clobbers unsaved edits.)
+SUB tabs_TabClosed(label AS STRING, idx AS INTEGER)
+    _ = label
+    IF idx < 0 OR idx >= LEN(openFiles) THEN RETURN
+    ' Remove openFiles[idx], openBufs[idx], openDirty[idx].
+    DIM newFiles AS []STRING
+    DIM newBufs  AS []STRING
+    DIM newDirty AS []BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(openFiles) - 1
+        IF i <> idx THEN
+            newFiles = APPEND(newFiles, openFiles[i])
+            DIM b AS STRING = ""
+            IF i < LEN(openBufs) THEN b = openBufs[i]
+            newBufs = APPEND(newBufs, b)
+            DIM d AS BOOLEAN = FALSE
+            IF i < LEN(openDirty) THEN d = openDirty[i]
+            newDirty = APPEND(newDirty, d)
+        END IF
+    NEXT i
+    openFiles = newFiles
+    openBufs = newBufs
+    openDirty = newDirty
+    IF LEN(openFiles) = 0 THEN
+        curIdx = 0 - 1
+        curFile = ""
+        gSetText("code", "")
+        refreshTabs()
+        gSetText("status", "closed last tab")
+        RETURN
+    END IF
+    DIM newCur AS INTEGER = idx
+    IF newCur >= LEN(openFiles) THEN newCur = LEN(openFiles) - 1
+    curIdx = 0 - 1
+    refreshTabs()
+    switchToTab(newCur)
+END SUB
+
+' CodeEditor Change — fires on every keystroke. Update the dirty
+' flag for the current tab (buffer differs from openBufs snapshot).
+' Cheap-but-not-free; OK for the skeleton.
+SUB code_Change()
+    IF curIdx < 0 OR curIdx >= LEN(openFiles) THEN RETURN
+    DIM body AS STRING = gGetText("code")
+    DIM diskSnap AS STRING = ""
+    IF curIdx < LEN(openBufs) THEN diskSnap = openBufs[curIdx]
+    DIM dirty AS BOOLEAN = (body <> diskSnap)
+    DO WHILE LEN(openDirty) <= curIdx
+        openDirty = APPEND(openDirty, FALSE)
+    LOOP
+    IF dirty <> openDirty[curIdx] THEN
+        openDirty[curIdx] = dirty
+        refreshTabs()
+    END IF
 END SUB
 
 ' Canvas placeholders.
@@ -249,9 +336,23 @@ SUB FormKey(key AS STRING)
         DIM err AS ERROR = os.WriteFile(curFile, Encode(body), 0644)
         IF err <> NIL THEN
             gSetText("status", "save failed: " + err.Error())
-        ELSE
-            gSetText("status", "saved " + shorten(curFile, 60) + " (" + fmt.Sprintf("%d", LEN(body)) + " bytes)")
+            RETURN
         END IF
+        ' Update the on-disk snapshot + clear dirty for the saved tab.
+        IF curIdx >= 0 AND curIdx < LEN(openFiles) THEN
+            DO WHILE LEN(openBufs) <= curIdx
+                openBufs = APPEND(openBufs, "")
+            LOOP
+            openBufs[curIdx] = body
+            DO WHILE LEN(openDirty) <= curIdx
+                openDirty = APPEND(openDirty, FALSE)
+            LOOP
+            IF openDirty[curIdx] THEN
+                openDirty[curIdx] = FALSE
+                refreshTabs()
+            END IF
+        END IF
+        gSetText("status", "saved " + shorten(curFile, 60) + " (" + fmt.Sprintf("%d", LEN(body)) + " bytes)")
         RETURN
     END IF
     IF key = "f5" THEN
