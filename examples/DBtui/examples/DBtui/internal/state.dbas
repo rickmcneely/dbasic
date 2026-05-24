@@ -46,6 +46,7 @@ FUNCTION captureState(m AS POINTER TO Model) AS PersistedState
     s.RightW = m.RightW
     s.BottomVisible = m.BottomVisible
     s.Recent = m.Recent
+    s.ClosedTabs = m.ClosedTabs
     RETURN s
 END FUNCTION
 

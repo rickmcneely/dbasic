@@ -168,6 +168,19 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         doFindInFiles(m, text)
         RETURN FALSE, NIL
     END IF
+    ' "watch:reload" — file-watcher prompt. Reload reads disk;
+    ' Keep silences the prompt by refreshing LoadedMtime to the
+    ' current disk mtime; Cancel does nothing (next tick will
+    ' re-prompt).
+    IF m.ModalContext = "watch:reload" THEN
+        IF button = "Reload" OR button = "Reload (lose edits)" THEN
+            reloadActiveFromDisk(m)
+        ELSEIF button = "Keep editor" OR button = "Keep" THEN
+            refreshActiveMtime(m)
+            m.Status = "kept editor version"
+        END IF
+        RETURN FALSE, NIL
+    END IF
     m.Status = "modal " + m.ModalContext + " → " + button
     RETURN FALSE, NIL
 END FUNCTION

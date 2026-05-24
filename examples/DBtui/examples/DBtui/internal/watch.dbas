@@ -1,0 +1,78 @@
+' -------------------------------------------------------------------------
+' File watcher — periodic mtime poll for the active tab.
+'
+' Every WatchTickMsg (fired by tea.Tick at watchInterval) we stat the
+' active tab's file and compare ModTime to the LoadedMtime captured
+' at load / save time. If the disk is newer AND we're not already
+' showing a modal / overlay, we pop a confirm asking the user
+' whether to reload.
+' -------------------------------------------------------------------------
+
+CONST watchInterval AS INTEGER = 2
+
+TYPE WatchTickMsg
+    DIM Dummy AS BOOLEAN
+END TYPE
+
+' watchTickHandler — tea.Tick callback. Just wraps the firing time
+' in a WatchTickMsg for the Update loop.
+FUNCTION watchTickHandler(t AS time.Time) AS tea.Msg
+    _ = t
+    DIM ev AS WatchTickMsg
+    ev.Dummy = TRUE
+    RETURN ev
+END FUNCTION
+
+' watchTickCmd — schedules the next watch tick.
+FUNCTION watchTickCmd() AS tea.Cmd
+    RETURN tea.Tick(time.Duration(watchInterval) * time.Second, watchTickHandler)
+END FUNCTION
+
+' checkActiveFileChanged — TRUE if the active tab's on-disk mtime
+' is newer than the LoadedMtime we last recorded.
+FUNCTION checkActiveFileChanged(m AS POINTER TO Model) AS BOOLEAN
+    IF NOT hasActiveTab(^m) THEN RETURN FALSE
+    DIM path AS STRING = m.Tabs[m.TabIdx].Path
+    IF path = "" THEN RETURN FALSE
+    DIM fi AS os.FileInfo
+    DIM ferr AS ERROR
+    fi, ferr = os.Stat(path)
+    IF ferr <> NIL THEN RETURN FALSE
+    RETURN fi.ModTime().After(m.Tabs[m.TabIdx].LoadedMtime)
+END FUNCTION
+
+' reloadActiveFromDisk — re-read the active tab's file into the
+' editor. Snaps to undo first so Ctrl+Z restores the in-memory
+' version. Refreshes LoadedMtime.
+SUB reloadActiveFromDisk(m AS POINTER TO Model)
+    IF NOT hasActiveTab(^m) THEN RETURN
+    DIM path AS STRING = m.Tabs[m.TabIdx].Path
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile(path)
+    IF err <> NIL THEN
+        m.Status = "reload failed: " + err.Error()
+        RETURN
+    END IF
+    padSnap(@m.Tabs[m.TabIdx].Editor)
+    m.Tabs[m.TabIdx].Editor.SetValue(string(data))
+    m.Tabs[m.TabIdx].Editor.MoveToBegin()
+    m.Tabs[m.TabIdx].Dirty = FALSE
+    DIM fi AS os.FileInfo
+    DIM ferr AS ERROR
+    fi, ferr = os.Stat(path)
+    IF ferr = NIL THEN m.Tabs[m.TabIdx].LoadedMtime = fi.ModTime()
+    invalidateEditorCache(m)
+    m.Status = "reloaded " + path
+END SUB
+
+' refreshActiveMtime — pretend we just loaded the file (used by
+' "Keep" in the watch modal so we don't keep prompting).
+SUB refreshActiveMtime(m AS POINTER TO Model)
+    IF NOT hasActiveTab(^m) THEN RETURN
+    DIM path AS STRING = m.Tabs[m.TabIdx].Path
+    DIM fi AS os.FileInfo
+    DIM ferr AS ERROR
+    fi, ferr = os.Stat(path)
+    IF ferr = NIL THEN m.Tabs[m.TabIdx].LoadedMtime = fi.ModTime()
+END SUB

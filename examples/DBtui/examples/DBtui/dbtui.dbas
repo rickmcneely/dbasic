@@ -26,6 +26,7 @@ IMPORT "os"
 IMPORT "os/exec" AS osexec
 IMPORT "strconv"
 IMPORT "strings"
+IMPORT "time"
 
 ' -------------------------------------------------------------------------
 ' Theme — Tokyo-Night-ish palette borrowed from the original DBtui.
@@ -88,9 +89,10 @@ END TYPE
 ' -------------------------------------------------------------------------
 
 TYPE Tab
-    DIM Path   AS STRING                 ' file path on disk
-    DIM Editor AS Pad                    ' per-tab editor state
-    DIM Dirty  AS BOOLEAN                ' buffer differs from disk
+    DIM Path        AS STRING            ' file path on disk
+    DIM Editor      AS Pad               ' per-tab editor state
+    DIM Dirty       AS BOOLEAN           ' buffer differs from disk
+    DIM LoadedMtime AS time.Time         ' mtime when last read / saved
 END TYPE
 
 ' -------------------------------------------------------------------------
@@ -107,6 +109,7 @@ TYPE PersistedState
     DIM RightW        AS INTEGER
     DIM BottomVisible AS BOOLEAN
     DIM Recent        AS []STRING
+    DIM ClosedTabs    AS []STRING
 END TYPE
 
 ' -------------------------------------------------------------------------
@@ -231,6 +234,11 @@ TYPE Model
     ' ~/.dbtui-state.json. Surfaced under the File menu so the
     ' last few files are one keystroke away.
     DIM Recent AS []STRING
+
+    ' Recently closed tab paths (newest first, capped at 10).
+    ' Ctrl+Shift+T reopens the head. Persisted with the rest of
+    ' the state so it survives restarts.
+    DIM ClosedTabs AS []STRING
 
     ' Files queued for restoration on startup, drained one at a
     ' time after the corresponding LoadFinishedMsg lands.
@@ -586,8 +594,39 @@ END SUB
 ' references something sensible, and flips back to form mode when the
 ' last tab is gone. Caller is responsible for any "are you sure"
 ' confirmation on a dirty buffer.
+' reopenClosed — pop the head of m.ClosedTabs and openFile() it.
+' Returns the openFile Cmd; "" path / empty stack just sets status.
+FUNCTION reopenClosed(m AS POINTER TO Model) AS tea.Cmd
+    IF LEN(m.ClosedTabs) = 0 THEN
+        m.Status = "no recently-closed tabs"
+        RETURN NIL
+    END IF
+    DIM path AS STRING = m.ClosedTabs[0]
+    DIM rest AS []STRING
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(m.ClosedTabs) - 1
+        rest = APPEND(rest, m.ClosedTabs[i])
+    NEXT i
+    m.ClosedTabs = rest
+    RETURN openFile(m, path)
+END FUNCTION
+
 SUB closeTab(m AS POINTER TO Model, idx AS INTEGER)
     IF idx < 0 OR idx >= LEN(m.Tabs) THEN RETURN
+    ' Remember the path so Ctrl+Shift+T can pop it back. Skip
+    ' untitled tabs — no on-disk identity to reopen.
+    DIM closingPath AS STRING = m.Tabs[idx].Path
+    IF closingPath <> "" THEN
+        DIM ctNew AS []STRING
+        ctNew = APPEND(ctNew, closingPath)
+        DIM ci AS INTEGER
+        FOR ci = 0 TO LEN(m.ClosedTabs) - 1
+            IF m.ClosedTabs[ci] <> closingPath AND LEN(ctNew) < 10 THEN
+                ctNew = APPEND(ctNew, m.ClosedTabs[ci])
+            END IF
+        NEXT ci
+        m.ClosedTabs = ctNew
+    END IF
     DIM keep AS []Tab
     DIM i AS INTEGER
     FOR i = 0 TO LEN(m.Tabs) - 1
@@ -652,7 +691,7 @@ FUNCTION helpText() AS STRING
     s = s + "  Ctrl+O   Open file       Ctrl+P   Quick switcher\n"
     s = s + "  Ctrl+Shift+P   Command palette\n"
     s = s + "  Ctrl+S   Save (Save As if no path)\n"
-    s = s + "  Ctrl+W   Close tab\n"
+    s = s + "  Ctrl+W   Close tab       Ctrl+Shift+T   Reopen last\n"
     s = s + "  q / Ctrl+C   Quit\n"
     s = s + "\n"
     s = s + "EDIT / NAVIGATE\n"
@@ -841,7 +880,16 @@ SUB saveCurrent(m AS POINTER TO Model)
     END IF
     m.Tabs[m.TabIdx].Dirty = FALSE
     m.Status = fmt.Sprintf("saved %s (%d bytes)", path, LEN(body))
+    ' Refresh LoadedMtime so the watcher doesn't immediately flag
+    ' our own write as an external change.
+    DIM sfi AS os.FileInfo
+    DIM sferr AS ERROR
+    sfi, sferr = os.Stat(path)
+    IF sferr = NIL THEN m.Tabs[m.TabIdx].LoadedMtime = sfi.ModTime()
     applyFormatter(m, path)
+    ' applyFormatter may have re-written the file; refresh again.
+    sfi, sferr = os.Stat(path)
+    IF sferr = NIL THEN m.Tabs[m.TabIdx].LoadedMtime = sfi.ModTime()
 END SUB
 
 INCLUDE "internal/modal.dbas"
@@ -981,6 +1029,11 @@ SUB completeFileLoad(m AS POINTER TO Model, path AS STRING, data AS BYTES, err A
     ' feel hung.
     t.Editor.MoveToBegin()
     t.Dirty = FALSE
+    ' Capture mtime so the watcher can detect external edits.
+    DIM tfi AS os.FileInfo
+    DIM tferr AS ERROR
+    tfi, tferr = os.Stat(path)
+    IF tferr = NIL THEN t.LoadedMtime = tfi.ModTime()
     IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
     m.Tabs = APPEND(m.Tabs, t)
     m.TabIdx = LEN(m.Tabs) - 1
@@ -1054,7 +1107,8 @@ FUNCTION newModel() AS Model
     ' pane visibility, list of files to reopen). Failures are silent
     ' — defaults are already in place.
     DIM saved AS PersistedState = loadState()
-    m.Recent = saved.Recent
+    m.Recent     = saved.Recent
+    m.ClosedTabs = saved.ClosedTabs
     IF saved.LeftW  >= 15 THEN m.LeftW  = saved.LeftW
     IF saved.RightW >= 15 THEN m.RightW = saved.RightW
     m.BottomVisible = saved.BottomVisible
@@ -1076,11 +1130,13 @@ FUNCTION (m AS Model) Init() AS tea.Cmd
     ' just point the worker's package-level slot at the first
     ' pending file and fire it. The LoadFinishedMsg handler does
     ' the actual dequeue + drains the rest of the queue.
+    ' Always batch in the watcher tick so external file changes
+    ' get noticed.
     IF LEN(m.PendingOpens) > 0 THEN
         pendingLoadPath = m.PendingOpens[0]
-        RETURN loadFileWorker
+        RETURN tea.Batch(loadFileWorker, watchTickCmd())
     END IF
-    RETURN NIL
+    RETURN watchTickCmd()
 END FUNCTION
 
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
@@ -1138,6 +1194,29 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             END IF
         END IF
         RETURN m, NIL
+    END IF
+
+    ' --- File-watcher tick ---------------------------------------
+    ' Every watchInterval seconds, check if the active tab's file
+    ' changed on disk. Prompt to reload unless any other modal /
+    ' overlay is already up. Re-arm regardless so the loop runs
+    ' for the program's lifetime.
+    DIM wtMsg AS WatchTickMsg
+    DIM wtOk  AS BOOLEAN
+    wtMsg, wtOk = msg.(WatchTickMsg)
+    IF wtOk THEN
+        _ = wtMsg
+        DIM busy AS BOOLEAN = m.ModalActive OR m.QuickOpenActive OR m.CmdPaletteActive OR m.Loading <> ""
+        IF NOT busy AND checkActiveFileChanged(@m) THEN
+            DIM dn AS STRING = baseName(m.Tabs[m.TabIdx].Path)
+            IF dn = "" THEN dn = m.Tabs[m.TabIdx].Path
+            IF m.Tabs[m.TabIdx].Dirty THEN
+                showModal(@m, "File changed on disk", dn + " was modified externally AND has unsaved edits in DBtui.", "Reload (lose edits),Keep editor,Cancel", "watch:reload")
+            ELSE
+                showModal(@m, "File changed on disk", dn + " was modified externally. Reload?", "Reload,Keep,Cancel", "watch:reload")
+            END IF
+        END IF
+        RETURN m, watchTickCmd()
     END IF
 
     ' --- Run-finished message -------------------------------------
@@ -1781,6 +1860,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             openCommandPalette(@m)
             RETURN m, NIL
         END IF
+        IF key = "ctrl+shift+t" THEN
+            DIM rcCmd AS tea.Cmd = reopenClosed(@m)
+            RETURN m, rcCmd
+        END IF
         ' Find / Goto live alongside the file shortcuts so they work
         ' from either pane (the editor never sees them).
         IF key = "ctrl+f" THEN
@@ -2279,6 +2362,7 @@ END FUNCTION
 
 INCLUDE "internal/quickopen.dbas"
 INCLUDE "internal/palette.dbas"
+INCLUDE "internal/watch.dbas"
 
 ' -------------------------------------------------------------------------
 ' Main — wire up bubbletea and run.
