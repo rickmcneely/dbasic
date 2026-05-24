@@ -100,7 +100,7 @@
           "Kind": "Process",
           "Properties": {
             "Command": "dbasic",
-            "Args": "check,forms/frmMain.dbas",
+            "Args": "check",
             "Cwd": ""
           }
         }

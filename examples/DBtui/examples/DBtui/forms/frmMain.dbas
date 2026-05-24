@@ -4,73 +4,95 @@ IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
 
+' Path of whatever .dbas file is currently shown in the code editor.
+' Ctrl+S writes the editor buffer back here.
+DIM curFile AS STRING
+
 SUB FormLoad()
-    gSetText("status", "Self-hosted DBtui skeleton — tree | canvas | code | check")
+    tvSetNodes("tree", buildTreeNodes("."))
+    gSetText("status", "Self-hosted DBtui — click a tree node, Ctrl+S saves.")
 END SUB
 
 SUB FormResize(w AS INTEGER, h AS INTEGER)
     gSetText("status", fmt.Sprintf("resized: %dx%d", w, h))
 END SUB
 
-' Tree click — open the selected file in the code editor (if it's
-' a .dbas file) or just echo the path in the status bar.
+' Tree click — open .dbas files in the code editor and remember the path.
 SUB tree_NodeSelected(label AS STRING)
     DIM trimmed AS STRING = strings.TrimSpace(label)
-    IF strings.HasSuffix(trimmed, ".dbas") THEN
-        DIM path AS STRING = ""
-        IF trimmed = "frmMain.dbas" THEN path = "forms/frmMain.dbas"
-        IF trimmed = "util.dbas"    THEN path = "modules/util.dbas"
-        IF path = "" THEN
-            gSetText("status", "selected: " + trimmed + " (no file mapping)")
-            RETURN
-        END IF
-        DIM data AS BYTES
-        DIM err AS ERROR
-        data, err = os.ReadFile(path)
-        IF err <> NIL THEN
-            gSetText("status", "open " + path + ": " + err.Error())
-            RETURN
-        END IF
-        gSetText("code", string(data))
-        gSetText("status", "opened " + shorten(path, 60))
-    ELSE
+    IF NOT strings.HasSuffix(trimmed, ".dbas") AND NOT strings.HasSuffix(trimmed, ".dbproj") THEN
         gSetText("status", "selected: " + trimmed)
+        RETURN
     END IF
+    DIM path AS STRING = nodePathForLabel(trimmed)
+    IF path = "" THEN
+        gSetText("status", "no on-disk file for " + trimmed)
+        RETURN
+    END IF
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile(path)
+    IF err <> NIL THEN
+        gSetText("status", "open " + path + ": " + err.Error())
+        RETURN
+    END IF
+    gSetText("code", string(data))
+    curFile = path
+    gSetText("status", "opened " + shorten(path, 70))
 END SUB
 
 SUB tree_NodeRightClicked(label AS STRING)
     gMsgBox("Tree", "Node: " + label, "OK", "tree-node")
 END SUB
 
-' Canvas children placed at startup — gives the FormCanvas something
-' to demo with. User can drag them around.
+' Canvas placeholders.
 SUB canvas_ChildAdded(childId AS STRING)
-    gSetText("status", "added child: " + childId)
+    _ = childId
 END SUB
-
 SUB canvas_ChildSelected(childId AS STRING)
-    gSetText("status", "canvas selected: " + childId)
+    gSetText("status", "canvas: " + childId)
 END SUB
-
 SUB canvas_ChildMoved(childId AS STRING)
     _ = childId
 END SUB
 
-' Check button — confirm + run the dbCheck Process tool, surface the
-' result through gMsgBox.
+' Check button.
 SUB checkBtn_Click()
-    gMsgBox("Check", "Run `dbasic check` on forms/frmMain.dbas?", "Yes,No", "check")
+    IF curFile = "" THEN
+        gMsgBox("Check", "Open a file first.", "OK", "")
+        RETURN
+    END IF
+    gMsgBox("Check", "Run `dbasic check` on " + shorten(curFile, 50) + "?", "Yes,No", "check")
 END SUB
 
 SUB gMsgBoxClosed(button AS STRING, context AS STRING)
     IF context = "check" AND button = "Yes" THEN
-        DIM code AS INTEGER = dbCheck_Run()
+        DIM code AS INTEGER = dbCheck_RunWith(curFile)
         IF code = 0 THEN
-            gSetText("status", "check OK: " + strings.TrimSpace(dbCheck_Stdout()))
+            DIM ok AS STRING = strings.TrimSpace(dbCheck_Stdout())
+            IF ok = "" THEN ok = "OK"
+            gSetText("status", "check: " + ok)
         ELSE
             DIM err AS STRING = strings.TrimSpace(dbCheck_Stderr())
             IF err = "" THEN err = strings.TrimSpace(dbCheck_Stdout())
             gMsgBox("Check failed", shorten(err, 60), "OK", "check-fail")
+        END IF
+    END IF
+END SUB
+
+' Global hotkeys — Ctrl+S saves the editor buffer to curFile.
+SUB FormKey(key AS STRING)
+    IF key = "ctrl+s" THEN
+        IF curFile = "" THEN
+            gSetText("status", "Ctrl+S: nothing to save")
+            RETURN
+        END IF
+        DIM body AS STRING = gGetText("code")
+        DIM err AS ERROR = os.WriteFile(curFile, Encode(body), 0644)
+        IF err <> NIL THEN
+            gSetText("status", "save failed: " + err.Error())
+        ELSE
+            gSetText("status", "saved " + shorten(curFile, 60) + " (" + fmt.Sprintf("%d", LEN(body)) + " bytes)")
         END IF
     END IF
 END SUB

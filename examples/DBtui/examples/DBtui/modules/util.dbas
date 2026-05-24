@@ -1,10 +1,123 @@
 ' DBtui — self-hosted skeleton, util module.
 '
-' Demonstrates that modules in form-based projects compile alongside
-' the form's event handlers.
+' Provides:
+'   shorten(s, max)          — truncate with ellipsis for status line.
+'   buildTreeNodes(rootDir)  — walk a directory + format as a TreeView
+'                              Nodes string ("0|+|name;1|*|file;..."),
+'                              alphabetized, two-level (root + one descent).
+'   nodePathForLabel(label)  — given a click label, return the on-disk
+'                              relative path (heuristic: forms/<label>
+'                              or modules/<label> if the file exists,
+'                              else the label itself in the root).
+
+IMPORT "fmt"
+IMPORT "os"
+IMPORT "sort"
+IMPORT "strings"
+
+' baseName — last path segment of a "/"-delimited path. Avoids
+' filepath.Base because "Base" is reserved in DBasic.
+FUNCTION baseName(p AS STRING) AS STRING
+    DIM idx AS INTEGER = strings.LastIndex(p, "/")
+    IF idx < 0 THEN RETURN p
+    RETURN Mid(p, idx + 2, LEN(p) - idx - 1)
+END FUNCTION
+
+' joinPath — minimal replacement for joinPath: a/b → "a/b",
+' empty parts skipped, trailing slashes squashed.
+FUNCTION joinPath(a AS STRING, b AS STRING) AS STRING
+    IF a = "" THEN RETURN b
+    IF b = "" THEN RETURN a
+    IF strings.HasSuffix(a, "/") THEN RETURN a + b
+    RETURN a + "/" + b
+END FUNCTION
 
 FUNCTION shorten(s AS STRING, max AS INTEGER) AS STRING
     IF LEN(s) <= max THEN RETURN s
     IF max < 4 THEN RETURN Left(s, max)
     RETURN Left(s, max - 3) + "..."
+END FUNCTION
+
+' buildTreeNodes walks rootDir (one level deep into each direct
+' subfolder) and returns a TreeView Nodes string. Hidden entries
+' (leading ".") are skipped.
+FUNCTION buildTreeNodes(rootDir AS STRING) AS STRING
+    DIM rootName AS STRING = baseName(rootDir)
+    IF rootName = "" OR rootName = "." THEN rootName = "project"
+    DIM parts AS []STRING
+    parts = APPEND(parts, "0|+|" + rootName + "/")
+
+    DIM entries AS []os.DirEntry
+    DIM err AS ERROR
+    entries, err = os.ReadDir(rootDir)
+    IF err <> NIL THEN RETURN strings.Join(parts, ";")
+
+    DIM dirs AS []STRING
+    DIM files AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(entries) - 1
+        DIM nm AS STRING = entries[i].Name()
+        IF strings.HasPrefix(nm, ".") THEN
+            ' skip dotfiles
+        ELSEIF entries[i].IsDir() THEN
+            dirs = APPEND(dirs, nm)
+        ELSE
+            files = APPEND(files, nm)
+        END IF
+    NEXT i
+    sort.Strings(dirs)
+    sort.Strings(files)
+
+    ' Subdirectories: list each, then list its files one level in.
+    DIM d AS INTEGER
+    FOR d = 0 TO LEN(dirs) - 1
+        parts = APPEND(parts, "1|+|" + dirs[d] + "/")
+        DIM subPath AS STRING = joinPath(rootDir, dirs[d])
+        DIM subEntries AS []os.DirEntry
+        DIM subErr AS ERROR
+        subEntries, subErr = os.ReadDir(subPath)
+        IF subErr = NIL THEN
+            DIM subFiles AS []STRING
+            DIM si AS INTEGER
+            FOR si = 0 TO LEN(subEntries) - 1
+                DIM sn AS STRING = subEntries[si].Name()
+                IF NOT strings.HasPrefix(sn, ".") AND NOT subEntries[si].IsDir() THEN
+                    subFiles = APPEND(subFiles, sn)
+                END IF
+            NEXT si
+            sort.Strings(subFiles)
+            DIM sf AS INTEGER
+            FOR sf = 0 TO LEN(subFiles) - 1
+                parts = APPEND(parts, "2|*|" + subFiles[sf])
+            NEXT sf
+        END IF
+    NEXT d
+
+    ' Top-level files last so they cluster at the bottom of the tree.
+    DIM f AS INTEGER
+    FOR f = 0 TO LEN(files) - 1
+        parts = APPEND(parts, "1|*|" + files[f])
+    NEXT f
+
+    RETURN strings.Join(parts, ";")
+END FUNCTION
+
+' nodePathForLabel — heuristic mapping from a node label back to a
+' relative path. Tries "<label>" in root, "forms/<label>", and
+' "modules/<label>"; returns the first one that exists. Empty result
+' means "not a file the caller can open".
+FUNCTION nodePathForLabel(label AS STRING) AS STRING
+    DIM candidates AS []STRING
+    candidates = APPEND(candidates, label)
+    candidates = APPEND(candidates, joinPath("forms", label))
+    candidates = APPEND(candidates, joinPath("modules", label))
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(candidates) - 1
+        DIM info AS os.FileInfo
+        DIM err AS ERROR
+        info, err = os.Stat(candidates[i])
+        IF err = NIL AND NOT info.IsDir() THEN RETURN candidates[i]
+    NEXT i
+    _ = fmt.Sprintf
+    RETURN ""
 END FUNCTION

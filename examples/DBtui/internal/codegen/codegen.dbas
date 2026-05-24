@@ -2079,6 +2079,16 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "            FormClose()\n"
     s = s + "            RETURN m, tea.Quit\n"
     s = s + "        END IF\n"
+    ' Global hotkeys that bubble to FormKey even when a textarea-style
+    ' widget would otherwise swallow them. Ctrl+S is the typical save
+    ' shortcut; F1..F12 are conventional function hotkeys.
+    s = s + "        DIM bubble AS BOOLEAN = FALSE\n"
+    s = s + "        IF k = \"ctrl+s\" OR k = \"ctrl+o\" OR k = \"ctrl+n\" OR k = \"ctrl+q\" THEN bubble = TRUE\n"
+    s = s + "        IF LEN(k) >= 2 AND Mid(k, 1, 1) = \"f\" AND Asc(Mid(k, 2, 1)) >= Asc(\"0\") AND Asc(Mid(k, 2, 1)) <= Asc(\"9\") THEN bubble = TRUE\n"
+    s = s + "        IF bubble THEN\n"
+    s = s + "            FormKey(k)\n"
+    s = s + "            RETURN m, NIL\n"
+    s = s + "        END IF\n"
     s = s + "        IF k = \"tab\" THEN\n"
     s = s + "            DIM total AS INTEGER = focusableCount(m)\n"
     s = s + "            IF total > 0 THEN\n"
