@@ -149,6 +149,13 @@ TYPE Model
     ' no load in progress.
     DIM Loading AS STRING
 
+    ' Bottom output pane — captures `dbasic check` / `run` output
+    ' persistently instead of one-shot modals. F12 toggles
+    ' visibility; auto-shows when something fails.
+    DIM BottomVisible AS BOOLEAN
+    DIM BottomTitle   AS STRING
+    DIM BottomBody    AS STRING
+
     ' Cached textarea.View() output. Re-rendering the editor is the
     ' single most expensive thing View() does, and bubbletea calls
     ' View() after every Update — including every mouse-motion
@@ -813,6 +820,41 @@ END SUB
 ' On failure the (truncated) compiler output goes into a popup modal.
 ' -------------------------------------------------------------------------
 
+' -------------------------------------------------------------------------
+' Bottom output pane helpers.
+'
+' The pane stores its accumulated text in m.BottomBody and a short
+' caption in m.BottomTitle. appendBottomOutput is the chokepoint for
+' anything that wants to write into the pane — it joins on newlines,
+' updates the title, and auto-shows the pane so the user sees the
+' new content immediately.
+' -------------------------------------------------------------------------
+
+SUB appendBottomOutput(m AS POINTER TO Model, title AS STRING, content AS STRING)
+    m.BottomTitle = title
+    IF m.BottomBody = "" THEN
+        m.BottomBody = content
+    ELSE
+        m.BottomBody = m.BottomBody + "\n" + content
+    END IF
+    m.BottomVisible = TRUE
+    ' Editor area shrinks/grows when the bottom pane toggles, so the
+    ' cached textarea view (which is sized for the *previous* height)
+    ' is now stale.
+    invalidateEditorCache(m)
+END SUB
+
+SUB toggleBottomPane(m AS POINTER TO Model)
+    m.BottomVisible = NOT m.BottomVisible
+    invalidateEditorCache(m)
+END SUB
+
+' clearBottomOutput — reset the pane to empty. Currently unused but
+' kept on hand for a future "Clear" menu item.
+SUB clearBottomOutput(m AS POINTER TO Model)
+    m.BottomBody = ""
+END SUB
+
 TYPE RunFinishedMsg
     DIM Err AS ERROR
 END TYPE
@@ -856,8 +898,9 @@ FUNCTION truncateOutput(s AS STRING, maxLines AS INTEGER) AS STRING
     RETURN strings.Join(out, "\n")
 END FUNCTION
 
-' doCheck — save + sync `dbasic check`. On success: status bar
-' confirmation. On failure: pop a modal with the truncated output.
+' doCheck — save + sync `dbasic check`. Output (success or failure)
+' is appended to the bottom output pane, which auto-shows. Status
+' bar gets a one-line summary so the user knows whether to look.
 SUB doCheck(m AS POINTER TO Model)
     IF NOT hasActiveTab(^m) THEN
         m.Status = "nothing to check"
@@ -872,12 +915,13 @@ SUB doCheck(m AS POINTER TO Model)
     outBytes, err = cmd.CombinedOutput()
     DIM out AS STRING = strings.TrimSpace(string(outBytes))
     IF err = NIL THEN
+        appendBottomOutput(m, "Output", "[check OK] " + path)
         m.Status = "check ok: " + path
         RETURN
     END IF
     IF out = "" THEN out = err.Error()
-    out = truncateOutput(out, 12)
-    showModal(m, "Check failed: " + path, out, "OK", "check")
+    appendBottomOutput(m, "Output", "[check FAIL] " + path + "\n" + out)
+    m.Status = "check failed — see Output pane (F12)"
 END SUB
 
 ' anyDirtyTab — TRUE if any open tab has unsaved changes. Drives the
@@ -1188,9 +1232,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     rfMsg, rfOk = msg.(RunFinishedMsg)
     IF rfOk THEN
         IF rfMsg.Err = NIL THEN
+            appendBottomOutput(@m, "Output", "[run finished]")
             m.Status = "run finished"
         ELSE
-            m.Status = "run failed: " + rfMsg.Err.Error()
+            appendBottomOutput(@m, "Output", "[run failed] " + rfMsg.Err.Error())
+            m.Status = "run failed — see Output pane (F12)"
         END IF
         RETURN m, NIL
     END IF
@@ -1579,6 +1625,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             doCheck(@m)
             RETURN m, NIL
         END IF
+        IF key = "f12" THEN
+            toggleBottomPane(@m)
+            RETURN m, NIL
+        END IF
 
         IF key = "f7" THEN
             ' Toggle between form-design view and code editor view.
@@ -1956,30 +2006,38 @@ FUNCTION hintCell(key AS STRING, label AS STRING) AS STRING
     RETURN keyStyle.Render(key) + lblStyle.Render(" " + label)
 END FUNCTION
 
-' renderStatusBar — bottom row. Left segment shows the live status
-' message; right segment shows a VBDOS-style key-hint strip. When
-' the status text would overflow into the hints, it is truncated
-' with an ellipsis so the hints always remain readable.
-FUNCTION renderStatusBar(width AS INTEGER, text AS STRING) AS STRING
+' renderStatusBar — bottom row. Layout: status message on the left,
+' optional cursor-position chip in the middle, key-hint strip on
+' the right. The status text truncates with an ellipsis when it
+' would overflow into the position/hints segments so those remain
+' readable at any width.
+FUNCTION renderStatusBar(width AS INTEGER, text AS STRING, pos AS STRING) AS STRING
     DIM barBg AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg))
     DIM msgStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cStatusFg)).Italic(TRUE)
+    DIM posStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
 
     ' Build the hint strip. Each cell is two spaces apart.
     DIM hints AS STRING = ""
     hints = hints + hintCell("F5", "Run")    + barBg.Render("  ")
     hints = hints + hintCell("F8", "Check")  + barBg.Render("  ")
     hints = hints + hintCell("F10", "Menu")  + barBg.Render("  ")
+    hints = hints + hintCell("F12", "Out")   + barBg.Render("  ")
     hints = hints + hintCell("^S", "Save")   + barBg.Render("  ")
     hints = hints + hintCell("^F", "Find")   + barBg.Render("  ")
-    hints = hints + hintCell("^N", "New")    + barBg.Render("  ")
     hints = hints + hintCell("^O", "Open")   + barBg.Render("  ")
     hints = hints + hintCell("^W", "Close")
     DIM hintsW AS INTEGER = lipgloss.Width(hints)
 
-    ' Status message, truncated to the remaining width with a trailing
-    ' ellipsis when it would otherwise collide with the hint strip.
+    ' Position chip — rendered when caller passes a non-empty `pos`.
+    DIM posCell AS STRING = ""
+    IF pos <> "" THEN
+        posCell = posStyle.Render(" " + pos + " ") + barBg.Render("  ")
+    END IF
+    DIM posW AS INTEGER = lipgloss.Width(posCell)
+
+    ' Status message, truncated to the remaining width.
     DIM msgRaw AS STRING = " " + text + " "
-    DIM avail AS INTEGER = width - hintsW - 1
+    DIM avail AS INTEGER = width - hintsW - posW - 1
     IF avail < 4 THEN avail = 4
     IF lipgloss.Width(msgRaw) > avail THEN
         msgRaw = Mid(msgRaw, 1, avail - 1) + "…"
@@ -1988,10 +2046,10 @@ FUNCTION renderStatusBar(width AS INTEGER, text AS STRING) AS STRING
 
     ' If the terminal is too narrow for any hints, just show the
     ' status message stretched the full width.
-    IF width < hintsW + 6 THEN
+    IF width < hintsW + posW + 6 THEN
         RETURN msgStyle.Width(width).Render(" " + text)
     END IF
-    RETURN msgPadded + hints
+    RETURN msgPadded + posCell + hints
 END FUNCTION
 
 ' titledBox — render `body` inside a bordered panel with `title`
@@ -2396,6 +2454,31 @@ FUNCTION renderModal(m AS Model) AS STRING
 END FUNCTION
 
 ' -------------------------------------------------------------------------
+' renderBottomPane — bordered pane showing the tail of BottomBody.
+' Always shows the most recent lines that fit; long output scrolls
+' the old lines off the top. Title (e.g. "Output") sits in the
+' top border like other titledBoxes.
+' -------------------------------------------------------------------------
+FUNCTION renderBottomPane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
+    DIM title AS STRING = m.BottomTitle
+    IF title = "" THEN title = "Output"
+    DIM rawLines AS []STRING = strings.Split(m.BottomBody, "\n")
+    ' Inner area height inside titledBox: height - 2 (top title row +
+    ' bottom border). Show the last N lines that fit.
+    DIM visible AS INTEGER = height - 2
+    IF visible < 1 THEN visible = 1
+    DIM startI AS INTEGER = 0
+    IF LEN(rawLines) > visible THEN startI = LEN(rawLines) - visible
+    DIM showLines AS []STRING
+    DIM i AS INTEGER
+    FOR i = startI TO LEN(rawLines) - 1
+        showLines = APPEND(showLines, rawLines[i])
+    NEXT i
+    DIM body AS STRING = strings.Join(showLines, "\n")
+    RETURN titledBox(title, body, width, height, FALSE)
+END FUNCTION
+
+' -------------------------------------------------------------------------
 ' View — compose the full screen each frame.
 ' -------------------------------------------------------------------------
 
@@ -2412,17 +2495,38 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM midW   AS INTEGER = w - leftW - rightW
     IF midW < 20 THEN midW = 20
 
-    ' Body height = total minus menu (1) and statusbar (1).
-    DIM bodyH AS INTEGER = h - 2
+    ' Reserve a fixed slice of the screen for the bottom output
+    ' pane when it's visible. The main body shrinks to compensate.
+    DIM bottomH AS INTEGER = 0
+    IF m.BottomVisible THEN
+        bottomH = 10
+        IF bottomH > h - 6 THEN bottomH = h - 6
+        IF bottomH < 3 THEN bottomH = 3
+    END IF
+    ' Body height = total minus menu (1), statusbar (1), bottom pane.
+    DIM bodyH AS INTEGER = h - 2 - bottomH
     IF bodyH < 4 THEN bodyH = 4
 
+    ' Cursor position chip — shown only when actively editing code.
+    DIM posStr AS STRING = ""
+    IF m.ViewMode = "code" AND hasActiveTab(m) THEN
+        DIM curLine AS INTEGER = m.Tabs[m.TabIdx].Editor.Line() + 1
+        DIM curCol  AS INTEGER = m.Tabs[m.TabIdx].Editor.Column() + 1
+        posStr = fmt.Sprintf("Ln %d Col %d", curLine, curCol)
+    END IF
     DIM menu  AS STRING = renderMenuBar(m, w)
-    DIM stat  AS STRING = renderStatusBar(w, m.Status)
+    DIM stat  AS STRING = renderStatusBar(w, m.Status, posStr)
     DIM left  AS STRING = renderLeftPane(m, leftW, bodyH)
     DIM mid   AS STRING = renderMiddlePane(m, midW, bodyH)
     DIM right AS STRING = renderRightPane(m, rightW, bodyH, leftW + midW)
     DIM body  AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
-    DIM full  AS STRING = lipgloss.JoinVertical(lipgloss.Left, menu, body, stat)
+    DIM full  AS STRING
+    IF bottomH > 0 THEN
+        DIM bottomPane AS STRING = renderBottomPane(m, w, bottomH)
+        full = lipgloss.JoinVertical(lipgloss.Left, menu, body, bottomPane, stat)
+    ELSE
+        full = lipgloss.JoinVertical(lipgloss.Left, menu, body, stat)
+    END IF
 
     ' Active menu — overlay the dropdown on top of `full` at the right
     ' X offset under the menu cell. Uses lipgloss.Compositor so the
