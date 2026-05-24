@@ -85,16 +85,34 @@
           "Properties": {"Text": "Check"}
         },
         {
+          "Id": "runBtn",
+          "Kind": "Button",
+          "X": 16, "Y": 26, "Width": 12, "Height": 3,
+          "Visible": true, "TabStop": true,
+          "Anchor": "BottomLeft",
+          "Style": {"BgColor":"#3d4570","FgColor":"#e0def4","Border":"normal","Corner":"round"},
+          "Properties": {"Text": "Run"}
+        },
+        {
           "Id": "status",
           "Kind": "Label",
-          "X": 16, "Y": 27, "Width": 80, "Height": 1,
+          "X": 30, "Y": 27, "Width": 80, "Height": 1,
           "Visible": true,
           "Anchor": "BottomLeft",
           "Style": {"BgColor":"","FgColor":"#8087a2","Border":"none","Corner":"square"},
-          "Properties": {"Text": "Ready. Click a tree node to open it. Check runs `dbasic check` on the form code."}
+          "Properties": {"Text": "Ready. Click a tree node, Ctrl+S saves, Check runs `dbasic check`, Run builds + launches."}
         }
       ],
       "Tools": [
+        {
+          "Id": "dbBuild",
+          "Kind": "Process",
+          "Properties": {
+            "Command": "dbasic",
+            "Args": "build",
+            "Cwd": ""
+          }
+        },
         {
           "Id": "dbCheck",
           "Kind": "Process",

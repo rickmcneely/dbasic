@@ -562,6 +562,7 @@ FUNCTION emitHeader(p AS Project) AS STRING
     s = s + "IMPORT \"encoding/json\" AS encjson\n"
     s = s + "IMPORT \"fmt\"\n"
     s = s + "IMPORT \"os\"\n"
+    s = s + "IMPORT \"os/exec\" AS osexec\n"
     s = s + "IMPORT \"path/filepath\"\n"
     s = s + "IMPORT \"sort\"\n"
     s = s + "IMPORT \"strconv\"\n"
@@ -695,6 +696,12 @@ FUNCTION emitHeader(p AS Project) AS STRING
     ' call <id>_Show(); the next Update tick observes it and switches
     ' to dialog mode.
     s = s + "DIM gPendingDialog AS STRING\n\n"
+    ' Pending exec — gExec(path, argsCSV) sets these; the next Update
+    ' tick observes them and returns tea.ExecProcess so bubbletea
+    ' suspends and the child gets full terminal control until exit.
+    s = s + "DIM gPendingExecPath AS STRING\n"
+    s = s + "DIM gPendingExecArgs AS STRING\n"
+    s = s + "DIM gPendingExecCwd  AS STRING\n\n"
     ' Package-level Model pointer — Update sets gM = @m on every tick.
     ' Accessor helpers (gGetText, gSetItems, etc.) read/mutate widget
     ' state through this pointer so user SUBs can affect other widgets.
@@ -1138,6 +1145,20 @@ FUNCTION emitWidgetAccessors() AS STRING
     s = s + "SUB gCloseMsgBox()\n"
     s = s + "    IF gM = NIL THEN RETURN\n"
     s = s + "    gM.MbActive = FALSE\n"
+    s = s + "END SUB\n\n"
+    ' gExec stashes a path + comma-separated args + optional cwd. The
+    ' next Update tick observes them, builds an exec.Cmd, and returns
+    ' tea.ExecProcess so bubbletea suspends and the child runs with
+    ' full terminal control. Useful for launching another TUI app from
+    ' the host TUI.
+    s = s + "SUB gExec(path AS STRING, argsCSV AS STRING)\n"
+    s = s + "    gPendingExecPath = path\n"
+    s = s + "    gPendingExecArgs = argsCSV\n"
+    s = s + "END SUB\n\n"
+    s = s + "SUB gExecIn(path AS STRING, argsCSV AS STRING, cwd AS STRING)\n"
+    s = s + "    gPendingExecPath = path\n"
+    s = s + "    gPendingExecArgs = argsCSV\n"
+    s = s + "    gPendingExecCwd = cwd\n"
     s = s + "END SUB\n\n"
     RETURN s
 END FUNCTION
@@ -2376,6 +2397,26 @@ FUNCTION emitLifecycle() AS STRING
     ' user-overridable FormKey(k) so apps can wire global shortcuts.
     s = s + "        FormKey(k)\n"
     s = s + "    END IF\n"
+    ' Pending gExec — suspend bubbletea and run the requested process.
+    s = s + "    IF gPendingExecPath <> \"\" THEN\n"
+    s = s + "        DIM pep AS STRING = gPendingExecPath\n"
+    s = s + "        DIM pea AS STRING = gPendingExecArgs\n"
+    s = s + "        DIM peCwd AS STRING = gPendingExecCwd\n"
+    s = s + "        gPendingExecPath = \"\"\n"
+    s = s + "        gPendingExecArgs = \"\"\n"
+    s = s + "        gPendingExecCwd = \"\"\n"
+    s = s + "        DIM peCmd AS POINTER TO osexec.Cmd = osexec.Command(pep)\n"
+    s = s + "        IF pea <> \"\" THEN\n"
+    s = s + "            DIM peParts AS []STRING = strings.Split(pea, \",\")\n"
+    s = s + "            DIM pei AS INTEGER\n"
+    s = s + "            FOR pei = 0 TO LEN(peParts) - 1\n"
+    s = s + "                DIM pep1 AS STRING = strings.TrimSpace(peParts[pei])\n"
+    s = s + "                IF pep1 <> \"\" THEN peCmd.Args = APPEND(peCmd.Args, pep1)\n"
+    s = s + "            NEXT pei\n"
+    s = s + "        END IF\n"
+    s = s + "        IF peCwd <> \"\" THEN peCmd.Dir = peCwd\n"
+    s = s + "        RETURN m, tea.ExecProcess(peCmd, NIL)\n"
+    s = s + "    END IF\n"
     s = s + "    RETURN m, NIL\n"
     s = s + "END FUNCTION\n\n"
     RETURN s
@@ -3014,7 +3055,6 @@ FUNCTION emitProcessRuntime(form AS Form) AS STRING
     DIM s AS STRING = ""
     s = s + "' --- Process tool runtime --------------------------------------\n"
     s = s + "IMPORT \"bytes\"\n"
-    s = s + "IMPORT \"os/exec\" AS osexec\n"
     DIM i AS INTEGER
     FOR i = 0 TO LEN(form.Tools) - 1
         DIM t AS ToolEntry = form.Tools[i]

@@ -65,6 +65,26 @@ SUB checkBtn_Click()
     gMsgBox("Check", "Run `dbasic check` on " + shorten(curFile, 50) + "?", "Yes,No", "check")
 END SUB
 
+' Run — build curFile into a temp binary, then gExec it so bubbletea
+' suspends and the built program runs full-screen until it exits.
+SUB runBtn_Click()
+    IF curFile = "" THEN
+        gMsgBox("Run", "Open a .dbas file first.", "OK", "")
+        RETURN
+    END IF
+    DIM outBin AS STRING = "/tmp/dbtui_run"
+    gSetText("status", "building " + shorten(curFile, 50) + "...")
+    DIM code AS INTEGER = dbBuild_RunWith(curFile + ",-o," + outBin)
+    IF code <> 0 THEN
+        DIM err AS STRING = strings.TrimSpace(dbBuild_Stderr())
+        IF err = "" THEN err = strings.TrimSpace(dbBuild_Stdout())
+        gMsgBox("Build failed", shorten(err, 60), "OK", "build-fail")
+        RETURN
+    END IF
+    gSetText("status", "built " + outBin + ", launching...")
+    gExec(outBin, "")
+END SUB
+
 SUB gMsgBoxClosed(button AS STRING, context AS STRING)
     IF context = "check" AND button = "Yes" THEN
         DIM code AS INTEGER = dbCheck_RunWith(curFile)
