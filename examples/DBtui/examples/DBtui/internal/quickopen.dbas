@@ -1,0 +1,128 @@
+' -------------------------------------------------------------------------
+' Quick switcher — Ctrl+P fuzzy file picker.
+'
+' scanProjectFiles walks the project tree once per invocation
+' collecting .dbas / .dbproj paths. The modal then filters live
+' as the user types into a textinput; Enter opens the highlighted
+' path via the regular openFile path (so loading is async + the
+' file goes through the usual recent-files / tab plumbing).
+' -------------------------------------------------------------------------
+
+' scanProjectFiles — recursively collect .dbas / .dbproj paths under
+' `root`, skipping dotfiles / dot-dirs. Results are absolute paths.
+SUB scanProjectFiles(root AS STRING, out AS POINTER TO []STRING)
+    DIM entries AS []os.DirEntry
+    DIM err AS ERROR
+    entries, err = os.ReadDir(root)
+    IF err <> NIL THEN RETURN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(entries) - 1
+        DIM nm AS STRING = entries[i].Name()
+        IF strings.HasPrefix(nm, ".") THEN
+            ' skip dotfile / dot-dir
+        ELSEIF entries[i].IsDir() THEN
+            scanProjectFiles(joinPath(root, nm), out)
+        ELSE
+            DIM lo AS STRING = strings.ToLower(nm)
+            IF strings.HasSuffix(lo, ".dbas") OR strings.HasSuffix(lo, ".dbproj") THEN
+                ^out = APPEND(^out, joinPath(root, nm))
+            END IF
+        END IF
+    NEXT i
+END SUB
+
+' quickRelPath — strip the project root from a path so the modal
+' shows e.g. "internal/pad.dbas" instead of an absolute path.
+FUNCTION quickRelPath(root AS STRING, full AS STRING) AS STRING
+    DIM prefix AS STRING = root + "/"
+    IF strings.HasPrefix(full, prefix) THEN
+        RETURN Mid(full, LEN(prefix) + 1, LEN(full) - LEN(prefix))
+    END IF
+    RETURN full
+END FUNCTION
+
+' quickFilter — rebuild QuickOpenFiltered from QuickOpenInput. Simple
+' case-insensitive substring match; empty query matches everything.
+SUB quickFilter(m AS POINTER TO Model)
+    DIM q AS STRING = strings.ToLower(strings.TrimSpace(m.QuickOpenInput.Value()))
+    DIM filtered AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.QuickOpenFiles) - 1
+        DIM path AS STRING = m.QuickOpenFiles[i]
+        IF q = "" OR strings.Contains(strings.ToLower(path), q) THEN
+            filtered = APPEND(filtered, path)
+        END IF
+    NEXT i
+    m.QuickOpenFiltered = filtered
+    IF m.QuickOpenIdx >= LEN(filtered) THEN m.QuickOpenIdx = LEN(filtered) - 1
+    IF m.QuickOpenIdx < 0 THEN m.QuickOpenIdx = 0
+    m.QuickOpenOffset = 0
+END SUB
+
+' openQuickSwitcher — re-scan + open the modal.
+SUB openQuickSwitcher(m AS POINTER TO Model)
+    DIM files AS []STRING
+    scanProjectFiles(m.TreeRoot, @files)
+    m.QuickOpenFiles    = files
+    m.QuickOpenFiltered = files
+    m.QuickOpenIdx      = 0
+    m.QuickOpenOffset   = 0
+    m.QuickOpenInput    = textinput.New()
+    m.QuickOpenInput.Placeholder = "type to filter…"
+    DIM fcmd AS tea.Cmd = m.QuickOpenInput.Focus()
+    _ = fcmd
+    m.QuickOpenActive = TRUE
+END SUB
+
+' renderQuickSwitcher — framed modal with title, input field, and
+' a scrollable list of matching paths. Centered by View().
+FUNCTION renderQuickSwitcher(m AS Model) AS STRING
+    DIM innerW AS INTEGER = 60
+    DIM listH  AS INTEGER = 12
+
+    ' Title row.
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Bold(TRUE).Foreground(lipgloss.Color(cHotkey)).Width(innerW).Align(lipgloss.Center)
+    DIM countStr AS STRING = fmt.Sprintf(" (%d / %d)", LEN(m.QuickOpenFiltered), LEN(m.QuickOpenFiles))
+    DIM title AS STRING = titleStyle.Render("Open File" + countStr)
+
+    ' Input field.
+    m.QuickOpenInput.SetWidth(innerW)
+    DIM inputBox AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent))
+    DIM inField AS STRING = inputBox.Render(m.QuickOpenInput.View())
+
+    ' File list. Apply a scroll window so the selected row stays
+    ' visible.
+    DIM start AS INTEGER = m.QuickOpenOffset
+    IF m.QuickOpenIdx < start THEN start = m.QuickOpenIdx
+    IF m.QuickOpenIdx >= start + listH THEN start = m.QuickOpenIdx - listH + 1
+    IF start < 0 THEN start = 0
+    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg)).Width(innerW)
+    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE).Width(innerW)
+    DIM rows AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO listH - 1
+        DIM idx AS INTEGER = start + i
+        DIM txt AS STRING = ""
+        IF idx < LEN(m.QuickOpenFiltered) THEN
+            txt = " " + quickRelPath(m.TreeRoot, m.QuickOpenFiltered[idx])
+        END IF
+        IF idx = m.QuickOpenIdx AND idx < LEN(m.QuickOpenFiltered) THEN
+            rows = APPEND(rows, selStyle.Render(txt))
+        ELSE
+            rows = APPEND(rows, rowStyle.Render(txt))
+        END IF
+    NEXT i
+    DIM list AS STRING = strings.Join(rows, "\n")
+
+    ' Footer hint.
+    DIM hintStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cStatusFg)).Italic(TRUE).Width(innerW).Align(lipgloss.Center)
+    DIM hint AS STRING = hintStyle.Render("Enter: open    Esc: cancel    ↑↓: select")
+
+    ' Spacer (single bg-filled blank row) so the empty rows between
+    ' sections match the modal surface.
+    DIM spacer AS STRING = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Render(" ")
+
+    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, title, spacer, inField, spacer, list, spacer, hint)
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Background(lipgloss.Color(cBg)).Padding(1, 2)
+    RETURN frame.Render(stacked)
+END FUNCTION

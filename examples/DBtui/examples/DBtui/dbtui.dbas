@@ -177,6 +177,16 @@ TYPE Model
     ' best-effort via tea.SetClipboard so paste works across apps.
     DIM Clipboard AS STRING
 
+    ' Quick-switcher (Ctrl+P) state. When QuickOpenActive is TRUE,
+    ' all input goes to the switcher modal: type to filter, ↑/↓
+    ' to navigate, Enter opens, Esc cancels.
+    DIM QuickOpenActive   AS BOOLEAN
+    DIM QuickOpenInput    AS textinput.Model
+    DIM QuickOpenFiles    AS []STRING
+    DIM QuickOpenFiltered AS []STRING
+    DIM QuickOpenIdx      AS INTEGER
+    DIM QuickOpenOffset   AS INTEGER
+
     ' "Loading <path>" message shown while an async file load is in
     ' flight. Cleared when the LoadFinishedMsg lands. Empty string =
     ' no load in progress.
@@ -622,7 +632,7 @@ FUNCTION helpText() AS STRING
     s = s + "\n"
     s = s + "FILE\n"
     s = s + "  Ctrl+N   New file\n"
-    s = s + "  Ctrl+O   Open file\n"
+    s = s + "  Ctrl+O   Open file       Ctrl+P   Quick switcher\n"
     s = s + "  Ctrl+S   Save (Save As if no path)\n"
     s = s + "  Ctrl+W   Close tab\n"
     s = s + "  q / Ctrl+C   Quit\n"
@@ -1413,6 +1423,41 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF kOk THEN
         DIM key AS STRING = k.String()
 
+        ' --- Quick switcher: type to filter, ↑/↓ to navigate ---------
+        IF m.QuickOpenActive THEN
+            IF key = "esc" THEN
+                m.QuickOpenActive = FALSE
+                RETURN m, NIL
+            END IF
+            IF key = "enter" THEN
+                m.QuickOpenActive = FALSE
+                IF m.QuickOpenIdx >= 0 AND m.QuickOpenIdx < LEN(m.QuickOpenFiltered) THEN
+                    DIM qsPick AS STRING = m.QuickOpenFiltered[m.QuickOpenIdx]
+                    DIM qsCmd AS tea.Cmd = openFile(@m, qsPick)
+                    RETURN m, qsCmd
+                END IF
+                RETURN m, NIL
+            END IF
+            IF key = "up" THEN
+                m.QuickOpenIdx = m.QuickOpenIdx - 1
+                IF m.QuickOpenIdx < 0 THEN m.QuickOpenIdx = 0
+                RETURN m, NIL
+            END IF
+            IF key = "down" THEN
+                m.QuickOpenIdx = m.QuickOpenIdx + 1
+                IF m.QuickOpenIdx >= LEN(m.QuickOpenFiltered) THEN m.QuickOpenIdx = LEN(m.QuickOpenFiltered) - 1
+                IF m.QuickOpenIdx < 0 THEN m.QuickOpenIdx = 0
+                RETURN m, NIL
+            END IF
+            ' Anything else → textinput, then re-filter the list.
+            DIM qsNewTi AS textinput.Model
+            DIM qsTiCmd AS tea.Cmd
+            qsNewTi, qsTiCmd = m.QuickOpenInput.Update(msg)
+            m.QuickOpenInput = qsNewTi
+            quickFilter(@m)
+            RETURN m, qsTiCmd
+        END IF
+
         ' --- Modal dialog takes priority over everything else ---------
         IF m.ModalActive THEN
             IF key = "esc" THEN
@@ -1622,6 +1667,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             cwdOp, cwdErrOp = os.Getwd()
             IF cwdErrOp <> NIL THEN cwdOp = "."
             showInputModal(@m, "Open File", "Path:", cwdOp + "/", "open")
+            RETURN m, NIL
+        END IF
+        IF key = "ctrl+p" THEN
+            openQuickSwitcher(@m)
             RETURN m, NIL
         END IF
         ' Find / Goto live alongside the file shortcuts so they work
@@ -2040,6 +2089,23 @@ FUNCTION (m AS Model) View() AS tea.View
         END IF
     END IF
 
+    ' --- Quick switcher overlay (Z=4 — above modal + loading) -----
+    IF m.QuickOpenActive THEN
+        DIM qs AS STRING = renderQuickSwitcher(m)
+        IF qs <> "" THEN
+            DIM qsW AS INTEGER = lipgloss.Width(qs)
+            DIM qsH AS INTEGER = lipgloss.Height(qs)
+            DIM qsX AS INTEGER = (w - qsW) / 2
+            DIM qsY AS INTEGER = (h - qsH) / 2
+            IF qsX < 0 THEN qsX = 0
+            IF qsY < 0 THEN qsY = 0
+            DIM qsBg AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM qsL  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(qs).X(qsX).Y(qsY).Z(4)
+            DIM qsCmp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(qsBg, qsL)
+            full = qsCmp.Render()
+        END IF
+    END IF
+
     ' --- Loading overlay (Z=3, above modal and dropdown) ----------
     ' Shown while an async openFile is in flight. Small framed box
     ' centered on the screen so the user knows their click landed
@@ -2086,6 +2152,7 @@ FUNCTION (m AS Model) View() AS tea.View
 END FUNCTION
 
 INCLUDE "internal/pad.dbas"
+INCLUDE "internal/quickopen.dbas"
 
 ' -------------------------------------------------------------------------
 ' Main — wire up bubbletea and run.
