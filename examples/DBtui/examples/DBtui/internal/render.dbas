@@ -550,14 +550,72 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     DIM listBox  AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(listH)
     _ = listKindStyle  ' reserved for future per-token styling
 
-    ' --- Properties panel (placeholder rows; hover restyle per row) --
+    ' --- Properties panel — live cursor context ----------------------
     ' titledBox draws title at the top of the panel, so property rows
     ' start one cell below that. The panel begins at y = 2 + listH;
     ' first row sits at y = 2 + listH + 1.
     DIM propRows AS []STRING
-    propRows = APPEND(propRows, "Name      lblTitle")
-    propRows = APPEND(propRows, "Visible   [x] true")
-    propRows = APPEND(propRows, "Text      Label")
+    IF hasActiveTab(m) THEN
+        DIM edRow AS INTEGER = m.Tabs[m.TabIdx].Editor.Row
+        DIM edCol AS INTEGER = m.Tabs[m.TabIdx].Editor.Col
+        DIM edLines AS []STRING = m.Tabs[m.TabIdx].Editor.Lines
+        DIM filenm AS STRING = baseName(m.Tabs[m.TabIdx].Path)
+        IF filenm = "" THEN filenm = "(untitled)"
+        propRows = APPEND(propRows, "File   " + filenm)
+        propRows = APPEND(propRows, fmt.Sprintf("Lines  %d", LEN(edLines)))
+        propRows = APPEND(propRows, fmt.Sprintf("Pos    Ln %d Col %d", edRow + 1, edCol + 1))
+        ' Dirty flag chip.
+        DIM dirty AS STRING = "clean"
+        IF m.Tabs[m.TabIdx].Dirty THEN dirty = "modified"
+        propRows = APPEND(propRows, "State  " + dirty)
+        ' Enclosing SUB / FUNCTION / TYPE — walk the outline
+        ' backwards for the nearest decl at or above cursor row.
+        DIM outlineP AS []OutlineEntry = scanOutline(edLines)
+        DIM enclosing AS STRING = "(top-level)"
+        DIM oi AS INTEGER
+        FOR oi = LEN(outlineP) - 1 TO 0 STEP 0 - 1
+            IF outlineP[oi].Row <= edRow THEN
+                enclosing = outlineP[oi].Kind + " " + outlineP[oi].Name
+                EXIT FOR
+            END IF
+        NEXT oi
+        ' Trim long names so they fit the pane.
+        IF LEN(enclosing) > 22 THEN enclosing = Mid(enclosing, 1, 21) + "…"
+        propRows = APPEND(propRows, "In     " + enclosing)
+        ' Indent depth of current line.
+        IF edRow >= 0 AND edRow < LEN(edLines) THEN
+            DIM wsLead AS STRING = padLeadingWhitespace(edLines[edRow])
+            propRows = APPEND(propRows, fmt.Sprintf("Indent %d", LEN(wsLead)))
+        END IF
+        ' Token + kind under cursor.
+        IF edRow >= 0 AND edRow < LEN(edLines) THEN
+            DIM curLine AS STRING = edLines[edRow]
+            DIM toks AS []PadToken = tokenizeLine(curLine)
+            DIM tCol AS INTEGER = 0
+            DIM tokTxt AS STRING = ""
+            DIM tokKind AS STRING = "—"
+            DIM ti AS INTEGER
+            FOR ti = 0 TO LEN(toks) - 1
+                DIM tokEnd AS INTEGER = tCol + LEN(toks[ti].Text)
+                IF edCol >= tCol AND edCol < tokEnd THEN
+                    tokTxt = toks[ti].Text
+                    IF toks[ti].Kind = tkKeyword THEN tokKind = "keyword"
+                    IF toks[ti].Kind = tkString  THEN tokKind = "string"
+                    IF toks[ti].Kind = tkComment THEN tokKind = "comment"
+                    IF toks[ti].Kind = tkNumber  THEN tokKind = "number"
+                    IF toks[ti].Kind = tkPlain   THEN tokKind = "ident"
+                    EXIT FOR
+                END IF
+                tCol = tokEnd
+            NEXT ti
+            IF tokTxt = "" THEN tokTxt = "(ws/eol)"
+            IF LEN(tokTxt) > 18 THEN tokTxt = Mid(tokTxt, 1, 17) + "…"
+            propRows = APPEND(propRows, "Word   " + tokTxt)
+            propRows = APPEND(propRows, "Kind   " + tokKind)
+        END IF
+    ELSE
+        propRows = APPEND(propRows, "(no file open)")
+    END IF
     DIM propsInnerW AS INTEGER = width - 2
     DIM propsFirstY AS INTEGER = 2 + listH + 1
     DIM propsVisible AS INTEGER = propsH - 2

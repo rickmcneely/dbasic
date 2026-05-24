@@ -2078,6 +2078,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     RETURN m, NIL
 END FUNCTION
 
+INCLUDE "internal/pad.dbas"
 INCLUDE "internal/render.dbas"
 
 
@@ -2207,7 +2208,6 @@ FUNCTION (m AS Model) View() AS tea.View
     RETURN v
 END FUNCTION
 
-INCLUDE "internal/pad.dbas"
 INCLUDE "internal/quickopen.dbas"
 
 ' -------------------------------------------------------------------------
