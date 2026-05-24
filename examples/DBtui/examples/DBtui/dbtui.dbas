@@ -965,12 +965,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
 
         ' --- Focus cycle ----------------------------------------------
-        ' Tab / Shift+Tab toggles focus between tree and editor without
-        ' changing ViewMode — so you can browse files while the editor
-        ' still shows your current buffer. Only meaningful when there
-        ' is an editor to switch *to*. F6 is an alias for users who
-        ' want to keep plain Tab available inside the editor.
-        IF (key = "tab" OR key = "shift+tab" OR key = "f6") AND hasActiveTab(m) AND m.ViewMode = "code" THEN
+        ' Ctrl+Tab / Ctrl+Shift+Tab toggle focus between tree and
+        ' editor without changing ViewMode — so you can browse files
+        ' while the editor still shows your current buffer. Plain
+        ' Tab is reserved for the editor (indent). F6 is also bound
+        ' as a no-modifier alternative.
+        IF (key = "ctrl+tab" OR key = "ctrl+shift+tab" OR key = "f6") AND hasActiveTab(m) AND m.ViewMode = "code" THEN
             IF m.FocusedPane = "tree" THEN
                 setFocus(@m, "editor")
             ELSE
@@ -988,12 +988,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 RETURN m, stayCmd
             END IF
             ' Ctrl+PageDown / Ctrl+PageUp cycle tabs forward / back.
-            ' Most terminals also send these as Ctrl+Tab / Ctrl+Shift+Tab.
-            IF key = "ctrl+pgdown" OR key = "ctrl+tab" THEN
+            ' (Ctrl+Tab is reserved for focus cycling, not tab cycling.)
+            IF key = "ctrl+pgdown" THEN
                 switchToTab(@m, (m.TabIdx + 1) MOD LEN(m.Tabs))
                 RETURN m, NIL
             END IF
-            IF key = "ctrl+pgup" OR key = "ctrl+shift+tab" THEN
+            IF key = "ctrl+pgup" THEN
                 DIM prev AS INTEGER = m.TabIdx - 1
                 IF prev < 0 THEN prev = LEN(m.Tabs) - 1
                 switchToTab(@m, prev)
