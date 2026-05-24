@@ -247,7 +247,18 @@ SUB (p AS POINTER TO PropertiesPanel) rebuildRows()
         rows = APPEND(rows, rowText("ZOrder", fmt.Sprintf("%d", w.ZOrder)))
         rows = APPEND(rows, rowText("TabIndex", fmt.Sprintf("%d", w.TabIndex)))
         rows = APPEND(rows, rowBool("TabStop", w.TabStop))
-        rows = APPEND(rows, rowText("Anchor", w.Anchor))
+        DIM anchorOpts AS []STRING
+        anchorOpts = APPEND(anchorOpts, "")
+        anchorOpts = APPEND(anchorOpts, "Top")
+        anchorOpts = APPEND(anchorOpts, "Bottom")
+        anchorOpts = APPEND(anchorOpts, "Left")
+        anchorOpts = APPEND(anchorOpts, "Right")
+        anchorOpts = APPEND(anchorOpts, "TopLeft")
+        anchorOpts = APPEND(anchorOpts, "TopRight")
+        anchorOpts = APPEND(anchorOpts, "BottomLeft")
+        anchorOpts = APPEND(anchorOpts, "BottomRight")
+        anchorOpts = APPEND(anchorOpts, "Fill")
+        rows = APPEND(rows, rowEnum("Anchor", w.Anchor, anchorOpts))
 
         ' Kind-specific properties (Text, Placeholder, Value, Align...).
         ' Style props are sorted into their own section below.

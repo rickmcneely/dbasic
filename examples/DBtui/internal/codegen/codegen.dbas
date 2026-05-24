@@ -603,6 +603,12 @@ FUNCTION emitHeader(p AS Project) AS STRING
     ' --- SplitPanel container slots --------------------------------
     s = s + "    DIM SpSlot1 AS STRING\n"
     s = s + "    DIM SpSlot2 AS STRING\n"
+    ' --- Initial layout snapshot (anchor reflow base) --------------
+    s = s + "    DIM InitX AS INTEGER\n"
+    s = s + "    DIM InitY AS INTEGER\n"
+    s = s + "    DIM InitW AS INTEGER\n"
+    s = s + "    DIM InitH AS INTEGER\n"
+    s = s + "    DIM Anch  AS STRING\n"
     ' When TRUE, clicks on this widget start a move-drag — the runtime
     ' tracks the cursor delta and updates X/Y until release.
     s = s + "    DIM Draggable AS BOOLEAN\n"
@@ -646,6 +652,12 @@ FUNCTION emitHeader(p AS Project) AS STRING
     s = s + "    DIM DragMoveSMY  AS INTEGER\n"
     s = s + "    DIM DragMoveOX   AS INTEGER\n"
     s = s + "    DIM DragMoveOY   AS INTEGER\n"
+    ' Design-time form bounds — used by applyAnchors to compute the
+    ' delta against the current terminal size.
+    s = s + "    DIM DesignW      AS INTEGER\n"
+    s = s + "    DIM DesignH      AS INTEGER\n"
+    s = s + "    DIM ResizableX   AS BOOLEAN\n"
+    s = s + "    DIM ResizableY   AS BOOLEAN\n"
     s = s + "END TYPE\n\n"
     ' Package-level pending request — user SUBs set this when they
     ' call <id>_Show(); the next Update tick observes it and switches
@@ -1063,6 +1075,10 @@ FUNCTION emitNewModel(form AS Form) AS STRING
     DIM s AS STRING = "FUNCTION NewModel() AS Model\n"
     s = s + "    DIM m AS Model\n"
     s = s + "    m.Focus = 0\n"
+    s = s + fmt.Sprintf("    m.DesignW = %d\n", form.Width)
+    s = s + fmt.Sprintf("    m.DesignH = %d\n", form.Height)
+    s = s + fmt.Sprintf("    m.ResizableX = %s\n", dbasBool(form.ResizableX))
+    s = s + fmt.Sprintf("    m.ResizableY = %s\n", dbasBool(form.ResizableY))
     DIM i AS INTEGER
     FOR i = 0 TO LEN(form.Widgets) - 1
         DIM w AS WidgetEntry = form.Widgets[i]
@@ -1074,6 +1090,11 @@ FUNCTION emitNewModel(form AS Form) AS STRING
         s = s + fmt.Sprintf("    w%d.Y = %d\n",       i, w.Y)
         s = s + fmt.Sprintf("    w%d.W = %d\n",       i, w.Width)
         s = s + fmt.Sprintf("    w%d.H = %d\n",       i, w.Height)
+        s = s + fmt.Sprintf("    w%d.InitX = %d\n",   i, w.X)
+        s = s + fmt.Sprintf("    w%d.InitY = %d\n",   i, w.Y)
+        s = s + fmt.Sprintf("    w%d.InitW = %d\n",   i, w.Width)
+        s = s + fmt.Sprintf("    w%d.InitH = %d\n",   i, w.Height)
+        s = s + fmt.Sprintf("    w%d.Anch = %s\n",    i, dbasStr(w.Anchor))
         s = s + fmt.Sprintf("    w%d.Visi = %s\n",    i, dbasBool(w.Visible))
         s = s + fmt.Sprintf("    w%d.TStop = %s\n",   i, dbasBool(w.TabStop))
         s = s + fmt.Sprintf("    w%d.TIdx = %d\n",    i, w.TabIndex)
@@ -2572,11 +2593,14 @@ FUNCTION emitView(form AS Form) AS STRING
 
     DIM s AS STRING = ""
     s = s + "FUNCTION (m AS Model) View() AS tea.View\n"
-    ' Reflow any SplitPanel containers each frame so divider drags +
-    ' WindowSize changes take effect immediately.
+    ' Reflow anchors first so SplitPanel layout sees post-anchor widget
+    ' bounds. Then split-panel slot reflow on top of that.
+    s = s + "    applyAnchors(@m)\n"
     s = s + "    layoutSplitPanels(@m)\n"
     s = s + fmt.Sprintf("    DIM formW AS INTEGER = %d\n", form.Width)
     s = s + fmt.Sprintf("    DIM formH AS INTEGER = %d\n", form.Height)
+    s = s + "    IF m.ResizableX AND m.Width > 0 THEN formW = m.Width\n"
+    s = s + "    IF m.ResizableY AND m.Height > 0 THEN formH = m.Height\n"
     s = s + fmt.Sprintf("    DIM bgCol AS STRING = %s\n", dbasStr(bgCol))
     s = s + fmt.Sprintf("    DIM fgCol AS STRING = %s\n", dbasStr(fgCol))
     s = s + fmt.Sprintf("    DIM title AS STRING = %s\n", dbasStr(title))
@@ -3729,6 +3753,59 @@ FUNCTION emitSplitPanelLayout() AS STRING
     RETURN s
 END FUNCTION
 
+' emitAnchorLayout — writes applyAnchors(m) that reflows each widget
+' based on its Anch value against the design vs current form bounds.
+' Anchor values:
+'   ""                — no anchor; widget keeps its initial X/Y/W/H
+'   "Top"/"Bottom"    — sticks to top/bottom edge (offset preserved)
+'   "Left"/"Right"    — sticks to left/right edge
+'   "TopLeft"/"TopRight"/"BottomLeft"/"BottomRight" — corner anchors
+'   "Fill"            — grows in both axes proportionally with the form
+'
+' Convention: "Right" means the widget's RIGHT edge stays the same
+' distance from the form's right edge (so it slides as the form grows).
+FUNCTION emitAnchorLayout() AS STRING
+    DIM s AS STRING = ""
+    s = s + "' --- Anchor reflow ---------------------------------------------\n"
+    s = s + "SUB applyAnchors(m AS POINTER TO Model)\n"
+    s = s + "    IF m.DesignW = 0 OR m.DesignH = 0 THEN RETURN\n"
+    s = s + "    DIM curW AS INTEGER = m.DesignW\n"
+    s = s + "    DIM curH AS INTEGER = m.DesignH\n"
+    s = s + "    IF m.ResizableX AND m.Width > 0 THEN curW = m.Width\n"
+    s = s + "    IF m.ResizableY AND m.Height > 0 THEN curH = m.Height\n"
+    s = s + "    DIM dw AS INTEGER = curW - m.DesignW\n"
+    s = s + "    DIM dh AS INTEGER = curH - m.DesignH\n"
+    s = s + "    IF dw = 0 AND dh = 0 THEN RETURN\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "        DIM a AS STRING = m.Widgets[i].Anch\n"
+    s = s + "        IF a <> \"\" THEN\n"
+    s = s + "        DIM ix AS INTEGER = m.Widgets[i].InitX\n"
+    s = s + "        DIM iy AS INTEGER = m.Widgets[i].InitY\n"
+    s = s + "        DIM iw AS INTEGER = m.Widgets[i].InitW\n"
+    s = s + "        DIM ih AS INTEGER = m.Widgets[i].InitH\n"
+    s = s + "        DIM nx AS INTEGER = ix\n"
+    s = s + "        DIM ny AS INTEGER = iy\n"
+    s = s + "        DIM nw AS INTEGER = iw\n"
+    s = s + "        DIM nh AS INTEGER = ih\n"
+    s = s + "        IF a = \"Right\" OR a = \"TopRight\" OR a = \"BottomRight\" THEN nx = ix + dw\n"
+    s = s + "        IF a = \"Bottom\" OR a = \"BottomLeft\" OR a = \"BottomRight\" THEN ny = iy + dh\n"
+    s = s + "        IF a = \"Fill\" THEN\n"
+    s = s + "            nw = iw + dw\n"
+    s = s + "            nh = ih + dh\n"
+    s = s + "        END IF\n"
+    s = s + "        IF nw < 1 THEN nw = 1\n"
+    s = s + "        IF nh < 1 THEN nh = 1\n"
+    s = s + "        m.Widgets[i].X = nx\n"
+    s = s + "        m.Widgets[i].Y = ny\n"
+    s = s + "        m.Widgets[i].W = nw\n"
+    s = s + "        m.Widgets[i].H = nh\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT i\n"
+    s = s + "END SUB\n\n"
+    RETURN s
+END FUNCTION
+
 FUNCTION emitPropertyGridRender() AS STRING
     DIM candidates AS []STRING
     DIM envDir AS STRING = os.Getenv("DBTUI_RUNTIME_DIR")
@@ -3850,6 +3927,7 @@ FUNCTION GenerateProgram(p AS Project) AS STRING
     s = s + emitFormCanvasHelpers()
     s = s + emitFormCanvasAPI(form)
     s = s + emitSplitPanelLayout()
+    s = s + emitAnchorLayout()
     s = s + emitRenderWidget()
     s = s + emitView(form)
     s = s + emitTools(form)
