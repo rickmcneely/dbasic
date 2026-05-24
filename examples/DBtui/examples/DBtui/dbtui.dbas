@@ -156,6 +156,18 @@ TYPE Model
     DIM BottomTitle   AS STRING
     DIM BottomBody    AS STRING
 
+    ' Splitter widths — left tree column and right widgets column,
+    ' both resizable via mouse drag on the splitter column or via
+    ' Alt+←/→ (left) and Alt+Shift+←/→ (right). Clamped so the
+    ' middle pane never falls below 20 cells.
+    DIM LeftW  AS INTEGER
+    DIM RightW AS INTEGER
+
+    ' Drag tracking. DragMode is "" (idle), "splitL" (left splitter
+    ' is being dragged), or "splitR" (right splitter). When non-empty,
+    ' MouseMotionMsg updates the corresponding width.
+    DIM DragMode AS STRING
+
     ' Cached textarea.View() output. Re-rendering the editor is the
     ' single most expensive thing View() does, and bubbletea calls
     ' View() after every Update — including every mouse-motion
@@ -494,6 +506,78 @@ SUB refreshEditorCache(m AS POINTER TO Model, width AS INTEGER, height AS INTEGE
     m.EditorCacheW = width
     m.EditorCacheH = height
     m.EditorCacheDirty = FALSE
+END SUB
+
+' helpText — the keybindings cheat-sheet shown in the Help modal.
+' Kept tight (≤ 46 cols wide) so the existing modal innerW fits it
+' without soft-wrapping the lines.
+FUNCTION helpText() AS STRING
+    DIM s AS STRING = ""
+    s = s + "DBtui — self-hosted IDE for DBasic\n"
+    s = s + "\n"
+    s = s + "FILE\n"
+    s = s + "  Ctrl+N   New file\n"
+    s = s + "  Ctrl+O   Open file\n"
+    s = s + "  Ctrl+S   Save (Save As if no path)\n"
+    s = s + "  Ctrl+W   Close tab\n"
+    s = s + "  q / Ctrl+C   Quit\n"
+    s = s + "\n"
+    s = s + "EDIT / NAVIGATE\n"
+    s = s + "  Ctrl+F   Find    F3   Find next\n"
+    s = s + "  Ctrl+G   Go to line\n"
+    s = s + "  Esc      Focus tree from editor\n"
+    s = s + "  Ctrl+Tab / F6   Cycle focus\n"
+    s = s + "\n"
+    s = s + "TABS\n"
+    s = s + "  Ctrl+PgUp / Ctrl+PgDn   Cycle tabs\n"
+    s = s + "  Click tab     Switch     Click ✕   Close\n"
+    s = s + "\n"
+    s = s + "VIEW / RUN\n"
+    s = s + "  F5    Run         F7    Form / Code\n"
+    s = s + "  F8    Check       F12   Toggle Output\n"
+    s = s + "  F10   Open menu\n"
+    s = s + "\n"
+    s = s + "TREE\n"
+    s = s + "  ↑/↓ PgUp PgDn Home End   Move\n"
+    s = s + "  Enter   Open file / toggle folder\n"
+    s = s + "  Wheel   Scroll\n"
+    s = s + "\n"
+    s = s + "LAYOUT\n"
+    s = s + "  Drag pane border   Resize splitter\n"
+    s = s + "  Alt+← / →          Resize left pane\n"
+    s = s + "  Alt+Shift+← / →    Resize right pane\n"
+    RETURN s
+END FUNCTION
+
+' showHelpModal — pop the keybindings cheat-sheet. Single OK button
+' (or Enter/Esc to dismiss). Tagged "help" so dispatchModalClose
+' doesn't run any action on close.
+SUB showHelpModal(m AS POINTER TO Model)
+    showModal(m, "Help — DBtui Keybindings", helpText(), "OK", "help")
+END SUB
+
+' clampSplitters — keep LeftW / RightW in the legal range:
+' each at least 15 cells, middle pane at least 20 cells, total
+' not exceeding the screen width. Whittles down whichever pane
+' is larger when the screen is too narrow.
+SUB clampSplitters(m AS POINTER TO Model)
+    IF m.LeftW  < 15 THEN m.LeftW  = 15
+    IF m.RightW < 15 THEN m.RightW = 15
+    DIM minMid AS INTEGER = 20
+    DIM tot AS INTEGER = m.LeftW + m.RightW + minMid
+    IF tot > m.Width AND m.Width > 0 THEN
+        DIM over AS INTEGER = tot - m.Width
+        ' Trim from whichever side has more "give" first.
+        IF m.LeftW - 15 >= over THEN
+            m.LeftW = m.LeftW - over
+        ELSEIF m.RightW - 15 >= over THEN
+            m.RightW = m.RightW - over
+        ELSE
+            m.LeftW = 15
+            m.RightW = 15
+        END IF
+    END IF
+    invalidateEditorCache(m)
 END SUB
 
 ' isMutatingKey — TRUE for keys that can change the editor buffer.
@@ -1063,11 +1147,11 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
         RETURN
     END IF
     IF action = "help.about" THEN
-        m.Status = "DBtui — self-hosted IDE for DBasic"
+        showHelpModal(m)
         RETURN
     END IF
     IF action = "help.keys" THEN
-        m.Status = "Keys: F10 menu, F7 form/code, Ctrl+S save, q quit"
+        showHelpModal(m)
         RETURN
     END IF
     m.Status = "action: " + action
@@ -1200,6 +1284,9 @@ FUNCTION newModel() AS Model
     ' No hover known until the first MouseMotionMsg arrives.
     m.HoverX = 0 - 1
     m.HoverY = 0 - 1
+    ' Default splitter widths mirror the original DBtui's defaults.
+    m.LeftW  = 28
+    m.RightW = 32
     ' Menubar definitions + closed-state.
     m.Menus = buildMenus()
     m.MenuActive = 0 - 1
@@ -1224,8 +1311,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF szOk THEN
         m.Width = sz.Width
         m.Height = sz.Height
-        ' New dimensions → cached editor view almost certainly
-        ' wrong; force a refresh on the next paint.
+        ' Re-clamp splitters in case the window shrank below their
+        ' combined minimum, and invalidate the editor cache since
+        ' its sized-for-old-width content is now wrong.
+        clampSplitters(@m)
         invalidateEditorCache(@m)
         RETURN m, NIL
     END IF
@@ -1270,6 +1359,19 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mmOk AS BOOLEAN
     mmMsg, mmOk = msg.(tea.MouseMotionMsg)
     IF mmOk THEN
+        ' Splitter drag in progress — translate cursor position to
+        ' new pane width and reclamp. Doesn't go through the hover
+        ' update path because the cursor is "owned" by the drag.
+        IF m.DragMode = "splitL" THEN
+            m.LeftW = mmMsg.X + 1
+            clampSplitters(@m)
+            RETURN m, NIL
+        END IF
+        IF m.DragMode = "splitR" THEN
+            m.RightW = m.Width - mmMsg.X
+            clampSplitters(@m)
+            RETURN m, NIL
+        END IF
         ' Drop identical-cell events early. bubbletea v2 in
         ' MouseModeAllMotion floods us with events as the pointer
         ' moves; deduping makes hover feel snappy.
@@ -1313,7 +1415,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mwMsg AS tea.MouseWheelMsg
     DIM mwOk AS BOOLEAN
     mwMsg, mwOk = msg.(tea.MouseWheelMsg)
-    IF mwOk AND mwMsg.X < 28 THEN
+    IF mwOk AND mwMsg.X < m.LeftW THEN
         DIM step AS INTEGER = 3
         IF mwMsg.Button = tea.MouseWheelUp THEN
             m.TreeOffset = m.TreeOffset - step
@@ -1321,6 +1423,17 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.TreeOffset = m.TreeOffset + step
         END IF
         clampTreeOffset(@m)
+        RETURN m, NIL
+    END IF
+
+    ' --- Mouse release --------------------------------------------
+    ' End an in-progress splitter drag.
+    DIM mrMsg AS tea.MouseReleaseMsg
+    DIM mrOk  AS BOOLEAN
+    mrMsg, mrOk = msg.(tea.MouseReleaseMsg)
+    IF mrOk AND m.DragMode <> "" THEN
+        m.DragMode = ""
+        _ = mrMsg
         RETURN m, NIL
     END IF
 
@@ -1334,6 +1447,21 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mcMsg, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mcMsg.Button = tea.MouseLeft THEN
+        ' (0) Splitter click — start a drag. The drag-handle is the
+        '     column right at the left pane's right border (and the
+        '     mirror column for the right pane). 2-cell tolerance so
+        '     the user doesn't have to land on the exact pixel.
+        IF mcMsg.Y >= 2 AND mcMsg.Y < m.Height - 1 THEN
+            IF mcMsg.X = m.LeftW - 1 OR mcMsg.X = m.LeftW THEN
+                m.DragMode = "splitL"
+                RETURN m, NIL
+            END IF
+            DIM rsX AS INTEGER = m.Width - m.RightW
+            IF mcMsg.X = rsX OR mcMsg.X = rsX - 1 THEN
+                m.DragMode = "splitR"
+                RETURN m, NIL
+            END IF
+        END IF
         ' (1) Dropdown-item click.
         IF m.MenuActive >= 0 THEN
             DIM ddIt AS INTEGER = dropdownItemAt(m, mcMsg.X, mcMsg.Y)
@@ -1395,7 +1523,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' file (or toggles the folder).
         DIM treeBodyH AS INTEGER = m.Height - 2
         IF treeBodyH < 4 THEN treeBodyH = 4
-        DIM treeHit AS INTEGER = treeNodeAt(m, mcMsg.X, mcMsg.Y, 28, treeBodyH)
+        DIM treeHit AS INTEGER = treeNodeAt(m, mcMsg.X, mcMsg.Y, m.LeftW, treeBodyH)
         IF treeHit >= 0 THEN
             DIM alreadyOn AS BOOLEAN = (m.TreeSelected = treeHit)
             m.TreeSelected = treeHit
@@ -1421,7 +1549,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' (5) Click landed in the middle pane (between left and right
         '     panes, below the tabs row) while code mode is active —
         '     focus the editor so the next keystroke lands there.
-        IF mcMsg.Y >= 2 AND mcMsg.Y < m.Height - 1 AND mcMsg.X >= 28 AND mcMsg.X < m.Width - 32 AND m.ViewMode = "code" AND hasActiveTab(m) THEN
+        IF mcMsg.Y >= 2 AND mcMsg.Y < m.Height - 1 AND mcMsg.X >= m.LeftW AND mcMsg.X < m.Width - m.RightW AND m.ViewMode = "code" AND hasActiveTab(m) THEN
             setFocus(@m, "editor")
             RETURN m, NIL
         END IF
@@ -1529,6 +1657,28 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             showInputModal(@m, "Go To Line", "Line number:", "", "goto")
             RETURN m, NIL
         END IF
+        ' Splitter resize via keyboard. Alt+←/→ grow / shrink the
+        ' LEFT pane; Alt+Shift+←/→ do the same to the right pane.
+        IF key = "alt+left" THEN
+            m.LeftW = m.LeftW - 2
+            clampSplitters(@m)
+            RETURN m, NIL
+        END IF
+        IF key = "alt+right" THEN
+            m.LeftW = m.LeftW + 2
+            clampSplitters(@m)
+            RETURN m, NIL
+        END IF
+        IF key = "alt+shift+left" THEN
+            m.RightW = m.RightW + 2
+            clampSplitters(@m)
+            RETURN m, NIL
+        END IF
+        IF key = "alt+shift+right" THEN
+            m.RightW = m.RightW - 2
+            clampSplitters(@m)
+            RETURN m, NIL
+        END IF
 
         ' --- Menubar handling -----------------------------------------
         ' Menubar takes priority when active: arrows navigate, Enter
@@ -1632,6 +1782,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     RETURN m, NIL
                 END IF
             NEXT altMi
+        END IF
+
+        ' F1 = Help cheat-sheet. Available from anywhere (even
+        ' inside the editor) since it's a global lookup.
+        IF key = "f1" THEN
+            showHelpModal(@m)
+            RETURN m, NIL
         END IF
 
         ' F5 = Run (saves + tea.ExecProcess). F8 = Check (saves +
@@ -2123,9 +2280,10 @@ FUNCTION renderTreeBody(m AS Model, innerW AS INTEGER, innerH AS INTEGER) AS STR
     DIM cursorStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color("#2d4f67")).Foreground(lipgloss.Color(cFg)).Bold(TRUE).Width(innerW)
     DIM hoverStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cFg)).Width(innerW)
     DIM defStyle    AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(innerW)
-    ' Resolve the hovered row ONCE. treeNodeAt expects leftW=28,
-    ' bodyH = innerH + 2 (it strips the title row + bottom border).
-    DIM hoverRow AS INTEGER = treeNodeAt(m, m.HoverX, m.HoverY, 28, innerH + 2)
+    ' Resolve the hovered row ONCE. treeNodeAt expects the left-pane
+    ' width and bodyH = innerH + 2 (it strips the title row + bottom
+    ' border).
+    DIM hoverRow AS INTEGER = treeNodeAt(m, m.HoverX, m.HoverY, m.LeftW, innerH + 2)
     DIM lines AS []STRING
     DIM total AS INTEGER = LEN(m.TreeNodes)
     DIM startI AS INTEGER = m.TreeOffset
@@ -2515,9 +2673,10 @@ FUNCTION (m AS Model) View() AS tea.View
     IF w < 60 THEN w = 80
     IF h < 20 THEN h = 24
 
-    ' Column widths — mirror the original DBtui's defaults.
-    DIM leftW  AS INTEGER = 28
-    DIM rightW AS INTEGER = 32
+    ' Column widths come from Model — splitter drag and Alt+arrows
+    ' adjust LeftW / RightW; clampSplitters keeps them sane.
+    DIM leftW  AS INTEGER = m.LeftW
+    DIM rightW AS INTEGER = m.RightW
     DIM midW   AS INTEGER = w - leftW - rightW
     IF midW < 20 THEN midW = 20
 
