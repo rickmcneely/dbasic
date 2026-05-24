@@ -17,9 +17,20 @@
       "FgColor": "#e0def4",
       "Widgets": [
         {
+          "Id": "mainmenu",
+          "Kind": "MenuBar",
+          "X": 1, "Y": 1, "Width": 106, "Height": 1,
+          "Visible": true,
+          "Anchor": "TopLeft",
+          "Style": {"BgColor":"#24273a","FgColor":"#cad3f5","Border":"none","Corner":"square"},
+          "Properties": {
+            "Menus": "File|Save:file.save,Save All:file.saveall,-,Quit:file.quit;Edit|Cut:edit.cut,Copy:edit.copy,Paste:edit.paste;Run|Run:run.run,Check:run.check,-,Build:run.build;Help|About:help.about,Keys:help.keys"
+          }
+        },
+        {
           "Id": "split1",
           "Kind": "SplitPanel",
-          "X": 1, "Y": 1, "Width": 106, "Height": 24,
+          "X": 1, "Y": 2, "Width": 106, "Height": 23,
           "Visible": true,
           "Anchor": "Fill",
           "Style": {"BgColor":"#1a1b2e","FgColor":"#7dcfff","Border":"none","Corner":"square"},

@@ -715,6 +715,9 @@ FUNCTION emitHeader(p AS Project) AS STRING
     s = s + "DIM gPendingExecPath AS STRING\n"
     s = s + "DIM gPendingExecArgs AS STRING\n"
     s = s + "DIM gPendingExecCwd  AS STRING\n\n"
+    ' Pending quit — gQuit() sets this; the next Update tick observes
+    ' it and returns tea.Quit (after FormClose).
+    s = s + "DIM gPendingQuit AS BOOLEAN\n\n"
     ' Package-level Model pointer — Update sets gM = @m on every tick.
     ' Accessor helpers (gGetText, gSetItems, etc.) read/mutate widget
     ' state through this pointer so user SUBs can affect other widgets.
@@ -1235,6 +1238,9 @@ FUNCTION emitWidgetAccessors() AS STRING
     s = s + "    gPendingExecPath = path\n"
     s = s + "    gPendingExecArgs = argsCSV\n"
     s = s + "    gPendingExecCwd = cwd\n"
+    s = s + "END SUB\n\n"
+    s = s + "SUB gQuit()\n"
+    s = s + "    gPendingQuit = TRUE\n"
     s = s + "END SUB\n\n"
     RETURN s
 END FUNCTION
@@ -2477,6 +2483,12 @@ FUNCTION emitLifecycle() AS STRING
     ' Anything that fell through the standard key dispatch goes to the
     ' user-overridable FormKey(k) so apps can wire global shortcuts.
     s = s + "        FormKey(k)\n"
+    s = s + "    END IF\n"
+    ' Pending quit — user code called gQuit().
+    s = s + "    IF gPendingQuit THEN\n"
+    s = s + "        gPendingQuit = FALSE\n"
+    s = s + "        FormClose()\n"
+    s = s + "        RETURN m, tea.Quit\n"
     s = s + "    END IF\n"
     ' Pending gExec — suspend bubbletea and run the requested process.
     s = s + "    IF gPendingExecPath <> \"\" THEN\n"

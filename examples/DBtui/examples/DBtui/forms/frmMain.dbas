@@ -337,6 +337,63 @@ SUB props_Change()
     END IF
 END SUB
 
+' Top menu — dispatched as "section.action". Reuses the button /
+' hotkey handlers so the menu is just another way to drive them.
+SUB mainmenu_Action(action AS STRING)
+    IF action = "file.save" THEN
+        IF curFile = "" THEN
+            gSetText("status", "nothing to save")
+            RETURN
+        END IF
+        IF saveCurrent() THEN gSetText("status", "saved " + shorten(curFile, 60))
+        RETURN
+    END IF
+    IF action = "file.saveall" THEN
+        DIM saved AS INTEGER = 0
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(openFiles) - 1
+            IF i < LEN(openDirty) AND openDirty[i] THEN
+                DIM body AS STRING = ""
+                IF i = curIdx THEN
+                    body = gGetText("code")
+                ELSEIF i < LEN(openBufs) THEN
+                    body = openBufs[i]
+                END IF
+                DIM err AS ERROR = os.WriteFile(openFiles[i], Encode(body), 0644)
+                IF err = NIL THEN
+                    openDirty[i] = FALSE
+                    IF i < LEN(openBufs) THEN openBufs[i] = body
+                    saved = saved + 1
+                END IF
+            END IF
+        NEXT i
+        refreshTabs()
+        gSetText("status", fmt.Sprintf("saved %d file(s)", saved))
+        RETURN
+    END IF
+    IF action = "file.quit" THEN
+        gQuit()
+        RETURN
+    END IF
+    IF action = "run.run" OR action = "run.build" THEN
+        runBtn_Click()
+        RETURN
+    END IF
+    IF action = "run.check" THEN
+        checkBtn_Click()
+        RETURN
+    END IF
+    IF action = "help.about" THEN
+        gMsgBox("About DBtui", "Self-hosted DBtui skeleton — built in DBasic on the extracted widget set.", "OK", "about")
+        RETURN
+    END IF
+    IF action = "help.keys" THEN
+        gMsgBox("Keys", "F5 Run · F6 Check · Ctrl+S Save · Click tree · Right-click tab to close", "OK", "keys")
+        RETURN
+    END IF
+    gSetText("status", "menu: " + action)
+END SUB
+
 ' Check button.
 SUB checkBtn_Click()
     IF curFile = "" THEN
