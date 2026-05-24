@@ -496,6 +496,28 @@ SUB refreshEditorCache(m AS POINTER TO Model, width AS INTEGER, height AS INTEGE
     m.EditorCacheDirty = FALSE
 END SUB
 
+' isMutatingKey — TRUE for keys that can change the editor buffer.
+' Lets the editor dispatch flip the Dirty flag without a costly
+' before/after Value() comparison on every keystroke.
+FUNCTION isMutatingKey(k AS STRING) AS BOOLEAN
+    IF LEN(k) = 1 THEN RETURN TRUE          ' single character — typed text
+    IF k = "backspace" THEN RETURN TRUE
+    IF k = "delete"    THEN RETURN TRUE
+    IF k = "enter"     THEN RETURN TRUE
+    IF k = "space"     THEN RETURN TRUE
+    IF k = "tab"       THEN RETURN TRUE
+    IF k = "ctrl+v"    THEN RETURN TRUE      ' paste
+    IF k = "ctrl+x"    THEN RETURN TRUE      ' cut
+    IF k = "ctrl+y"    THEN RETURN TRUE      ' redo (textarea default)
+    IF k = "ctrl+z"    THEN RETURN TRUE      ' undo
+    IF k = "ctrl+k"    THEN RETURN TRUE      ' kill to end-of-line
+    IF k = "ctrl+u"    THEN RETURN TRUE      ' kill to start-of-line
+    IF k = "ctrl+w"    THEN RETURN TRUE      ' (intercepted earlier, defensive)
+    IF k = "alt+backspace" THEN RETURN TRUE  ' delete prev word
+    IF k = "alt+d"     THEN RETURN TRUE      ' delete next word
+    RETURN FALSE
+END FUNCTION
+
 ' newTextarea — fresh, empty textarea.Model configured the way every
 ' tab wants. Centralised so all tabs look identical at birth.
 FUNCTION newTextarea() AS textarea.Model
@@ -1107,12 +1129,11 @@ SUB completeFileLoad(m AS POINTER TO Model, path AS STRING, data AS BYTES, err A
     t.Path = path
     t.Editor = newTextarea()
     t.Editor.SetValue(string(data))
-    ' SetValue lands the cursor at the END; walk back to the top so
-    ' the user sees the start of the file first.
-    DO WHILE t.Editor.Line() > 0
-        t.Editor.CursorUp()
-    LOOP
-    t.Editor.CursorStart()
+    ' SetValue lands the cursor at the END. MoveToBegin is the
+    ' single-call way back to the top — walking up line by line
+    ' via CursorUp() was O(lines) and made loading large files
+    ' feel hung.
+    t.Editor.MoveToBegin()
     t.Dirty = FALSE
     IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
     m.Tabs = APPEND(m.Tabs, t)
@@ -1698,12 +1719,17 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 setFocus(@m, "tree")
                 RETURN m, NIL
             END IF
-            DIM prevBuf AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+            ' Cheap mutating-key check instead of comparing the whole
+            ' buffer before/after Update. Editor.Value() is O(buffer
+            ' size); doing it twice per keystroke made typing in big
+            ' files feel laggy. This catches the common edit keys —
+            ' single chars, structural keys, paste/cut/undo/redo.
+            DIM mutates AS BOOLEAN = isMutatingKey(key)
             DIM newEd AS textarea.Model
             DIM eCmd  AS tea.Cmd
             newEd, eCmd = m.Tabs[m.TabIdx].Editor.Update(msg)
             m.Tabs[m.TabIdx].Editor = newEd
-            IF newEd.Value() <> prevBuf THEN m.Tabs[m.TabIdx].Dirty = TRUE
+            IF mutates THEN m.Tabs[m.TabIdx].Dirty = TRUE
             ' Any editor.Update may have moved the cursor or content,
             ' so the cached View() output is now stale.
             invalidateEditorCache(@m)
