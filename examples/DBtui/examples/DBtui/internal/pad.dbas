@@ -296,6 +296,26 @@ TYPE Pad
     DIM RedoStack AS []PadSnapshot
 END TYPE
 
+' padMouseToRowCol — translate screen coords (mx, my) to a (row, col)
+' inside Pad `p`. `contentX` / `contentY` are the absolute screen
+' positions where the editor's first text cell begins (i.e. just
+' past the line-number gutter, just below the tabs row). The result
+' is clamped to a valid position inside the current buffer.
+FUNCTION padMouseToRowCol(p AS Pad, mx AS INTEGER, my AS INTEGER, contentX AS INTEGER, contentY AS INTEGER) AS (INTEGER, INTEGER)
+    DIM localY AS INTEGER = my - contentY
+    DIM localX AS INTEGER = mx - contentX
+    IF localY < 0 THEN localY = 0
+    IF localX < 0 THEN localX = 0
+    DIM row AS INTEGER = p.ScrollTop  + localY
+    DIM col AS INTEGER = p.ScrollLeft + localX
+    IF row < 0                THEN row = 0
+    IF row >= LEN(p.Lines)    THEN row = LEN(p.Lines) - 1
+    DIM lineLen AS INTEGER = LEN(p.Lines[row])
+    IF col > lineLen          THEN col = lineLen
+    IF col < 0                THEN col = 0
+    RETURN row, col
+END FUNCTION
+
 ' newPad — empty single-line buffer with sane defaults.
 FUNCTION newPad() AS Pad
     DIM p AS Pad

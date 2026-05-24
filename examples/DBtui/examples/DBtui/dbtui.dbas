@@ -1139,6 +1139,19 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             clampSplitters(@m)
             RETURN m, NIL
         END IF
+        ' Editor drag-select: cursor follows the mouse, selection
+        ' extends from the anchor pinned at MouseClickMsg time.
+        IF m.DragMode = "editorSelect" AND hasActiveTab(m) THEN
+            DIM dsRow AS INTEGER
+            DIM dsCol AS INTEGER
+            dsRow, dsCol = padMouseToRowCol(m.Tabs[m.TabIdx].Editor, mmMsg.X, mmMsg.Y, m.LeftW + 5, 2)
+            m.Tabs[m.TabIdx].Editor.Row = dsRow
+            m.Tabs[m.TabIdx].Editor.Col = dsCol
+            m.Tabs[m.TabIdx].Editor.SelActive = TRUE
+            padEnsureVisible(@m.Tabs[m.TabIdx].Editor)
+            invalidateEditorCache(@m)
+            RETURN m, NIL
+        END IF
         ' Drop identical-cell events early. bubbletea v2 in
         ' MouseModeAllMotion floods us with events as the pointer
         ' moves; deduping makes hover feel snappy.
@@ -1176,9 +1189,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     END IF
 
     ' --- Mouse wheel ----------------------------------------------
-    ' Wheel inside the left pane scrolls the tree (independent of
-    ' the selection cursor). Wheel elsewhere falls through — the
-    ' textarea handles its own wheel in editor-routing later.
+    ' Routed by region: left pane → tree, middle pane in code mode →
+    ' editor scroll. The cursor is unaffected — wheel scroll only
+    ' moves the viewport, matching how every other editor behaves.
     DIM mwMsg AS tea.MouseWheelMsg
     DIM mwOk AS BOOLEAN
     mwMsg, mwOk = msg.(tea.MouseWheelMsg)
@@ -1190,6 +1203,21 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.TreeOffset = m.TreeOffset + step
         END IF
         clampTreeOffset(@m)
+        RETURN m, NIL
+    END IF
+    IF mwOk AND mwMsg.X >= m.LeftW AND mwMsg.X < m.Width - m.RightW AND mwMsg.Y >= 2 AND m.ViewMode = "code" AND hasActiveTab(m) THEN
+        DIM eStep AS INTEGER = 3
+        IF mwMsg.Button = tea.MouseWheelUp THEN
+            m.Tabs[m.TabIdx].Editor.ScrollTop = m.Tabs[m.TabIdx].Editor.ScrollTop - eStep
+        ELSE
+            m.Tabs[m.TabIdx].Editor.ScrollTop = m.Tabs[m.TabIdx].Editor.ScrollTop + eStep
+        END IF
+        ' Clamp to [0, max] so we don't scroll past either end.
+        DIM maxScroll AS INTEGER = LEN(m.Tabs[m.TabIdx].Editor.Lines) - m.Tabs[m.TabIdx].Editor.ViewH
+        IF maxScroll < 0 THEN maxScroll = 0
+        IF m.Tabs[m.TabIdx].Editor.ScrollTop > maxScroll THEN m.Tabs[m.TabIdx].Editor.ScrollTop = maxScroll
+        IF m.Tabs[m.TabIdx].Editor.ScrollTop < 0 THEN m.Tabs[m.TabIdx].Editor.ScrollTop = 0
+        invalidateEditorCache(@m)
         RETURN m, NIL
     END IF
 
@@ -1330,9 +1358,21 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         ' (5) Click landed in the middle pane (between left and right
         '     panes, below the tabs row) while code mode is active —
-        '     focus the editor so the next keystroke lands there.
+        '     focus the editor, position the cursor at the click,
+        '     and arm a drag-select. The MouseMotionMsg handler
+        '     extends the selection while the button is held.
         IF mcMsg.Y >= 2 AND mcMsg.Y < m.Height - 1 AND mcMsg.X >= m.LeftW AND mcMsg.X < m.Width - m.RightW AND m.ViewMode = "code" AND hasActiveTab(m) THEN
             setFocus(@m, "editor")
+            DIM ecRow AS INTEGER
+            DIM ecCol AS INTEGER
+            ecRow, ecCol = padMouseToRowCol(m.Tabs[m.TabIdx].Editor, mcMsg.X, mcMsg.Y, m.LeftW + 5, 2)
+            m.Tabs[m.TabIdx].Editor.Row    = ecRow
+            m.Tabs[m.TabIdx].Editor.Col    = ecCol
+            m.Tabs[m.TabIdx].Editor.SelRow = ecRow
+            m.Tabs[m.TabIdx].Editor.SelCol = ecCol
+            m.Tabs[m.TabIdx].Editor.SelActive = FALSE
+            m.DragMode = "editorSelect"
+            invalidateEditorCache(@m)
             RETURN m, NIL
         END IF
     END IF
