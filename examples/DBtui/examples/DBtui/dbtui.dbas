@@ -56,6 +56,29 @@ TYPE TreeNode
 END TYPE
 
 ' -------------------------------------------------------------------------
+' Menubar data model.
+'
+' A MenuDef is one top-level cell on the menu bar: "(F)ile", "(E)dit",
+' etc. Each holds a list of MenuItem entries. An item with IsSep=TRUE
+' renders as a horizontal separator inside the dropdown.
+'
+' The Label string uses the "(X)" convention to mark the hotkey letter
+' that activates the menu / item — Alt+letter for top-level, plain
+' letter (when the dropdown is already open) for items.
+' -------------------------------------------------------------------------
+
+TYPE MenuItem
+    DIM Label  AS STRING                 ' "(S)ave"  or "─" for separator
+    DIM Action AS STRING                 ' "file.save", "" for separators
+    DIM IsSep  AS BOOLEAN
+END TYPE
+
+TYPE MenuDef
+    DIM Label AS STRING                  ' "(F)ile"
+    DIM Items AS []MenuItem
+END TYPE
+
+' -------------------------------------------------------------------------
 ' Model — the entire IDE state lives here.
 ' -------------------------------------------------------------------------
 
@@ -77,6 +100,12 @@ TYPE Model
     DIM Editor   AS textarea.Model
     DIM ViewMode AS STRING               ' "form" or "code"
     DIM CurFile  AS STRING               ' path of the file currently in Editor
+    DIM Dirty    AS BOOLEAN              ' editor buffer differs from disk
+
+    ' Menubar state.
+    DIM Menus       AS []MenuDef         ' definitions built once at startup
+    DIM MenuActive  AS INTEGER           ' -1 = closed; else top-menu index
+    DIM MenuItemIdx AS INTEGER           ' cursor inside the open dropdown
 END TYPE
 
 ' setExpanded — toggle whether `path` is in the TreeExpanded "set".
@@ -184,6 +213,140 @@ FUNCTION baseName(p AS STRING) AS STRING
     RETURN Mid(p, idx + 2, LEN(p) - idx - 1)
 END FUNCTION
 
+' mkItem / mkSep — small constructors so the menu definition reads as
+' a flat list of `APPEND` calls instead of nested struct literals.
+FUNCTION mkItem(label AS STRING, action AS STRING) AS MenuItem
+    DIM it AS MenuItem
+    it.Label = label
+    it.Action = action
+    it.IsSep = FALSE
+    RETURN it
+END FUNCTION
+
+FUNCTION mkSep() AS MenuItem
+    DIM it AS MenuItem
+    it.IsSep = TRUE
+    RETURN it
+END FUNCTION
+
+FUNCTION mkMenu(label AS STRING, items AS []MenuItem) AS MenuDef
+    DIM md AS MenuDef
+    md.Label = label
+    md.Items = items
+    RETURN md
+END FUNCTION
+
+' buildMenus — define the menubar's contents. The "(X)" letters mark
+' the hotkey for each menu/item. Actions are dispatched in dispatchAction.
+FUNCTION buildMenus() AS []MenuDef
+    DIM menus AS []MenuDef
+    DIM fileItems AS []MenuItem
+    fileItems = APPEND(fileItems, mkItem("(S)ave        Ctrl+S", "file.save"))
+    fileItems = APPEND(fileItems, mkSep())
+    fileItems = APPEND(fileItems, mkItem("(Q)uit             q", "file.quit"))
+    menus = APPEND(menus, mkMenu("(F)ile", fileItems))
+
+    DIM viewItems AS []MenuItem
+    viewItems = APPEND(viewItems, mkItem("(F)orm Designer  F7", "view.form"))
+    viewItems = APPEND(viewItems, mkItem("(C)ode Editor    F7", "view.code"))
+    menus = APPEND(menus, mkMenu("(V)iew", viewItems))
+
+    DIM runItems AS []MenuItem
+    runItems = APPEND(runItems, mkItem("(R)un             F5", "run.run"))
+    runItems = APPEND(runItems, mkItem("(C)heck           F6", "run.check"))
+    menus = APPEND(menus, mkMenu("(R)un", runItems))
+
+    DIM helpItems AS []MenuItem
+    helpItems = APPEND(helpItems, mkItem("(A)bout", "help.about"))
+    helpItems = APPEND(helpItems, mkItem("(K)eys",  "help.keys"))
+    menus = APPEND(menus, mkMenu("(H)elp", helpItems))
+    RETURN menus
+END FUNCTION
+
+' menuHotkey — extract the lowercased "(X)" letter from a label.
+' Returns "" if the label has no hotkey marker.
+FUNCTION menuHotkey(label AS STRING) AS STRING
+    DIM i AS INTEGER = strings.Index(label, "(")
+    IF i < 0 OR i + 2 >= LEN(label) THEN RETURN ""
+    IF Mid(label, i + 3, 1) <> ")" THEN RETURN ""
+    RETURN strings.ToLower(Mid(label, i + 2, 1))
+END FUNCTION
+
+' menuStrip — strip the parens from a label, leaving the visible text.
+' "(F)ile" → "File".
+FUNCTION menuStrip(label AS STRING) AS STRING
+    DIM i AS INTEGER = strings.Index(label, "(")
+    IF i < 0 OR i + 2 >= LEN(label) THEN RETURN label
+    IF Mid(label, i + 3, 1) <> ")" THEN RETURN label
+    DIM pre AS STRING = ""
+    IF i > 0 THEN pre = Mid(label, 1, i)
+    DIM letter AS STRING = Mid(label, i + 2, 1)
+    DIM post AS STRING = ""
+    IF i + 3 < LEN(label) THEN post = Mid(label, i + 4, LEN(label) - i - 3)
+    RETURN pre + letter + post
+END FUNCTION
+
+' saveCurrent — write the editor buffer to CurFile. Status reports
+' the byte count on success or the error message on failure.
+SUB saveCurrent(m AS POINTER TO Model)
+    IF m.CurFile = "" THEN
+        m.Status = "nothing open to save"
+        RETURN
+    END IF
+    DIM body AS STRING = m.Editor.Value()
+    DIM err  AS ERROR  = os.WriteFile(m.CurFile, Encode(body), 0644)
+    IF err <> NIL THEN
+        m.Status = "save failed: " + err.Error()
+        RETURN
+    END IF
+    m.Dirty = FALSE
+    m.Status = fmt.Sprintf("saved %s (%d bytes)", m.CurFile, LEN(body))
+END SUB
+
+' dispatchAction — resolve the user's menu pick to the underlying
+' action handler. Centralised here so other paths (keyboard shortcuts
+' or buttons later) can invoke the same code.
+SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
+    IF action = "file.save" THEN
+        saveCurrent(m)
+        RETURN
+    END IF
+    IF action = "file.quit" THEN
+        m.Status = "quitting..."
+        RETURN
+    END IF
+    IF action = "view.form" THEN
+        m.ViewMode = "form"
+        m.Editor.Blur()
+        m.Status = "form designer"
+        RETURN
+    END IF
+    IF action = "view.code" THEN
+        m.ViewMode = "code"
+        DIM cmd AS tea.Cmd = m.Editor.Focus()
+        _ = cmd
+        m.Status = "code editor"
+        RETURN
+    END IF
+    IF action = "run.run" THEN
+        m.Status = "run: not wired yet"
+        RETURN
+    END IF
+    IF action = "run.check" THEN
+        m.Status = "check: not wired yet"
+        RETURN
+    END IF
+    IF action = "help.about" THEN
+        m.Status = "DBtui — self-hosted IDE for DBasic"
+        RETURN
+    END IF
+    IF action = "help.keys" THEN
+        m.Status = "Keys: F10 menu, F7 form/code, Ctrl+S save, q quit"
+        RETURN
+    END IF
+    m.Status = "action: " + action
+END SUB
+
 ' openFile — read `path` off disk into the code editor, switch
 ' ViewMode to "code", and remember the file path for the status bar
 ' + future Save. On read error the status line surfaces the message.
@@ -207,6 +370,7 @@ SUB openFile(m AS POINTER TO Model, path AS STRING)
     _ = cmd
     m.CurFile = path
     m.ViewMode = "code"
+    m.Dirty = FALSE
     m.Status = "opened " + path
 END SUB
 
@@ -235,6 +399,11 @@ FUNCTION newModel() AS Model
     m.Editor.Placeholder = "(open a file from the tree to view its source)"
     m.ViewMode = "form"
     m.CurFile = ""
+    m.Dirty = FALSE
+    ' Menubar definitions + closed-state.
+    m.Menus = buildMenus()
+    m.MenuActive = 0 - 1
+    m.MenuItemIdx = 0
     RETURN m
 END FUNCTION
 
@@ -268,6 +437,101 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' Global shortcuts first — apply regardless of which pane is
         ' "logically focused".
         IF key = "ctrl+c" THEN RETURN m, tea.Quit
+        IF key = "ctrl+s" THEN
+            saveCurrent(@m)
+            RETURN m, NIL
+        END IF
+
+        ' --- Menubar handling -----------------------------------------
+        ' Menubar takes priority when active: arrows navigate, Enter
+        ' picks an item, Esc closes, letter triggers the item hotkey.
+        IF m.MenuActive >= 0 THEN
+            IF key = "esc" THEN
+                m.MenuActive = 0 - 1
+                RETURN m, NIL
+            END IF
+            IF key = "left" THEN
+                m.MenuActive = m.MenuActive - 1
+                IF m.MenuActive < 0 THEN m.MenuActive = LEN(m.Menus) - 1
+                m.MenuItemIdx = 0
+                RETURN m, NIL
+            END IF
+            IF key = "right" THEN
+                m.MenuActive = m.MenuActive + 1
+                IF m.MenuActive >= LEN(m.Menus) THEN m.MenuActive = 0
+                m.MenuItemIdx = 0
+                RETURN m, NIL
+            END IF
+            IF key = "up" THEN
+                IF m.MenuItemIdx > 0 THEN m.MenuItemIdx = m.MenuItemIdx - 1
+                RETURN m, NIL
+            END IF
+            IF key = "down" THEN
+                DIM ic AS INTEGER = LEN(m.Menus[m.MenuActive].Items)
+                IF m.MenuItemIdx < ic - 1 THEN m.MenuItemIdx = m.MenuItemIdx + 1
+                RETURN m, NIL
+            END IF
+            IF key = "enter" OR key = "space" THEN
+                DIM items AS []MenuItem = m.Menus[m.MenuActive].Items
+                IF m.MenuItemIdx >= 0 AND m.MenuItemIdx < LEN(items) AND NOT items[m.MenuItemIdx].IsSep THEN
+                    DIM act AS STRING = items[m.MenuItemIdx].Action
+                    m.MenuActive = 0 - 1
+                    dispatchAction(@m, act)
+                    IF act = "file.quit" THEN RETURN m, tea.Quit
+                END IF
+                RETURN m, NIL
+            END IF
+            ' Single letter — look up item by its hotkey.
+            IF LEN(key) = 1 THEN
+                DIM itemsK AS []MenuItem = m.Menus[m.MenuActive].Items
+                DIM ii AS INTEGER
+                FOR ii = 0 TO LEN(itemsK) - 1
+                    IF NOT itemsK[ii].IsSep AND menuHotkey(itemsK[ii].Label) = strings.ToLower(key) THEN
+                        DIM act2 AS STRING = itemsK[ii].Action
+                        m.MenuActive = 0 - 1
+                        dispatchAction(@m, act2)
+                        IF act2 = "file.quit" THEN RETURN m, tea.Quit
+                        RETURN m, NIL
+                    END IF
+                NEXT ii
+            END IF
+            ' Alt+letter — switch active top-level menu.
+            IF LEN(key) = 5 AND Mid(key, 1, 4) = "alt+" THEN
+                DIM ml AS STRING = strings.ToLower(Mid(key, 5, 1))
+                DIM mi AS INTEGER
+                FOR mi = 0 TO LEN(m.Menus) - 1
+                    IF menuHotkey(m.Menus[mi].Label) = ml THEN
+                        m.MenuActive = mi
+                        m.MenuItemIdx = 0
+                        RETURN m, NIL
+                    END IF
+                NEXT mi
+            END IF
+            ' Swallow other keys while menu is up.
+            RETURN m, NIL
+        END IF
+
+        ' F10 opens the menubar at the first menu.
+        IF key = "f10" THEN
+            m.MenuActive = 0
+            m.MenuItemIdx = 0
+            RETURN m, NIL
+        END IF
+        ' Alt+letter — open the matching menu directly (works even when
+        ' the code editor is focused, since we check it here ahead of
+        ' the editor-routes-everything block below).
+        IF LEN(key) = 5 AND Mid(key, 1, 4) = "alt+" THEN
+            DIM altL AS STRING = strings.ToLower(Mid(key, 5, 1))
+            DIM altMi AS INTEGER
+            FOR altMi = 0 TO LEN(m.Menus) - 1
+                IF menuHotkey(m.Menus[altMi].Label) = altL THEN
+                    m.MenuActive = altMi
+                    m.MenuItemIdx = 0
+                    RETURN m, NIL
+                END IF
+            NEXT altMi
+        END IF
+
         IF key = "f7" THEN
             ' Toggle between form-design view and code editor view.
             IF m.ViewMode = "code" THEN
@@ -290,10 +554,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 m.Editor.Blur()
                 RETURN m, NIL
             END IF
+            DIM prevBuf AS STRING = m.Editor.Value()
             DIM newEd AS textarea.Model
             DIM eCmd  AS tea.Cmd
             newEd, eCmd = m.Editor.Update(msg)
             m.Editor = newEd
+            IF newEd.Value() <> prevBuf THEN m.Dirty = TRUE
             RETURN m, eCmd
         END IF
 
@@ -341,10 +607,109 @@ FUNCTION padRight(s AS STRING, width AS INTEGER, fill AS STRING) AS STRING
     RETURN s + strings.Repeat(fill, width - cur)
 END FUNCTION
 
-' renderMenuBar — top row, one-line strip with menu labels.
-FUNCTION renderMenuBar(width AS INTEGER) AS STRING
-    DIM bar AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg)).Bold(TRUE).Width(width)
-    RETURN bar.Render(" File  Edit  View  Run  Help")
+' renderMenuLabel — render one "(X)label" menu/item label with the
+' hotkey letter restyled. `base` styles non-hotkey chars; `hot`
+' styles the bracketed letter (typically peach + bold + underline).
+FUNCTION renderMenuLabel(label AS STRING, bs AS lipgloss.Style, hot AS lipgloss.Style) AS STRING
+    DIM i AS INTEGER = strings.Index(label, "(")
+    IF i < 0 OR i + 2 >= LEN(label) OR Mid(label, i + 3, 1) <> ")" THEN
+        RETURN bs.Render(label)
+    END IF
+    DIM pre AS STRING = ""
+    IF i > 0 THEN pre = Mid(label, 1, i)
+    DIM letter AS STRING = Mid(label, i + 2, 1)
+    DIM post AS STRING = ""
+    IF i + 3 < LEN(label) THEN post = Mid(label, i + 4, LEN(label) - i - 3)
+    RETURN bs.Render(pre) + hot.Render(letter) + bs.Render(post)
+END FUNCTION
+
+' renderMenuBar — top row. Walks Menus, renders each cell with " label "
+' padding; the active menu (if any) gets the inverted bg. Hotkey letter
+' inside each label is colored peach.
+FUNCTION renderMenuBar(m AS Model, width AS INTEGER) AS STRING
+    DIM defBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg)).Bold(TRUE)
+    DIM defHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    DIM selBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM selHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    DIM out AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Menus) - 1
+        DIM bs AS lipgloss.Style = defBase
+        DIM hot  AS lipgloss.Style = defHot
+        IF i = m.MenuActive THEN
+            bs = selBase
+            hot  = selHot
+        END IF
+        DIM lab AS STRING = m.Menus[i].Label
+        out = out + bs.Render(" ") + renderMenuLabel(lab, bs, hot) + bs.Render(" ")
+    NEXT i
+    ' Fill the rest of the row so the bar bg extends to the right edge.
+    DIM consumed AS INTEGER = lipgloss.Width(out)
+    IF consumed < width THEN
+        out = out + defBase.Render(strings.Repeat(" ", width - consumed))
+    END IF
+    RETURN out
+END FUNCTION
+
+' menuOffsetX — leading X (in cells) of the dropdown for menu `idx`.
+' Sum of preceding menu cell widths so the dropdown opens directly
+' below its parent label.
+FUNCTION menuOffsetX(m AS Model, idx AS INTEGER) AS INTEGER
+    DIM off AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO idx - 1
+        off = off + LEN(menuStrip(m.Menus[i].Label)) + 2
+    NEXT i
+    RETURN off
+END FUNCTION
+
+' renderDropdown — produce the framed dropdown for the active menu.
+' Items get hotkey emphasis; the cursor row inverts colors. Separators
+' render as a horizontal line spanning the dropdown's inner width.
+FUNCTION renderDropdown(m AS Model) AS STRING
+    IF m.MenuActive < 0 OR m.MenuActive >= LEN(m.Menus) THEN RETURN ""
+    DIM items AS []MenuItem = m.Menus[m.MenuActive].Items
+    ' Compute width = max item label length + padding.
+    DIM maxW AS INTEGER = 0
+    DIM ix AS INTEGER
+    FOR ix = 0 TO LEN(items) - 1
+        IF NOT items[ix].IsSep THEN
+            DIM w AS INTEGER = LEN(menuStrip(items[ix].Label))
+            IF w > maxW THEN maxW = w
+        END IF
+    NEXT ix
+    IF maxW < 12 THEN maxW = 12
+    DIM inner AS INTEGER = maxW + 2
+
+    DIM rowBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg))
+    DIM rowHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    DIM selBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM selHot  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Underline(TRUE)
+    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cBorder))
+
+    DIM lines AS []STRING
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(items) - 1
+        IF items[j].IsSep THEN
+            lines = APPEND(lines, sepStyle.Render(strings.Repeat("─", inner)))
+        ELSE
+            DIM bs AS lipgloss.Style = rowBase
+            DIM hot  AS lipgloss.Style = rowHot
+            IF j = m.MenuItemIdx THEN
+                bs = selBase
+                hot  = selHot
+            END IF
+            DIM rendered AS STRING = renderMenuLabel(items[j].Label, bs, hot)
+            DIM cur AS INTEGER = lipgloss.Width(rendered)
+            ' Left-pad 1, right-pad to width.
+            DIM padR AS INTEGER = inner - 1 - cur
+            IF padR < 0 THEN padR = 0
+            lines = APPEND(lines, bs.Render(" ") + rendered + bs.Render(strings.Repeat(" ", padR)))
+        END IF
+    NEXT j
+    DIM body AS STRING = strings.Join(lines, "\n")
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cMenuBg))
+    RETURN frame.Render(body)
 END FUNCTION
 
 ' renderStatusBar — bottom row, hint text.
@@ -515,13 +880,26 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM bodyH AS INTEGER = h - 2
     IF bodyH < 4 THEN bodyH = 4
 
-    DIM menu  AS STRING = renderMenuBar(w)
+    DIM menu  AS STRING = renderMenuBar(m, w)
     DIM stat  AS STRING = renderStatusBar(w, m.Status)
     DIM left  AS STRING = renderLeftPane(m, leftW, bodyH)
     DIM mid   AS STRING = renderMiddlePane(m, midW, bodyH)
     DIM right AS STRING = renderRightPane(rightW, bodyH)
     DIM body  AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
     DIM full  AS STRING = lipgloss.JoinVertical(lipgloss.Left, menu, body, stat)
+
+    ' Active menu — overlay the dropdown on top of `full` at the right
+    ' X offset under the menu cell. Uses lipgloss.Compositor so the
+    ' base composition is unchanged.
+    IF m.MenuActive >= 0 THEN
+        DIM dd AS STRING = renderDropdown(m)
+        IF dd <> "" THEN
+            DIM bgLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM ddLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dd).X(menuOffsetX(m, m.MenuActive)).Y(1).Z(1)
+            DIM comp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer, ddLayer)
+            full = comp.Render()
+        END IF
+    END IF
 
     DIM v AS tea.View = tea.NewView(full)
     v.AltScreen = TRUE
