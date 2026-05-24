@@ -24,7 +24,7 @@
           "Anchor": "TopLeft",
           "Style": {"BgColor":"#24273a","FgColor":"#cad3f5","Border":"none","Corner":"square"},
           "Properties": {
-            "Menus": "File|Save:file.save,Save All:file.saveall,-,Quit:file.quit;Edit|Cut:edit.cut,Copy:edit.copy,Paste:edit.paste;Run|Run:run.run,Check:run.check,-,Build:run.build;Help|About:help.about,Keys:help.keys"
+            "Menus": "(F)ile|(S)ave:file.save,Save (A)ll:file.saveall,-,(Q)uit:file.quit;(E)dit|Cu(t):edit.cut,(C)opy:edit.copy,(P)aste:edit.paste;(R)un|(R)un:run.run,(C)heck:run.check,-,(B)uild:run.build;(H)elp|(A)bout:help.about,(K)eys:help.keys"
           }
         },
         {

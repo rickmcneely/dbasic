@@ -647,6 +647,8 @@ FUNCTION emitHeader(p AS Project) AS STRING
     s = s + "    DIM InitW AS INTEGER\n"
     s = s + "    DIM InitH AS INTEGER\n"
     s = s + "    DIM Anch  AS STRING\n"
+    ' Mouse-hover state for MenuBar (-1 = no hover).
+    s = s + "    DIM MbHover AS INTEGER\n"
     ' When TRUE, clicks on this widget start a move-drag — the runtime
     ' tracks the cursor delta and updates X/Y until release.
     s = s + "    DIM Draggable AS BOOLEAN\n"
@@ -1271,6 +1273,7 @@ FUNCTION emitNewModel(form AS Form) AS STRING
         s = s + fmt.Sprintf("    w%d.InitW = %d\n",   i, w.Width)
         s = s + fmt.Sprintf("    w%d.InitH = %d\n",   i, w.Height)
         s = s + fmt.Sprintf("    w%d.Anch = %s\n",    i, dbasStr(w.Anchor))
+        s = s + fmt.Sprintf("    w%d.MbHover = 0 - 1\n", i)
         s = s + fmt.Sprintf("    w%d.Visi = %s\n",    i, dbasBool(w.Visible))
         s = s + fmt.Sprintf("    w%d.TStop = %s\n",   i, dbasBool(w.TabStop))
         s = s + fmt.Sprintf("    w%d.TIdx = %d\n",    i, w.TabIndex)
@@ -1753,7 +1756,7 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "                DIM mcHit AS INTEGER = -1\n"
     s = s + "                DIM mcI AS INTEGER\n"
     s = s + "                FOR mcI = 0 TO LEN(mcLabs) - 1\n"
-    s = s + "                    DIM mcCellW AS INTEGER = LEN(mcLabs[mcI]) + 2\n"
+    s = s + "                    DIM mcCellW AS INTEGER = LEN(mbStrip(mcLabs[mcI])) + 2\n"
     s = s + "                    IF mcLocalX >= mcPos AND mcLocalX < mcPos + mcCellW THEN mcHit = mcI\n"
     s = s + "                    mcPos = mcPos + mcCellW\n"
     s = s + "                NEXT mcI\n"
@@ -1841,6 +1844,32 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "    DIM mmMsg AS tea.MouseMotionMsg\n"
     s = s + "    DIM mmOk AS BOOLEAN\n"
     s = s + "    mmMsg, mmOk = msg.(tea.MouseMotionMsg)\n"
+    ' MenuBar hover — update MbHover for every menubar widget based
+    ' on the cursor position. Decoupled from drag state.
+    s = s + "    IF mmOk THEN\n"
+    s = s + "        DIM mhI AS INTEGER\n"
+    s = s + "        FOR mhI = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "            IF m.Widgets[mhI].Kind = \"MenuBar\" AND m.Widgets[mhI].Visi THEN\n"
+    s = s + "                DIM mhAbsX AS INTEGER = mmMsg.X - 1\n"
+    s = s + "                DIM mhAbsY AS INTEGER = mmMsg.Y - 1\n"
+    s = s + "                DIM mhInRow AS BOOLEAN = (mhAbsY = m.Widgets[mhI].Y)\n"
+    s = s + "                DIM mhLocalX AS INTEGER = mhAbsX - m.Widgets[mhI].X\n"
+    s = s + "                DIM mhLabs AS []STRING\n"
+    s = s + "                DIM mhRaw AS []STRING\n"
+    s = s + "                mhLabs, mhRaw = menuParse(m.Widgets[mhI].Items)\n"
+    s = s + "                _ = mhRaw\n"
+    s = s + "                DIM mhPos AS INTEGER = 0\n"
+    s = s + "                DIM mhHitI AS INTEGER = 0 - 1\n"
+    s = s + "                DIM mhJ AS INTEGER\n"
+    s = s + "                FOR mhJ = 0 TO LEN(mhLabs) - 1\n"
+    s = s + "                    DIM mhCellW AS INTEGER = LEN(mbStrip(mhLabs[mhJ])) + 2\n"
+    s = s + "                    IF mhInRow AND mhLocalX >= mhPos AND mhLocalX < mhPos + mhCellW THEN mhHitI = mhJ\n"
+    s = s + "                    mhPos = mhPos + mhCellW\n"
+    s = s + "                NEXT mhJ\n"
+    s = s + "                m.Widgets[mhI].MbHover = mhHitI\n"
+    s = s + "            END IF\n"
+    s = s + "        NEXT mhI\n"
+    s = s + "    END IF\n"
     ' FormCanvas child-drag: any FormCanvas with FcDragMode=1 receives motion.
     s = s + "    IF mmOk THEN\n"
     s = s + "        DIM fcm AS INTEGER\n"
@@ -2186,6 +2215,32 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "        IF k = \"ctrl+c\" THEN\n"
     s = s + "            FormClose()\n"
     s = s + "            RETURN m, tea.Quit\n"
+    s = s + "        END IF\n"
+    ' Alt+letter — scan MenuBar widgets for a top-level menu whose
+    ' "(X)" hotkey matches. Opens that menu directly (selects + sets
+    ' Checked=TRUE so the dropdown overlay paints next frame).
+    s = s + "        IF LEN(k) = 5 AND Mid(k, 1, 4) = \"alt+\" THEN\n"
+    s = s + "            DIM altL AS STRING = strings.ToLower(Mid(k, 5, 1))\n"
+    s = s + "            DIM altMI AS INTEGER\n"
+    s = s + "            FOR altMI = 0 TO LEN(m.Widgets) - 1\n"
+    s = s + "                IF m.Widgets[altMI].Kind = \"MenuBar\" AND m.Widgets[altMI].Visi THEN\n"
+    s = s + "                    DIM altLabs AS []STRING\n"
+    s = s + "                    DIM altRaw AS []STRING\n"
+    s = s + "                    altLabs, altRaw = menuParse(m.Widgets[altMI].Items)\n"
+    s = s + "                    _ = altRaw\n"
+    s = s + "                    DIM altJ AS INTEGER\n"
+    s = s + "                    DIM altMatch AS INTEGER = 0 - 1\n"
+    s = s + "                    FOR altJ = 0 TO LEN(altLabs) - 1\n"
+    s = s + "                        IF mbHotkey(altLabs[altJ]) = altL THEN altMatch = altJ\n"
+    s = s + "                    NEXT altJ\n"
+    s = s + "                    IF altMatch >= 0 THEN\n"
+    s = s + "                        m.Widgets[altMI].Selected = altMatch\n"
+    s = s + "                        m.Widgets[altMI].Checked = TRUE\n"
+    s = s + "                        m.Widgets[altMI].Offset = 0\n"
+    s = s + "                        RETURN m, NIL\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            NEXT altMI\n"
     s = s + "        END IF\n"
     ' Global hotkeys that bubble to FormKey even when a textarea-style
     ' widget would otherwise swallow them. Ctrl+S is the typical save
@@ -2718,18 +2773,39 @@ FUNCTION emitRenderWidget() AS STRING
     ' GroupBox renders empty body; the border + title is the whole point.
     s = s + "        body = \"\"\n"
     s = s + "    ELSEIF w.Kind = \"MenuBar\" THEN\n"
-    ' Render the closed bar — menu labels with the active one highlighted.
+    ' Closed-bar render. Each menu label may use the "(X)" convention
+    ' to mark a hotkey letter; that letter is rendered in the hotkey
+    ' style (warm peach + bold) inside whatever cell style applies.
+    ' Three cell states: selected (active menu open), hovered (mouse
+    ' over but not opened), and default.
     s = s + "        DIM mbLabs AS []STRING\n"
     s = s + "        DIM mbRaw AS []STRING\n"
     s = s + "        mbLabs, mbRaw = menuParse(w.Items)\n"
     s = s + "        _ = mbRaw\n"
-    s = s + "        DIM mbHi AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#7dcfff\")).Foreground(lipgloss.Color(\"#1a1b2e\"))\n"
+    s = s + "        DIM mbBgCol AS STRING = w.BgColor\n"
+    s = s + "        IF mbBgCol = \"\" THEN mbBgCol = \"#24273a\"\n"
+    s = s + "        DIM mbFgCol AS STRING = w.FgColor\n"
+    s = s + "        IF mbFgCol = \"\" THEN mbFgCol = \"#cad3f5\"\n"
+    s = s + "        DIM mbDef AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(mbBgCol)).Foreground(lipgloss.Color(mbFgCol))\n"
+    s = s + "        DIM mbHov AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#3d4570\")).Foreground(lipgloss.Color(mbFgCol)).Bold(TRUE)\n"
+    s = s + "        DIM mbSel AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#7dcfff\")).Foreground(lipgloss.Color(\"#1a1b2e\")).Bold(TRUE)\n"
+    s = s + "        DIM mbHotDef AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(mbBgCol)).Foreground(lipgloss.Color(\"#f5a97f\")).Bold(TRUE).Underline(TRUE)\n"
+    s = s + "        DIM mbHotHov AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#3d4570\")).Foreground(lipgloss.Color(\"#f5a97f\")).Bold(TRUE).Underline(TRUE)\n"
+    s = s + "        DIM mbHotSel AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(\"#7dcfff\")).Foreground(lipgloss.Color(\"#f5a97f\")).Bold(TRUE).Underline(TRUE)\n"
     s = s + "        DIM mbOut AS STRING = \"\"\n"
     s = s + "        DIM mbI AS INTEGER\n"
     s = s + "        FOR mbI = 0 TO LEN(mbLabs) - 1\n"
-    s = s + "            DIM mbCell AS STRING = \" \" + mbLabs[mbI] + \" \"\n"
-    s = s + "            IF mbI = w.Selected THEN mbCell = mbHi.Render(mbCell)\n"
-    s = s + "            mbOut = mbOut + mbCell\n"
+    s = s + "            DIM mbPad AS STRING = \" \"\n"
+    s = s + "            DIM mbBase AS lipgloss.Style = mbDef\n"
+    s = s + "            DIM mbHot AS lipgloss.Style = mbHotDef\n"
+    s = s + "            IF mbI = w.Selected AND w.Checked THEN\n"
+    s = s + "                mbBase = mbSel\n"
+    s = s + "                mbHot = mbHotSel\n"
+    s = s + "            ELSEIF mbI = w.MbHover THEN\n"
+    s = s + "                mbBase = mbHov\n"
+    s = s + "                mbHot = mbHotHov\n"
+    s = s + "            END IF\n"
+    s = s + "            mbOut = mbOut + mbBase.Render(mbPad) + mbRenderCell(mbLabs[mbI], mbBase, mbHot) + mbBase.Render(mbPad)\n"
     s = s + "        NEXT mbI\n"
     s = s + "        body = mbOut\n"
     s = s + "    ELSEIF w.Kind = \"Toolbar\" THEN\n"
@@ -3085,7 +3161,10 @@ FUNCTION emitView(form AS Form) AS STRING
     s = s + "    END IF\n"
     s = s + "    DIM v AS tea.View = tea.NewView(frameStr)\n"
     s = s + "    v.AltScreen = TRUE\n"
-    s = s + "    v.MouseMode = tea.MouseModeCellMotion\n"
+    ' AllMotion delivers MouseMotionMsg even when no button is held —
+    ' needed for hover effects (menu hover, button hover) to track the
+    ' cursor without requiring a press.
+    s = s + "    v.MouseMode = tea.MouseModeAllMotion\n"
     s = s + "    RETURN v\n"
     s = s + "END FUNCTION\n\n"
     RETURN s
@@ -4144,6 +4223,49 @@ FUNCTION emitSplitPanelLayout() AS STRING
     RETURN s
 END FUNCTION
 
+' emitMenuBarHelpers — runtime helpers for the MenuBar widget:
+'   mbHotkey(label)        — extracts the lowercased letter inside
+'                            parentheses, or "" if none. "(F)ile" → "f".
+'   mbStrip(label)         — strips the parens from the label, leaving
+'                            just the visible chars. "(F)ile" → "File".
+'   mbRenderCell(label, baseStyle, hotStyle) — renders a menu label
+'                            with the hotkey letter restyled.
+FUNCTION emitMenuBarHelpers() AS STRING
+    DIM s AS STRING = ""
+    s = s + "' --- MenuBar render + hotkey helpers --------------------------\n"
+    s = s + "FUNCTION mbHotkey(label AS STRING) AS STRING\n"
+    s = s + "    DIM i AS INTEGER = strings.Index(label, \"(\")\n"
+    s = s + "    IF i < 0 OR i + 2 >= LEN(label) THEN RETURN \"\"\n"
+    s = s + "    IF Mid(label, i + 3, 1) <> \")\" THEN RETURN \"\"\n"
+    s = s + "    RETURN strings.ToLower(Mid(label, i + 2, 1))\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "FUNCTION mbStrip(label AS STRING) AS STRING\n"
+    s = s + "    DIM i AS INTEGER = strings.Index(label, \"(\")\n"
+    s = s + "    IF i < 0 OR i + 2 >= LEN(label) THEN RETURN label\n"
+    s = s + "    IF Mid(label, i + 3, 1) <> \")\" THEN RETURN label\n"
+    s = s + "    DIM pre AS STRING = \"\"\n"
+    s = s + "    IF i > 0 THEN pre = Mid(label, 1, i)\n"
+    s = s + "    DIM letter AS STRING = Mid(label, i + 2, 1)\n"
+    s = s + "    DIM post AS STRING = \"\"\n"
+    s = s + "    IF i + 3 < LEN(label) THEN post = Mid(label, i + 4, LEN(label) - i - 3)\n"
+    s = s + "    RETURN pre + letter + post\n"
+    s = s + "END FUNCTION\n\n"
+    ' Render with hotkey letter swapped to hotStyle, the rest in baseStyle.
+    s = s + "FUNCTION mbRenderCell(label AS STRING, baseStyle AS lipgloss.Style, hotStyle AS lipgloss.Style) AS STRING\n"
+    s = s + "    DIM i AS INTEGER = strings.Index(label, \"(\")\n"
+    s = s + "    IF i < 0 OR i + 2 >= LEN(label) OR Mid(label, i + 3, 1) <> \")\" THEN\n"
+    s = s + "        RETURN baseStyle.Render(label)\n"
+    s = s + "    END IF\n"
+    s = s + "    DIM pre AS STRING = \"\"\n"
+    s = s + "    IF i > 0 THEN pre = Mid(label, 1, i)\n"
+    s = s + "    DIM letter AS STRING = Mid(label, i + 2, 1)\n"
+    s = s + "    DIM post AS STRING = \"\"\n"
+    s = s + "    IF i + 3 < LEN(label) THEN post = Mid(label, i + 4, LEN(label) - i - 3)\n"
+    s = s + "    RETURN baseStyle.Render(pre) + hotStyle.Render(letter) + baseStyle.Render(post)\n"
+    s = s + "END FUNCTION\n\n"
+    RETURN s
+END FUNCTION
+
 ' emitTabStripAPI emits a tsDispatchTabClosed router so right-click
 ' on a tab routes to <tabsId>_TabClosed(label, index).
 FUNCTION emitTabStripAPI(form AS Form) AS STRING
@@ -4402,6 +4524,7 @@ FUNCTION GenerateProgram(p AS Project) AS STRING
     s = s + emitAnchorLayout()
     s = s + emitTreeViewAPI(form)
     s = s + emitTabStripAPI(form)
+    s = s + emitMenuBarHelpers()
     s = s + emitRenderWidget()
     s = s + emitView(form)
     s = s + emitTools(form)
