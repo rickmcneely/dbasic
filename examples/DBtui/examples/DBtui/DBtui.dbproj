@@ -109,16 +109,16 @@
           "Visible": true, "TabStop": true,
           "Anchor": "BottomLeft",
           "Style": {"BgColor":"#3d4570","FgColor":"#e0def4","Border":"normal","Corner":"round"},
-          "Properties": {"Text": "Check"}
+          "Properties": {"Text": "Check (F6)"}
         },
         {
           "Id": "runBtn",
           "Kind": "Button",
-          "X": 16, "Y": 26, "Width": 12, "Height": 3,
+          "X": 18, "Y": 26, "Width": 12, "Height": 3,
           "Visible": true, "TabStop": true,
           "Anchor": "BottomLeft",
           "Style": {"BgColor":"#3d4570","FgColor":"#e0def4","Border":"normal","Corner":"round"},
-          "Properties": {"Text": "Run"}
+          "Properties": {"Text": "Run (F5)"}
         },
         {
           "Id": "status",
@@ -127,7 +127,7 @@
           "Visible": true,
           "Anchor": "BottomLeft",
           "Style": {"BgColor":"","FgColor":"#8087a2","Border":"none","Corner":"square"},
-          "Properties": {"Text": "Ready. Tree click opens, Ctrl+S saves, Check runs `dbasic check`, Run builds + launches."}
+          "Properties": {"Text": "Tree click opens · Ctrl+S saves · F5 runs · F6 checks"}
         }
       ],
       "Tools": [

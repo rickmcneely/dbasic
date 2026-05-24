@@ -235,7 +235,10 @@ SUB gMsgBoxClosed(button AS STRING, context AS STRING)
     END IF
 END SUB
 
-' Global hotkeys — Ctrl+S saves the editor buffer to curFile.
+' Global hotkeys:
+'   Ctrl+S — save editor buffer to curFile
+'   F5     — run (build + launch via gExec)
+'   F6     — check (dbasic check curFile)
 SUB FormKey(key AS STRING)
     IF key = "ctrl+s" THEN
         IF curFile = "" THEN
@@ -249,5 +252,27 @@ SUB FormKey(key AS STRING)
         ELSE
             gSetText("status", "saved " + shorten(curFile, 60) + " (" + fmt.Sprintf("%d", LEN(body)) + " bytes)")
         END IF
+        RETURN
+    END IF
+    IF key = "f5" THEN
+        runBtn_Click()
+        RETURN
+    END IF
+    IF key = "f6" THEN
+        IF curFile = "" THEN
+            gSetText("status", "F6: open a file first")
+            RETURN
+        END IF
+        DIM code AS INTEGER = dbCheck_RunWith(curFile)
+        IF code = 0 THEN
+            DIM ok AS STRING = strings.TrimSpace(dbCheck_Stdout())
+            IF ok = "" THEN ok = "OK"
+            gSetText("status", "check: " + ok)
+        ELSE
+            DIM err2 AS STRING = strings.TrimSpace(dbCheck_Stderr())
+            IF err2 = "" THEN err2 = strings.TrimSpace(dbCheck_Stdout())
+            gMsgBox("Check failed", shorten(err2, 60), "OK", "check-fail")
+        END IF
+        RETURN
     END IF
 END SUB
