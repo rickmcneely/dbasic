@@ -1,0 +1,234 @@
+' =========================================================================
+' DBtui — self-hosted IDE for DBasic, written in DBasic.
+' =========================================================================
+'
+' Path B: written the way the original DBtui is written — as a Charm
+' bubbletea Model / Update / View triple. lipgloss.JoinHorizontal /
+' JoinVertical compose layout; reflow on terminal resize is automatic.
+'
+' Layout (mirroring the original):
+'
+'    File  Edit  View  Run  Help                                <- menubar
+'   ╭─ Project ──╮ ─[ Editor caption ]──── [ Widgets ] [ Tools ]
+'   │ tree       │ middle pane              │ widgets list      │
+'   │            │ (form designer or        │                   │
+'   │            │  code editor)            ├─ Properties ──────┤
+'   │            │                          │ property grid     │
+'   ╰────────────╯                          ╰───────────────────╯
+'    DBtui — F10:Menu  F5:Run  ...                              <- statusbar
+
+IMPORT "charm.land/bubbletea/v2" AS tea
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "fmt"
+IMPORT "os"
+IMPORT "strings"
+
+' -------------------------------------------------------------------------
+' Theme — Tokyo-Night-ish palette borrowed from the original DBtui.
+' -------------------------------------------------------------------------
+
+CONST cBg        AS STRING = "#1a1b2e"   ' deep indigo background
+CONST cFg        AS STRING = "#e0def4"   ' soft lavender text
+CONST cAccent    AS STRING = "#7dcfff"   ' bright sky-blue (titles, accents)
+CONST cBorder    AS STRING = "#3b3d5e"   ' muted panel borders
+CONST cMenuBg    AS STRING = "#24273a"   ' menubar / status bar background
+CONST cMenuFg    AS STRING = "#cad3f5"   ' menubar text
+CONST cStatusFg  AS STRING = "#8087a2"   ' statusbar text (dimmer)
+CONST cHotkey    AS STRING = "#f5a97f"   ' warm peach for hotkey letters
+
+' -------------------------------------------------------------------------
+' Model — the entire IDE state lives here.
+' -------------------------------------------------------------------------
+
+TYPE Model
+    DIM Width  AS INTEGER                ' terminal width  (WindowSizeMsg)
+    DIM Height AS INTEGER                ' terminal height (WindowSizeMsg)
+    DIM Status AS STRING                 ' message shown in the status bar
+END TYPE
+
+' newModel — initial state on program start.
+FUNCTION newModel() AS Model
+    DIM m AS Model
+    m.Width = 0
+    m.Height = 0
+    m.Status = "DBtui — F10:Menu  F5:Run  F7:Code  F12:Console  |  q:Quit"
+    RETURN m
+END FUNCTION
+
+' -------------------------------------------------------------------------
+' bubbletea lifecycle.
+' -------------------------------------------------------------------------
+
+FUNCTION (m AS Model) Init() AS tea.Cmd
+    RETURN NIL
+END FUNCTION
+
+FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+
+    ' Window resize — track the new dimensions.
+    DIM sz AS tea.WindowSizeMsg
+    DIM szOk AS BOOLEAN
+    sz, szOk = msg.(tea.WindowSizeMsg)
+    IF szOk THEN
+        m.Width = sz.Width
+        m.Height = sz.Height
+        RETURN m, NIL
+    END IF
+
+    ' Key press — only q (quit) for now.
+    DIM k AS tea.KeyPressMsg
+    DIM kOk AS BOOLEAN
+    k, kOk = msg.(tea.KeyPressMsg)
+    IF kOk THEN
+        DIM key AS STRING = k.String()
+        IF key = "q" OR key = "ctrl+c" THEN RETURN m, tea.Quit
+    END IF
+
+    RETURN m, NIL
+END FUNCTION
+
+' -------------------------------------------------------------------------
+' Render helpers — each returns a styled string. View() composes them.
+' -------------------------------------------------------------------------
+
+' padRight — right-pad s with `fill` characters so its visible width is
+' `width` cells. Uses lipgloss.Width so multi-byte glyphs count as 1.
+FUNCTION padRight(s AS STRING, width AS INTEGER, fill AS STRING) AS STRING
+    DIM cur AS INTEGER = lipgloss.Width(s)
+    IF cur >= width THEN RETURN s
+    RETURN s + strings.Repeat(fill, width - cur)
+END FUNCTION
+
+' renderMenuBar — top row, one-line strip with menu labels.
+FUNCTION renderMenuBar(width AS INTEGER) AS STRING
+    DIM bar AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg)).Bold(TRUE).Width(width)
+    RETURN bar.Render(" File  Edit  View  Run  Help")
+END FUNCTION
+
+' renderStatusBar — bottom row, hint text.
+FUNCTION renderStatusBar(width AS INTEGER, text AS STRING) AS STRING
+    DIM bar AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cStatusFg)).Italic(TRUE).Width(width)
+    RETURN bar.Render(" " + text)
+END FUNCTION
+
+' titledBox — render `body` inside a bordered panel with `title`
+' embedded in the top border. Mirrors the original DBtui's panel
+' style. `focused` selects the border style: TRUE → square corners
+' (the focused panel), FALSE → rounded corners (unfocused panel).
+FUNCTION titledBox(title AS STRING, body AS STRING, width AS INTEGER, height AS INTEGER, focused AS BOOLEAN) AS STRING
+    DIM tl AS STRING = "╭"
+    DIM tr AS STRING = "╮"
+    DIM borderObj AS lipgloss.Border = lipgloss.RoundedBorder()
+    IF focused THEN
+        tl = "┌"
+        tr = "┐"
+        borderObj = lipgloss.NormalBorder()
+    END IF
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    DIM titleStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Italic(TRUE)
+    ' Top row: "{tl}─ title ──...──{tr}" (width chars total)
+    DIM titleLen AS INTEGER = lipgloss.Width(" " + title + " ")
+    DIM dashLen  AS INTEGER = width - 2 - 1 - titleLen
+    IF dashLen < 0 THEN dashLen = 0
+    DIM top AS STRING = borderStyle.Render(tl + "─") + titleStyle.Render(" " + title + " ") + borderStyle.Render(strings.Repeat("─", dashLen) + tr)
+    ' Body box. Width(width) → total visible width includes borders.
+    DIM bodyBox AS lipgloss.Style = lipgloss.NewStyle().Border(borderObj).BorderTop(FALSE).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(height - 1)
+    RETURN top + "\n" + bodyBox.Render(body)
+END FUNCTION
+
+' renderLeftPane — Project tree column. Focused = TRUE so it gets the
+' square-corner border (matches the original's startup focus state).
+FUNCTION renderLeftPane(width AS INTEGER, height AS INTEGER) AS STRING
+    DIM body AS STRING = "▾ myproject/\n  ▾ forms/\n    ▸ ★ frmStart.dbf\n    ◇ frmStart.dbas\n  ▾ modules/\n    ◇ main.dbas"
+    RETURN titledBox("Project", body, width, height, TRUE)
+END FUNCTION
+
+' renderMiddlePane — editor area. No outer panel frame in the original
+' DBtui; just a caption line + the editor surface beneath. The caption
+' is "─[ Form Designer — frmStart ]" padded with dashes to fill width.
+FUNCTION renderMiddlePane(width AS INTEGER, height AS INTEGER) AS STRING
+    DIM dashStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM caption AS STRING = dashStyle.Render("─[ ") + titleStyle.Render("Form Designer — frmStart") + dashStyle.Render(" ]")
+    caption = padRight(caption, width, dashStyle.Render("─"))
+    DIM bodyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(width).Height(height - 1)
+    RETURN caption + "\n" + bodyStyle.Render("")
+END FUNCTION
+
+' renderRightPane — Widgets/Tools tabs strip + Widgets list, stacked
+' over a Properties box. Both panels unfocused → rounded corners.
+' The tabs row is right-aligned so "[ Widgets ] [ Tools ]" sits flush
+' against the trailing dashes of the middle pane's caption (matching
+' the original DBtui).
+FUNCTION renderRightPane(width AS INTEGER, height AS INTEGER) AS STRING
+    ' Tabs row: leading dashes (so the row reads as a continuation of
+    ' the middle pane's caption) then the tab labels, flush against
+    ' the right edge. Matches the original DBtui.
+    DIM dashStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
+    DIM tabStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM tabLabels AS STRING = "[ Widgets ] [ Tools ]"
+    DIM labelW AS INTEGER = lipgloss.Width(tabLabels)
+    DIM dashW  AS INTEGER = width - labelW
+    IF dashW < 0 THEN dashW = 0
+    DIM tabs AS STRING = dashStyle.Render(strings.Repeat("─", dashW)) + tabStyle.Render(tabLabels)
+    DIM remain  AS INTEGER = height - 1
+    DIM listH   AS INTEGER = remain / 2
+    DIM propsH  AS INTEGER = remain - listH
+    DIM listBody  AS STRING = "Button\nCheckbox\nCodeEditor\nComboBox\nFormCanvas"
+    DIM propsBody AS STRING = "Name      lblTitle\nVisible   [x] true\nText      Label"
+    DIM listBox  AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(listH)
+    DIM propsTitled AS STRING = titledBox("Properties", propsBody, width, propsH, FALSE)
+    RETURN lipgloss.JoinVertical(lipgloss.Left, tabs, listBox.Render(listBody), propsTitled)
+END FUNCTION
+
+' -------------------------------------------------------------------------
+' View — compose the full screen each frame.
+' -------------------------------------------------------------------------
+
+FUNCTION (m AS Model) View() AS tea.View
+    ' Fallback defaults on first tick (before WindowSizeMsg).
+    DIM w AS INTEGER = m.Width
+    DIM h AS INTEGER = m.Height
+    IF w < 60 THEN w = 80
+    IF h < 20 THEN h = 24
+
+    ' Column widths — mirror the original DBtui's defaults.
+    DIM leftW  AS INTEGER = 28
+    DIM rightW AS INTEGER = 32
+    DIM midW   AS INTEGER = w - leftW - rightW
+    IF midW < 20 THEN midW = 20
+
+    ' Body height = total minus menu (1) and statusbar (1).
+    DIM bodyH AS INTEGER = h - 2
+    IF bodyH < 4 THEN bodyH = 4
+
+    DIM menu  AS STRING = renderMenuBar(w)
+    DIM stat  AS STRING = renderStatusBar(w, m.Status)
+    DIM left  AS STRING = renderLeftPane(leftW, bodyH)
+    DIM mid   AS STRING = renderMiddlePane(midW, bodyH)
+    DIM right AS STRING = renderRightPane(rightW, bodyH)
+    DIM body  AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
+    DIM full  AS STRING = lipgloss.JoinVertical(lipgloss.Left, menu, body, stat)
+
+    DIM v AS tea.View = tea.NewView(full)
+    v.AltScreen = TRUE
+    v.MouseMode = tea.MouseModeAllMotion
+    RETURN v
+END FUNCTION
+
+' -------------------------------------------------------------------------
+' Main — wire up bubbletea and run.
+' -------------------------------------------------------------------------
+
+SUB Main()
+    DIM model AS Model = newModel()
+    DIM prog AS POINTER TO tea.Program = tea.NewProgram(model, tea.WithoutSignalHandler())
+    DIM final AS tea.Model
+    DIM err AS ERROR
+    final, err = prog.Run()
+    IF err <> NIL THEN
+        fmt.Fprintln(os.Stderr, "DBtui error:", err)
+        os.Exit(1)
+    END IF
+    _ = final
+END SUB

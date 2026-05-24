@@ -2942,7 +2942,20 @@ FUNCTION emitView(form AS Form) AS STRING
     s = s + fmt.Sprintf("    DIM bgCol AS STRING = %s\n", dbasStr(bgCol))
     s = s + fmt.Sprintf("    DIM fgCol AS STRING = %s\n", dbasStr(fgCol))
     s = s + fmt.Sprintf("    DIM title AS STRING = %s\n", dbasStr(title))
-    s = s + "    DIM formStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Foreground(lipgloss.Color(fgCol)).Width(formW - 2).Height(formH - 2).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(fgCol))\n"
+    ' Form border. "none" suppresses the outer frame entirely so the
+    ' program looks "borderless" — matches the original DBtui look
+    ' where the menubar/status bar bookend the body directly.
+    DIM borderArg AS STRING = "lipgloss.RoundedBorder()"
+    DIM borderInset AS INTEGER = 2
+    IF form.Border = "none" THEN
+        borderArg = "lipgloss.HiddenBorder()"
+        borderInset = 0
+    END IF
+    s = s + fmt.Sprintf("    DIM formStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Foreground(lipgloss.Color(fgCol)).Width(formW - %d).Height(formH - %d)", borderInset, borderInset)
+    IF form.Border <> "none" THEN
+        s = s + fmt.Sprintf(".Border(%s).BorderForeground(lipgloss.Color(fgCol))", borderArg)
+    END IF
+    s = s + "\n"
     s = s + "    DIM bg AS STRING = formStyle.Render(\"\")\n"
     s = s + "    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(bgCol)).Foreground(lipgloss.Color(\"#7dcfff\")).Bold(TRUE)\n"
     s = s + "    DIM titleStr AS STRING = titleStyle.Render(\" \" + title + \" \")\n"
@@ -4356,15 +4369,15 @@ END FUNCTION
 
 ' emitAnchorLayout — writes applyAnchors(m) that reflows each widget
 ' based on its Anch value against the design vs current form bounds.
-' Anchor values:
-'   ""                — no anchor; widget keeps its initial X/Y/W/H
-'   "Top"/"Bottom"    — sticks to top/bottom edge (offset preserved)
-'   "Left"/"Right"    — sticks to left/right edge
-'   "TopLeft"/"TopRight"/"BottomLeft"/"BottomRight" — corner anchors
-'   "Fill"            — grows in both axes proportionally with the form
-'
-' Convention: "Right" means the widget's RIGHT edge stays the same
-' distance from the form's right edge (so it slides as the form grows).
+' Anchor is "|"-separated tokens; multiple may be combined:
+'   "Top"        — Y stays (default, no-op)
+'   "Bottom"     — Y += form-height-delta (sticks to bottom edge)
+'   "Left"       — X stays (default, no-op)
+'   "Right"      — X += form-width-delta (sticks to right edge)
+'   "HFill"      — W grows with form width
+'   "VFill"      — H grows with form height
+'   "Fill"       — both HFill + VFill
+'   "TopRight" etc — convenience aliases for "Top|Right" and so on.
 FUNCTION emitAnchorLayout() AS STRING
     DIM s AS STRING = ""
     s = s + "' --- Anchor reflow ---------------------------------------------\n"
@@ -4389,12 +4402,23 @@ FUNCTION emitAnchorLayout() AS STRING
     s = s + "        DIM ny AS INTEGER = iy\n"
     s = s + "        DIM nw AS INTEGER = iw\n"
     s = s + "        DIM nh AS INTEGER = ih\n"
-    s = s + "        IF a = \"Right\" OR a = \"TopRight\" OR a = \"BottomRight\" THEN nx = ix + dw\n"
-    s = s + "        IF a = \"Bottom\" OR a = \"BottomLeft\" OR a = \"BottomRight\" THEN ny = iy + dh\n"
-    s = s + "        IF a = \"Fill\" THEN\n"
-    s = s + "            nw = iw + dw\n"
-    s = s + "            nh = ih + dh\n"
-    s = s + "        END IF\n"
+    s = s + "        DIM shiftX AS BOOLEAN = FALSE\n"
+    s = s + "        DIM shiftY AS BOOLEAN = FALSE\n"
+    s = s + "        DIM growW  AS BOOLEAN = FALSE\n"
+    s = s + "        DIM growH  AS BOOLEAN = FALSE\n"
+    s = s + "        DIM tokens AS []STRING = strings.Split(a, \"|\")\n"
+    s = s + "        DIM tj AS INTEGER\n"
+    s = s + "        FOR tj = 0 TO LEN(tokens) - 1\n"
+    s = s + "            DIM tk AS STRING = strings.TrimSpace(tokens[tj])\n"
+    s = s + "            IF tk = \"Right\" OR tk = \"TopRight\" OR tk = \"BottomRight\" THEN shiftX = TRUE\n"
+    s = s + "            IF tk = \"Bottom\" OR tk = \"BottomLeft\" OR tk = \"BottomRight\" THEN shiftY = TRUE\n"
+    s = s + "            IF tk = \"HFill\" OR tk = \"Fill\" THEN growW = TRUE\n"
+    s = s + "            IF tk = \"VFill\" OR tk = \"Fill\" THEN growH = TRUE\n"
+    s = s + "        NEXT tj\n"
+    s = s + "        IF shiftX THEN nx = ix + dw\n"
+    s = s + "        IF shiftY THEN ny = iy + dh\n"
+    s = s + "        IF growW THEN nw = iw + dw\n"
+    s = s + "        IF growH THEN nh = ih + dh\n"
     s = s + "        IF nw < 1 THEN nw = 1\n"
     s = s + "        IF nh < 1 THEN nh = 1\n"
     s = s + "        m.Widgets[i].X = nx\n"
