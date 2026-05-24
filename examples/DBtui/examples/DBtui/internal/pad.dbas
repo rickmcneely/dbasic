@@ -132,6 +132,7 @@ DIM padStyleBg      AS lipgloss.Style
 DIM padStyleGutter  AS lipgloss.Style
 DIM padStyleGutterActive AS lipgloss.Style
 DIM padStyleSelection AS lipgloss.Style
+DIM padStyleBracketMatch AS lipgloss.Style
 
 SUB initPadStyles()
     IF padStylesReady THEN RETURN
@@ -145,6 +146,7 @@ SUB initPadStyles()
     padStyleGutter  = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#565f89"))
     padStyleGutterActive = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
     padStyleSelection = lipgloss.NewStyle().Background(lipgloss.Color("#3b3d5e")).Foreground(lipgloss.Color(cFg))
+    padStyleBracketMatch = lipgloss.NewStyle().Background(lipgloss.Color("#4f5b66")).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
     padStylesReady = TRUE
 END SUB
 
@@ -751,6 +753,187 @@ SUB padDedentLine(p AS POINTER TO Pad)
     padEnsureVisible(p)
 END SUB
 
+' padLineRange — span of currently affected logical lines:
+' the selection's row range when there's a selection, otherwise
+' just the cursor row.
+FUNCTION padLineRange(p AS POINTER TO Pad) AS (INTEGER, INTEGER)
+    IF padHasSelection(p) THEN
+        DIM sR0 AS INTEGER
+        DIM sC0 AS INTEGER
+        DIM sR1 AS INTEGER
+        DIM sC1 AS INTEGER
+        sR0, sC0, sR1, sC1 = padSelBounds(p)
+        _ = sC0
+        _ = sC1
+        RETURN sR0, sR1
+    END IF
+    RETURN p.Row, p.Row
+END FUNCTION
+
+' padMoveLinesUp — swap the current line (or selection block) with
+' the line above. No-op when already at the top. Caller snaps.
+SUB padMoveLinesUp(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER
+    DIM r1 AS INTEGER
+    r0, r1 = padLineRange(p)
+    IF r0 <= 0 THEN RETURN
+    DIM above AS STRING = p.Lines[r0 - 1]
+    DIM i AS INTEGER
+    FOR i = r0 TO r1
+        p.Lines[i - 1] = p.Lines[i]
+    NEXT i
+    p.Lines[r1] = above
+    p.Row = p.Row - 1
+    IF p.SelActive THEN p.SelRow = p.SelRow - 1
+    padEnsureVisible(p)
+END SUB
+
+' padMoveLinesDown — swap with the line below. No-op at bottom.
+SUB padMoveLinesDown(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER
+    DIM r1 AS INTEGER
+    r0, r1 = padLineRange(p)
+    IF r1 >= LEN(p.Lines) - 1 THEN RETURN
+    DIM below AS STRING = p.Lines[r1 + 1]
+    DIM i AS INTEGER
+    FOR i = r1 TO r0 STEP 0 - 1
+        p.Lines[i + 1] = p.Lines[i]
+    NEXT i
+    p.Lines[r0] = below
+    p.Row = p.Row + 1
+    IF p.SelActive THEN p.SelRow = p.SelRow + 1
+    padEnsureVisible(p)
+END SUB
+
+' padDuplicateLines — insert a copy of the current line / selection
+' block immediately after itself. Cursor follows the copy.
+SUB padDuplicateLines(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER
+    DIM r1 AS INTEGER
+    r0, r1 = padLineRange(p)
+    DIM dupCount AS INTEGER = r1 - r0 + 1
+    DIM rebuilt AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(p.Lines) - 1
+        rebuilt = APPEND(rebuilt, p.Lines[i])
+        IF i = r1 THEN
+            DIM k AS INTEGER
+            FOR k = r0 TO r1
+                rebuilt = APPEND(rebuilt, p.Lines[k])
+            NEXT k
+        END IF
+    NEXT i
+    p.Lines = rebuilt
+    p.Row = p.Row + dupCount
+    IF p.SelActive THEN p.SelRow = p.SelRow + dupCount
+    padEnsureVisible(p)
+END SUB
+
+' padDeleteLines — delete the current line / selection block. A
+' minimum of one empty line is always kept. Cursor lands at r0.
+SUB padDeleteLines(p AS POINTER TO Pad)
+    DIM r0 AS INTEGER
+    DIM r1 AS INTEGER
+    r0, r1 = padLineRange(p)
+    DIM kept AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(p.Lines) - 1
+        IF i < r0 OR i > r1 THEN kept = APPEND(kept, p.Lines[i])
+    NEXT i
+    IF LEN(kept) = 0 THEN kept = APPEND(kept, "")
+    p.Lines = kept
+    p.Row = r0
+    IF p.Row >= LEN(p.Lines) THEN p.Row = LEN(p.Lines) - 1
+    p.Col = 0
+    p.SelActive = FALSE
+    padEnsureVisible(p)
+END SUB
+
+' padSelectLine — set the selection to the entire current line and
+' put the cursor at the start of the next line (so Ctrl+L+Ctrl+L
+' grows the selection one line at a time).
+SUB (p AS POINTER TO Pad) SelectLine()
+    p.SelRow = p.Row
+    p.SelCol = 0
+    p.SelActive = TRUE
+    IF p.Row < LEN(p.Lines) - 1 THEN
+        p.Row = p.Row + 1
+        p.Col = 0
+    ELSE
+        p.Col = LEN(p.Lines[p.Row])
+    END IF
+    padEnsureVisible(p)
+END SUB
+
+' --- Bracket helpers -----------------------------------------------------
+
+FUNCTION padOpenerToCloser(ch AS STRING) AS STRING
+    IF ch = "(" THEN RETURN ")"
+    IF ch = "[" THEN RETURN "]"
+    IF ch = "{" THEN RETURN "}"
+    RETURN ""
+END FUNCTION
+
+FUNCTION padIsCloser(ch AS STRING) AS BOOLEAN
+    IF ch = ")" OR ch = "]" OR ch = "}" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' padBracketMatch — given the current cursor position, find the
+' matching bracket if the cursor sits on a bracket character.
+' Returns (row, col, found).
+FUNCTION padBracketMatch(p AS Pad) AS (INTEGER, INTEGER, BOOLEAN)
+    IF p.Row < 0 OR p.Row >= LEN(p.Lines) THEN RETURN 0, 0, FALSE
+    DIM line AS STRING = p.Lines[p.Row]
+    IF p.Col < 0 OR p.Col >= LEN(line) THEN RETURN 0, 0, FALSE
+    DIM ch AS STRING = Mid(line, p.Col + 1, 1)
+    DIM match AS STRING = ""
+    DIM dir AS INTEGER = 0
+    IF ch = "(" THEN
+        match = ")"
+        dir = 1
+    ELSEIF ch = "[" THEN
+        match = "]"
+        dir = 1
+    ELSEIF ch = "{" THEN
+        match = "}"
+        dir = 1
+    ELSEIF ch = ")" THEN
+        match = "("
+        dir = 0 - 1
+    ELSEIF ch = "]" THEN
+        match = "["
+        dir = 0 - 1
+    ELSEIF ch = "}" THEN
+        match = "{"
+        dir = 0 - 1
+    END IF
+    IF dir = 0 THEN RETURN 0, 0, FALSE
+    DIM depth AS INTEGER = 1
+    DIM r AS INTEGER = p.Row
+    DIM c AS INTEGER = p.Col + dir
+    DO WHILE r >= 0 AND r < LEN(p.Lines)
+        DIM rl AS STRING = p.Lines[r]
+        DO WHILE c >= 0 AND c < LEN(rl)
+            DIM rc AS STRING = Mid(rl, c + 1, 1)
+            IF rc = ch THEN depth = depth + 1
+            IF rc = match THEN
+                depth = depth - 1
+                IF depth = 0 THEN RETURN r, c, TRUE
+            END IF
+            c = c + dir
+        LOOP
+        IF dir > 0 THEN
+            r = r + 1
+            c = 0
+        ELSE
+            r = r - 1
+            IF r >= 0 THEN c = LEN(p.Lines[r]) - 1
+        END IF
+    LOOP
+    RETURN 0, 0, FALSE
+END FUNCTION
+
 ' padToggleComment — flip the leading "' " on the cursor line, or
 ' on every selected line. Sublime-style: if any selected line is
 ' un-commented, the operation comments all of them; otherwise it
@@ -1127,7 +1310,27 @@ FUNCTION (p AS POINTER TO Pad) Update(msg AS tea.Msg) AS tea.Cmd
     IF LEN(key) = 1 THEN
         padSnap(p)
         IF padHasSelection(p) THEN padDeleteSelection(p)
-        padInsertChar(p, key)
+        ' Bracket auto-pair: opener inserts opener+closer with
+        ' cursor between; closer overstrikes when next char matches;
+        ' quote both auto-pairs AND overstrikes (it's its own closer).
+        DIM nextCh AS STRING = ""
+        IF p.Col < LEN(p.Lines[p.Row]) THEN nextCh = Mid(p.Lines[p.Row], p.Col + 1, 1)
+        DIM closer AS STRING = padOpenerToCloser(key)
+        IF closer <> "" THEN
+            padInsertChar(p, key + closer)
+            p.Col = p.Col - 1
+        ELSEIF key = Chr(34) THEN
+            IF nextCh = Chr(34) THEN
+                p.Col = p.Col + 1
+            ELSE
+                padInsertChar(p, key + key)
+                p.Col = p.Col - 1
+            END IF
+        ELSEIF padIsCloser(key) AND nextCh = key THEN
+            p.Col = p.Col + 1
+        ELSE
+            padInsertChar(p, key)
+        END IF
     END IF
     RETURN NIL
 END FUNCTION
@@ -1162,6 +1365,19 @@ FUNCTION (p AS Pad) View() AS STRING
             selC1 = tc
         END IF
     END IF
+    ' Pre-resolve the matching bracket (if the cursor sits on one).
+    DIM bmRow AS INTEGER = 0 - 1
+    DIM bmCol AS INTEGER = 0 - 1
+    IF p.Focused THEN
+        DIM mr AS INTEGER
+        DIM mc AS INTEGER
+        DIM mok AS BOOLEAN
+        mr, mc, mok = padBracketMatch(p)
+        IF mok THEN
+            bmRow = mr
+            bmCol = mc
+        END IF
+    END IF
     DIM rows AS []STRING
     DIM r AS INTEGER
     FOR r = 0 TO p.ViewH - 1
@@ -1189,8 +1405,12 @@ FUNCTION (p AS Pad) View() AS STRING
                 IF rowIdx = selR0 THEN selStart = selC0
                 IF rowIdx = selR1 THEN selEnd   = selC1
             END IF
+            ' Per-row match column: -1 unless this row contains the
+            ' bracket-match location.
+            DIM rowMatchCol AS INTEGER = 0 - 1
+            IF rowIdx = bmRow THEN rowMatchCol = bmCol
             DIM cursorCol AS INTEGER = p.Col
-            DIM body AS STRING = padRenderLine(p.Lines[rowIdx], p.ScrollLeft, contentW, isCursorRow, cursorCol, selStart, selEnd)
+            DIM body AS STRING = padRenderLine(p.Lines[rowIdx], p.ScrollLeft, contentW, isCursorRow, cursorCol, selStart, selEnd, rowMatchCol)
             rows = APPEND(rows, gutter + body)
         END IF
     NEXT r
@@ -1203,6 +1423,7 @@ FUNCTION padStyleForMode(mode AS INTEGER) AS lipgloss.Style
     initPadStyles()
     IF mode = 100 THEN RETURN padStyleCursor
     IF mode = 101 THEN RETURN padStyleSelection
+    IF mode = 102 THEN RETURN padStyleBracketMatch
     RETURN styleForToken(mode)
 END FUNCTION
 
@@ -1215,7 +1436,7 @@ END FUNCTION
 ' Coalesces consecutive chars sharing the same render mode into one
 ' Render call — turns a ~40-char line from ~40 ANSI runs into ~6,
 ' which makes editor caching and bubbletea diffing much cheaper.
-FUNCTION padRenderLine(line AS STRING, scrollLeft AS INTEGER, contentW AS INTEGER, isCursorRow AS BOOLEAN, cursorCol AS INTEGER, selStart AS INTEGER, selEnd AS INTEGER) AS STRING
+FUNCTION padRenderLine(line AS STRING, scrollLeft AS INTEGER, contentW AS INTEGER, isCursorRow AS BOOLEAN, cursorCol AS INTEGER, selStart AS INTEGER, selEnd AS INTEGER, matchCol AS INTEGER) AS STRING
     initPadStyles()
     DIM tokens AS []PadToken = tokenizeLine(line)
     DIM out AS STRING = ""
@@ -1231,6 +1452,7 @@ FUNCTION padRenderLine(line AS STRING, scrollLeft AS INTEGER, contentW AS INTEGE
             DIM ch AS STRING = Mid(tok.Text, j + 1, 1)
             IF col >= scrollLeft AND visCol < contentW THEN
                 DIM mode AS INTEGER = tok.Kind
+                IF matchCol >= 0 AND col = matchCol THEN mode = 102
                 IF selStart >= 0 AND col >= selStart AND col < selEnd THEN mode = 101
                 IF isCursorRow AND col = cursorCol THEN mode = 100
                 IF mode = runMode THEN

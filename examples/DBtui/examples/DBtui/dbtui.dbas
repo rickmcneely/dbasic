@@ -638,6 +638,11 @@ FUNCTION helpText() AS STRING
     s = s + "  Ctrl+H / F4   Replace (all)\n"
     s = s + "  Ctrl+G   Go to line\n"
     s = s + "  Ctrl+/   Toggle comment\n"
+    s = s + "  Alt+↑/↓  Move line up/down\n"
+    s = s + "  Ctrl+D   Duplicate line   Ctrl+L   Select line\n"
+    s = s + "  Ctrl+Shift+K   Delete line\n"
+    s = s + "  Brackets ( [ { auto-pair; cursor on a bracket\n"
+    s = s + "    highlights its match.\n"
     s = s + "  Esc      Focus tree from editor\n"
     s = s + "  Ctrl+Tab / F6   Cycle focus\n"
     s = s + "\n"
@@ -1557,6 +1562,44 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             padSnap(@m.Tabs[m.TabIdx].Editor)
             padToggleComment(@m.Tabs[m.TabIdx].Editor)
             m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(@m)
+            RETURN m, NIL
+        END IF
+        ' --- Editor productivity cluster ------------------------------
+        ' Alt+↑/↓ move the current line (or selection block) up/down.
+        IF key = "alt+up" AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
+            padSnap(@m.Tabs[m.TabIdx].Editor)
+            padMoveLinesUp(@m.Tabs[m.TabIdx].Editor)
+            m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(@m)
+            RETURN m, NIL
+        END IF
+        IF key = "alt+down" AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
+            padSnap(@m.Tabs[m.TabIdx].Editor)
+            padMoveLinesDown(@m.Tabs[m.TabIdx].Editor)
+            m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(@m)
+            RETURN m, NIL
+        END IF
+        ' Ctrl+D duplicates current line / selection block.
+        IF key = "ctrl+d" AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
+            padSnap(@m.Tabs[m.TabIdx].Editor)
+            padDuplicateLines(@m.Tabs[m.TabIdx].Editor)
+            m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(@m)
+            RETURN m, NIL
+        END IF
+        ' Ctrl+Shift+K removes the current line / selection block.
+        IF key = "ctrl+shift+k" AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
+            padSnap(@m.Tabs[m.TabIdx].Editor)
+            padDeleteLines(@m.Tabs[m.TabIdx].Editor)
+            m.Tabs[m.TabIdx].Dirty = TRUE
+            invalidateEditorCache(@m)
+            RETURN m, NIL
+        END IF
+        ' Ctrl+L selects the whole current line.
+        IF key = "ctrl+l" AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
+            m.Tabs[m.TabIdx].Editor.SelectLine()
             invalidateEditorCache(@m)
             RETURN m, NIL
         END IF
