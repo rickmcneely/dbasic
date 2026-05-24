@@ -161,6 +161,13 @@ TYPE Model
     ' Last find query — F3 repeats it from the current cursor.
     DIM FindQuery AS STRING
 
+    ' Replace state. ReplaceFind carries the typed pattern between
+    ' the two-step Replace flow (find prompt → replace-with prompt).
+    ' ReplaceText is the last replacement text, used as the default
+    ' on the second prompt.
+    DIM ReplaceFind AS STRING
+    DIM ReplaceText AS STRING
+
     ' "Loading <path>" message shown while an async file load is in
     ' flight. Cleared when the LoadFinishedMsg lands. Empty string =
     ' no load in progress.
@@ -414,6 +421,14 @@ FUNCTION buildMenus(m AS Model) AS []MenuDef
     fileItems = APPEND(fileItems, mkItem("(Q)uit             q", "file.quit"))
     menus = APPEND(menus, mkMenu("(F)ile", fileItems))
 
+    DIM editItems AS []MenuItem
+    editItems = APPEND(editItems, mkItem("(F)ind        Ctrl+F", "edit.find"))
+    editItems = APPEND(editItems, mkItem("Find (N)ext        F3", "edit.findnext"))
+    editItems = APPEND(editItems, mkItem("(R)eplace     Ctrl+H", "edit.replace"))
+    editItems = APPEND(editItems, mkSep())
+    editItems = APPEND(editItems, mkItem("(G)o to Line  Ctrl+G", "edit.goto"))
+    menus = APPEND(menus, mkMenu("(E)dit", editItems))
+
     DIM viewItems AS []MenuItem
     viewItems = APPEND(viewItems, mkItem("(F)orm Designer  F7", "view.form"))
     viewItems = APPEND(viewItems, mkItem("(C)ode Editor    F7", "view.code"))
@@ -565,7 +580,8 @@ FUNCTION helpText() AS STRING
     s = s + "  q / Ctrl+C   Quit\n"
     s = s + "\n"
     s = s + "EDIT / NAVIGATE\n"
-    s = s + "  Ctrl+F   Find    F3   Find next\n"
+    s = s + "  Ctrl+F   Find        F3   Find next\n"
+    s = s + "  Ctrl+H / F4   Replace (all)\n"
     s = s + "  Ctrl+G   Go to line\n"
     s = s + "  Esc      Focus tree from editor\n"
     s = s + "  Ctrl+Tab / F6   Cycle focus\n"
@@ -745,6 +761,35 @@ SUB findNextInActive(m AS POINTER TO Model, fromOff AS INTEGER)
     END IF
 END SUB
 
+' replaceAllInActive — bulk replace every occurrence of `find` with
+' `replace` in the active tab's buffer. Status bar reports the
+' match count (or "no matches"). Marks the buffer dirty and
+' invalidates the editor cache so the next render shows the
+' updated text. v1 has no per-match interactive walk — Replace All
+' is the only mode for now.
+SUB replaceAllInActive(m AS POINTER TO Model, find AS STRING, replace AS STRING)
+    IF NOT hasActiveTab(^m) THEN
+        m.Status = "no file open"
+        RETURN
+    END IF
+    IF find = "" THEN
+        m.Status = "empty find pattern"
+        RETURN
+    END IF
+    DIM content AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    DIM count AS INTEGER = strings.Count(content, find)
+    IF count = 0 THEN
+        m.Status = "no matches: " + find
+        RETURN
+    END IF
+    DIM updated AS STRING = strings.ReplaceAll(content, find, replace)
+    m.Tabs[m.TabIdx].Editor.SetValue(updated)
+    m.Tabs[m.TabIdx].Editor.MoveToBegin()
+    m.Tabs[m.TabIdx].Dirty = TRUE
+    invalidateEditorCache(m)
+    m.Status = "replaced " + fmt.Sprintf("%d", count) + " occurrence(s)"
+END SUB
+
 ' gotoLine — jump the cursor to the start of line `line` (1-based)
 ' in the active tab AND scroll so that line lands at the *top* of
 ' the viewport (matching VBDOS / VS Code behaviour).
@@ -920,6 +965,24 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         END IF
         m.FindQuery = fq
         findNextInActive(m, 0)
+        RETURN FALSE, NIL
+    END IF
+    ' "replace-find" / "replace-with" — two-step Replace flow. The
+    ' first prompt collects the pattern; on commit we chain a
+    ' second input modal asking what to replace it with. The second
+    ' modal's commit runs Replace All against the active buffer.
+    IF m.ModalContext = "replace-find" THEN
+        m.ReplaceFind = text
+        IF text = "" THEN
+            m.Status = "replace cancelled"
+            RETURN FALSE, NIL
+        END IF
+        showInputModal(m, "Replace", "Replace with:", m.ReplaceText, "replace-with")
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "replace-with" THEN
+        m.ReplaceText = text
+        replaceAllInActive(m, m.ReplaceFind, m.ReplaceText)
         RETURN FALSE, NIL
     END IF
     ' "goto" — input modal asking for a 1-based line number.
@@ -1242,6 +1305,22 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
     END IF
     IF action = "file.quit" THEN
         m.Status = "quitting..."
+        RETURN
+    END IF
+    IF action = "edit.find" THEN
+        showInputModal(m, "Find", "Find:", m.FindQuery, "find")
+        RETURN
+    END IF
+    IF action = "edit.findnext" THEN
+        findNextInActive(m, cursorOffset(m) + 1)
+        RETURN
+    END IF
+    IF action = "edit.replace" THEN
+        showInputModal(m, "Replace", "Find:", m.FindQuery, "replace-find")
+        RETURN
+    END IF
+    IF action = "edit.goto" THEN
+        showInputModal(m, "Go To Line", "Line number:", "", "goto")
         RETURN
     END IF
     IF action = "view.form" THEN
@@ -1829,6 +1908,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF key = "ctrl+g" THEN
             showInputModal(@m, "Go To Line", "Line number:", "", "goto")
+            RETURN m, NIL
+        END IF
+        ' Replace — Ctrl+H is the de-facto shortcut but some terms
+        ' send it as Backspace, so F4 is bound as an alternate.
+        IF key = "ctrl+h" OR key = "f4" THEN
+            showInputModal(@m, "Replace", "Find:", m.FindQuery, "replace-find")
             RETURN m, NIL
         END IF
         ' Splitter resize via keyboard. Alt+←/→ grow / shrink the
