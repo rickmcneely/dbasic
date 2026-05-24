@@ -448,8 +448,7 @@ FUNCTION renderMiddlePane(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
         DIM emptyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder)).Width(width).Height(bodyH).Align(lipgloss.Center, lipgloss.Center)
         bodyStr = emptyStyle.Render("(no files open — pick one from the tree)")
     ELSE
-        DIM placeholder AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder)).Width(width).Height(bodyH).Align(lipgloss.Center, lipgloss.Center)
-        bodyStr = placeholder.Render("(form designer — coming soon; press F7 or Enter on a tree file to code)")
+        bodyStr = renderFormCanvas(m, width, bodyH)
     END IF
     RETURN caption + "\n" + bodyStr
 END FUNCTION
@@ -493,6 +492,7 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
 
     ' --- Tab strip ---------------------------------------------------
     DIM widgetsLbl AS STRING = "Outline"
+    IF m.ViewMode = "form" THEN widgetsLbl = "Palette"
     DIM toolsLbl   AS STRING = "Tools"
     DIM wS AS INTEGER
     DIM wE AS INTEGER
@@ -514,48 +514,74 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     DIM listH   AS INTEGER = remain / 2
     DIM propsH  AS INTEGER = remain - listH
 
-    ' --- Outline list (SUB / FUNCTION / TYPE from active buffer) -----
+    ' --- List section: Outline (code mode) OR Palette (form mode) ----
     ' The listBox has a rounded border so the inner area is (width-2)
     ' chars wide × (listH-2) rows tall. Top border at body y = 2,
     ' so visible entries occupy y = 3..3+listH-3.
-    DIM outline AS []OutlineEntry
-    IF hasActiveTab(m) THEN
-        outline = scanOutline(m.Tabs[m.TabIdx].Editor.Lines)
-    END IF
     DIM listInnerW AS INTEGER = width - 2
     DIM listFirstY AS INTEGER = 3
     DIM listVisible AS INTEGER = listH - 2
     DIM listRowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(listInnerW)
     DIM listHoverStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Width(listInnerW)
-    DIM listKindStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
     DIM listLines AS []STRING
     DIM li AS INTEGER
-    FOR li = 0 TO listVisible - 1
-        DIM txt AS STRING = ""
-        IF li < LEN(outline) THEN
-            DIM mark AS STRING = "?"
-            IF outline[li].Kind = "SUB"      THEN mark = "S"
-            IF outline[li].Kind = "FUNCTION" THEN mark = "F"
-            IF outline[li].Kind = "TYPE"     THEN mark = "T"
-            txt = " " + mark + "  " + outline[li].Name
+    IF m.ViewMode = "form" THEN
+        ' Palette: fixed list of widget kinds.
+        FOR li = 0 TO listVisible - 1
+            DIM palTxt AS STRING = ""
+            IF li < 4 THEN palTxt = " + " + formKindByIdx(li)
+            DIM prowY AS INTEGER = listFirstY + li
+            IF m.HoverY = prowY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND li < 4 THEN
+                listLines = APPEND(listLines, listHoverStyle.Render(palTxt))
+            ELSE
+                listLines = APPEND(listLines, listRowStyle.Render(palTxt))
+            END IF
+        NEXT li
+    ELSE
+        ' Outline: SUB / FUNCTION / TYPE from active buffer.
+        DIM outline AS []OutlineEntry
+        IF hasActiveTab(m) THEN
+            outline = scanOutline(m.Tabs[m.TabIdx].Editor.Lines)
         END IF
-        DIM rowY AS INTEGER = listFirstY + li
-        IF m.HoverY = rowY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND li < LEN(outline) THEN
-            listLines = APPEND(listLines, listHoverStyle.Render(txt))
-        ELSE
-            listLines = APPEND(listLines, listRowStyle.Render(txt))
-        END IF
-    NEXT li
+        FOR li = 0 TO listVisible - 1
+            DIM txt AS STRING = ""
+            IF li < LEN(outline) THEN
+                DIM mark AS STRING = "?"
+                IF outline[li].Kind = "SUB"      THEN mark = "S"
+                IF outline[li].Kind = "FUNCTION" THEN mark = "F"
+                IF outline[li].Kind = "TYPE"     THEN mark = "T"
+                txt = " " + mark + "  " + outline[li].Name
+            END IF
+            DIM rowY AS INTEGER = listFirstY + li
+            IF m.HoverY = rowY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND li < LEN(outline) THEN
+                listLines = APPEND(listLines, listHoverStyle.Render(txt))
+            ELSE
+                listLines = APPEND(listLines, listRowStyle.Render(txt))
+            END IF
+        NEXT li
+    END IF
     DIM listBody AS STRING = strings.Join(listLines, "\n")
     DIM listBox  AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(listH)
-    _ = listKindStyle  ' reserved for future per-token styling
 
-    ' --- Properties panel — live cursor context ----------------------
-    ' titledBox draws title at the top of the panel, so property rows
-    ' start one cell below that. The panel begins at y = 2 + listH;
-    ' first row sits at y = 2 + listH + 1.
+    ' --- Properties panel — live cursor context (code) OR selected
+    '     widget props (form). titledBox draws title at the top of
+    '     the panel, so property rows start one cell below that.
     DIM propRows AS []STRING
-    IF hasActiveTab(m) THEN
+    IF m.ViewMode = "form" THEN
+        IF m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
+            DIM sw AS DesignWidget = m.Form.Widgets[m.SelWidget]
+            propRows = APPEND(propRows, "Kind   " + sw.Kind)
+            propRows = APPEND(propRows, "Name   " + sw.Name)
+            propRows = APPEND(propRows, "Text   " + sw.Text)
+            propRows = APPEND(propRows, fmt.Sprintf("Pos    %d, %d", sw.X, sw.Y))
+            propRows = APPEND(propRows, fmt.Sprintf("Size   %d x %d", sw.W, sw.H))
+        ELSE
+            propRows = APPEND(propRows, "(no widget selected)")
+            propRows = APPEND(propRows, "Click palette to add,")
+            propRows = APPEND(propRows, "click widget to select,")
+            propRows = APPEND(propRows, "drag to move.")
+        END IF
+    ELSEIF hasActiveTab(m) THEN
         DIM edRow AS INTEGER = m.Tabs[m.TabIdx].Editor.Row
         DIM edCol AS INTEGER = m.Tabs[m.TabIdx].Editor.Col
         DIM edLines AS []STRING = m.Tabs[m.TabIdx].Editor.Lines

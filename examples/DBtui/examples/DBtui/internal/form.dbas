@@ -1,0 +1,218 @@
+' =========================================================================
+' Form designer — visual canvas + palette + hit-test + drag.
+'
+' v1 scope:
+'   - Single in-memory Form on Model.
+'   - Four widget kinds: Button / Label / TextInput / Checkbox.
+'   - Click palette item → append widget at canvas (2, 1).
+'   - Click widget on canvas → select.
+'   - Drag selected widget → move (DragMode = "formMove").
+'   - Selected widget highlighted; properties shown in right pane.
+'
+' Persistence + codegen come in a follow-up.
+' =========================================================================
+
+CONST formPaletteKinds AS INTEGER = 4   ' Button, Label, TextInput, Checkbox
+
+' formKindByIdx — fixed list of widget kinds in palette display order.
+FUNCTION formKindByIdx(i AS INTEGER) AS STRING
+    IF i = 0 THEN RETURN "Button"
+    IF i = 1 THEN RETURN "Label"
+    IF i = 2 THEN RETURN "TextInput"
+    IF i = 3 THEN RETURN "Checkbox"
+    RETURN ""
+END FUNCTION
+
+' defaultWidget — produce a widget of the given kind with sensible
+' default text / size; caller picks Name + (X, Y).
+FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
+    DIM w AS DesignWidget
+    w.Kind = kind
+    w.W = 12
+    w.H = 1
+    IF kind = "Button" THEN
+        w.Text = "Button"
+    ELSEIF kind = "Label" THEN
+        w.Text = "Label"
+        w.W = 10
+    ELSEIF kind = "TextInput" THEN
+        w.Text = ""
+        w.W = 16
+    ELSEIF kind = "Checkbox" THEN
+        w.Text = "option"
+        w.W = 14
+    END IF
+    RETURN w
+END FUNCTION
+
+' formAddWidget — append a new widget of `kind` to the form, auto-name
+' it, position at (2, 1). Selects the new widget.
+SUB formAddWidget(m AS POINTER TO Model, kind AS STRING)
+    DIM w AS DesignWidget = defaultWidget(kind)
+    ' Auto-name: lower-case kind + index. E.g. "button1".
+    DIM prefix AS STRING = strings.ToLower(kind)
+    DIM n AS INTEGER = 1
+    DO WHILE TRUE
+        DIM cand AS STRING = prefix + strconv.Itoa(n)
+        DIM clash AS BOOLEAN = FALSE
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(m.Form.Widgets) - 1
+            IF m.Form.Widgets[i].Name = cand THEN clash = TRUE
+        NEXT i
+        IF NOT clash THEN
+            w.Name = cand
+            EXIT DO
+        END IF
+        n = n + 1
+    LOOP
+    w.X = 2
+    w.Y = 1 + LEN(m.Form.Widgets)
+    IF w.Y < 1 THEN w.Y = 1
+    m.Form.Widgets = APPEND(m.Form.Widgets, w)
+    m.SelWidget = LEN(m.Form.Widgets) - 1
+    m.Status = "added " + w.Name
+END SUB
+
+' formDeleteSelected — drop the currently-selected widget.
+SUB formDeleteSelected(m AS POINTER TO Model)
+    IF m.SelWidget < 0 OR m.SelWidget >= LEN(m.Form.Widgets) THEN RETURN
+    DIM kept AS []DesignWidget
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Form.Widgets) - 1
+        IF i <> m.SelWidget THEN kept = APPEND(kept, m.Form.Widgets[i])
+    NEXT i
+    m.Form.Widgets = kept
+    m.SelWidget = 0 - 1
+    m.Status = "widget deleted"
+END SUB
+
+' widgetVisibleText — what we'll print on the canvas for a widget.
+FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
+    IF w.Kind = "Button"    THEN RETURN "[ " + w.Text + " ]"
+    IF w.Kind = "Label"     THEN RETURN w.Text
+    IF w.Kind = "TextInput" THEN
+        DIM inner AS STRING = w.Text
+        IF LEN(inner) < w.W - 2 THEN inner = inner + strings.Repeat(" ", w.W - 2 - LEN(inner))
+        RETURN "[" + inner + "]"
+    END IF
+    IF w.Kind = "Checkbox"  THEN RETURN "[ ] " + w.Text
+    RETURN w.Text
+END FUNCTION
+
+' widgetBox — bounding box of widget in canvas coordinates:
+' (x0, y0, x1, y1) with x1/y1 exclusive.
+FUNCTION widgetBox(w AS DesignWidget) AS (INTEGER, INTEGER, INTEGER, INTEGER)
+    DIM txt AS STRING = widgetVisibleText(w)
+    DIM ww AS INTEGER = lipgloss.Width(txt)
+    IF w.W > ww THEN ww = w.W
+    DIM hh AS INTEGER = w.H
+    IF hh < 1 THEN hh = 1
+    RETURN w.X, w.Y, w.X + ww, w.Y + hh
+END FUNCTION
+
+' formWidgetAt — index of the topmost widget whose box contains
+' canvas coords (cx, cy), or -1 if none. Walks back-to-front so
+' later (drawn-on-top) widgets win.
+FUNCTION formWidgetAt(m AS Model, cx AS INTEGER, cy AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = LEN(m.Form.Widgets) - 1 TO 0 STEP 0 - 1
+        DIM x0 AS INTEGER
+        DIM y0 AS INTEGER
+        DIM x1 AS INTEGER
+        DIM y1 AS INTEGER
+        x0, y0, x1, y1 = widgetBox(m.Form.Widgets[i])
+        IF cx >= x0 AND cx < x1 AND cy >= y0 AND cy < y1 THEN RETURN i
+    NEXT i
+    RETURN 0 - 1
+END FUNCTION
+
+' formScreenToCanvas — translate screen coords to canvas coords
+' assuming the canvas starts at (LeftW, 2) and we keep a 1-cell
+' top margin for the title row.
+FUNCTION formScreenToCanvas(m AS Model, sx AS INTEGER, sy AS INTEGER) AS (INTEGER, INTEGER)
+    DIM cx AS INTEGER = sx - m.LeftW
+    DIM cy AS INTEGER = sy - 2 - 1   ' minus caption (1) + title row (1)
+    RETURN cx, cy
+END FUNCTION
+
+' renderFormCanvas — middle-pane body when ViewMode = "form".
+' Renders the title row then paints each widget at its (X, Y).
+FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
+    DIM cellBg AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg))
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Width(width)
+    DIM widStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg))
+    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    ' Build a grid of plain bg cells then overlay widgets char-by-char.
+    DIM gridH AS INTEGER = height - 1   ' minus title row
+    IF gridH < 1 THEN gridH = 1
+    ' Loop vars hoisted — DBasic codegen drops re-DIM inside nested
+    ' ELSEIF/FOR scopes, so we declare every loop iterator once.
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    DIM grid AS [][]STRING
+    FOR r = 0 TO gridH - 1
+        DIM row AS []STRING
+        FOR c = 0 TO width - 1
+            row = APPEND(row, " ")
+        NEXT c
+        grid = APPEND(grid, row)
+    NEXT r
+    ' Per-cell selection flag (mirrors grid shape).
+    DIM selGrid AS [][]BOOLEAN
+    FOR r = 0 TO gridH - 1
+        DIM srow AS []BOOLEAN
+        FOR c = 0 TO width - 1
+            srow = APPEND(srow, FALSE)
+        NEXT c
+        selGrid = APPEND(selGrid, srow)
+    NEXT r
+    ' Paint widgets.
+    DIM wi AS INTEGER
+    FOR wi = 0 TO LEN(m.Form.Widgets) - 1
+        DIM w AS DesignWidget = m.Form.Widgets[wi]
+        DIM txt AS STRING = widgetVisibleText(w)
+        DIM isSel AS BOOLEAN = (wi = m.SelWidget)
+        DIM ci AS INTEGER
+        FOR ci = 0 TO LEN(txt) - 1
+            DIM pCol AS INTEGER = w.X + ci
+            DIM pRow AS INTEGER = w.Y
+            IF pRow >= 0 AND pRow < gridH AND pCol >= 0 AND pCol < width THEN
+                grid[pRow][pCol] = Mid(txt, ci + 1, 1)
+                IF isSel THEN selGrid[pRow][pCol] = TRUE
+            END IF
+        NEXT ci
+    NEXT wi
+    ' Render rows.
+    DIM lines AS []STRING
+    DIM titleLine AS STRING = titleStyle.Render(" " + m.Form.Title)
+    lines = APPEND(lines, titleLine)
+    FOR r = 0 TO gridH - 1
+        DIM out AS STRING = ""
+        DIM runBuf AS STRING = ""
+        DIM runIsSel AS BOOLEAN = FALSE
+        FOR c = 0 TO width - 1
+            DIM ch AS STRING = grid[r][c]
+            DIM cellSel AS BOOLEAN = selGrid[r][c]
+            IF cellSel <> runIsSel AND runBuf <> "" THEN
+                IF runIsSel THEN
+                    out = out + selStyle.Render(runBuf)
+                ELSE
+                    out = out + widStyle.Render(runBuf)
+                END IF
+                runBuf = ""
+            END IF
+            runIsSel = cellSel
+            runBuf = runBuf + ch
+        NEXT c
+        IF runBuf <> "" THEN
+            IF runIsSel THEN
+                out = out + selStyle.Render(runBuf)
+            ELSE
+                out = out + widStyle.Render(runBuf)
+            END IF
+        END IF
+        _ = cellBg
+        lines = APPEND(lines, out)
+    NEXT r
+    RETURN strings.Join(lines, "\n")
+END FUNCTION

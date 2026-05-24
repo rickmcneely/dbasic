@@ -96,6 +96,27 @@ TYPE Tab
 END TYPE
 
 ' -------------------------------------------------------------------------
+' Form designer types — DesignWidget is one placed widget on a Form;
+' Form is the collection. v1 keeps a single in-memory Form on Model;
+' future versions will store one per tab and persist to .dbproj.
+' -------------------------------------------------------------------------
+
+TYPE DesignWidget
+    DIM Kind AS STRING       ' "Button" / "Label" / "TextInput" / "Checkbox"
+    DIM Name AS STRING       ' identifier, e.g. "btnOK"
+    DIM Text AS STRING       ' visible label
+    DIM X    AS INTEGER      ' col offset within canvas
+    DIM Y    AS INTEGER      ' row offset within canvas
+    DIM W    AS INTEGER
+    DIM H    AS INTEGER
+END TYPE
+
+TYPE DesignForm
+    DIM Title   AS STRING
+    DIM Widgets AS []DesignWidget
+END TYPE
+
+' -------------------------------------------------------------------------
 ' Persisted state — JSON-marshalled to ~/.dbtui-state.json on quit
 ' and read back on startup. Captures enough to drop the user back
 ' where they left off: open tabs (paths), active tab, splitter
@@ -239,6 +260,16 @@ TYPE Model
     ' Ctrl+Shift+T reopens the head. Persisted with the rest of
     ' the state so it survives restarts.
     DIM ClosedTabs AS []STRING
+
+    ' Form designer — single in-memory form for now; multi-form +
+    ' .dbproj persistence comes later. SelWidget is the index of
+    ' the currently-selected widget on the form (-1 = none).
+    ' FormDragOffX / Y store the cursor's offset within the widget
+    ' when the move-drag started, so motion translates 1:1.
+    DIM Form         AS DesignForm
+    DIM SelWidget    AS INTEGER
+    DIM FormDragOffX AS INTEGER
+    DIM FormDragOffY AS INTEGER
 
     ' Files queued for restoration on startup, drained one at a
     ' time after the corresponding LoadFinishedMsg lands.
@@ -1097,6 +1128,9 @@ FUNCTION newModel() AS Model
     ' Tree starts focused — the tree is always available and the
     ' editor doesn't exist yet.
     m.FocusedPane = "tree"
+    ' Empty form designer state.
+    m.Form.Title = "frmStart"
+    m.SelWidget = 0 - 1
     ' No hover known until the first MouseMotionMsg arrives.
     m.HoverX = 0 - 1
     m.HoverY = 0 - 1
@@ -1257,6 +1291,20 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF m.DragMode = "splitR" THEN
             m.RightW = m.Width - mmMsg.X
             clampSplitters(@m)
+            RETURN m, NIL
+        END IF
+        ' Form-canvas move-drag: cursor moves the selected widget.
+        IF m.DragMode = "formMove" AND m.SelWidget >= 0 AND m.SelWidget < LEN(m.Form.Widgets) THEN
+            DIM fmx AS INTEGER
+            DIM fmy AS INTEGER
+            fmx, fmy = formScreenToCanvas(m, mmMsg.X, mmMsg.Y)
+            DIM nx AS INTEGER = fmx - m.FormDragOffX
+            DIM ny AS INTEGER = fmy - m.FormDragOffY
+            IF nx < 0 THEN nx = 0
+            IF ny < 0 THEN ny = 0
+            m.Form.Widgets[m.SelWidget].X = nx
+            m.Form.Widgets[m.SelWidget].Y = ny
+            invalidateEditorCache(@m)
             RETURN m, NIL
         END IF
         ' Editor drag-select: cursor follows the mouse, selection
@@ -1499,6 +1547,45 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     RETURN m, NIL
                 END IF
             END IF
+        END IF
+        ' (4c) Palette click — when in form mode, the right pane's
+        '      list section is the widget palette. Each row adds a
+        '      widget of that kind to the canvas.
+        IF m.ViewMode = "form" AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width AND mcMsg.Y >= 3 THEN
+            DIM pBodyH AS INTEGER = m.Height - 2
+            IF m.BottomVisible THEN
+                DIM pBot AS INTEGER = 10
+                IF pBot > pBodyH - 4 THEN pBot = pBodyH - 4
+                IF pBot < 3 THEN pBot = 3
+                pBodyH = pBodyH - pBot
+            END IF
+            DIM pRemain AS INTEGER = pBodyH - 1
+            DIM pListH  AS INTEGER = pRemain / 2
+            DIM pRelRow AS INTEGER = mcMsg.Y - 3
+            IF pRelRow >= 0 AND pRelRow < pListH - 2 AND pRelRow < 4 THEN
+                formAddWidget(@m, formKindByIdx(pRelRow))
+                invalidateEditorCache(@m)
+                RETURN m, NIL
+            END IF
+        END IF
+        ' (4d) Form-canvas click — select a widget or arm a move-drag.
+        IF m.ViewMode = "form" AND mcMsg.Y >= 2 AND mcMsg.Y < m.Height - 1 AND mcMsg.X >= m.LeftW AND mcMsg.X < m.Width - m.RightW THEN
+            DIM fcx AS INTEGER
+            DIM fcy AS INTEGER
+            fcx, fcy = formScreenToCanvas(m, mcMsg.X, mcMsg.Y)
+            DIM hit AS INTEGER = formWidgetAt(m, fcx, fcy)
+            m.SelWidget = hit
+            IF hit >= 0 THEN
+                ' Arm a move-drag — record the cursor's offset within
+                ' the widget so the drag motion translates 1:1.
+                m.DragMode = "formMove"
+                m.FormDragOffX = fcx - m.Form.Widgets[hit].X
+                m.FormDragOffY = fcy - m.Form.Widgets[hit].Y
+            ELSE
+                m.Status = "no widget under cursor"
+            END IF
+            invalidateEditorCache(@m)
+            RETURN m, NIL
         END IF
         ' (5) Click landed in the middle pane (between left and right
         '     panes, below the tabs row) while code mode is active —
@@ -1864,6 +1951,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM rcCmd AS tea.Cmd = reopenClosed(@m)
             RETURN m, rcCmd
         END IF
+        ' Form-mode Delete key drops the selected widget.
+        IF key = "delete" AND m.ViewMode = "form" AND m.SelWidget >= 0 THEN
+            formDeleteSelected(@m)
+            RETURN m, NIL
+        END IF
         ' Find / Goto live alongside the file shortcuts so they work
         ' from either pane (the editor never sees them).
         IF key = "ctrl+f" THEN
@@ -2214,6 +2306,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
 END FUNCTION
 
 INCLUDE "internal/pad.dbas"
+INCLUDE "internal/form.dbas"
 INCLUDE "internal/render.dbas"
 
 
