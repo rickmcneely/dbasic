@@ -738,7 +738,8 @@ FUNCTION WidgetEvents(w AS Widget) AS []STRING
         RETURN out
     END IF
     IF w.Kind = WidgetKindTreeView THEN
-        out = APPEND(out, "Change")
+        out = APPEND(out, "NodeSelected")
+        out = APPEND(out, "NodeRightClicked")
         out = APPEND(out, "Expand")
         out = APPEND(out, "Collapse")
         out = APPEND(out, "GotFocus")

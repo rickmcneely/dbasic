@@ -450,6 +450,24 @@ FUNCTION emitStubs(form AS Form, defined AS []STRING) AS STRING
                 END IF
             NEXT ev
         END IF
+        IF w.Kind = WidgetKindTreeView THEN
+            DIM tvEvs AS []STRING
+            tvEvs = APPEND(tvEvs, "NodeSelected")
+            tvEvs = APPEND(tvEvs, "NodeRightClicked")
+            DIM tvE AS INTEGER
+            FOR tvE = 0 TO LEN(tvEvs) - 1
+                DIM tnm AS STRING = w.Id + "_" + tvEvs[tvE]
+                IF NOT subDefined(tnm, defined) THEN
+                    IF NOT emitted THEN
+                        s = s + "' Auto-stubs for handlers not yet defined in the form's code file.\n"
+                        emitted = TRUE
+                    END IF
+                    s = s + "SUB " + tnm + "(label AS STRING)\n"
+                    s = s + "    _ = label\n"
+                    s = s + "END SUB\n\n"
+                END IF
+            NEXT tvE
+        END IF
     NEXT i
     ' Generic per-click hook — auto-stubbed empty if the user code
     ' doesn't define it. Called from the mouse hit-test for every
@@ -1543,9 +1561,16 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "                DIM tcClickY AS INTEGER = (mcMsg.Y - 1) - m.Widgets[hitIdx].Y - 1\n"
     s = s + "                DIM tcVisIdx AS INTEGER = m.Widgets[hitIdx].Offset + tcClickY\n"
     s = s + "                IF tcVisIdx >= 0 AND tcVisIdx < LEN(tcVis) THEN\n"
-    s = s + "                    IF tcVisIdx <> m.Widgets[hitIdx].Selected THEN\n"
+    s = s + "                    DIM tcNodeLabel AS STRING = \"\"\n"
+    s = s + "                    DIM tcLabP AS []STRING = strings.SplitN(tcVis[tcVisIdx], \"|\", 3)\n"
+    s = s + "                    IF LEN(tcLabP) >= 3 THEN tcNodeLabel = tcLabP[2]\n"
+    s = s + "                    IF mcMsg.Button = tea.MouseRight THEN\n"
+    s = s + "                        m.Widgets[hitIdx].Selected = tcVisIdx\n"
+    s = s + "                        tvDispatchNodeRightClicked(m.Widgets[hitIdx].Id, tcNodeLabel)\n"
+    s = s + "                    ELSEIF tcVisIdx <> m.Widgets[hitIdx].Selected THEN\n"
     s = s + "                        m.Widgets[hitIdx].Selected = tcVisIdx\n"
     s = s + "                        dispatchChange(m.Widgets[hitIdx].Id)\n"
+    s = s + "                        tvDispatchNodeSelected(m.Widgets[hitIdx].Id, tcNodeLabel)\n"
     s = s + "                    ELSE\n"
     ' Second click on the already-selected row toggles its open/close state.
     s = s + "                        DIM tcAbsIdx AS INTEGER = tcAbs[tcVisIdx]\n"
@@ -2227,6 +2252,10 @@ FUNCTION emitLifecycle() AS STRING
     s = s + "                            IF tkNew < m.Widgets[afIdx].Offset THEN m.Widgets[afIdx].Offset = tkNew\n"
     s = s + "                            IF tkNew >= m.Widgets[afIdx].Offset + tkInH THEN m.Widgets[afIdx].Offset = tkNew - tkInH + 1\n"
     s = s + "                            dispatchChange(m.Widgets[afIdx].Id)\n"
+    s = s + "                            DIM tkNodeLab AS STRING = \"\"\n"
+    s = s + "                            DIM tkLabP AS []STRING = strings.SplitN(tkVis[tkNew], \"|\", 3)\n"
+    s = s + "                            IF LEN(tkLabP) >= 3 THEN tkNodeLab = tkLabP[2]\n"
+    s = s + "                            tvDispatchNodeSelected(m.Widgets[afIdx].Id, tkNodeLab)\n"
     s = s + "                        END IF\n"
     s = s + "                    END IF\n"
     s = s + "                END IF\n"
@@ -3753,6 +3782,68 @@ FUNCTION emitSplitPanelLayout() AS STRING
     RETURN s
 END FUNCTION
 
+' emitTreeViewAPI emits the runtime API + event dispatchers for any
+' TreeView widgets on the form. User code can call tvSetNodes /
+' tvGetSelected / tvNodeCount / tvExpand / tvCollapse; NodeSelected
+' and NodeRightClicked events route to <treeId>_NodeSelected(label)
+' and <treeId>_NodeRightClicked(label) handlers.
+FUNCTION emitTreeViewAPI(form AS Form) AS STRING
+    DIM s AS STRING = ""
+    s = s + "' --- TreeView runtime API + dispatch ---------------------------\n"
+    s = s + "FUNCTION tvFind(treeId AS STRING) AS INTEGER\n"
+    s = s + "    IF gM = NIL THEN RETURN 0 - 1\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(gM.Widgets) - 1\n"
+    s = s + "        IF gM.Widgets[i].Kind = \"TreeView\" AND gM.Widgets[i].Id = treeId THEN RETURN i\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN 0 - 1\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "SUB tvSetNodes(treeId AS STRING, nodes AS STRING)\n"
+    s = s + "    DIM idx AS INTEGER = tvFind(treeId)\n"
+    s = s + "    IF idx < 0 THEN RETURN\n"
+    s = s + "    gM.Widgets[idx].Items = nodes\n"
+    s = s + "    gM.Widgets[idx].Selected = 0\n"
+    s = s + "    gM.Widgets[idx].Offset = 0\n"
+    s = s + "END SUB\n\n"
+    s = s + "FUNCTION tvGetSelected(treeId AS STRING) AS STRING\n"
+    s = s + "    DIM idx AS INTEGER = tvFind(treeId)\n"
+    s = s + "    IF idx < 0 THEN RETURN \"\"\n"
+    s = s + "    DIM tgVis AS []STRING\n"
+    s = s + "    DIM tgAbs AS []INTEGER\n"
+    s = s + "    tgVis, tgAbs = treeVisible(gM.Widgets[idx].Items)\n"
+    s = s + "    _ = tgAbs\n"
+    s = s + "    DIM sel AS INTEGER = gM.Widgets[idx].Selected\n"
+    s = s + "    IF sel < 0 OR sel >= LEN(tgVis) THEN RETURN \"\"\n"
+    s = s + "    DIM tgP AS []STRING = strings.SplitN(tgVis[sel], \"|\", 3)\n"
+    s = s + "    IF LEN(tgP) < 3 THEN RETURN \"\"\n"
+    s = s + "    RETURN tgP[2]\n"
+    s = s + "END FUNCTION\n\n"
+    s = s + "FUNCTION tvNodeCount(treeId AS STRING) AS INTEGER\n"
+    s = s + "    DIM idx AS INTEGER = tvFind(treeId)\n"
+    s = s + "    IF idx < 0 THEN RETURN 0\n"
+    s = s + "    RETURN LEN(strings.Split(gM.Widgets[idx].Items, \";\"))\n"
+    s = s + "END FUNCTION\n\n"
+    ' Per-event dispatchers.
+    DIM evs AS []STRING
+    evs = APPEND(evs, "NodeSelected")
+    evs = APPEND(evs, "NodeRightClicked")
+    DIM ei AS INTEGER
+    FOR ei = 0 TO LEN(evs) - 1
+        DIM evName AS STRING = evs[ei]
+        s = s + "SUB tvDispatch" + evName + "(treeId AS STRING, label AS STRING)\n"
+        DIM fi AS INTEGER
+        FOR fi = 0 TO LEN(form.Widgets) - 1
+            DIM fw AS WidgetEntry = form.Widgets[fi]
+            IF fw.Kind = WidgetKindTreeView THEN
+                s = s + "    IF treeId = " + dbasStr(fw.Id) + " THEN " + fw.Id + "_" + evName + "(label)\n"
+            END IF
+        NEXT fi
+        s = s + "    _ = label\n"
+        s = s + "END SUB\n\n"
+    NEXT ei
+    RETURN s
+END FUNCTION
+
 ' emitAnchorLayout — writes applyAnchors(m) that reflows each widget
 ' based on its Anch value against the design vs current form bounds.
 ' Anchor values:
@@ -3928,6 +4019,7 @@ FUNCTION GenerateProgram(p AS Project) AS STRING
     s = s + emitFormCanvasAPI(form)
     s = s + emitSplitPanelLayout()
     s = s + emitAnchorLayout()
+    s = s + emitTreeViewAPI(form)
     s = s + emitRenderWidget()
     s = s + emitView(form)
     s = s + emitTools(form)
