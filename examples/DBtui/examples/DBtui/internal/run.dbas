@@ -147,10 +147,14 @@ FUNCTION runActiveNow(m AS POINTER TO Model) AS tea.Cmd
     RETURN tea.ExecProcess(cmd, runFinishedHandler)
 END FUNCTION
 
-' doRun — F5 entry point. Auto-prompts when the active tab is dirty
-' so the user picks between "save and run", "run the on-disk
-' version", or cancel.
+' doRun — F5 entry point. In form mode, regenerates + runs the
+' partner .dbas via doFormRun. In code mode, auto-prompts when
+' the active tab is dirty so the user picks between "save and
+' run", "run the on-disk version", or cancel.
 FUNCTION doRun(m AS POINTER TO Model) AS tea.Cmd
+    IF m.ViewMode = "form" THEN
+        RETURN doFormRun(m)
+    END IF
     IF NOT hasActiveTab(^m) THEN
         m.Status = "nothing to run"
         RETURN NIL
