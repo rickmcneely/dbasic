@@ -22,6 +22,7 @@ IMPORT "charm.land/bubbles/v2/textarea" AS textarea
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 IMPORT "fmt"
 IMPORT "os"
+IMPORT "strconv"
 IMPORT "strings"
 
 ' -------------------------------------------------------------------------
@@ -79,6 +80,18 @@ TYPE MenuDef
 END TYPE
 
 ' -------------------------------------------------------------------------
+' Tab — one open file in the code editor. Each tab owns its own
+' textarea so switching tabs preserves cursor, selection, scroll
+' position. Dirty is per-tab so the * marker is per-buffer.
+' -------------------------------------------------------------------------
+
+TYPE Tab
+    DIM Path   AS STRING                 ' file path on disk
+    DIM Editor AS textarea.Model         ' per-tab editor state
+    DIM Dirty  AS BOOLEAN                ' buffer differs from disk
+END TYPE
+
+' -------------------------------------------------------------------------
 ' Model — the entire IDE state lives here.
 ' -------------------------------------------------------------------------
 
@@ -94,13 +107,18 @@ TYPE Model
     DIM TreeSelected AS INTEGER          ' cursor index into TreeNodes
     DIM TreeOffset   AS INTEGER          ' vertical scroll offset
 
-    ' Middle pane state — code editor backed by a bubbles textarea +
-    ' a "ViewMode" toggle. "form" shows the form-designer placeholder;
-    ' "code" shows the textarea. F7 flips between the two.
-    DIM Editor   AS textarea.Model
+    ' Middle pane state.
+    '
+    ' ViewMode = "form" → form-designer placeholder; "code" → tabbed
+    ' code editor. F7 flips between the two.
+    '
+    ' Tabs is the open-file list; TabIdx is the active tab (or -1 if
+    ' no files are open yet). openFile pushes a new tab — or activates
+    ' an existing one if the path is already present. closeTab pulls
+    ' tabs out; when the last tab closes we fall back to form mode.
     DIM ViewMode AS STRING               ' "form" or "code"
-    DIM CurFile  AS STRING               ' path of the file currently in Editor
-    DIM Dirty    AS BOOLEAN              ' editor buffer differs from disk
+    DIM Tabs     AS []Tab                ' open files
+    DIM TabIdx   AS INTEGER              ' active tab; -1 = none
 
     ' Menubar state.
     DIM Menus       AS []MenuDef         ' definitions built once at startup
@@ -297,21 +315,97 @@ FUNCTION menuStrip(label AS STRING) AS STRING
     RETURN pre + letter + post
 END FUNCTION
 
-' saveCurrent — write the editor buffer to CurFile. Status reports
-' the byte count on success or the error message on failure.
+' -------------------------------------------------------------------------
+' Tab helpers.
+' -------------------------------------------------------------------------
+
+' hasActiveTab — TRUE when there's at least one open file AND TabIdx
+' points to a valid entry. All editor operations gate on this.
+FUNCTION hasActiveTab(m AS Model) AS BOOLEAN
+    IF m.TabIdx < 0 OR m.TabIdx >= LEN(m.Tabs) THEN RETURN FALSE
+    RETURN TRUE
+END FUNCTION
+
+' findTabIdx — return the index of the tab whose Path matches `path`,
+' or -1 if no such tab is open. Used by openFile to avoid duplicate
+' tabs when the user clicks the same file twice.
+FUNCTION findTabIdx(m AS Model, path AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        IF m.Tabs[i].Path = path THEN RETURN i
+    NEXT i
+    RETURN 0 - 1
+END FUNCTION
+
+' switchToTab — make tab `idx` active. Focuses its editor (when in
+' code mode) and blurs the previous one. No-op if idx is out of range.
+SUB switchToTab(m AS POINTER TO Model, idx AS INTEGER)
+    IF idx < 0 OR idx >= LEN(m.Tabs) THEN RETURN
+    ' Blur the previous tab's editor so only one shows a cursor.
+    IF hasActiveTab(^m) AND m.TabIdx <> idx THEN
+        m.Tabs[m.TabIdx].Editor.Blur()
+    END IF
+    m.TabIdx = idx
+    IF m.ViewMode = "code" THEN
+        DIM fcmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
+        _ = fcmd
+    END IF
+END SUB
+
+' closeTab — drop tab `idx` from the list. Adjusts TabIdx so it still
+' references something sensible, and flips back to form mode when the
+' last tab is gone. Caller is responsible for any "are you sure"
+' confirmation on a dirty buffer.
+SUB closeTab(m AS POINTER TO Model, idx AS INTEGER)
+    IF idx < 0 OR idx >= LEN(m.Tabs) THEN RETURN
+    DIM keep AS []Tab
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        IF i <> idx THEN keep = APPEND(keep, m.Tabs[i])
+    NEXT i
+    m.Tabs = keep
+    IF LEN(m.Tabs) = 0 THEN
+        ' Nothing left — drop back to the form-designer placeholder.
+        m.TabIdx = 0 - 1
+        m.ViewMode = "form"
+        m.Status = "all files closed"
+        RETURN
+    END IF
+    ' Clamp the active index. Prefer staying near the closed tab.
+    IF m.TabIdx >= LEN(m.Tabs) THEN m.TabIdx = LEN(m.Tabs) - 1
+    IF m.ViewMode = "code" THEN
+        DIM fcmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
+        _ = fcmd
+    END IF
+END SUB
+
+' newTextarea — fresh, empty textarea.Model configured the way every
+' tab wants. Centralised so all tabs look identical at birth.
+FUNCTION newTextarea() AS textarea.Model
+    DIM ed AS textarea.Model = textarea.New()
+    ed.Prompt = ""
+    ed.ShowLineNumbers = TRUE
+    ed.Placeholder = ""
+    RETURN ed
+END FUNCTION
+
+' saveCurrent — write the active tab's buffer to its Path on disk.
+' Status reports the byte count on success or the error on failure.
+' No-op (with explanatory status) when there is no active tab.
 SUB saveCurrent(m AS POINTER TO Model)
-    IF m.CurFile = "" THEN
+    IF NOT hasActiveTab(^m) THEN
         m.Status = "nothing open to save"
         RETURN
     END IF
-    DIM body AS STRING = m.Editor.Value()
-    DIM err  AS ERROR  = os.WriteFile(m.CurFile, Encode(body), 0644)
+    DIM path AS STRING = m.Tabs[m.TabIdx].Path
+    DIM body AS STRING = m.Tabs[m.TabIdx].Editor.Value()
+    DIM err  AS ERROR  = os.WriteFile(path, Encode(body), 0644)
     IF err <> NIL THEN
         m.Status = "save failed: " + err.Error()
         RETURN
     END IF
-    m.Dirty = FALSE
-    m.Status = fmt.Sprintf("saved %s (%d bytes)", m.CurFile, LEN(body))
+    m.Tabs[m.TabIdx].Dirty = FALSE
+    m.Status = fmt.Sprintf("saved %s (%d bytes)", path, LEN(body))
 END SUB
 
 ' showModal — pop a modal dialog with `title`, `message`, and a
@@ -345,8 +439,43 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING) AS BOOLEAN
         m.Status = "quit cancelled"
         RETURN FALSE
     END IF
+    ' "closetab:<idx>" — Discard removes the tab; Cancel keeps it.
+    IF strings.HasPrefix(m.ModalContext, "closetab:") THEN
+        IF button = "Discard" THEN
+            DIM idxStr AS STRING = Mid(m.ModalContext, 10, LEN(m.ModalContext) - 9)
+            DIM idx AS INTEGER
+            DIM err AS ERROR
+            idx, err = strconv.Atoi(idxStr)
+            IF err = NIL THEN closeTab(m, idx)
+        ELSE
+            m.Status = "close cancelled"
+        END IF
+        RETURN FALSE
+    END IF
     m.Status = "modal " + m.ModalContext + " → " + button
     RETURN FALSE
+END FUNCTION
+
+' anyDirtyTab — TRUE if any open tab has unsaved changes. Drives the
+' quit-confirm prompt so closing the whole app doesn't silently throw
+' away buffers in inactive tabs.
+FUNCTION anyDirtyTab(m AS Model) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        IF m.Tabs[i].Dirty THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' dirtyTabSummary — short list of dirty filenames for the modal body.
+' "foo.dbas, bar.dbas" — comma-joined basenames.
+FUNCTION dirtyTabSummary(m AS Model) AS STRING
+    DIM names AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        IF m.Tabs[i].Dirty THEN names = APPEND(names, baseName(m.Tabs[i].Path))
+    NEXT i
+    RETURN strings.Join(names, ", ")
 END FUNCTION
 
 ' tryQuit — single chokepoint for every "user wants to leave" path.
@@ -354,8 +483,23 @@ END FUNCTION
 ' FALSE after popping a Discard/Cancel modal so the caller knows to
 ' stay alive and wait for the user's pick.
 FUNCTION tryQuit(m AS POINTER TO Model) AS BOOLEAN
-    IF NOT m.Dirty THEN RETURN TRUE
-    showModal(m, "Quit", baseName(m.CurFile) + " has unsaved changes. Discard?", "Discard,Cancel", "quit")
+    IF NOT anyDirtyTab(^m) THEN RETURN TRUE
+    DIM msg AS STRING = dirtyTabSummary(^m) + " — unsaved changes will be lost. Discard?"
+    showModal(m, "Quit", msg, "Discard,Cancel", "quit")
+    RETURN FALSE
+END FUNCTION
+
+' tryCloseTab — close-tab chokepoint, mirroring tryQuit. If the tab
+' is dirty we pop a Discard/Cancel modal tagged "closetab:<idx>" so
+' the modal-close handler knows which tab to drop on Discard.
+FUNCTION tryCloseTab(m AS POINTER TO Model, idx AS INTEGER) AS BOOLEAN
+    IF idx < 0 OR idx >= LEN(m.Tabs) THEN RETURN FALSE
+    IF NOT m.Tabs[idx].Dirty THEN
+        closeTab(m, idx)
+        RETURN TRUE
+    END IF
+    DIM msg AS STRING = baseName(m.Tabs[idx].Path) + " has unsaved changes. Discard?"
+    showModal(m, "Close Tab", msg, "Discard,Cancel", "closetab:" + fmt.Sprintf("%d", idx))
     RETURN FALSE
 END FUNCTION
 
@@ -373,15 +517,19 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
     END IF
     IF action = "view.form" THEN
         m.ViewMode = "form"
-        m.Editor.Blur()
+        IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
         m.Status = "form designer"
         RETURN
     END IF
     IF action = "view.code" THEN
         m.ViewMode = "code"
-        DIM cmd AS tea.Cmd = m.Editor.Focus()
-        _ = cmd
-        m.Status = "code editor"
+        IF hasActiveTab(^m) THEN
+            DIM cmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
+            _ = cmd
+            m.Status = "code editor — " + m.Tabs[m.TabIdx].Path
+        ELSE
+            m.Status = "code editor (no files open — pick one from the tree)"
+        END IF
         RETURN
     END IF
     IF action = "run.run" THEN
@@ -403,10 +551,22 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
     m.Status = "action: " + action
 END SUB
 
-' openFile — read `path` off disk into the code editor, switch
-' ViewMode to "code", and remember the file path for the status bar
-' + future Save. On read error the status line surfaces the message.
+' openFile — open `path` in the code editor. If a tab for that path
+' is already open, just switch to it. Otherwise create a fresh tab,
+' load the file's bytes into its editor, and make it active.
+' ViewMode is flipped to "code" so the editor surface becomes
+' visible. On read error the status line surfaces the message.
 SUB openFile(m AS POINTER TO Model, path AS STRING)
+    ' Already open? Just activate it (cheap, preserves cursor).
+    DIM existing AS INTEGER = findTabIdx(^m, path)
+    IF existing >= 0 THEN
+        m.ViewMode = "code"
+        switchToTab(m, existing)
+        m.Status = "switched to " + path
+        RETURN
+    END IF
+    ' Read the file once, up front — if it fails we abandon the open
+    ' rather than leaving an empty tab behind.
     DIM data AS BYTES
     DIM err  AS ERROR
     data, err = os.ReadFile(path)
@@ -414,19 +574,25 @@ SUB openFile(m AS POINTER TO Model, path AS STRING)
         m.Status = "open " + path + ": " + err.Error()
         RETURN
     END IF
-    m.Editor.Reset()
-    m.Editor.SetValue(string(data))
+    ' Build a fresh tab with its own editor.
+    DIM t AS Tab
+    t.Path = path
+    t.Editor = newTextarea()
+    t.Editor.SetValue(string(data))
     ' SetValue lands the cursor at the END of the buffer; walk back to
     ' the top so the user sees the start of the file first.
-    DO WHILE m.Editor.Line() > 0
-        m.Editor.CursorUp()
+    DO WHILE t.Editor.Line() > 0
+        t.Editor.CursorUp()
     LOOP
-    m.Editor.CursorStart()
-    DIM cmd AS tea.Cmd = m.Editor.Focus()
+    t.Editor.CursorStart()
+    t.Dirty = FALSE
+    ' Blur whatever editor was active before pushing.
+    IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
+    m.Tabs = APPEND(m.Tabs, t)
+    m.TabIdx = LEN(m.Tabs) - 1
+    DIM cmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
     _ = cmd
-    m.CurFile = path
     m.ViewMode = "code"
-    m.Dirty = FALSE
     m.Status = "opened " + path
 END SUB
 
@@ -447,15 +613,11 @@ FUNCTION newModel() AS Model
     buildTreeNodes(@m)
     m.TreeSelected = 0
     m.TreeOffset = 0
-    ' Editor starts empty in form-design mode. F7 / opening a file
-    ' from the tree flips into code mode.
-    m.Editor = textarea.New()
-    m.Editor.Prompt = ""
-    m.Editor.ShowLineNumbers = TRUE
-    m.Editor.Placeholder = "(open a file from the tree to view its source)"
+    ' No tabs open at startup. The middle pane shows the form
+    ' designer until the user opens a file from the tree (which
+    ' creates the first tab) or presses F7.
     m.ViewMode = "form"
-    m.CurFile = ""
-    m.Dirty = FALSE
+    m.TabIdx = 0 - 1
     ' Menubar definitions + closed-state.
     m.Menus = buildMenus()
     m.MenuActive = 0 - 1
@@ -481,6 +643,92 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Width = sz.Width
         m.Height = sz.Height
         RETURN m, NIL
+    END IF
+
+    ' --- Mouse motion (hover) -------------------------------------
+    ' When a menu is open, sliding the cursor sideways across the
+    ' menubar swings the active menu to whichever cell sits under
+    ' the pointer (classic Windows menubar behaviour).
+    DIM mmMsg AS tea.MouseMotionMsg
+    DIM mmOk AS BOOLEAN
+    mmMsg, mmOk = msg.(tea.MouseMotionMsg)
+    IF mmOk THEN
+        IF m.MenuActive >= 0 AND mmMsg.Y = 0 THEN
+            DIM newMi AS INTEGER = menuCellAt(m, mmMsg.X)
+            IF newMi >= 0 AND newMi <> m.MenuActive THEN
+                m.MenuActive = newMi
+                m.MenuItemIdx = 0
+            END IF
+            RETURN m, NIL
+        END IF
+        ' Hovering an item inside an open dropdown moves the cursor
+        ' to that row, so click-through feels responsive.
+        IF m.MenuActive >= 0 THEN
+            DIM hoverItem AS INTEGER = dropdownItemAt(m, mmMsg.X, mmMsg.Y)
+            IF hoverItem >= 0 THEN m.MenuItemIdx = hoverItem
+        END IF
+        RETURN m, NIL
+    END IF
+
+    ' --- Mouse click ----------------------------------------------
+    ' Left-click hit-tests in priority order:
+    '   1. dropdown items (when a menu is open)
+    '   2. top-row menu cells
+    '   3. tabs caption row (close button vs label) when in code mode
+    ' Clicks elsewhere close any open menu.
+    DIM mcMsg AS tea.MouseClickMsg
+    DIM mcOk AS BOOLEAN
+    mcMsg, mcOk = msg.(tea.MouseClickMsg)
+    IF mcOk AND mcMsg.Button = tea.MouseLeft THEN
+        ' (1) Dropdown-item click.
+        IF m.MenuActive >= 0 THEN
+            DIM ddIt AS INTEGER = dropdownItemAt(m, mcMsg.X, mcMsg.Y)
+            IF ddIt >= 0 THEN
+                DIM ddItems AS []MenuItem = m.Menus[m.MenuActive].Items
+                DIM ddAct AS STRING = ddItems[ddIt].Action
+                m.MenuActive = 0 - 1
+                IF ddAct = "file.quit" THEN
+                    IF tryQuit(@m) THEN RETURN m, tea.Quit
+                    RETURN m, NIL
+                END IF
+                dispatchAction(@m, ddAct)
+                RETURN m, NIL
+            END IF
+        END IF
+        ' (2) Top-row menu cell click — open / toggle / switch.
+        IF mcMsg.Y = 0 THEN
+            DIM mci AS INTEGER = menuCellAt(m, mcMsg.X)
+            IF mci >= 0 THEN
+                IF m.MenuActive = mci THEN
+                    ' Clicking the already-open menu closes it.
+                    m.MenuActive = 0 - 1
+                ELSE
+                    m.MenuActive = mci
+                    m.MenuItemIdx = 0
+                END IF
+                RETURN m, NIL
+            END IF
+            ' Click in the menubar's empty filler — close any open menu.
+            m.MenuActive = 0 - 1
+            RETURN m, NIL
+        END IF
+        ' Click anywhere else closes an open menu without firing it.
+        IF m.MenuActive >= 0 THEN
+            m.MenuActive = 0 - 1
+            RETURN m, NIL
+        END IF
+        ' (3) Tabs caption row (y = 1) in code mode with open tabs.
+        IF mcMsg.Y = 1 AND m.ViewMode = "code" AND LEN(m.Tabs) > 0 THEN
+            DIM tabHit AS INTEGER = tabAtX(m, mcMsg.X)
+            IF tabHit >= 0 THEN
+                IF closeXOnTab(m, tabHit, mcMsg.X) THEN
+                    _ = tryCloseTab(@m, tabHit)
+                ELSE
+                    switchToTab(@m, tabHit)
+                END IF
+                RETURN m, NIL
+            END IF
+        END IF
     END IF
 
     ' Key press dispatch.
@@ -631,30 +879,55 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             ' Toggle between form-design view and code editor view.
             IF m.ViewMode = "code" THEN
                 m.ViewMode = "form"
-                m.Editor.Blur()
+                IF hasActiveTab(m) THEN m.Tabs[m.TabIdx].Editor.Blur()
             ELSE
                 m.ViewMode = "code"
-                DIM fcmd AS tea.Cmd = m.Editor.Focus()
-                _ = fcmd
+                IF hasActiveTab(m) THEN
+                    DIM fcmd AS tea.Cmd = m.Tabs[m.TabIdx].Editor.Focus()
+                    _ = fcmd
+                END IF
             END IF
             RETURN m, NIL
         END IF
 
-        ' When the code editor is showing, route keystrokes to it so
-        ' typing, arrows, Ctrl+arrow, etc. behave like a normal editor.
-        ' Esc exits back to tree-focus / form view.
-        IF m.ViewMode = "code" THEN
-            IF key = "esc" THEN
-                m.ViewMode = "form"
-                m.Editor.Blur()
+        ' --- Tab shortcuts (work in code mode only) -------------------
+        IF m.ViewMode = "code" AND hasActiveTab(m) THEN
+            ' Ctrl+W closes the active tab (with dirty-confirm).
+            IF key = "ctrl+w" THEN
+                DIM stayCmd AS tea.Cmd = NIL
+                _ = tryCloseTab(@m, m.TabIdx)
+                RETURN m, stayCmd
+            END IF
+            ' Ctrl+PageDown / Ctrl+PageUp cycle tabs forward / back.
+            ' Most terminals also send these as Ctrl+Tab / Ctrl+Shift+Tab.
+            IF key = "ctrl+pgdown" OR key = "ctrl+tab" THEN
+                switchToTab(@m, (m.TabIdx + 1) MOD LEN(m.Tabs))
                 RETURN m, NIL
             END IF
-            DIM prevBuf AS STRING = m.Editor.Value()
+            IF key = "ctrl+pgup" OR key = "ctrl+shift+tab" THEN
+                DIM prev AS INTEGER = m.TabIdx - 1
+                IF prev < 0 THEN prev = LEN(m.Tabs) - 1
+                switchToTab(@m, prev)
+                RETURN m, NIL
+            END IF
+        END IF
+
+        ' When the code editor is showing AND a file is open, route
+        ' keystrokes into the active tab's editor so typing, arrows,
+        ' Ctrl+arrow, etc. behave like a normal editor. Esc exits
+        ' back to tree-focus / form view.
+        IF m.ViewMode = "code" AND hasActiveTab(m) THEN
+            IF key = "esc" THEN
+                m.ViewMode = "form"
+                m.Tabs[m.TabIdx].Editor.Blur()
+                RETURN m, NIL
+            END IF
+            DIM prevBuf AS STRING = m.Tabs[m.TabIdx].Editor.Value()
             DIM newEd AS textarea.Model
             DIM eCmd  AS tea.Cmd
-            newEd, eCmd = m.Editor.Update(msg)
-            m.Editor = newEd
-            IF newEd.Value() <> prevBuf THEN m.Dirty = TRUE
+            newEd, eCmd = m.Tabs[m.TabIdx].Editor.Update(msg)
+            m.Tabs[m.TabIdx].Editor = newEd
+            IF newEd.Value() <> prevBuf THEN m.Tabs[m.TabIdx].Dirty = TRUE
             RETURN m, eCmd
         END IF
 
@@ -749,6 +1022,14 @@ FUNCTION renderMenuBar(m AS Model, width AS INTEGER) AS STRING
     RETURN out
 END FUNCTION
 
+' menuCellWidth — visible width (in cells) of one top-menu cell.
+' renderMenuBar pads each cell as " label " — so visible width is
+' LEN(stripped label) + 2 (one leading + one trailing space).
+FUNCTION menuCellWidth(m AS Model, idx AS INTEGER) AS INTEGER
+    IF idx < 0 OR idx >= LEN(m.Menus) THEN RETURN 0
+    RETURN LEN(menuStrip(m.Menus[idx].Label)) + 2
+END FUNCTION
+
 ' menuOffsetX — leading X (in cells) of the dropdown for menu `idx`.
 ' Sum of preceding menu cell widths so the dropdown opens directly
 ' below its parent label.
@@ -756,9 +1037,76 @@ FUNCTION menuOffsetX(m AS Model, idx AS INTEGER) AS INTEGER
     DIM off AS INTEGER = 0
     DIM i AS INTEGER
     FOR i = 0 TO idx - 1
-        off = off + LEN(menuStrip(m.Menus[i].Label)) + 2
+        off = off + menuCellWidth(m, i)
     NEXT i
     RETURN off
+END FUNCTION
+
+' menuCellAt — return the menu index whose top-row cell contains the
+' screen X column `mx`. Returns -1 when `mx` lands outside any cell
+' (e.g. past the last menu in the filler area).
+FUNCTION menuCellAt(m AS Model, mx AS INTEGER) AS INTEGER
+    DIM off AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Menus) - 1
+        DIM w AS INTEGER = menuCellWidth(m, i)
+        IF mx >= off AND mx < off + w THEN RETURN i
+        off = off + w
+    NEXT i
+    RETURN 0 - 1
+END FUNCTION
+
+' dropdownItemAt — translate a screen (mx,my) inside an open dropdown
+' to an item index, or -1 if outside. The dropdown's framed top
+' border sits at y = 1 (menubar row is y = 0) so item 0 occupies
+' y = 2, item 1 occupies y = 3, etc. The horizontal bounds are
+' [menuOffsetX, menuOffsetX + width).
+FUNCTION dropdownItemAt(m AS Model, mx AS INTEGER, my AS INTEGER) AS INTEGER
+    IF m.MenuActive < 0 OR m.MenuActive >= LEN(m.Menus) THEN RETURN 0 - 1
+    DIM items AS []MenuItem = m.Menus[m.MenuActive].Items
+    ' Recompute the dropdown's drawn width — same formula as the
+    ' renderer: max stripped label length + 2 inner padding, then
+    ' plus 2 for the border.
+    DIM maxW AS INTEGER = 0
+    DIM ix AS INTEGER
+    FOR ix = 0 TO LEN(items) - 1
+        IF NOT items[ix].IsSep THEN
+            DIM w AS INTEGER = LEN(menuStrip(items[ix].Label))
+            IF w > maxW THEN maxW = w
+        END IF
+    NEXT ix
+    IF maxW < 12 THEN maxW = 12
+    DIM outerW AS INTEGER = maxW + 2 + 2
+    DIM x0 AS INTEGER = menuOffsetX(m, m.MenuActive)
+    IF mx < x0 OR mx >= x0 + outerW THEN RETURN 0 - 1
+    ' Item rows start at y=2 (after menubar + dropdown top border).
+    DIM row AS INTEGER = my - 2
+    IF row < 0 OR row >= LEN(items) THEN RETURN 0 - 1
+    IF items[row].IsSep THEN RETURN 0 - 1
+    RETURN row
+END FUNCTION
+
+' tabAtX — translate a screen column on the tabs caption row to a
+' tab index. Returns -1 if `mx` lands on filler dashes or the leading
+' dash. Together with closeXOnTab() below, gives full tab hit-test.
+FUNCTION tabAtX(m AS Model, mx AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        DIM x0 AS INTEGER = tabCellX(m, i)
+        DIM x1 AS INTEGER = x0 + tabCellWidth(m, i)
+        IF mx >= x0 AND mx < x1 THEN RETURN i
+    NEXT i
+    RETURN 0 - 1
+END FUNCTION
+
+' closeXOnTab — TRUE when the screen column `mx` lands exactly on
+' the "✕" glyph for tab `i` (the second-to-last cell of its [...] box).
+FUNCTION closeXOnTab(m AS Model, i AS INTEGER, mx AS INTEGER) AS BOOLEAN
+    IF i < 0 OR i >= LEN(m.Tabs) THEN RETURN FALSE
+    DIM x0 AS INTEGER = tabCellX(m, i)
+    DIM xClose AS INTEGER = x0 + tabCellWidth(m, i) - 3
+    IF mx = xClose THEN RETURN TRUE
+    RETURN FALSE
 END FUNCTION
 
 ' renderDropdown — produce the framed dropdown for the active menu.
@@ -892,42 +1240,84 @@ FUNCTION renderLeftPane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRI
     RETURN titledBox("Project", body, width, height, TRUE)
 END FUNCTION
 
+' tabLabel — display label for tab `i`: basename, dirty-prefixed with
+' "*" when unsaved. Centralised so render + hit-test math agree on
+' visible-cell width.
+FUNCTION tabLabel(m AS Model, i AS INTEGER) AS STRING
+    IF i < 0 OR i >= LEN(m.Tabs) THEN RETURN ""
+    DIM marker AS STRING = ""
+    IF m.Tabs[i].Dirty THEN marker = "*"
+    RETURN marker + baseName(m.Tabs[i].Path)
+END FUNCTION
+
+' tabCellWidth — total visible cells one tab occupies on the caption
+' row. Format is "[ LABEL ✕ ]" so it's lipgloss.Width(label) + 6 (one
+' bracket, space, label, space, glyph, space, bracket = 6 fixed).
+FUNCTION tabCellWidth(m AS Model, i AS INTEGER) AS INTEGER
+    RETURN lipgloss.Width(tabLabel(m, i)) + 6
+END FUNCTION
+
+' tabCellX — leading X offset (in cells) where tab `i`'s "[" sits.
+' Caption begins with one "─" so the first tab starts at column 1.
+FUNCTION tabCellX(m AS Model, i AS INTEGER) AS INTEGER
+    DIM x AS INTEGER = 1
+    DIM j AS INTEGER
+    FOR j = 0 TO i - 1
+        x = x + tabCellWidth(m, j)
+    NEXT j
+    RETURN x
+END FUNCTION
+
+' renderTabsCaption — caption row when in code mode with at least one
+' tab: leading dash, "[ name ✕ ]" per tab (active one accented), then
+' filler dashes to width. Replaces the plain captionin code mode so
+' the tabs and the right pane's [Widgets][Tools] strip share a row.
+FUNCTION renderTabsCaption(m AS Model, width AS INTEGER) AS STRING
+    DIM dashStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
+    DIM defBase   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cMenuFg))
+    DIM actBase   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM closeStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cHotkey))
+
+    DIM out AS STRING = dashStyle.Render("─")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        DIM bs AS lipgloss.Style = defBase
+        IF i = m.TabIdx THEN bs = actBase
+        out = out + dashStyle.Render("[") + bs.Render(" " + tabLabel(m, i) + " ") + closeStyle.Render("✕") + dashStyle.Render(" ]")
+    NEXT i
+    RETURN padRight(out, width, dashStyle.Render("─"))
+END FUNCTION
+
 ' renderMiddlePane — editor area. No outer panel frame in the original
-' DBtui; just a caption line + the editor surface beneath. The caption
-' title switches with ViewMode ("Form Designer — <form>" vs
-' "Code Editor — <path>") and the body either shows the form-designer
-' placeholder or the bubbles textarea's View().
+' DBtui; just a caption line + the editor surface beneath. In form
+' mode the caption is a single "Form Designer" title; in code mode
+' the caption becomes the tab strip (rendered by renderTabsCaption).
 FUNCTION renderMiddlePane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRING
     DIM dashStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
     DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
 
-    ' Caption text picks the mode-appropriate title. A "*" prefix on
-    ' the filename signals an unsaved buffer (matches the convention
-    ' used by VBDOS and most modern editors).
-    DIM titleText AS STRING
-    IF m.ViewMode = "code" THEN
-        IF m.CurFile <> "" THEN
-            DIM marker AS STRING = ""
-            IF m.Dirty THEN marker = "*"
-            titleText = "Code Editor — " + marker + m.CurFile
-        ELSE
-            titleText = "Code Editor"
-        END IF
+    ' --- Caption -----------------------------------------------------
+    DIM caption AS STRING
+    IF m.ViewMode = "code" AND LEN(m.Tabs) > 0 THEN
+        caption = renderTabsCaption(m, width)
+    ELSEIF m.ViewMode = "code" THEN
+        caption = padRight(dashStyle.Render("─[ ") + titleStyle.Render("Code Editor") + dashStyle.Render(" ]"), width, dashStyle.Render("─"))
     ELSE
-        titleText = "Form Designer — frmStart"
+        caption = padRight(dashStyle.Render("─[ ") + titleStyle.Render("Form Designer — frmStart") + dashStyle.Render(" ]"), width, dashStyle.Render("─"))
     END IF
-    DIM caption AS STRING = dashStyle.Render("─[ ") + titleStyle.Render(titleText) + dashStyle.Render(" ]")
-    caption = padRight(caption, width, dashStyle.Render("─"))
 
-    ' Body — either placeholder (form mode) or live textarea view.
+    ' --- Body --------------------------------------------------------
     DIM bodyH AS INTEGER = height - 1
     IF bodyH < 1 THEN bodyH = 1
     DIM bodyStr AS STRING
-    IF m.ViewMode = "code" THEN
-        ' Size the textarea to fit the available area, then render.
-        m.Editor.SetWidth(width)
-        m.Editor.SetHeight(bodyH)
-        bodyStr = m.Editor.View()
+    IF m.ViewMode = "code" AND hasActiveTab(m) THEN
+        ' Size the active tab's textarea to fit, then render.
+        m.Tabs[m.TabIdx].Editor.SetWidth(width)
+        m.Tabs[m.TabIdx].Editor.SetHeight(bodyH)
+        bodyStr = m.Tabs[m.TabIdx].Editor.View()
+    ELSEIF m.ViewMode = "code" THEN
+        DIM emptyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder)).Width(width).Height(bodyH).Align(lipgloss.Center, lipgloss.Center)
+        bodyStr = emptyStyle.Render("(no files open — pick one from the tree)")
     ELSE
         DIM placeholder AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder)).Width(width).Height(bodyH).Align(lipgloss.Center, lipgloss.Center)
         bodyStr = placeholder.Render("(form designer — coming soon; press F7 or Enter on a tree file to code)")
