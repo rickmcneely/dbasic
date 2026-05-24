@@ -39,7 +39,23 @@
           "X": 0, "Y": 0, "Width": 1, "Height": 1,
           "Visible": true,
           "Style": {"BgColor":"#1a1b2e","FgColor":"#7dcfff","Border":"none","Corner":"square"},
-          "Properties": {"Orientation": "horizontal", "Position": 55, "Slot1": "canvas", "Slot2": "code"}
+          "Properties": {"Orientation": "horizontal", "Position": 55, "Slot1": "canvas", "Slot2": "split4"}
+        },
+        {
+          "Id": "split4",
+          "Kind": "SplitPanel",
+          "X": 0, "Y": 0, "Width": 1, "Height": 1,
+          "Visible": true,
+          "Style": {"BgColor":"#1a1b2e","FgColor":"#7dcfff","Border":"none","Corner":"square"},
+          "Properties": {"Orientation": "horizontal", "Position": 10, "Slot1": "tabs", "Slot2": "code"}
+        },
+        {
+          "Id": "tabs",
+          "Kind": "TabStrip",
+          "X": 0, "Y": 0, "Width": 1, "Height": 1,
+          "Visible": true, "TabStop": true,
+          "Style": {"BgColor":"#24273a","FgColor":"#cad3f5","Border":"none","Corner":"square"},
+          "Properties": {"Tabs": "(no files)", "Active": "0"}
         },
         {
           "Id": "tree",

@@ -4,29 +4,84 @@ IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
 
-' Path of whatever .dbas file is currently shown in the code editor.
-' Ctrl+S writes the editor buffer back here.
-DIM curFile AS STRING
+' Open-file state. openFiles is the list of paths shown in the tab
+' strip; curIdx is the active tab; curFile mirrors openFiles[curIdx]
+' (kept for save shortcut convenience).
+DIM openFiles AS []STRING
+DIM curIdx    AS INTEGER
+DIM curFile   AS STRING
 
 SUB FormLoad()
+    curIdx = 0 - 1
     tvSetNodes("tree", buildTreeNodes("."))
     gSetItems("props", propsFor(""))
-    gSetText("status", "Self-hosted DBtui — click a tree node, Ctrl+S saves.")
-END SUB
-
-' Focus / click on any widget — mirror its runtime state into the props
-' panel on the right. Skip the props panel itself so clicking it
-' doesn't replace its own content.
-SUB gOnSelect(id AS STRING)
-    IF id = "props" OR id = "" THEN RETURN
-    gSetItems("props", propsFor(id))
+    refreshTabs()
+    gSetText("status", "Self-hosted DBtui — tree click opens, Ctrl+S saves.")
 END SUB
 
 SUB FormResize(w AS INTEGER, h AS INTEGER)
     gSetText("status", fmt.Sprintf("resized: %dx%d", w, h))
 END SUB
 
-' Tree click — open .dbas files in the code editor and remember the path.
+SUB gOnSelect(id AS STRING)
+    IF id = "props" OR id = "" THEN RETURN
+    gSetItems("props", propsFor(id))
+END SUB
+
+' refreshTabs — rebuild the TabStrip Items from openFiles. Each tab
+' shows just the base name to keep things short.
+SUB refreshTabs()
+    IF LEN(openFiles) = 0 THEN
+        gSetItems("tabs", "(no files)")
+        gSetSelected("tabs", 0)
+        RETURN
+    END IF
+    DIM labels AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(openFiles) - 1
+        labels = APPEND(labels, baseName(openFiles[i]))
+    NEXT i
+    gSetItems("tabs", strings.Join(labels, ";"))
+    IF curIdx < 0 THEN curIdx = 0
+    IF curIdx >= LEN(openFiles) THEN curIdx = LEN(openFiles) - 1
+    gSetSelected("tabs", curIdx)
+END SUB
+
+' switchToTab — load openFiles[idx] into the editor + update curFile.
+SUB switchToTab(idx AS INTEGER)
+    IF idx < 0 OR idx >= LEN(openFiles) THEN RETURN
+    curIdx = idx
+    curFile = openFiles[idx]
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile(curFile)
+    IF err <> NIL THEN
+        gSetText("status", "open " + curFile + ": " + err.Error())
+        RETURN
+    END IF
+    gSetText("code", string(data))
+    gSetText("status", "opened " + shorten(curFile, 60))
+END SUB
+
+' openFile — open a file in the editor. If it's already open, switch
+' to its existing tab; otherwise append a new tab and switch.
+SUB openFile(path AS STRING)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(openFiles) - 1
+        IF openFiles[i] = path THEN
+            curIdx = i
+            refreshTabs()
+            switchToTab(i)
+            RETURN
+        END IF
+    NEXT i
+    openFiles = APPEND(openFiles, path)
+    curIdx = LEN(openFiles) - 1
+    refreshTabs()
+    switchToTab(curIdx)
+END SUB
+
+' Tree click — open .dbas / .dbproj files via the tab system.
 SUB tree_NodeSelected(label AS STRING)
     DIM trimmed AS STRING = strings.TrimSpace(label)
     IF NOT strings.HasSuffix(trimmed, ".dbas") AND NOT strings.HasSuffix(trimmed, ".dbproj") THEN
@@ -38,20 +93,17 @@ SUB tree_NodeSelected(label AS STRING)
         gSetText("status", "no on-disk file for " + trimmed)
         RETURN
     END IF
-    DIM data AS BYTES
-    DIM err AS ERROR
-    data, err = os.ReadFile(path)
-    IF err <> NIL THEN
-        gSetText("status", "open " + path + ": " + err.Error())
-        RETURN
-    END IF
-    gSetText("code", string(data))
-    curFile = path
-    gSetText("status", "opened " + shorten(path, 70))
+    openFile(path)
 END SUB
 
 SUB tree_NodeRightClicked(label AS STRING)
     gMsgBox("Tree", "Node: " + label, "OK", "tree-node")
+END SUB
+
+' Tab click / arrow nav fires the standard Change event for the TabStrip.
+SUB tabs_Change()
+    DIM idx AS INTEGER = gGetSelected("tabs")
+    IF idx >= 0 AND idx < LEN(openFiles) AND idx <> curIdx THEN switchToTab(idx)
 END SUB
 
 ' Canvas placeholders.
@@ -65,6 +117,10 @@ SUB canvas_ChildMoved(childId AS STRING)
     _ = childId
 END SUB
 
+' PropertyGrid placeholder.
+SUB props_Change()
+END SUB
+
 ' Check button.
 SUB checkBtn_Click()
     IF curFile = "" THEN
@@ -74,8 +130,7 @@ SUB checkBtn_Click()
     gMsgBox("Check", "Run `dbasic check` on " + shorten(curFile, 50) + "?", "Yes,No", "check")
 END SUB
 
-' Run — build curFile into a temp binary, then gExec it so bubbletea
-' suspends and the built program runs full-screen until it exits.
+' Run button — build curFile, gExec the result.
 SUB runBtn_Click()
     IF curFile = "" THEN
         gMsgBox("Run", "Open a .dbas file first.", "OK", "")
