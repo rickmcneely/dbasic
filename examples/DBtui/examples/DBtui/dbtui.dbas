@@ -2554,7 +2554,10 @@ FUNCTION renderModal(m AS Model) AS STRING
     DIM innerW AS INTEGER = 48
 
     ' --- Title row ------------------------------------------------
-    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Bold(TRUE).Foreground(lipgloss.Color(cHotkey)).Width(innerW).Align(lipgloss.Center)
+    ' Background is set on every inner style so lipgloss's padding-
+    ' to-Width fills the empty cells with the modal's bg instead of
+    ' letting the underlying terminal bg leak through.
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Bold(TRUE).Foreground(lipgloss.Color(cHotkey)).Width(innerW).Align(lipgloss.Center)
     DIM titleLine AS STRING = titleStyle.Render(m.ModalTitle)
 
     ' --- Message body --------------------------------------------
@@ -2589,21 +2592,23 @@ FUNCTION renderModal(m AS Model) AS STRING
         END IF
     NEXT rl
 
-    DIM bodyStyle AS lipgloss.Style = lipgloss.NewStyle().Width(innerW)
+    DIM bodyStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg)).Width(innerW)
     DIM bodyText AS STRING = strings.Join(msgLines, "\n")
     DIM bodyBlock AS STRING = bodyStyle.Render(bodyText)
 
     ' --- Button row ----------------------------------------------
     ' Each button is rendered as " label "; the active one (matching
     ' ModalIdx) is reverse-video so it reads as the default action.
-    DIM btnNormal AS lipgloss.Style = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder))
+    ' Both styles carry the modal bg so the border padding cells
+    ' match the surrounding modal surface.
+    DIM btnNormal AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg)).Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder))
     DIM btnActive AS lipgloss.Style = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Foreground(lipgloss.Color(cBg)).Background(lipgloss.Color(cHotkey)).Bold(TRUE)
 
     ' --- Footer: either an input field (input mode) or button row -
     DIM footer AS STRING = ""
     IF m.ModalIsInput THEN
         m.ModalInput.SetWidth(innerW)
-        DIM inputBox AS lipgloss.Style = lipgloss.NewStyle().Width(innerW).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent))
+        DIM inputBox AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent))
         footer = inputBox.Render(m.ModalInput.View())
     ELSE
         DIM rendered AS []STRING
@@ -2626,11 +2631,15 @@ FUNCTION renderModal(m AS Model) AS STRING
         ELSEIF LEN(rendered) >= 3 THEN
             btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1], "  ", rendered[2])
         END IF
-        footer = lipgloss.NewStyle().Width(innerW).Align(lipgloss.Center).Render(btnRow)
+        footer = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Align(lipgloss.Center).Render(btnRow)
     END IF
 
+    ' --- Spacer rows — explicit bg-filled blank line so the empty
+    '     rows between title / body / footer match the modal surface.
+    DIM spacer AS STRING = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Render(" ")
+
     ' --- Stack title / body / spacer / footer --------------------
-    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, titleLine, "", bodyBlock, "", footer)
+    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, titleLine, spacer, bodyBlock, spacer, footer)
 
     ' --- Outer frame ---------------------------------------------
     DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Background(lipgloss.Color(cBg)).Padding(1, 2)
