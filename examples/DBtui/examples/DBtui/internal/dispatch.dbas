@@ -153,10 +153,16 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
         RETURN
     END IF
     IF action = "file.newproject" THEN
-        ' Untitled multi-form project — opens a blank frmStart tab.
-        ' First Ctrl+S pops Save As; subsequent New Form items
-        ' append into the same .dbproj.
-        newUntitledForm(m)
+        ' Pop a Save-style browser so the user picks where the new
+        ' .dbproj lives BEFORE we create anything. dispatchModalClose
+        ' for "newproject" scaffolds the file, re-roots the tree to
+        ' its dir, and opens the new project as a form tab. This way
+        ' the project tree always reflects the active project.
+        DIM npDir AS STRING
+        DIM npErr AS ERROR
+        npDir, npErr = os.Getwd()
+        IF npErr <> NIL THEN npDir = "."
+        openBrowser(m, "newproject", "New Project", "save", npDir, "untitled.dbproj")
         RETURN
     END IF
     IF action = "view.code" THEN
