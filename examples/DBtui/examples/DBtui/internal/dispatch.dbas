@@ -12,7 +12,7 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
         DIM cwdErr AS ERROR
         cwd, cwdErr = os.Getwd()
         IF cwdErr <> NIL THEN cwd = "."
-        showInputModal(m, "Open File", "Path:", cwd + "/", "open")
+        openBrowser(m, "open", "Open File", "open", cwd, "")
         RETURN
     END IF
     IF action = "file.saveas" THEN
@@ -20,7 +20,13 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
             m.Status = "nothing to save"
             RETURN
         END IF
-        showInputModal(m, "Save As", "Path:", m.Tabs[m.TabIdx].Path, "saveas")
+        DIM saDir AS STRING = "."
+        DIM saName AS STRING = "untitled.dbas"
+        IF m.Tabs[m.TabIdx].Path <> "" THEN
+            saDir  = dirName(m.Tabs[m.TabIdx].Path)
+            saName = baseName(m.Tabs[m.TabIdx].Path)
+        END IF
+        openBrowser(m, "saveas", "Save As", "save", saDir, saName)
         RETURN
     END IF
     IF action = "file.close" THEN
@@ -31,7 +37,11 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
         ' Saving a brand-new (no-path) buffer falls through to
         ' Save As so the user is prompted for a destination.
         IF hasActiveTab(^m) AND m.Tabs[m.TabIdx].Path = "" THEN
-            showInputModal(m, "Save As", "Path:", "untitled.dbas", "saveas")
+            DIM ssDir AS STRING
+            DIM ssErr AS ERROR
+            ssDir, ssErr = os.Getwd()
+            IF ssErr <> NIL THEN ssDir = "."
+            openBrowser(m, "saveas", "Save As", "save", ssDir, "untitled.dbas")
             RETURN
         END IF
         saveCurrent(m)

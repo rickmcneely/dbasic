@@ -577,7 +577,11 @@ END SUB
 SUB saveForm(m AS POINTER TO Model)
     IF NOT hasActiveTab(^m) THEN RETURN
     IF m.Tabs[m.TabIdx].Path = "" THEN
-        showInputModal(m, "Save Form", "Path:", "form.dbproj", "saveform")
+        DIM sfDir AS STRING
+        DIM sfErr AS ERROR
+        sfDir, sfErr = os.Getwd()
+        IF sfErr <> NIL THEN sfDir = "."
+        openBrowser(m, "saveform", "Save Form", "save", sfDir, "form.dbproj")
         RETURN
     END IF
     DIM path AS STRING = m.Tabs[m.TabIdx].Path

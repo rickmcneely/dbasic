@@ -153,6 +153,16 @@ TYPE Project
 END TYPE
 
 ' -------------------------------------------------------------------------
+' BrowseEntry — one row in the file-browser modal. Name is just the
+' basename (so the same list works against any BrowseDir); IsDir
+' decides whether Enter navigates into or commits the entry.
+' -------------------------------------------------------------------------
+TYPE BrowseEntry
+    DIM Name  AS STRING
+    DIM IsDir AS BOOLEAN
+END TYPE
+
+' -------------------------------------------------------------------------
 ' Persisted state — JSON-marshalled to ~/.dbtui-state.json on quit
 ' and read back on startup. Captures enough to drop the user back
 ' where they left off: open tabs (paths), active tab, splitter
@@ -217,6 +227,25 @@ TYPE Model
     ' like the FileDialog). The label that's currently active gets
     ' inverted; rendering of the body switches on this value.
     DIM RightTab AS STRING               ' "list" or "tools"
+
+    ' --- File browser state (Open/Save/SaveAs/SaveForm) -------------
+    ' When BrowseActive is TRUE every input event routes through the
+    ' browser overlay instead of the editor. BrowseContext carries
+    ' the original modal-context key (e.g. "open" / "saveas" /
+    ' "saveform") so the existing dispatchModalClose handlers apply
+    ' the committed path without each needing a separate browser-
+    ' aware code path.
+    DIM BrowseActive   AS BOOLEAN
+    DIM BrowseContext  AS STRING
+    DIM BrowseTitle    AS STRING
+    DIM BrowseMode     AS STRING         ' "open" or "save"
+    DIM BrowseDir      AS STRING         ' currently-listed directory (absolute)
+    DIM BrowseEntries  AS []BrowseEntry  ' "../" + dirs + files (sorted)
+    DIM BrowseSelected AS INTEGER        ' cursor into BrowseEntries
+    DIM BrowseScroll   AS INTEGER        ' top-of-list scroll offset
+    DIM BrowseFilename AS textinput.Model ' editable filename (save mode)
+    DIM BrowseFocus    AS STRING         ' "list" / "filename" / "newdir"
+    DIM BrowseNewDir   AS textinput.Model ' inline New Folder input
 
     ' Menubar state.
     DIM Menus       AS []MenuDef         ' definitions built once at startup
@@ -497,6 +526,15 @@ FUNCTION baseName(p AS STRING) AS STRING
     DIM idx AS INTEGER = strings.LastIndex(p, "/")
     IF idx < 0 THEN RETURN p
     RETURN Mid(p, idx + 2, LEN(p) - idx - 1)
+END FUNCTION
+
+' dirName — everything before the last "/". "/a/b/c.txt" → "/a/b".
+' Bare names (no slash) and root paths return ".".
+FUNCTION dirName(p AS STRING) AS STRING
+    DIM idx AS INTEGER = strings.LastIndex(p, "/")
+    IF idx < 0 THEN RETURN "."
+    IF idx = 0 THEN RETURN "/"
+    RETURN Mid(p, 1, idx)
 END FUNCTION
 
 ' mkItem / mkSep — small constructors so the menu definition reads as
@@ -1279,6 +1317,17 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     END IF
 
+    ' --- File browser overlay takes priority over everything else --
+    ' (above modal even — the browser opens FROM what used to be a
+    ' modal, so once it's up, every key/mouse goes to it.)
+    IF m.BrowseActive THEN
+        DIM brModel AS tea.Model
+        DIM brCmd   AS tea.Cmd
+        brModel, brCmd = browseUpdate(@m, msg)
+        _ = brModel
+        RETURN m, brCmd
+    END IF
+
     ' --- Async file load finished --------------------------------
     ' Background goroutine started by openFile() posts a
     ' LoadFinishedMsg when its os.ReadFile returns. Build the new
@@ -1830,6 +1879,29 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
     END IF
 
+    ' --- Right-click on the project tree → delete-confirm modal.
+    '     Modal context "treedel:<path>" routes through dispatchModalClose
+    '     which os.Removes the file (or RemoveAll for an empty dir) and
+    '     rebuilds the tree. Same hit-test as the left-click tree path.
+    IF mcOk AND mcMsg.Button = tea.MouseRight THEN
+        DIM rcTreeBodyH AS INTEGER = m.Height - 2
+        IF rcTreeBodyH < 4 THEN rcTreeBodyH = 4
+        DIM rcHit AS INTEGER = treeNodeAt(m, mcMsg.X, mcMsg.Y, m.LeftW, rcTreeBodyH)
+        IF rcHit >= 0 THEN
+            DIM rcNode AS TreeNode = m.TreeNodes[rcHit]
+            ' Don't allow deleting the project root.
+            IF rcNode.Depth = 0 THEN
+                m.Status = "can't delete the project root"
+                RETURN m, NIL
+            END IF
+            DIM rcWhat AS STRING = "file"
+            IF rcNode.IsDir THEN rcWhat = "directory"
+            DIM rcMsg AS STRING = "Delete " + rcWhat + " " + baseName(rcNode.Path) + "?"
+            showModal(@m, "Delete", rcMsg, "Delete,Cancel", "treedel:" + rcNode.Path)
+            RETURN m, NIL
+        END IF
+    END IF
+
     ' Key press dispatch.
     DIM k AS tea.KeyPressMsg
     DIM kOk AS BOOLEAN
@@ -2109,7 +2181,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             END IF
             ' Save-As fallback when the buffer has no on-disk path yet.
             IF hasActiveTab(m) AND m.Tabs[m.TabIdx].Path = "" THEN
-                showInputModal(@m, "Save As", "Path:", "untitled.dbas", "saveas")
+                DIM saDir AS STRING
+                DIM saErr AS ERROR
+                saDir, saErr = os.Getwd()
+                IF saErr <> NIL THEN saDir = "."
+                openBrowser(@m, "saveas", "Save As", "save", saDir, "untitled.dbas")
             ELSE
                 saveCurrent(@m)
             END IF
@@ -2124,7 +2200,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM cwdErrOp AS ERROR
             cwdOp, cwdErrOp = os.Getwd()
             IF cwdErrOp <> NIL THEN cwdOp = "."
-            showInputModal(@m, "Open File", "Path:", cwdOp + "/", "open")
+            openBrowser(@m, "open", "Open File", "open", cwdOp, "")
             RETURN m, NIL
         END IF
         IF key = "ctrl+p" THEN
@@ -2512,6 +2588,7 @@ END FUNCTION
 
 INCLUDE "internal/pad.dbas"
 INCLUDE "internal/form.dbas"
+INCLUDE "internal/browse.dbas"
 INCLUDE "internal/render.dbas"
 
 
@@ -2654,6 +2731,24 @@ FUNCTION (m AS Model) View() AS tea.View
             ' coords and hit-test the button rects renderModal stored.
             modalLastOrigX = xOff
             modalLastOrigY = yOff
+        END IF
+    END IF
+
+    ' --- File browser overlay (Z=5 so it floats above the regular
+    '     modal — same compositor pattern as the modal above).
+    IF m.BrowseActive THEN
+        DIM br AS STRING = renderBrowser(m)
+        IF br <> "" THEN
+            DIM brW AS INTEGER = lipgloss.Width(br)
+            DIM brH AS INTEGER = lipgloss.Height(br)
+            DIM bxOff AS INTEGER = (w - brW) / 2
+            DIM byOff AS INTEGER = (h - brH) / 2
+            IF bxOff < 0 THEN bxOff = 0
+            IF byOff < 0 THEN byOff = 0
+            DIM bgL3 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM brL  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(br).X(bxOff).Y(byOff).Z(5)
+            DIM brComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgL3, brL)
+            full = brComp.Render()
         END IF
     END IF
 

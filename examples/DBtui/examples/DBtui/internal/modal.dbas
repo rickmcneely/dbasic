@@ -48,6 +48,28 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         m.Status = "quit cancelled"
         RETURN FALSE, NIL
     END IF
+    ' "treedel:<path>" — Delete unlinks the file (or os.Remove on an
+    ' empty dir); Cancel keeps it. Refuses non-empty directories so
+    ' a stray right-click can't shred a project folder. After delete
+    ' we close any open tab pointing at the deleted path so the
+    ' editor doesn't sit on a stale buffer.
+    IF strings.HasPrefix(m.ModalContext, "treedel:") THEN
+        IF button = "Delete" THEN
+            DIM tdPath AS STRING = Mid(m.ModalContext, 9, LEN(m.ModalContext) - 8)
+            DIM tdErr AS ERROR = os.Remove(tdPath)
+            IF tdErr <> NIL THEN
+                m.Status = "delete failed: " + tdErr.Error()
+                RETURN FALSE, NIL
+            END IF
+            DIM tdTabIdx AS INTEGER = findTabIdx(^m, tdPath)
+            IF tdTabIdx >= 0 THEN closeTab(m, tdTabIdx)
+            buildTreeNodes(m)
+            m.Status = "deleted " + tdPath
+        ELSE
+            m.Status = "delete cancelled"
+        END IF
+        RETURN FALSE, NIL
+    END IF
     ' "closetab:<idx>" — Discard removes the tab; Cancel keeps it.
     IF strings.HasPrefix(m.ModalContext, "closetab:") THEN
         IF button = "Discard" THEN

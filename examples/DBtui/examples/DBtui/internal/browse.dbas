@@ -1,0 +1,403 @@
+
+' -------------------------------------------------------------------------
+' File browser modal — used for New Project / Open / Save As / Save Form.
+'
+' The browser owns its own input focus and rendering. While
+' m.BrowseActive is TRUE, Update routes every key / mouse event
+' through here before the editor sees anything, and View overlays
+' the browser on top of the regular composition.
+'
+' Once the user commits (Enter on a file in open mode, Enter on the
+' filename input in save mode, or click OK), the chosen path is
+' fed back through the existing dispatchModalClose handlers via the
+' BrowseContext key — so "open" still calls openFile, "saveas" still
+' kicks off the existing overwrite-confirm flow, etc. Reusing the
+' existing dispatch keeps every commit path tested.
+' -------------------------------------------------------------------------
+
+' browseRefresh — re-list BrowseDir into BrowseEntries. Adds "../"
+' as the first entry (unless BrowseDir is already root), sorts dirs
+' before files, hides dotfiles for legibility. Clamps Selected /
+' Scroll back into range so the cursor never points past the list.
+SUB browseRefresh(m AS POINTER TO Model)
+    DIM dir AS STRING = m.BrowseDir
+    IF dir = "" THEN dir = "."
+    DIM entries AS []BrowseEntry
+    ' Parent-dir entry unless we're already at filesystem root.
+    IF dir <> "/" THEN
+        DIM up AS BrowseEntry
+        up.Name  = ".."
+        up.IsDir = TRUE
+        entries = APPEND(entries, up)
+    END IF
+    DIM raw AS []os.DirEntry
+    DIM rerr AS ERROR
+    raw, rerr = os.ReadDir(dir)
+    IF rerr <> NIL THEN
+        m.BrowseEntries  = entries
+        m.BrowseSelected = 0
+        m.BrowseScroll   = 0
+        m.Status = "browse " + dir + ": " + rerr.Error()
+        RETURN
+    END IF
+    ' Dirs first, then files; both groups alphabetical. Skip
+    ' hidden entries.
+    DIM dirs  AS []BrowseEntry
+    DIM files AS []BrowseEntry
+    DIM ri AS INTEGER
+    FOR ri = 0 TO LEN(raw) - 1
+        DIM nm AS STRING = raw[ri].Name()
+        IF strings.HasPrefix(nm, ".") THEN
+            ' skip
+        ELSE
+            DIM e AS BrowseEntry
+            e.Name  = nm
+            e.IsDir = raw[ri].IsDir()
+            IF e.IsDir THEN
+                dirs = APPEND(dirs, e)
+            ELSE
+                files = APPEND(files, e)
+            END IF
+        END IF
+    NEXT ri
+    DIM di AS INTEGER
+    FOR di = 0 TO LEN(dirs) - 1
+        entries = APPEND(entries, dirs[di])
+    NEXT di
+    DIM fi AS INTEGER
+    FOR fi = 0 TO LEN(files) - 1
+        entries = APPEND(entries, files[fi])
+    NEXT fi
+    m.BrowseEntries = entries
+    IF m.BrowseSelected >= LEN(entries) THEN m.BrowseSelected = LEN(entries) - 1
+    IF m.BrowseSelected < 0 THEN m.BrowseSelected = 0
+    IF m.BrowseScroll < 0 THEN m.BrowseScroll = 0
+END SUB
+
+' openBrowser — show the browser overlay. `context` is the existing
+' modal-context key (so dispatchModalClose handles the commit), mode
+' is "open" or "save", initialDir is where to start listing, and
+' initialFilename pre-fills the filename input (save mode only).
+SUB openBrowser(m AS POINTER TO Model, context AS STRING, title AS STRING, mode AS STRING, initialDir AS STRING, initialFilename AS STRING)
+    m.BrowseActive  = TRUE
+    m.BrowseContext = context
+    m.BrowseTitle   = title
+    m.BrowseMode    = mode
+    DIM dir AS STRING = initialDir
+    IF dir = "" THEN
+        DIM cwd AS STRING
+        DIM cerr AS ERROR
+        cwd, cerr = os.Getwd()
+        IF cerr <> NIL THEN cwd = "."
+        dir = cwd
+    END IF
+    m.BrowseDir      = dir
+    m.BrowseSelected = 0
+    m.BrowseScroll   = 0
+    m.BrowseFocus    = "list"
+    IF mode = "save" THEN m.BrowseFocus = "filename"
+    DIM ti AS textinput.Model = textinput.New()
+    ti.SetValue(initialFilename)
+    DIM tiCmd AS tea.Cmd = ti.Focus()
+    _ = tiCmd
+    m.BrowseFilename = ti
+    DIM ndi AS textinput.Model = textinput.New()
+    m.BrowseNewDir = ndi
+    browseRefresh(m)
+END SUB
+
+' closeBrowser — tear down the overlay without committing anything.
+SUB closeBrowser(m AS POINTER TO Model)
+    m.BrowseActive = FALSE
+    m.BrowseFocus  = ""
+END SUB
+
+' browseJoinPath — append `child` onto `dir`, dropping a trailing
+' slash on `dir` so we never get "//foo". Handles "..": pops the
+' last segment off `dir`.
+FUNCTION browseJoinPath(dir AS STRING, child AS STRING) AS STRING
+    IF child = ".." THEN
+        IF dir = "" OR dir = "/" THEN RETURN "/"
+        DIM trimmed AS STRING = dir
+        IF strings.HasSuffix(trimmed, "/") AND LEN(trimmed) > 1 THEN
+            trimmed = Mid(trimmed, 1, LEN(trimmed) - 1)
+        END IF
+        DIM slash AS INTEGER = strings.LastIndex(trimmed, "/")
+        IF slash <= 0 THEN RETURN "/"
+        RETURN Mid(trimmed, 1, slash)
+    END IF
+    IF dir = "" THEN RETURN child
+    IF strings.HasSuffix(dir, "/") THEN RETURN dir + child
+    RETURN dir + "/" + child
+END FUNCTION
+
+' browseCommit — apply the user's choice. Builds the absolute path
+' from BrowseDir + (selected entry OR Filename input depending on
+' mode), routes it through dispatchModalClose with BrowseContext, and
+' tears down the overlay. Returns the (quit, cmd) tuple matching
+' dispatchModalClose's contract.
+FUNCTION browseCommit(m AS POINTER TO Model) AS (BOOLEAN, tea.Cmd)
+    DIM ctx AS STRING = m.BrowseContext
+    DIM mode AS STRING = m.BrowseMode
+    DIM path AS STRING = ""
+    IF mode = "save" THEN
+        DIM fn AS STRING = strings.TrimSpace(m.BrowseFilename.Value())
+        IF fn = "" THEN
+            m.Status = "filename required"
+            RETURN FALSE, NIL
+        END IF
+        path = browseJoinPath(m.BrowseDir, fn)
+    ELSE
+        ' open mode — selected entry must be a file
+        IF m.BrowseSelected < 0 OR m.BrowseSelected >= LEN(m.BrowseEntries) THEN
+            RETURN FALSE, NIL
+        END IF
+        DIM e AS BrowseEntry = m.BrowseEntries[m.BrowseSelected]
+        IF e.IsDir THEN
+            ' Treat as navigation, not commit.
+            m.BrowseDir = browseJoinPath(m.BrowseDir, e.Name)
+            m.BrowseSelected = 0
+            m.BrowseScroll   = 0
+            browseRefresh(m)
+            RETURN FALSE, NIL
+        END IF
+        path = browseJoinPath(m.BrowseDir, e.Name)
+    END IF
+    ' Hand off via existing modal dispatch — gives us the
+    ' overwrite-confirm flow for free.
+    closeBrowser(m)
+    m.ModalContext = ctx
+    DIM bQuit AS BOOLEAN
+    DIM bCmd AS tea.Cmd
+    bQuit, bCmd = dispatchModalClose(m, "", path)
+    RETURN bQuit, bCmd
+END FUNCTION
+
+' browseCreateDir — os.Mkdir(BrowseDir/name); refresh on success.
+SUB browseCreateDir(m AS POINTER TO Model, name AS STRING)
+    DIM trim AS STRING = strings.TrimSpace(name)
+    IF trim = "" THEN
+        m.Status = "folder name required"
+        RETURN
+    END IF
+    DIM full AS STRING = browseJoinPath(m.BrowseDir, trim)
+    DIM merr AS ERROR = os.Mkdir(full, 0755)
+    IF merr <> NIL THEN
+        m.Status = "mkdir " + full + ": " + merr.Error()
+        RETURN
+    END IF
+    m.Status = "created " + full
+    browseRefresh(m)
+END SUB
+
+' browseUpdate — handle one tea.Msg while the browser is active.
+' Returns the (model, cmd) tuple Update should propagate.
+FUNCTION browseUpdate(m AS POINTER TO Model, msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    DIM k AS tea.KeyPressMsg
+    DIM kOk AS BOOLEAN
+    k, kOk = msg.(tea.KeyPressMsg)
+    IF NOT kOk THEN RETURN ^m, NIL
+    DIM key AS STRING = k.String()
+    IF key = "esc" THEN
+        closeBrowser(m)
+        m.Status = "browser cancelled"
+        RETURN ^m, NIL
+    END IF
+    ' --- New Folder inline input has its own focus state -----------
+    IF m.BrowseFocus = "newdir" THEN
+        IF key = "enter" THEN
+            browseCreateDir(m, m.BrowseNewDir.Value())
+            m.BrowseFocus = "list"
+            DIM ndi2 AS textinput.Model = textinput.New()
+            m.BrowseNewDir = ndi2
+            RETURN ^m, NIL
+        END IF
+        DIM ndNew AS textinput.Model
+        DIM ndCmd AS tea.Cmd
+        ndNew, ndCmd = m.BrowseNewDir.Update(msg)
+        m.BrowseNewDir = ndNew
+        RETURN ^m, ndCmd
+    END IF
+    ' --- Tab cycles focus between list / filename (save mode) ------
+    IF key = "tab" OR key = "shift+tab" THEN
+        IF m.BrowseMode = "save" THEN
+            IF m.BrowseFocus = "list" THEN
+                m.BrowseFocus = "filename"
+            ELSE
+                m.BrowseFocus = "list"
+            END IF
+        END IF
+        RETURN ^m, NIL
+    END IF
+    ' --- Ctrl+N → New Folder inline input --------------------------
+    IF key = "ctrl+n" THEN
+        m.BrowseFocus = "newdir"
+        DIM nd AS textinput.Model = textinput.New()
+        DIM ndFocusCmd AS tea.Cmd = nd.Focus()
+        _ = ndFocusCmd
+        m.BrowseNewDir = nd
+        RETURN ^m, NIL
+    END IF
+    ' --- Filename input handling (save mode) ----------------------
+    IF m.BrowseFocus = "filename" THEN
+        IF key = "enter" THEN
+            DIM cQuit AS BOOLEAN
+            DIM cCmd  AS tea.Cmd
+            cQuit, cCmd = browseCommit(m)
+            IF cQuit THEN RETURN ^m, tea.Quit
+            RETURN ^m, cCmd
+        END IF
+        DIM fnNew AS textinput.Model
+        DIM fnCmd AS tea.Cmd
+        fnNew, fnCmd = m.BrowseFilename.Update(msg)
+        m.BrowseFilename = fnNew
+        RETURN ^m, fnCmd
+    END IF
+    ' --- List navigation ------------------------------------------
+    IF key = "up" THEN
+        IF m.BrowseSelected > 0 THEN m.BrowseSelected = m.BrowseSelected - 1
+        RETURN ^m, NIL
+    END IF
+    IF key = "down" THEN
+        IF m.BrowseSelected < LEN(m.BrowseEntries) - 1 THEN m.BrowseSelected = m.BrowseSelected + 1
+        RETURN ^m, NIL
+    END IF
+    IF key = "pgup" THEN
+        m.BrowseSelected = m.BrowseSelected - 8
+        IF m.BrowseSelected < 0 THEN m.BrowseSelected = 0
+        RETURN ^m, NIL
+    END IF
+    IF key = "pgdown" THEN
+        m.BrowseSelected = m.BrowseSelected + 8
+        IF m.BrowseSelected >= LEN(m.BrowseEntries) THEN m.BrowseSelected = LEN(m.BrowseEntries) - 1
+        RETURN ^m, NIL
+    END IF
+    IF key = "home" THEN
+        m.BrowseSelected = 0
+        RETURN ^m, NIL
+    END IF
+    IF key = "end" THEN
+        m.BrowseSelected = LEN(m.BrowseEntries) - 1
+        RETURN ^m, NIL
+    END IF
+    IF key = "enter" OR key = "right" THEN
+        ' Navigate into dir, or commit file (open mode), or move
+        ' to filename field (save mode + dir selected).
+        IF m.BrowseSelected >= 0 AND m.BrowseSelected < LEN(m.BrowseEntries) THEN
+            DIM ent AS BrowseEntry = m.BrowseEntries[m.BrowseSelected]
+            IF ent.IsDir THEN
+                m.BrowseDir = browseJoinPath(m.BrowseDir, ent.Name)
+                m.BrowseSelected = 0
+                m.BrowseScroll   = 0
+                browseRefresh(m)
+                RETURN ^m, NIL
+            END IF
+            ' File entry. In save mode, copy its name into the
+            ' filename field as a starting point.
+            IF m.BrowseMode = "save" THEN
+                m.BrowseFilename.SetValue(ent.Name)
+                m.BrowseFocus = "filename"
+                RETURN ^m, NIL
+            END IF
+            ' Open mode — commit.
+            DIM oQuit AS BOOLEAN
+            DIM oCmd  AS tea.Cmd
+            oQuit, oCmd = browseCommit(m)
+            IF oQuit THEN RETURN ^m, tea.Quit
+            RETURN ^m, oCmd
+        END IF
+        RETURN ^m, NIL
+    END IF
+    IF key = "left" OR key = "backspace" THEN
+        ' Quick parent-dir jump.
+        m.BrowseDir = browseJoinPath(m.BrowseDir, "..")
+        m.BrowseSelected = 0
+        m.BrowseScroll   = 0
+        browseRefresh(m)
+        RETURN ^m, NIL
+    END IF
+    RETURN ^m, NIL
+END FUNCTION
+
+' renderBrowser — produce the browser overlay string. Layout:
+'
+'   ┌─ <title> ──────────────────────────────┐
+'   │ <BrowseDir>                            │
+'   │                                        │
+'   │ ../                                    │
+'   │ subdir/                                │
+'   │ file.txt                               │
+'   │ ...                                    │
+'   │                                        │
+'   │ Filename: [______________________]     │   (save mode)
+'   │                                        │
+'   │ Enter open/commit  Tab focus  Ctrl+N new folder  Esc cancel │
+'   └────────────────────────────────────────┘
+FUNCTION renderBrowser(m AS Model) AS STRING
+    IF NOT m.BrowseActive THEN RETURN ""
+    DIM innerW AS INTEGER = 60
+    DIM listH  AS INTEGER = 14
+    DIM bgPaint AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg))
+    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Width(innerW).Align(lipgloss.Center)
+    DIM pathStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Width(innerW)
+    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg)).Width(innerW)
+    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE).Width(innerW)
+    DIM hintStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cStatusFg)).Width(innerW)
+
+    DIM lines AS []STRING
+    lines = APPEND(lines, titleStyle.Render(m.BrowseTitle))
+    DIM dirShown AS STRING = m.BrowseDir
+    IF LEN(dirShown) > innerW - 2 THEN dirShown = "…" + Mid(dirShown, LEN(dirShown) - innerW + 3, innerW - 3)
+    lines = APPEND(lines, pathStyle.Render(" " + dirShown))
+    lines = APPEND(lines, bgPaint.Width(innerW).Render(""))
+
+    ' Scroll-window the list so the cursor stays visible.
+    DIM total AS INTEGER = LEN(m.BrowseEntries)
+    IF m.BrowseSelected < m.BrowseScroll THEN m.BrowseScroll = m.BrowseSelected
+    IF m.BrowseSelected >= m.BrowseScroll + listH THEN m.BrowseScroll = m.BrowseSelected - listH + 1
+    IF m.BrowseScroll < 0 THEN m.BrowseScroll = 0
+    DIM li AS INTEGER
+    FOR li = 0 TO listH - 1
+        DIM idx AS INTEGER = m.BrowseScroll + li
+        DIM txt AS STRING = ""
+        IF idx < total THEN
+            DIM e AS BrowseEntry = m.BrowseEntries[idx]
+            IF e.IsDir THEN
+                txt = " " + e.Name + "/"
+            ELSE
+                txt = "   " + e.Name
+            END IF
+        END IF
+        IF idx = m.BrowseSelected AND idx < total AND m.BrowseFocus = "list" THEN
+            lines = APPEND(lines, selStyle.Render(txt))
+        ELSE
+            lines = APPEND(lines, rowStyle.Render(txt))
+        END IF
+    NEXT li
+
+    lines = APPEND(lines, bgPaint.Width(innerW).Render(""))
+
+    ' Filename field (save mode only).
+    IF m.BrowseMode = "save" THEN
+        DIM fnFocus AS BOOLEAN = (m.BrowseFocus = "filename")
+        DIM caret AS STRING = "  "
+        IF fnFocus THEN caret = "▶ "
+        DIM fnLabel AS STRING = caret + "Filename: "
+        DIM fnVal AS STRING = m.BrowseFilename.Value()
+        ' Pad to innerW.
+        DIM combined AS STRING = fnLabel + "[" + fnVal + "]"
+        lines = APPEND(lines, bgPaint.Width(innerW).Render(combined))
+    END IF
+
+    ' New-folder inline input.
+    IF m.BrowseFocus = "newdir" THEN
+        lines = APPEND(lines, bgPaint.Width(innerW).Render("▶ New folder: [" + m.BrowseNewDir.Value() + "]"))
+    END IF
+
+    lines = APPEND(lines, bgPaint.Width(innerW).Render(""))
+    lines = APPEND(lines, hintStyle.Render(" Enter open  Tab focus  Ctrl+N new folder  Esc cancel"))
+
+    DIM stacked AS STRING = strings.Join(lines, "\n")
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg)).Padding(1, 2)
+    RETURN frame.Render(stacked)
+END FUNCTION
