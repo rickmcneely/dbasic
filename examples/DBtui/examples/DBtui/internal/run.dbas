@@ -183,9 +183,48 @@ FUNCTION truncateOutput(s AS STRING, maxLines AS INTEGER) AS STRING
     RETURN strings.Join(out, "\n")
 END FUNCTION
 
+' parseCheckOutput — scan dbasic check stderr/stdout for "line N"
+' tokens and produce one DiagLine per match. The full output line
+' becomes the message so users see context in tooltips / hovers
+' (future). Empty / non-matching lines are skipped.
+FUNCTION parseCheckOutput(out AS STRING) AS []DiagLine
+    DIM result AS []DiagLine
+    DIM lines AS []STRING = strings.Split(out, "\n")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        DIM ln AS STRING = lines[i]
+        DIM idx AS INTEGER = strings.Index(ln, "line ")
+        IF idx >= 0 THEN
+            DIM after AS STRING = Mid(ln, idx + 6, LEN(ln) - idx - 5)
+            DIM j AS INTEGER = 0
+            DIM digits AS STRING = ""
+            DO WHILE j < LEN(after)
+                DIM ch AS STRING = Mid(after, j + 1, 1)
+                IF ch < "0" OR ch > "9" THEN EXIT DO
+                digits = digits + ch
+                j = j + 1
+            LOOP
+            IF digits <> "" THEN
+                DIM n AS INTEGER
+                DIM nerr AS ERROR
+                n, nerr = strconv.Atoi(digits)
+                IF nerr = NIL THEN
+                    DIM d AS DiagLine
+                    d.Line = n
+                    d.Msg = ln
+                    result = APPEND(result, d)
+                END IF
+            END IF
+        END IF
+    NEXT i
+    RETURN result
+END FUNCTION
+
 ' doCheck — save + sync `dbasic check`. Output (success or failure)
 ' is appended to the bottom output pane, which auto-shows. Status
 ' bar gets a one-line summary so the user knows whether to look.
+' Also parses the output into per-path Diagnostics so the editor
+' gutter can show inline error markers.
 SUB doCheck(m AS POINTER TO Model)
     IF NOT hasActiveTab(^m) THEN
         m.Status = "nothing to check"
@@ -200,11 +239,17 @@ SUB doCheck(m AS POINTER TO Model)
     outBytes, err = cmd.CombinedOutput()
     DIM out AS STRING = strings.TrimSpace(string(outBytes))
     IF err = NIL THEN
+        ' Clear any stale diagnostics for this path.
+        DIM emptyDiags AS []DiagLine
+        m.Diagnostics[path] = emptyDiags
+        invalidateEditorCache(m)
         appendBottomOutput(m, "Output", "[check OK] " + path)
         m.Status = "check ok: " + path
         RETURN
     END IF
     IF out = "" THEN out = err.Error()
+    m.Diagnostics[path] = parseCheckOutput(out)
+    invalidateEditorCache(m)
     appendBottomOutput(m, "Output", "[check FAIL] " + path + "\n" + out)
     m.Status = "check failed — see Output pane (F12)"
 END SUB

@@ -433,6 +433,9 @@ FUNCTION renderMiddlePane(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
     IF bodyH < 1 THEN bodyH = 1
     DIM bodyStr AS STRING
     IF m.ViewMode = "code" AND hasActiveTab(m) THEN
+        ' Push the relevant diagnostics onto the active Pad before
+        ' rendering so the gutter can show error markers.
+        m.Tabs[m.TabIdx].Editor.DiagLines = m.Diagnostics[m.Tabs[m.TabIdx].Path]
         ' Prefer the cached textarea View() — refreshEditorCache
         ' is the only place that calls the (expensive) live View().
         ' Fall back to live render when the cache is stale or empty

@@ -133,6 +133,7 @@ DIM padStyleGutter  AS lipgloss.Style
 DIM padStyleGutterActive AS lipgloss.Style
 DIM padStyleSelection AS lipgloss.Style
 DIM padStyleBracketMatch AS lipgloss.Style
+DIM padStyleDiagMark AS lipgloss.Style
 
 SUB initPadStyles()
     IF padStylesReady THEN RETURN
@@ -147,6 +148,7 @@ SUB initPadStyles()
     padStyleGutterActive = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
     padStyleSelection = lipgloss.NewStyle().Background(lipgloss.Color("#3b3d5e")).Foreground(lipgloss.Color(cFg))
     padStyleBracketMatch = lipgloss.NewStyle().Background(lipgloss.Color("#4f5b66")).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
+    padStyleDiagMark = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color("#f7768e")).Bold(TRUE)
     padStylesReady = TRUE
 END SUB
 
@@ -300,6 +302,9 @@ TYPE Pad
     ' (SUB / FUNCTION / TYPE declarations). View skips lines after
     ' a folded head up to its matching END.
     DIM FoldedRows AS MAP OF INTEGER TO BOOLEAN
+    ' Diagnostics for this buffer (one entry per error line). Set
+    ' externally by renderMiddlePane just before View() runs.
+    DIM DiagLines AS []DiagLine
 END TYPE
 
 ' padMouseToRowCol — translate screen coords (mx, my) to a (row, col)
@@ -1535,7 +1540,15 @@ FUNCTION (p AS Pad) View() AS STRING
             gutter = padStyleBg.Render(strings.Repeat(" ", gutterW))
             rows = APPEND(rows, gutter + padStyleBg.Render(strings.Repeat(" ", contentW)))
         ELSE
-            ' Fold marker in the leading gutter cell.
+            ' Marker priority: diagnostic > fold; otherwise blank.
+            DIM hasDiag AS BOOLEAN = FALSE
+            DIM di AS INTEGER
+            FOR di = 0 TO LEN(p.DiagLines) - 1
+                IF p.DiagLines[di].Line - 1 = rowIdx THEN
+                    hasDiag = TRUE
+                    EXIT FOR
+                END IF
+            NEXT di
             DIM mark AS STRING = " "
             IF padIsFoldHead(p, rowIdx) THEN
                 IF p.FoldedRows[rowIdx] THEN
@@ -1544,12 +1557,23 @@ FUNCTION (p AS Pad) View() AS STRING
                     mark = "▾"
                 END IF
             END IF
-            DIM lab AS STRING = mark + fmt.Sprintf("%3d ", rowIdx + 1)
-            IF isCursorRow THEN
-                gutter = padStyleGutterActive.Render(lab)
+            IF hasDiag THEN mark = "●"
+            DIM lineLab AS STRING = fmt.Sprintf("%3d ", rowIdx + 1)
+            DIM markPart AS STRING
+            DIM labPart  AS STRING
+            IF hasDiag THEN
+                markPart = padStyleDiagMark.Render(mark)
+            ELSEIF isCursorRow THEN
+                markPart = padStyleGutterActive.Render(mark)
             ELSE
-                gutter = padStyleGutter.Render(lab)
+                markPart = padStyleGutter.Render(mark)
             END IF
+            IF isCursorRow THEN
+                labPart = padStyleGutterActive.Render(lineLab)
+            ELSE
+                labPart = padStyleGutter.Render(lineLab)
+            END IF
+            gutter = markPart + labPart
             ' Compute per-row selection bounds: -1, -1 means no
             ' selection on this row.
             DIM lineLen AS INTEGER = LEN(p.Lines[rowIdx])

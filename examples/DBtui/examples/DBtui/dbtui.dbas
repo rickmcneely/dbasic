@@ -126,6 +126,18 @@ END TYPE
 ' widths, bottom-pane visibility, and the recent-files list.
 ' -------------------------------------------------------------------------
 
+' -------------------------------------------------------------------------
+' Diagnostics — line-level error / warning markers parsed from
+' dbasic check output. Stored on Model by file path; renderMiddlePane
+' pushes the relevant slice onto the active tab's Pad before each
+' frame so the gutter can show a marker.
+' -------------------------------------------------------------------------
+
+TYPE DiagLine
+    DIM Line AS INTEGER     ' 1-based source line
+    DIM Msg  AS STRING
+END TYPE
+
 TYPE PersistedState
     DIM Open          AS []STRING
     DIM Active        AS INTEGER
@@ -203,6 +215,10 @@ TYPE Model
     ' the internal Ctrl+V paste path; OS-level clipboard is set
     ' best-effort via tea.SetClipboard so paste works across apps.
     DIM Clipboard AS STRING
+
+    ' Per-path diagnostics from `dbasic check`. Each F8 run fully
+    ' replaces the slice for the active tab's path.
+    DIM Diagnostics AS MAP OF STRING TO []DiagLine
 
     ' Quick-switcher (Ctrl+P) state. When QuickOpenActive is TRUE,
     ' all input goes to the switcher modal: type to filter, ↑/↓
@@ -1151,6 +1167,8 @@ FUNCTION newModel() AS Model
     m.FocusedPane = "tree"
     ' Form designer state now lives per-tab on Tab.Form / Tab.SelWidget;
     ' nothing to initialise globally.
+    ' Diagnostics map: path → []DiagLine. Lazy-initialised on first
+    ' use; map literal is auto-allocated by DBasic.
     ' No hover known until the first MouseMotionMsg arrives.
     m.HoverX = 0 - 1
     m.HoverY = 0 - 1
