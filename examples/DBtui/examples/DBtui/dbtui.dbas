@@ -177,6 +177,14 @@ TYPE Model
     DIM Tabs     AS []Tab                ' open files
     DIM TabIdx   AS INTEGER              ' active tab; -1 = none
 
+    ' Right-pane sub-tab. The strip across the top of the right pane
+    ' shows [ Widgets ] [ Tools ]; clicking flips this between "list"
+    ' (widgets/outline + properties — the original behaviour) and
+    ' "tools" (a placeholder pane listing reusable design tools
+    ' like the FileDialog). The label that's currently active gets
+    ' inverted; rendering of the body switches on this value.
+    DIM RightTab AS STRING               ' "list" or "tools"
+
     ' Menubar state.
     DIM Menus       AS []MenuDef         ' definitions built once at startup
     DIM MenuActive  AS INTEGER           ' -1 = closed; else top-menu index
@@ -1162,6 +1170,8 @@ FUNCTION newModel() AS Model
     ' it via switchToTab.
     m.ViewMode = "code"
     m.TabIdx = 0 - 1
+    ' Right-pane sub-tab starts on the list (Widgets/Outline) panel.
+    m.RightTab = "list"
     ' Tree starts focused — the tree is always available and the
     ' editor doesn't exist yet.
     m.FocusedPane = "tree"
@@ -1551,6 +1561,29 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.MenuActive = 0 - 1
             RETURN m, NIL
         END IF
+        ' (2.5) Right-pane sub-tab strip — y=1, in the right pane's
+        '       column range. Click on [Widgets] or [Tools] switches
+        '       the list section's content. Must come BEFORE the (3)
+        '       tabs-caption handler which only triggers in code mode,
+        '       and BEFORE every right-pane content handler so the
+        '       click isn't consumed by the body underneath.
+        IF mcMsg.Y = 1 AND mcMsg.X >= m.Width - m.RightW THEN
+            DIM rtwLbl AS STRING = "Outline"
+            IF m.ViewMode = "form" THEN rtwLbl = "Widgets"
+            DIM rtwS AS INTEGER
+            DIM rtwE AS INTEGER
+            DIM rttS AS INTEGER
+            DIM rttE AS INTEGER
+            rtwS, rtwE, rttS, rttE = rightTabsBounds(m.Width - m.RightW, m.RightW, rtwLbl, "Tools")
+            IF mcMsg.X >= rtwS AND mcMsg.X < rtwE THEN
+                m.RightTab = "list"
+                RETURN m, NIL
+            END IF
+            IF mcMsg.X >= rttS AND mcMsg.X < rttE THEN
+                m.RightTab = "tools"
+                RETURN m, NIL
+            END IF
+        END IF
         ' (3) Tabs caption row (y = 1) in code mode with open tabs.
         '     Clicking a tab also focuses the editor pane.
         '
@@ -1605,7 +1638,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         '      FUNCTION / TYPE declaration in the active buffer.
         '      The outline lives inside the right pane's listBox
         '      whose rows start at y = 3 and span listH - 2 rows.
-        IF mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width AND mcMsg.Y >= 3 AND hasActiveTab(m) THEN
+        '      Only relevant when the Widgets/Outline sub-tab is up.
+        IF m.RightTab = "list" AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width AND mcMsg.Y >= 3 AND hasActiveTab(m) THEN
             DIM oBodyH AS INTEGER = m.Height - 2
             IF m.BottomVisible THEN
                 DIM oBot AS INTEGER = 10
@@ -1628,7 +1662,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         ' (4c) Palette click — when in form mode, the right pane's
         '      list section is the widget palette. Each row adds a
         '      widget of that kind to the canvas.
-        IF m.ViewMode = "form" AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width AND mcMsg.Y >= 3 THEN
+        IF m.RightTab = "list" AND m.ViewMode = "form" AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width AND mcMsg.Y >= 3 THEN
             DIM pBodyH AS INTEGER = m.Height - 2
             IF m.BottomVisible THEN
                 DIM pBot AS INTEGER = 10
@@ -1640,6 +1674,15 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM pListH  AS INTEGER = pRemain / 2
             DIM pRelRow AS INTEGER = mcMsg.Y - 3
             IF pRelRow >= 0 AND pRelRow < pListH - 2 AND pRelRow < 4 THEN
+                ' Safety net: ViewMode might be "form" while the
+                ' active tab is still a code buffer (older sessions,
+                ' or a flow that flipped ViewMode without creating a
+                ' form tab). In that case the APPEND would land on
+                ' the code tab's invisible Form field and the canvas
+                ' wouldn't paint it. Upgrade the context first.
+                IF NOT hasActiveTab(m) OR m.Tabs[m.TabIdx].Kind <> "form" THEN
+                    newUntitledForm(@m)
+                END IF
                 formAddWidget(@m, formKindByIdx(pRelRow))
                 invalidateEditorCache(@m)
                 RETURN m, NIL
@@ -2273,11 +2316,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
 
         IF key = "f7" THEN
             ' Toggle between form-design view and code editor view.
-            ' Focus follows the view: form → tree, code → editor (if
-            ' a file is open) or tree (otherwise).
+            ' Route the "enter form mode" half through newUntitledForm
+            ' so palette clicks always have an actual form tab to land
+            ' on. (If we only flipped ViewMode, widgets would end up
+            ' appended to the active CODE tab's invisible Form field
+            ' and never paint on the canvas.)
             IF m.ViewMode = "code" THEN
-                m.ViewMode = "form"
-                setFocus(@m, "tree")
+                newUntitledForm(@m)
             ELSE
                 m.ViewMode = "code"
                 IF hasActiveTab(m) THEN

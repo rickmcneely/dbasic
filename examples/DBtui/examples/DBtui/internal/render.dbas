@@ -562,18 +562,25 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
 
     ' --- Tab strip ---------------------------------------------------
     DIM widgetsLbl AS STRING = "Outline"
-    IF m.ViewMode = "form" THEN widgetsLbl = "Palette"
+    IF m.ViewMode = "form" THEN widgetsLbl = "Widgets"
     DIM toolsLbl   AS STRING = "Tools"
     DIM wS AS INTEGER
     DIM wE AS INTEGER
     DIM tS AS INTEGER
     DIM tE AS INTEGER
     wS, wE, tS, tE = rightTabsBounds(xOrigin, width, widgetsLbl, toolsLbl)
-    ' Pick per-label style based on hover.
+    ' Active sub-tab inverts colors; hover (when not active) softens
+    ' the bg. Default is the accented-fg-on-modal-bg.
+    DIM actTabStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
     DIM widgetsStyled AS lipgloss.Style = tabStyle
     DIM toolsStyled   AS lipgloss.Style = tabStyle
-    IF m.HoverY = 1 AND m.HoverX >= wS AND m.HoverX < wE THEN widgetsStyled = hovTabStyle
-    IF m.HoverY = 1 AND m.HoverX >= tS AND m.HoverX < tE THEN toolsStyled   = hovTabStyle
+    IF m.RightTab = "tools" THEN
+        toolsStyled = actTabStyle
+    ELSE
+        widgetsStyled = actTabStyle
+    END IF
+    IF m.HoverY = 1 AND m.HoverX >= wS AND m.HoverX < wE AND m.RightTab <> "list" THEN widgetsStyled = hovTabStyle
+    IF m.HoverY = 1 AND m.HoverX >= tS AND m.HoverX < tE AND m.RightTab <> "tools" THEN toolsStyled   = hovTabStyle
     DIM tabLabels AS STRING = bracket.Render(rpLeftPad) + widgetsStyled.Render(widgetsLbl) + bracket.Render(rpTabSep) + toolsStyled.Render(toolsLbl) + bracket.Render(rpRightPad)
     DIM dashW AS INTEGER = width - lipgloss.Width(tabLabels)
     IF dashW < 0 THEN dashW = 0
@@ -595,8 +602,21 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     DIM listHoverStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Width(listInnerW)
     DIM listLines AS []STRING
     DIM li AS INTEGER
-    IF m.ViewMode = "form" THEN
-        ' Palette: fixed list of widget kinds.
+    IF m.RightTab = "tools" THEN
+        ' Tools panel — placeholder list of reusable design helpers.
+        ' For v1 just the FileDialog drop-in lives here; the real
+        ' tool palette grows once we wire codegen-side runtime tools.
+        DIM toolNames AS []STRING
+        toolNames = APPEND(toolNames, " ◆ FileDialog")
+        toolNames = APPEND(toolNames, "")
+        toolNames = APPEND(toolNames, "  (more tools coming)")
+        FOR li = 0 TO listVisible - 1
+            DIM toolTxt AS STRING = ""
+            IF li < LEN(toolNames) THEN toolTxt = toolNames[li]
+            listLines = APPEND(listLines, listRowStyle.Render(toolTxt))
+        NEXT li
+    ELSEIF m.ViewMode = "form" THEN
+        ' Widgets palette: fixed list of widget kinds.
         FOR li = 0 TO listVisible - 1
             DIM palTxt AS STRING = ""
             IF li < 4 THEN palTxt = " + " + formKindByIdx(li)
