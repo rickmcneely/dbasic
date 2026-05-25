@@ -570,7 +570,7 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     '     widget props (form). titledBox draws title at the top of
     '     the panel, so property rows start one cell below that.
     DIM propRows AS []STRING
-    IF m.ViewMode = "form" THEN
+    IF m.ViewMode = "form" AND hasActiveTab(m) THEN
         IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
             DIM sw AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
             propRows = APPEND(propRows, "Kind   " + sw.Kind)

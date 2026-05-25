@@ -1157,10 +1157,10 @@ FUNCTION newModel() AS Model
     m.TreeSelected = 0
     IF LEN(m.TreeNodes) > 1 THEN m.TreeSelected = 1
     m.TreeOffset = 0
-    ' No tabs open at startup. The middle pane shows the form
-    ' designer until the user opens a file from the tree (which
-    ' creates the first tab) or presses F7.
-    m.ViewMode = "form"
+    ' No tabs open at startup. Default ViewMode is "code" so the
+    ' renderer takes safe paths; opening a .dbproj / .dbas swaps
+    ' it via switchToTab.
+    m.ViewMode = "code"
     m.TabIdx = 0 - 1
     ' Tree starts focused — the tree is always available and the
     ' editor doesn't exist yet.
