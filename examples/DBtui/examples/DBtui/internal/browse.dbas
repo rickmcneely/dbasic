@@ -151,12 +151,37 @@ SUB openBrowser(m AS POINTER TO Model, context AS STRING, title AS STRING, mode 
         m.BrowseFocus = "files"
     END IF
     browseRefresh(m)
+    browseSyncTextFocus(m)
 END SUB
 
 ' closeBrowser — tear down the overlay without committing.
 SUB closeBrowser(m AS POINTER TO Model)
     m.BrowseActive = FALSE
     m.BrowseFocus  = ""
+END SUB
+
+' browseSyncTextFocus — make the textinput.Model that maps to the
+' current BrowseFocus actively focused (so its cursor blinks and
+' it receives key events) and blur the others. Call after every
+' focus change. Also sets a sensible Width so the cursor row fits
+' inside the inner column.
+SUB browseSyncTextFocus(m AS POINTER TO Model)
+    DIM fieldW AS INTEGER = browseInnerW - 10
+    IF fieldW < 10 THEN fieldW = 10
+    m.BrowsePath.SetWidth(fieldW)
+    m.BrowseFilename.SetWidth(fieldW)
+    IF m.BrowseFocus = "path" THEN
+        DIM pFocusCmd AS tea.Cmd = m.BrowsePath.Focus()
+        _ = pFocusCmd
+    ELSE
+        m.BrowsePath.Blur()
+    END IF
+    IF m.BrowseFocus = "filename" THEN
+        DIM fFocusCmd AS tea.Cmd = m.BrowseFilename.Focus()
+        _ = fFocusCmd
+    ELSE
+        m.BrowseFilename.Blur()
+    END IF
 END SUB
 
 ' browseJoinPath — join `child` onto `dir`. Handles ".." by popping
@@ -249,11 +274,13 @@ FUNCTION browseClickButton(m AS POINTER TO Model, key AS STRING) AS (BOOLEAN, te
         RETURN FALSE, NIL
     END IF
     IF key = "btnNew" THEN
-        m.BrowseFocus = "newdir"
-        DIM nd AS textinput.Model = textinput.New()
-        DIM ndCmd AS tea.Cmd = nd.Focus()
-        _ = ndCmd
-        m.BrowseNewDir = nd
+        ' Pop a regular input modal on top of the browser. The
+        ' "newfolder" handler in dispatchModalClose calls
+        ' browseCreateDir against the browser's current BrowseDir
+        ' (which is preserved while the modal is up — the browser
+        ' just stops handling input). After commit, browseRefresh
+        ' re-reads the dir so the new folder appears in the list.
+        showInputModal(m, "New Folder", "Folder name:", "", "newfolder")
         RETURN FALSE, NIL
     END IF
     IF key = "btnOK" THEN RETURN browseCommit(m)
@@ -295,6 +322,10 @@ END FUNCTION
 ' browseUpdate — handle one tea.Msg while the browser is active.
 ' Returns the (model, cmd) tuple Update should propagate.
 FUNCTION browseUpdate(m AS POINTER TO Model, msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    ' Re-sync the textinput focus / blur every tick so the cursor
+    ' always blinks in the right field. Cheap enough to do on
+    ' every event rather than threading focus mutations.
+    browseSyncTextFocus(m)
     ' --- Mouse first so button clicks beat focus-routing ----------
     DIM bmc AS tea.MouseClickMsg
     DIM bmcOk AS BOOLEAN
@@ -346,22 +377,6 @@ FUNCTION browseUpdate(m AS POINTER TO Model, msg AS tea.Msg) AS (tea.Model, tea.
         closeBrowser(m)
         m.Status = "browser cancelled"
         RETURN ^m, NIL
-    END IF
-
-    ' --- New Folder inline input has its own focus state ----------
-    IF m.BrowseFocus = "newdir" THEN
-        IF key = "enter" THEN
-            browseCreateDir(m, m.BrowseNewDir.Value())
-            m.BrowseFocus = "dirs"
-            DIM ndi2 AS textinput.Model = textinput.New()
-            m.BrowseNewDir = ndi2
-            RETURN ^m, NIL
-        END IF
-        DIM ndNew AS textinput.Model
-        DIM ndCmd AS tea.Cmd
-        ndNew, ndCmd = m.BrowseNewDir.Update(msg)
-        m.BrowseNewDir = ndNew
-        RETURN ^m, ndCmd
     END IF
 
     ' --- Tab cycle ------------------------------------------------
@@ -591,14 +606,14 @@ FUNCTION renderBrowser(m AS Model) AS STRING
     lines = APPEND(lines, titleStyle.Render(m.BrowseTitle))
 
     ' --- Path input row -------------------------------------------
+    ' Render the actual textinput so the user sees a real cursor
+    ' when typing. SetWidth/Focus/Blur are applied in browseUpdate
+    ' on focus changes; here we just read the View().
     DIM pathLbl AS STRING = "Path: "
     DIM pathFocus AS BOOLEAN = (m.BrowseFocus = "path")
     DIM pathCaret AS STRING = "  "
     IF pathFocus THEN pathCaret = "▶ "
-    DIM pathW AS INTEGER = browseInnerW - LEN(pathCaret) - LEN(pathLbl) - 2
-    DIM pathVal AS STRING = m.BrowsePath.Value()
-    IF LEN(pathVal) > pathW THEN pathVal = "…" + Mid(pathVal, LEN(pathVal) - pathW + 2, pathW - 1)
-    DIM pathLine AS STRING = pathCaret + lblStyle.Render(pathLbl) + bgPaint.Render("[" + pathVal + "]")
+    DIM pathLine AS STRING = pathCaret + lblStyle.Render(pathLbl) + bgPaint.Render(m.BrowsePath.View())
     lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(pathLine))
     lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(""))
 
@@ -632,19 +647,10 @@ FUNCTION renderBrowser(m AS Model) AS STRING
         DIM fnCaret AS STRING = "  "
         IF fnFocus THEN fnCaret = "▶ "
         DIM fnLbl AS STRING = "Name: "
-        DIM fnVal AS STRING = m.BrowseFilename.Value()
-        DIM fnLine AS STRING = fnCaret + lblStyle.Render(fnLbl) + bgPaint.Render("[" + fnVal + "]")
+        DIM fnLine AS STRING = fnCaret + lblStyle.Render(fnLbl) + bgPaint.Render(m.BrowseFilename.View())
         lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(fnLine))
         lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(""))
         fnRowYOffset = 2
-    END IF
-
-    ' --- New Folder inline input (only when focus=newdir) ---------
-    IF m.BrowseFocus = "newdir" THEN
-        DIM ndLine AS STRING = "▶ New folder: [" + m.BrowseNewDir.Value() + "]"
-        lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(ndLine))
-        lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(""))
-        fnRowYOffset = fnRowYOffset + 2
     END IF
 
     ' --- Button row -----------------------------------------------

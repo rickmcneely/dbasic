@@ -48,6 +48,19 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         m.Status = "quit cancelled"
         RETURN FALSE, NIL
     END IF
+    ' "newfolder" — typed name from the File Browser's New Folder
+    ' button. Creates the directory inside the browser's current
+    ' BrowseDir and refreshes the listing so the new entry appears
+    ' immediately. The browser stays active beneath the modal.
+    IF m.ModalContext = "newfolder" THEN
+        IF m.BrowseActive THEN
+            browseCreateDir(m, text)
+            ' Move focus back to the dirs column so the user sees
+            ' the new folder selected on next interaction.
+            m.BrowseFocus = "dirs"
+        END IF
+        RETURN FALSE, NIL
+    END IF
     ' "openproject" — committed from the browser. Routes the picked
     ' path through loadFormFromDisk so the tree re-roots to the
     ' project's directory (vs. openFile which keeps the current

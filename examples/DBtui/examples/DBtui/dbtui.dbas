@@ -1324,10 +1324,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     END IF
 
-    ' --- File browser overlay takes priority over everything else --
-    ' (above modal even — the browser opens FROM what used to be a
-    ' modal, so once it's up, every key/mouse goes to it.)
-    IF m.BrowseActive THEN
+    ' --- File browser overlay handles every event UNLESS a regular
+    '     modal has popped on top of it (e.g. the New Folder prompt).
+    '     When ModalActive, fall through so the modal's key handler
+    '     gets first crack.
+    IF m.BrowseActive AND NOT m.ModalActive THEN
         DIM brModel AS tea.Model
         DIM brCmd   AS tea.Cmd
         brModel, brCmd = browseUpdate(@m, msg)
