@@ -48,6 +48,21 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         m.Status = "quit cancelled"
         RETURN FALSE, NIL
     END IF
+    ' "openproject" — committed from the browser. Routes the picked
+    ' path through loadFormFromDisk so the tree re-roots to the
+    ' project's directory (vs. openFile which keeps the current
+    ' root). Refuses anything that doesn't end in .dbproj so the
+    ' user can't accidentally treat a stray file as a project.
+    IF m.ModalContext = "openproject" THEN
+        DIM opPath AS STRING = strings.TrimSpace(text)
+        IF opPath = "" THEN RETURN FALSE, NIL
+        IF NOT strings.HasSuffix(opPath, ".dbproj") THEN
+            m.Status = "not a .dbproj: " + opPath
+            RETURN FALSE, NIL
+        END IF
+        loadFormFromDisk(m, opPath)
+        RETURN FALSE, NIL
+    END IF
     ' "newproject" — committed from the browser in save mode.
     ' Scaffolds a minimal Project { frmStart } at the chosen path,
     ' rebuilds the tree rooted at the new project's directory, and

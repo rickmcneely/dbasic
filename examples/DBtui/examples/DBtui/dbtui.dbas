@@ -577,6 +577,7 @@ FUNCTION buildMenus(m AS Model) AS []MenuDef
     fileItems = APPEND(fileItems, mkItem("New (F)orm          ", "file.newform"))
     fileItems = APPEND(fileItems, mkSep())
     fileItems = APPEND(fileItems, mkItem("(O)pen        Ctrl+O", "file.open"))
+    fileItems = APPEND(fileItems, mkItem("Open Pro(j)ect      ", "file.openproject"))
     ' Recent files — top 5 paths, numbered hotkeys (1..5). The
     ' action carries the path so dispatchAction can route it.
     IF LEN(m.Recent) > 0 THEN

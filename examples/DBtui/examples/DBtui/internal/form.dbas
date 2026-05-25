@@ -529,6 +529,18 @@ SUB loadFormFromDisk(m AS POINTER TO Model, path AS STRING)
         m.Status = "empty project: " + path
         RETURN
     END IF
+    ' Opening a project is a project context switch — re-root the
+    ' tree to the project's directory so the sidebar doesn't keep
+    ' showing the previous project's files. Skip if we're already
+    ' rooted there.
+    DIM newRoot AS STRING = dirName(path)
+    IF newRoot <> "" AND newRoot <> m.TreeRoot THEN
+        m.TreeRoot     = newRoot
+        m.TreeExpanded = APPEND(m.TreeExpanded, newRoot)
+        buildTreeNodes(m)
+        m.TreeSelected = 0
+        m.TreeOffset   = 0
+    END IF
     DIM startName AS STRING = proj.StartForm
     IF startName = "" THEN startName = proj.Forms[0].Name
     openFormTab(m, path, proj, startName)

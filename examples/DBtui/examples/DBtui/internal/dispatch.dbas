@@ -15,6 +15,18 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
         openBrowser(m, "open", "Open File", "open", cwd, "")
         RETURN
     END IF
+    IF action = "file.openproject" THEN
+        ' Same browser as Open File, but the modal context routes
+        ' through a project-aware commit path so loadFormFromDisk
+        ' fires (re-rooting the tree to the project dir) instead
+        ' of the generic openFile dispatch.
+        DIM opDir AS STRING
+        DIM opErr AS ERROR
+        opDir, opErr = os.Getwd()
+        IF opErr <> NIL THEN opDir = "."
+        openBrowser(m, "openproject", "Open Project", "open", opDir, "")
+        RETURN
+    END IF
     IF action = "file.saveas" THEN
         IF NOT hasActiveTab(^m) THEN
             m.Status = "nothing to save"
