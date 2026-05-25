@@ -135,11 +135,18 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
         newUntitledForm(m)
         RETURN
     END IF
-    IF action = "view.newform" THEN
+    IF action = "view.newform" OR action = "file.newform" THEN
         ' Add a new form to the active project. Only meaningful when
         ' the active tab is a form on a saved .dbproj — otherwise
         ' falls back to newUntitledForm.
         addFormToActiveProject(m)
+        RETURN
+    END IF
+    IF action = "file.newproject" THEN
+        ' Untitled multi-form project — opens a blank frmStart tab.
+        ' First Ctrl+S pops Save As; subsequent New Form items
+        ' append into the same .dbproj.
+        newUntitledForm(m)
         RETURN
     END IF
     IF action = "view.code" THEN
