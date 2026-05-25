@@ -811,10 +811,12 @@ SUB padMoveLinesDown(p AS POINTER TO Pad)
     r0, r1 = padLineRange(p)
     IF r1 >= LEN(p.Lines) - 1 THEN RETURN
     DIM below AS STRING = p.Lines[r1 + 1]
-    DIM i AS INTEGER
-    FOR i = r1 TO r0 STEP 0 - 1
+    ' Downward FOR with STEP -1 has a codegen quirk; use DO WHILE.
+    DIM i AS INTEGER = r1
+    DO WHILE i >= r0
         p.Lines[i + 1] = p.Lines[i]
-    NEXT i
+        i = i - 1
+    LOOP
     p.Lines[r0] = below
     p.Row = p.Row + 1
     IF p.SelActive THEN p.SelRow = p.SelRow + 1
@@ -991,10 +993,12 @@ END FUNCTION
 ' padFindEnclosingFoldHead — walk backward from `row` to the
 ' nearest fold-head row. Returns -1 if none.
 FUNCTION padFindEnclosingFoldHead(p AS Pad, row AS INTEGER) AS INTEGER
-    DIM i AS INTEGER
-    FOR i = row TO 0 STEP 0 - 1
+    ' Downward FOR with STEP -1 has a codegen quirk; DO WHILE instead.
+    DIM i AS INTEGER = row
+    DO WHILE i >= 0
         IF padIsFoldHead(p, i) THEN RETURN i
-    NEXT i
+        i = i - 1
+    LOOP
     RETURN 0 - 1
 END FUNCTION
 
