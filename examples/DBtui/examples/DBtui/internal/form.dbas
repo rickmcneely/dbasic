@@ -393,11 +393,13 @@ SUB newUntitledForm(m AS POINTER TO Model)
         m.Tabs[m.TabIdx].Editor.Blur()
     END IF
     DIM nf AS DesignForm
+    nf.Name  = "frmStart"
     nf.Title = "frmStart"
     DIM nt AS Tab
     nt.Path      = ""
     nt.Kind      = "form"
     nt.Form      = nf
+    nt.FormName  = "frmStart"
     nt.SelWidget = 0 - 1
     m.Tabs   = APPEND(m.Tabs, nt)
     m.TabIdx = LEN(m.Tabs) - 1
@@ -408,60 +410,171 @@ SUB newUntitledForm(m AS POINTER TO Model)
     m.Status = "new form — click a palette item to add widgets"
 END SUB
 
-' loadFormFromDisk — parse `path` as a .dbproj JSON file into m.Form.
-' On any error the status bar gets the diagnostic and the in-memory
-' form is left alone. On success, ViewMode flips to "form".
-SUB loadFormFromDisk(m AS POINTER TO Model, path AS STRING)
+' readProjectFromDisk — parse `path` as a .dbproj JSON file into a
+' Project value. Handles both shapes: the new Project format and the
+' legacy single-DesignForm format (auto-wrapped). Returns (proj, ok)
+' so callers can flag bad JSON without panicking on a zero-value.
+FUNCTION readProjectFromDisk(path AS STRING) AS (Project, BOOLEAN)
+    DIM emptyProj AS Project
     DIM data AS BYTES
     DIM rerr AS ERROR
     data, rerr = os.ReadFile(path)
-    IF rerr <> NIL THEN
-        m.Status = "open " + path + ": " + rerr.Error()
+    IF rerr <> NIL THEN RETURN emptyProj, FALSE
+    ' Try the new Project shape first.
+    DIM p AS Project
+    DIM jerr AS ERROR = encjson.Unmarshal(data, @p)
+    IF jerr = NIL AND LEN(p.Forms) > 0 THEN
+        ' Looks like a Project — every form must have a Name; the
+        ' codegen and tab system key on it. Auto-name any blanks.
+        DIM nameI AS INTEGER
+        FOR nameI = 0 TO LEN(p.Forms) - 1
+            IF p.Forms[nameI].Name = "" THEN
+                p.Forms[nameI].Name = "frm" + strconv.Itoa(nameI + 1)
+            END IF
+        NEXT nameI
+        IF p.StartForm = "" THEN p.StartForm = p.Forms[0].Name
+        RETURN p, TRUE
+    END IF
+    ' Fall back to legacy single-DesignForm and wrap in a Project.
+    DIM legacy AS DesignForm
+    DIM jerr2 AS ERROR = encjson.Unmarshal(data, @legacy)
+    IF jerr2 <> NIL THEN RETURN emptyProj, FALSE
+    IF legacy.Name = "" THEN legacy.Name = "frmStart"
+    DIM wrap AS Project
+    wrap.Forms     = APPEND(wrap.Forms, legacy)
+    wrap.StartForm = legacy.Name
+    RETURN wrap, TRUE
+END FUNCTION
+
+' findFormByName — locate a form within a project by Name. Returns
+' (form, idx, ok). idx is the position within proj.Forms.
+FUNCTION findFormByName(proj AS Project, name AS STRING) AS (DesignForm, INTEGER, BOOLEAN)
+    DIM empty AS DesignForm
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(proj.Forms) - 1
+        IF proj.Forms[i].Name = name THEN RETURN proj.Forms[i], i, TRUE
+    NEXT i
+    RETURN empty, 0 - 1, FALSE
+END FUNCTION
+
+' writeProjectToDisk — JSON-marshal `proj` to `path` (pretty-printed).
+SUB writeProjectToDisk(path AS STRING, proj AS Project, status AS POINTER TO STRING)
+    DIM data AS BYTES
+    DIM merr AS ERROR
+    data, merr = encjson.MarshalIndent(proj, "", "  ")
+    IF merr <> NIL THEN
+        ^status = "marshal failed: " + merr.Error()
         RETURN
     END IF
-    DIM f AS DesignForm
-    DIM jerr AS ERROR = encjson.Unmarshal(data, @f)
-    IF jerr <> NIL THEN
-        m.Status = "bad .dbproj: " + jerr.Error()
+    DIM werr AS ERROR = os.WriteFile(path, data, 0644)
+    IF werr <> NIL THEN
+        ^status = "save failed: " + werr.Error()
         RETURN
     END IF
-    ' Build a new Form tab. Blur whatever editor was active.
+    ^status = fmt.Sprintf("saved project %s (%d bytes)", path, LEN(data))
+END SUB
+
+' loadFormFromDisk — read the .dbproj at `path`, pick the start form
+' (or first form if no StartForm), open it as a new form tab. The
+' tab's FormName is set so subsequent saves merge back into the
+' right slot of the on-disk project.
+SUB loadFormFromDisk(m AS POINTER TO Model, path AS STRING)
+    DIM proj AS Project
+    DIM pok AS BOOLEAN
+    proj, pok = readProjectFromDisk(path)
+    IF NOT pok THEN
+        m.Status = "bad .dbproj: " + path
+        RETURN
+    END IF
+    IF LEN(proj.Forms) = 0 THEN
+        m.Status = "empty project: " + path
+        RETURN
+    END IF
+    DIM startName AS STRING = proj.StartForm
+    IF startName = "" THEN startName = proj.Forms[0].Name
+    openFormTab(m, path, proj, startName)
+END SUB
+
+' openFormTab — shared by loadFormFromDisk and (future) tree-click /
+' New Form. If a tab is already editing (path, formName), focus it
+' instead of stacking a duplicate. Otherwise create a fresh tab.
+SUB openFormTab(m AS POINTER TO Model, path AS STRING, proj AS Project, formName AS STRING)
+    DIM picked AS DesignForm
+    DIM idx AS INTEGER
+    DIM found AS BOOLEAN
+    picked, idx, found = findFormByName(proj, formName)
+    IF NOT found THEN
+        m.Status = "form '" + formName + "' not in " + path
+        RETURN
+    END IF
+    _ = idx
+    ' Reuse an existing tab if one's already on this (path, formName).
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(m.Tabs) - 1
+        IF m.Tabs[ti].Kind = "form" AND m.Tabs[ti].Path = path AND m.Tabs[ti].FormName = formName THEN
+            switchToTab(m, ti)
+            RETURN
+        END IF
+    NEXT ti
     IF hasActiveTab(^m) THEN m.Tabs[m.TabIdx].Editor.Blur()
     DIM t AS Tab
-    t.Path = path
-    t.Kind = "form"
-    t.Form = f
+    t.Path      = path
+    t.Kind      = "form"
+    t.Form      = picked
+    t.FormName  = formName
     t.SelWidget = 0 - 1
-    m.Tabs = APPEND(m.Tabs, t)
+    m.Tabs   = APPEND(m.Tabs, t)
     m.TabIdx = LEN(m.Tabs) - 1
     m.ViewMode = "form"
     setFocus(m, "tree")
     rebuildMenus(m)
     invalidateEditorCache(m)
-    m.Status = "loaded form " + path
+    m.Status = "loaded " + formName + " from " + path
 END SUB
 
-' saveForm — JSON-marshal the active tab's Form to its Path. Empty
-' path pops a Save As prompt (modal context "saveform").
+' saveForm — write the active form back to its .dbproj. For multi-
+' form projects this re-reads disk first so other forms aren't
+' clobbered; the active form replaces its slot in proj.Forms.
 SUB saveForm(m AS POINTER TO Model)
     IF NOT hasActiveTab(^m) THEN RETURN
     IF m.Tabs[m.TabIdx].Path = "" THEN
         showInputModal(m, "Save Form", "Path:", "form.dbproj", "saveform")
         RETURN
     END IF
-    DIM data AS BYTES
-    DIM merr AS ERROR
-    data, merr = encjson.MarshalIndent(m.Tabs[m.TabIdx].Form, "", "  ")
-    IF merr <> NIL THEN
-        m.Status = "marshal failed: " + merr.Error()
-        RETURN
+    DIM path AS STRING = m.Tabs[m.TabIdx].Path
+    DIM proj AS Project
+    DIM pok AS BOOLEAN
+    proj, pok = readProjectFromDisk(path)
+    IF NOT pok THEN
+        ' File doesn't exist yet (Save As) or was deleted — start a
+        ' fresh project containing just this tab's form.
+        proj.StartForm = m.Tabs[m.TabIdx].FormName
+        IF proj.StartForm = "" THEN proj.StartForm = "frmStart"
     END IF
-    DIM werr AS ERROR = os.WriteFile(m.Tabs[m.TabIdx].Path, data, 0644)
-    IF werr <> NIL THEN
-        m.Status = "save failed: " + werr.Error()
-        RETURN
+    ' Pick which form-slot to overwrite: by FormName if the tab has
+    ' one, else by Form.Name on the tab's working copy.
+    DIM key AS STRING = m.Tabs[m.TabIdx].FormName
+    IF key = "" THEN key = m.Tabs[m.TabIdx].Form.Name
+    IF key = "" THEN
+        key = "frmStart"
+        m.Tabs[m.TabIdx].Form.Name = key
     END IF
-    m.Status = fmt.Sprintf("saved form %s (%d bytes)", m.Tabs[m.TabIdx].Path, LEN(data))
+    ' Mirror the working name onto Form.Name so the on-disk slot
+    ' uses the same identifier.
+    m.Tabs[m.TabIdx].Form.Name = key
+    m.Tabs[m.TabIdx].FormName  = key
+    DIM existing AS DesignForm
+    DIM eidx AS INTEGER
+    DIM efound AS BOOLEAN
+    existing, eidx, efound = findFormByName(proj, key)
+    _ = existing
+    IF efound THEN
+        proj.Forms[eidx] = m.Tabs[m.TabIdx].Form
+    ELSE
+        proj.Forms = APPEND(proj.Forms, m.Tabs[m.TabIdx].Form)
+    END IF
+    IF proj.StartForm = "" THEN proj.StartForm = key
+    writeProjectToDisk(path, proj, @m.Status)
 END SUB
 
 ' -------------------------------------------------------------------------

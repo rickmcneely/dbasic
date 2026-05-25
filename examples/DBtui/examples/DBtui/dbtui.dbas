@@ -89,10 +89,14 @@ END TYPE
 ' -------------------------------------------------------------------------
 
 TYPE Tab
-    DIM Path        AS STRING            ' file path on disk
+    DIM Path        AS STRING            ' file path on disk (.dbproj for form tabs)
     DIM Kind        AS STRING            ' "code" (.dbas) or "form" (.dbproj)
     DIM Editor      AS Pad               ' per-tab editor state (code tabs)
-    DIM Form        AS DesignForm        ' per-tab form (form tabs)
+    DIM Form        AS DesignForm        ' per-tab form (form tabs); for multi-form
+                                         ' projects this is a working copy of one
+                                         ' entry from Project.Forms keyed by FormName
+    DIM FormName    AS STRING            ' which form within the project this tab edits
+                                         ' (empty for single-form / legacy .dbproj)
     DIM SelWidget   AS INTEGER           ' selected widget index in Form (-1 = none)
     DIM Dirty       AS BOOLEAN           ' buffer differs from disk
     DIM LoadedMtime AS time.Time         ' mtime when last read / saved
@@ -129,8 +133,23 @@ TYPE DesignWidget
 END TYPE
 
 TYPE DesignForm
-    DIM Title   AS STRING
+    DIM Name    AS STRING                ' identifier within the project (e.g. "frmStart")
+    DIM Title   AS STRING                ' window caption shown at runtime
     DIM Widgets AS []DesignWidget
+END TYPE
+
+' -------------------------------------------------------------------------
+' Project — a .dbproj is a Project document. Single-form .dbprojs are
+' the legacy shape; the loader auto-upgrades them by wrapping the
+' DesignForm in a Project with one entry.
+'
+' StartForm names the form Main() lands on at program start. Empty
+' StartForm defaults to Forms[0].Name (or "frmStart" for legacy).
+' -------------------------------------------------------------------------
+TYPE Project
+    DIM Name      AS STRING
+    DIM StartForm AS STRING
+    DIM Forms     AS []DesignForm
 END TYPE
 
 ' -------------------------------------------------------------------------
