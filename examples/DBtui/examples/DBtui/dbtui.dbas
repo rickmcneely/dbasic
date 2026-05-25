@@ -1175,6 +1175,10 @@ FUNCTION newModel() AS Model
     ' Default splitter widths mirror the original DBtui's defaults.
     m.LeftW  = 28
     m.RightW = 32
+    ' Diagnostics map needs explicit init — struct-field MAP OF
+    ' isn't auto-initialised (only local DIMs are).
+    DIM diagsInit AS MAP OF STRING TO []DiagLine
+    m.Diagnostics = diagsInit
     ' Restore persisted state (recent files, splitter widths, bottom
     ' pane visibility, list of files to reopen). Failures are silent
     ' — defaults are already in place.

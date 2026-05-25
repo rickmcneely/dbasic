@@ -33,6 +33,9 @@ DIM padKeywords AS MAP OF STRING TO BOOLEAN
 
 SUB initPadKeywords()
     IF LEN(padKeywords) > 0 THEN RETURN
+    ' Package-level MAP OF isn't auto-initialised — a local DIM is.
+    DIM freshKw AS MAP OF STRING TO BOOLEAN
+    padKeywords = freshKw
     DIM kw AS []STRING
     kw = APPEND(kw, "AND")
     kw = APPEND(kw, "ANY")
@@ -327,12 +330,16 @@ FUNCTION padMouseToRowCol(p AS Pad, mx AS INTEGER, my AS INTEGER, contentX AS IN
     RETURN row, col
 END FUNCTION
 
-' newPad — empty single-line buffer with sane defaults.
+' newPad — empty single-line buffer with sane defaults. The
+' FoldedRows map needs explicit init — DBasic only auto-initialises
+' MAP OF on local DIM, not on struct fields.
 FUNCTION newPad() AS Pad
     DIM p AS Pad
     p.Lines = APPEND(p.Lines, "")
     p.ViewW = 80
     p.ViewH = 24
+    DIM folds AS MAP OF INTEGER TO BOOLEAN
+    p.FoldedRows = folds
     RETURN p
 END FUNCTION
 
