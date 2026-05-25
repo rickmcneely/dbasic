@@ -105,13 +105,27 @@ END TYPE
 ' -------------------------------------------------------------------------
 
 TYPE DesignWidget
-    DIM Kind AS STRING       ' "Button" / "Label" / "TextInput" / "Checkbox"
+    DIM Kind AS STRING       ' Button / Label / TextInput / Checkbox /
+                             ' RadioButton / ComboBox / ListBox /
+                             ' ProgressBar / ScrollBar
     DIM Name AS STRING       ' identifier, e.g. "btnOK"
     DIM Text AS STRING       ' visible label
     DIM X    AS INTEGER      ' col offset within canvas
     DIM Y    AS INTEGER      ' row offset within canvas
     DIM W    AS INTEGER
     DIM H    AS INTEGER
+
+    ' --- kind-specific fields (zero-valued / ignored for kinds that
+    ' don't use them; JSON-marshalled in full — small price for
+    ' avoiding a kind-tagged sum type) -------------------------------
+    DIM Items    AS []STRING   ' ComboBox / ListBox initial entries
+    DIM Selected AS INTEGER    ' ComboBox / ListBox initial index
+    DIM Checked  AS BOOLEAN    ' RadioButton initial state
+    DIM Group    AS STRING     ' RadioButton mutex group (one selected per group)
+    DIM Min      AS INTEGER    ' ScrollBar / ProgressBar lower bound
+    DIM Max      AS INTEGER    ' ScrollBar / ProgressBar upper bound
+    DIM Value    AS INTEGER    ' ScrollBar / ProgressBar current value
+    DIM Orient   AS STRING     ' ScrollBar: "h" or "v"
 END TYPE
 
 TYPE DesignForm
@@ -1673,7 +1687,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM pRemain AS INTEGER = pBodyH - 1
             DIM pListH  AS INTEGER = pRemain / 2
             DIM pRelRow AS INTEGER = mcMsg.Y - 3
-            IF pRelRow >= 0 AND pRelRow < pListH - 2 AND pRelRow < 4 THEN
+            ' formPaletteKinds is the count of palette entries; hard-
+            ' coded here because CONSTs in INCLUDEd files aren't
+            ' visible to the main module's analyzer pass. Keep in
+            ' sync with formKindByIdx in internal/form.dbas.
+            IF pRelRow >= 0 AND pRelRow < pListH - 2 AND pRelRow < 9 THEN
                 ' Safety net: ViewMode might be "form" while the
                 ' active tab is still a code buffer (older sessions,
                 ' or a flow that flipped ViewMode without creating a
