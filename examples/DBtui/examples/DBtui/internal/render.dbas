@@ -688,17 +688,13 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
         ' backwards for the nearest decl at or above cursor row.
         DIM outlineP AS []OutlineEntry = scanOutline(edLines)
         DIM enclosing AS STRING = "(top-level)"
-        ' Downward FOR with STEP -1 has a codegen quirk that
-        ' indexes past the bounds on empty slices — DO WHILE
-        ' avoids it.
-        DIM oi AS INTEGER = LEN(outlineP) - 1
-        DO WHILE oi >= 0
+        DIM oi AS INTEGER
+        FOR oi = LEN(outlineP) - 1 TO 0 STEP 0 - 1
             IF outlineP[oi].Row <= edRow THEN
                 enclosing = outlineP[oi].Kind + " " + outlineP[oi].Name
-                EXIT DO
+                EXIT FOR
             END IF
-            oi = oi - 1
-        LOOP
+        NEXT oi
         ' Trim long names so they fit the pane.
         IF LEN(enclosing) > 22 THEN enclosing = Mid(enclosing, 1, 21) + "…"
         propRows = APPEND(propRows, "In     " + enclosing)

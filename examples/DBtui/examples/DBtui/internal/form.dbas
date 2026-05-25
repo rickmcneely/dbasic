@@ -234,17 +234,15 @@ END FUNCTION
 ' later (drawn-on-top) widgets win.
 FUNCTION formWidgetAt(m AS Model, cx AS INTEGER, cy AS INTEGER) AS INTEGER
     IF NOT hasActiveTab(m) THEN RETURN 0 - 1
-    ' Downward FOR with STEP -1 has a codegen quirk; DO WHILE instead.
-    DIM i AS INTEGER = LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1
-    DO WHILE i >= 0
+    DIM i AS INTEGER
+    FOR i = LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1 TO 0 STEP 0 - 1
         DIM x0 AS INTEGER
         DIM y0 AS INTEGER
         DIM x1 AS INTEGER
         DIM y1 AS INTEGER
         x0, y0, x1, y1 = widgetBox(m.Tabs[m.TabIdx].Form.Widgets[i])
         IF cx >= x0 AND cx < x1 AND cy >= y0 AND cy < y1 THEN RETURN i
-        i = i - 1
-    LOOP
+    NEXT i
     RETURN 0 - 1
 END FUNCTION
 
