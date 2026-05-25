@@ -1,0 +1,32 @@
+{
+  "Title": "Quit?",
+  "Widgets": [
+    {
+      "Kind": "Label",
+      "Name": "lblMsg",
+      "Text": "Unsaved changes will be lost. Discard?",
+      "X": 2,
+      "Y": 1,
+      "W": 40,
+      "H": 1
+    },
+    {
+      "Kind": "Button",
+      "Name": "btnDiscard",
+      "Text": "Discard",
+      "X": 2,
+      "Y": 4,
+      "W": 11,
+      "H": 1
+    },
+    {
+      "Kind": "Button",
+      "Name": "btnCancel",
+      "Text": "Cancel",
+      "X": 18,
+      "Y": 4,
+      "W": 10,
+      "H": 1
+    }
+  ]
+}

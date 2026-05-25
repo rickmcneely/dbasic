@@ -2649,6 +2649,42 @@ INCLUDE "internal/watch.dbas"
 ' -------------------------------------------------------------------------
 
 SUB Main()
+    ' Non-interactive codegen path: `dbtui gen FOO.dbproj` reads the
+    ' form, merges (or seeds) the partner FOO.dbas via mergeFormDbas,
+    ' writes it back. Useful for CI, scripted regen, and for shipping
+    ' worked examples without requiring the user to spin up the TUI.
+    DIM args AS []STRING = os.Args
+    IF LEN(args) >= 2 AND args[1] = "gen" THEN
+        IF LEN(args) < 3 THEN
+            fmt.Fprintln(os.Stderr, "usage: dbtui gen <form.dbproj>")
+            os.Exit(2)
+        END IF
+        DIM gpath AS STRING = args[2]
+        DIM gdata AS BYTES
+        DIM grerr AS ERROR
+        gdata, grerr = os.ReadFile(gpath)
+        IF grerr <> NIL THEN
+            fmt.Fprintln(os.Stderr, "read", gpath, ":", grerr.Error())
+            os.Exit(1)
+        END IF
+        DIM gform AS DesignForm
+        DIM gjerr AS ERROR = encjson.Unmarshal(gdata, @gform)
+        IF gjerr <> NIL THEN
+            fmt.Fprintln(os.Stderr, "parse", gpath, ":", gjerr.Error())
+            os.Exit(1)
+        END IF
+        DIM gstem AS STRING = strings.TrimSuffix(gpath, ".dbproj")
+        DIM goutPath AS STRING = gstem + ".dbas"
+        DIM gcode AS STRING = mergeFormDbas(gform, goutPath)
+        DIM gwerr AS ERROR = os.WriteFile(goutPath, Encode(gcode), 0644)
+        IF gwerr <> NIL THEN
+            fmt.Fprintln(os.Stderr, "write", goutPath, ":", gwerr.Error())
+            os.Exit(1)
+        END IF
+        fmt.Println("wrote", goutPath)
+        RETURN
+    END IF
+
     DIM model AS Model = newModel()
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(model, tea.WithoutSignalHandler())
     DIM final AS tea.Model
