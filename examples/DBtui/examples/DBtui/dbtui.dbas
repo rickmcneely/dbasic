@@ -240,11 +240,17 @@ TYPE Model
     DIM BrowseTitle    AS STRING
     DIM BrowseMode     AS STRING         ' "open" or "save"
     DIM BrowseDir      AS STRING         ' currently-listed directory (absolute)
-    DIM BrowseEntries  AS []BrowseEntry  ' "../" + dirs + files (sorted)
-    DIM BrowseSelected AS INTEGER        ' cursor into BrowseEntries
-    DIM BrowseScroll   AS INTEGER        ' top-of-list scroll offset
+    DIM BrowsePath     AS textinput.Model ' editable path field at the top
+    DIM BrowseDirs     AS []BrowseEntry  ' subdirectories of BrowseDir (".." first)
+    DIM BrowseFiles    AS []BrowseEntry  ' regular files in BrowseDir
+    DIM BrowseDirSel   AS INTEGER        ' cursor into BrowseDirs
+    DIM BrowseFileSel  AS INTEGER        ' cursor into BrowseFiles
+    DIM BrowseDirScrl  AS INTEGER        ' top-of-list scroll for dirs column
+    DIM BrowseFileScrl AS INTEGER        ' top-of-list scroll for files column
     DIM BrowseFilename AS textinput.Model ' editable filename (save mode)
-    DIM BrowseFocus    AS STRING         ' "list" / "filename" / "newdir"
+    DIM BrowseFocus    AS STRING         ' "path" / "dirs" / "files" /
+                                         ' "filename" / "newdir" /
+                                         ' "btnNew" / "btnOK" / "btnCancel"
     DIM BrowseNewDir   AS textinput.Model ' inline New Folder input
 
     ' Menubar state.
@@ -2749,6 +2755,8 @@ FUNCTION (m AS Model) View() AS tea.View
             DIM brL  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(br).X(bxOff).Y(byOff).Z(5)
             DIM brComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgL3, brL)
             full = brComp.Render()
+            browseOrigX = bxOff
+            browseOrigY = byOff
         END IF
     END IF
 
