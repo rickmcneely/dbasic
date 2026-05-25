@@ -1655,7 +1655,13 @@ FUNCTION padRenderLine(line AS STRING, scrollLeft AS INTEGER, contentW AS INTEGE
                     runMode = mode
                     runBuf = ch
                 END IF
-                visCol = visCol + 1
+                ' Only count visible cells, not bytes — UTF-8
+                ' continuation bytes (10xxxxxx) belong to the
+                ' previous char so they don't add a new cell.
+                DIM bv AS INTEGER = Asc(ch)
+                IF bv < 128 OR bv >= 192 THEN
+                    visCol = visCol + 1
+                END IF
             END IF
             col = col + 1
         NEXT j
