@@ -128,9 +128,11 @@ SUB dispatchAction(m AS POINTER TO Model, action AS STRING)
         RETURN
     END IF
     IF action = "view.form" THEN
-        m.ViewMode = "form"
-        setFocus(m, "tree")
-        m.Status = "form designer"
+        ' If the active tab is a code buffer, spin up a fresh
+        ' untitled form tab so palette clicks have somewhere to land.
+        ' Otherwise (no tabs, or already on a form tab) newUntitledForm
+        ' just flips ViewMode and updates the status line.
+        newUntitledForm(m)
         RETURN
     END IF
     IF action = "view.code" THEN

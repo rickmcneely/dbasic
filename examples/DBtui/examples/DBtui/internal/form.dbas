@@ -229,6 +229,40 @@ END FUNCTION
 ' Persistence — .dbproj is a JSON blob of DesignForm.
 ' -------------------------------------------------------------------------
 
+' newUntitledForm — open a fresh, in-memory form tab so the user has
+' a real canvas to drop palette widgets onto. The tab has no on-disk
+' path; the first Ctrl+S will pop the Save As modal ("saveform"
+' context). Called by the View → Form Designer action so picking
+' that menu item from a session full of code tabs Just Works instead
+' of silently appending widgets to a code tab's invisible Form field.
+SUB newUntitledForm(m AS POINTER TO Model)
+    ' Reuse the active tab if it's already a form — no point stacking
+    ' a duplicate blank form on top of one the user is working on.
+    IF hasActiveTab(^m) THEN
+        IF m.Tabs[m.TabIdx].Kind = "form" THEN
+            m.ViewMode = "form"
+            m.Status = "form designer — " + m.Tabs[m.TabIdx].Path
+            RETURN
+        END IF
+        ' Blur the previous tab's editor so only one cursor blinks.
+        m.Tabs[m.TabIdx].Editor.Blur()
+    END IF
+    DIM nf AS DesignForm
+    nf.Title = "frmStart"
+    DIM nt AS Tab
+    nt.Path      = ""
+    nt.Kind      = "form"
+    nt.Form      = nf
+    nt.SelWidget = 0 - 1
+    m.Tabs   = APPEND(m.Tabs, nt)
+    m.TabIdx = LEN(m.Tabs) - 1
+    m.ViewMode = "form"
+    setFocus(m, "tree")
+    rebuildMenus(m)
+    invalidateEditorCache(m)
+    m.Status = "new form — click a palette item to add widgets"
+END SUB
+
 ' loadFormFromDisk — parse `path` as a .dbproj JSON file into m.Form.
 ' On any error the status bar gets the diagnostic and the in-memory
 ' form is left alone. On success, ViewMode flips to "form".
