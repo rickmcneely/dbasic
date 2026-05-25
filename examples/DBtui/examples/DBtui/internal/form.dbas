@@ -470,25 +470,65 @@ END SUB
 ' value. dispatchModalClose for "wprop:*" applies the edit.
 ' -------------------------------------------------------------------------
 
+' propRowEditContext — returns (title, prompt, default, modalContext)
+' for the input modal that edits Properties row `rowIdx` on widget
+' `w`. Returns empty strings when the row index isn't editable
+' (row 0 = Kind, read-only) or doesn't exist for this kind.
+'
+' Row order MUST match the renderer in renderRightPane. Standard
+' rows 0-4 are the same for every kind; rows 5+ are kind-specific
+' and walked by a cursor so each kind gets a tight, dense layout.
+FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, STRING, STRING, STRING)
+    IF rowIdx = 1 THEN RETURN "Edit Name", "Name:", w.Name, "wprop:name"
+    IF rowIdx = 2 THEN RETURN "Edit Text", "Text:", w.Text, "wprop:text"
+    IF rowIdx = 3 THEN RETURN "Edit Position", "X, Y:", fmt.Sprintf("%d, %d", w.X, w.Y), "wprop:pos"
+    IF rowIdx = 4 THEN RETURN "Edit Size", "W, H:", fmt.Sprintf("%d, %d", w.W, w.H), "wprop:size"
+    DIM cursor AS INTEGER = 5
+    IF w.Kind = "Checkbox" OR w.Kind = "RadioButton" THEN
+        IF rowIdx = cursor THEN
+            DIM ckDef AS STRING = "false"
+            IF w.Checked THEN ckDef = "true"
+            RETURN "Edit Checked", "true/false:", ckDef, "wprop:checked"
+        END IF
+        cursor = cursor + 1
+    END IF
+    IF w.Kind = "RadioButton" THEN
+        IF rowIdx = cursor THEN RETURN "Edit Group", "Group:", w.Group, "wprop:group"
+        cursor = cursor + 1
+    END IF
+    IF w.Kind = "ComboBox" OR w.Kind = "ListBox" THEN
+        IF rowIdx = cursor THEN RETURN "Edit Items", "comma-separated:", strings.Join(w.Items, ", "), "wprop:items"
+        cursor = cursor + 1
+        IF rowIdx = cursor THEN RETURN "Edit Selected", "index (0-based):", strconv.Itoa(w.Selected), "wprop:selected"
+        cursor = cursor + 1
+    END IF
+    IF w.Kind = "ProgressBar" OR w.Kind = "ScrollBar" THEN
+        IF rowIdx = cursor THEN RETURN "Edit Min", "Min:", strconv.Itoa(w.Min), "wprop:min"
+        cursor = cursor + 1
+        IF rowIdx = cursor THEN RETURN "Edit Max", "Max:", strconv.Itoa(w.Max), "wprop:max"
+        cursor = cursor + 1
+        IF rowIdx = cursor THEN RETURN "Edit Value", "Value:", strconv.Itoa(w.Value), "wprop:value"
+        cursor = cursor + 1
+    END IF
+    IF w.Kind = "ScrollBar" THEN
+        IF rowIdx = cursor THEN RETURN "Edit Orient", "h or v:", w.Orient, "wprop:orient"
+    END IF
+    RETURN "", "", "", ""
+END FUNCTION
+
 ' formClickPropAt — dispatch a click on Properties row `rowIdx`
-' (0-based) into the right modal. Row layout matches the renderer:
-'   0  Kind        (read-only)
-'   1  Name        editable
-'   2  Text        editable
-'   3  Pos (X, Y)  editable
-'   4  Size (W, H) editable
+' (0-based) into the right input modal. Row 0 (Kind) is read-only;
+' any rowIdx that propRowEditContext returns "" for is also a no-op.
 SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
     IF m.Tabs[m.TabIdx].SelWidget < 0 OR m.Tabs[m.TabIdx].SelWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
     DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
-    IF rowIdx = 1 THEN
-        showInputModal(m, "Edit Name", "Name:", w.Name, "wprop:name")
-    ELSEIF rowIdx = 2 THEN
-        showInputModal(m, "Edit Text", "Text:", w.Text, "wprop:text")
-    ELSEIF rowIdx = 3 THEN
-        showInputModal(m, "Edit Position", "X, Y:", fmt.Sprintf("%d, %d", w.X, w.Y), "wprop:pos")
-    ELSEIF rowIdx = 4 THEN
-        showInputModal(m, "Edit Size", "W, H:", fmt.Sprintf("%d, %d", w.W, w.H), "wprop:size")
-    END IF
+    DIM ctxTitle AS STRING
+    DIM ctxPrompt AS STRING
+    DIM ctxDef AS STRING
+    DIM ctxKey AS STRING
+    ctxTitle, ctxPrompt, ctxDef, ctxKey = propRowEditContext(w, rowIdx)
+    IF ctxKey = "" THEN RETURN
+    showInputModal(m, ctxTitle, ctxPrompt, ctxDef, ctxKey)
 END SUB
 
 ' parseTwoInts — helper for Pos / Size edits. "X, Y" → (X, Y, ok).

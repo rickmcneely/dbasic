@@ -660,11 +660,36 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     IF m.ViewMode = "form" AND hasActiveTab(m) THEN
         IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
             DIM sw AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
+            ' Shared row order with propRowEditContext (form.dbas) so
+            ' a click on row N pops the modal for the same field the
+            ' user sees on that visual line.
             propRows = APPEND(propRows, "Kind   " + sw.Kind)
             propRows = APPEND(propRows, "Name   " + sw.Name)
             propRows = APPEND(propRows, "Text   " + sw.Text)
             propRows = APPEND(propRows, fmt.Sprintf("Pos    %d, %d", sw.X, sw.Y))
             propRows = APPEND(propRows, fmt.Sprintf("Size   %d x %d", sw.W, sw.H))
+            ' Kind-specific property rows. Order matches the FOR loop
+            ' in propRowEditContext so clicks dispatch correctly.
+            IF sw.Kind = "Checkbox" OR sw.Kind = "RadioButton" THEN
+                DIM ckStr AS STRING = "false"
+                IF sw.Checked THEN ckStr = "true"
+                propRows = APPEND(propRows, "Check  " + ckStr)
+            END IF
+            IF sw.Kind = "RadioButton" THEN
+                propRows = APPEND(propRows, "Group  " + sw.Group)
+            END IF
+            IF sw.Kind = "ComboBox" OR sw.Kind = "ListBox" THEN
+                propRows = APPEND(propRows, "Items  " + strings.Join(sw.Items, ", "))
+                propRows = APPEND(propRows, fmt.Sprintf("Selctd %d", sw.Selected))
+            END IF
+            IF sw.Kind = "ProgressBar" OR sw.Kind = "ScrollBar" THEN
+                propRows = APPEND(propRows, fmt.Sprintf("Min    %d", sw.Min))
+                propRows = APPEND(propRows, fmt.Sprintf("Max    %d", sw.Max))
+                propRows = APPEND(propRows, fmt.Sprintf("Value  %d", sw.Value))
+            END IF
+            IF sw.Kind = "ScrollBar" THEN
+                propRows = APPEND(propRows, "Orient " + sw.Orient)
+            END IF
         ELSE
             propRows = APPEND(propRows, "(no widget selected)")
             propRows = APPEND(propRows, "Click palette to add,")

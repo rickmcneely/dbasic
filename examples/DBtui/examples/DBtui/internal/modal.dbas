@@ -217,6 +217,90 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         END IF
         RETURN FALSE, NIL
     END IF
+    ' --- Kind-specific widget property edits --------------------
+    ' All gated on a valid SelWidget; if the user clicked Properties
+    ' for a widget then deleted it before committing the modal, the
+    ' edit silently no-ops.
+    IF m.ModalContext = "wprop:checked" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            DIM ckLo AS STRING = strings.ToLower(strings.TrimSpace(text))
+            DIM ckVal AS BOOLEAN = (ckLo = "true") OR (ckLo = "yes") OR (ckLo = "1") OR (ckLo = "t")
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Checked = ckVal
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:group" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Group = strings.TrimSpace(text)
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:items" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            DIM itParts AS []STRING = strings.Split(text, ",")
+            DIM itOut AS []STRING
+            DIM itI AS INTEGER
+            FOR itI = 0 TO LEN(itParts) - 1
+                DIM itTrim AS STRING = strings.TrimSpace(itParts[itI])
+                IF itTrim <> "" THEN itOut = APPEND(itOut, itTrim)
+            NEXT itI
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Items = itOut
+            ' Clamp Selected so it can't dangle past the new last index.
+            DIM selCur AS INTEGER = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Selected
+            IF selCur >= LEN(itOut) THEN
+                DIM newSel AS INTEGER = LEN(itOut) - 1
+                IF newSel < 0 THEN newSel = 0
+                m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Selected = newSel
+            END IF
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:selected" THEN
+        DIM selV AS INTEGER
+        DIM selErr AS ERROR
+        selV, selErr = strconv.Atoi(strings.TrimSpace(text))
+        IF selErr = NIL AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            IF selV < 0 THEN selV = 0
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Selected = selV
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:min" THEN
+        DIM mnV AS INTEGER
+        DIM mnErr AS ERROR
+        mnV, mnErr = strconv.Atoi(strings.TrimSpace(text))
+        IF mnErr = NIL AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Min = mnV
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:max" THEN
+        DIM mxV AS INTEGER
+        DIM mxErr AS ERROR
+        mxV, mxErr = strconv.Atoi(strings.TrimSpace(text))
+        IF mxErr = NIL AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Max = mxV
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:value" THEN
+        DIM vlV AS INTEGER
+        DIM vlErr AS ERROR
+        vlV, vlErr = strconv.Atoi(strings.TrimSpace(text))
+        IF vlErr = NIL AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Value = vlV
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:orient" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            DIM orLo AS STRING = strings.ToLower(strings.TrimSpace(text))
+            IF orLo = "h" OR orLo = "v" THEN
+                m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Orient = orLo
+            END IF
+        END IF
+        RETURN FALSE, NIL
+    END IF
     ' "watch:reload" — file-watcher prompt. Reload reads disk;
     ' Keep silences the prompt by refreshing LoadedMtime to the
     ' current disk mtime; Cancel does nothing (next tick will

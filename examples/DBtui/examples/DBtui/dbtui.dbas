@@ -1720,7 +1720,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM peListH  AS INTEGER = peRemain / 2
             DIM pePropTop AS INTEGER = 2 + peListH + 1
             DIM peRel AS INTEGER = mcMsg.Y - pePropTop
-            IF peRel >= 1 AND peRel <= 4 THEN
+            ' Property rows now extend past 4 for kind-specific fields
+            ' (Items, Group, Min/Max/Value, Orient, ...). formClickPropAt
+            ' silently no-ops for any row that isn't editable for this
+            ' widget kind, so the upper bound is just "anywhere in the
+            ' Properties panel's visible area".
+            IF peRel >= 1 AND peRel < peBodyH THEN
                 formClickPropAt(@m, peRel)
                 RETURN m, NIL
             END IF
