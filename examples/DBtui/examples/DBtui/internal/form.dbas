@@ -474,6 +474,45 @@ SUB writeProjectToDisk(path AS STRING, proj AS Project, status AS POINTER TO STR
     ^status = fmt.Sprintf("saved project %s (%d bytes)", path, LEN(data))
 END SUB
 
+' addFormToActiveProject — append a fresh DesignForm to the project
+' owned by the active tab, save the project to disk, and open the
+' new form in its own tab. Auto-names the new form frmN where N is
+' the next free index. When the active tab isn't a saved form,
+' falls back to newUntitledForm.
+SUB addFormToActiveProject(m AS POINTER TO Model)
+    IF NOT hasActiveTab(^m) OR m.Tabs[m.TabIdx].Kind <> "form" OR m.Tabs[m.TabIdx].Path = "" THEN
+        newUntitledForm(m)
+        RETURN
+    END IF
+    DIM path AS STRING = m.Tabs[m.TabIdx].Path
+    DIM proj AS Project
+    DIM pok  AS BOOLEAN
+    proj, pok = readProjectFromDisk(path)
+    IF NOT pok THEN
+        m.Status = "couldn't read " + path + " — saving the active form first might help"
+        RETURN
+    END IF
+    ' Find a free frmN slot.
+    DIM idx AS INTEGER = LEN(proj.Forms) + 1
+    DIM cand AS STRING = "frm" + strconv.Itoa(idx)
+    DO WHILE TRUE
+        DIM exists AS BOOLEAN = FALSE
+        DIM ci AS INTEGER
+        FOR ci = 0 TO LEN(proj.Forms) - 1
+            IF proj.Forms[ci].Name = cand THEN exists = TRUE
+        NEXT ci
+        IF NOT exists THEN EXIT DO
+        idx = idx + 1
+        cand = "frm" + strconv.Itoa(idx)
+    LOOP
+    DIM nf AS DesignForm
+    nf.Name  = cand
+    nf.Title = cand
+    proj.Forms = APPEND(proj.Forms, nf)
+    writeProjectToDisk(path, proj, @m.Status)
+    openFormTab(m, path, proj, cand)
+END SUB
+
 ' loadFormFromDisk — read the .dbproj at `path`, pick the start form
 ' (or first form if no StartForm), open it as a new form tab. The
 ' tab's FormName is set so subsequent saves merge back into the
@@ -708,6 +747,15 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "IMPORT " + qt + "fmt" + qt + "\n"
     s = s + "IMPORT " + qt + "os" + qt + "\n"
     s = s + "IMPORT " + qt + "strings" + qt + "\n"
+    s = s + "\n"
+    ' fmt is imported pre-emptively so user handlers can call
+    ' fmt.Println etc. without adding their own IMPORT line. Go
+    ' rejects unused imports, so reference it from an uncalled
+    ' SUB to keep the import live even when user code doesn't
+    ' touch fmt at all.
+    s = s + "SUB _dbtuiKeepFmtAlive()\n"
+    s = s + "    _ = fmt.Sprintf(" + qt + qt + ")\n"
+    s = s + "END SUB\n"
     s = s + "\n"
     ' --- Model: width/height/focus + one field per stateful widget --
     s = s + "TYPE Model\n"
@@ -1254,19 +1302,35 @@ FUNCTION mergeFormDbas(f AS DesignForm, existingPath AS STRING) AS STRING
     RETURN out
 END FUNCTION
 
-' doFormRun — F5 in form mode. Saves the .dbproj if a path is set,
-' regenerates the partner .dbas, hands the terminal to dbasic run.
+' formOutputPath — where doFormRun / gen writes the partner .dbas
+' for a form within a project. Multi-form projects get one .dbas per
+' form named <stem>_<formName>.dbas to keep their handler sections
+' separate; single-form projects keep the legacy <stem>.dbas path.
+FUNCTION formOutputPath(projectPath AS STRING, formName AS STRING, formCount AS INTEGER) AS STRING
+    DIM stem AS STRING = strings.TrimSuffix(projectPath, ".dbproj")
+    IF formCount > 1 AND formName <> "" THEN
+        RETURN stem + "_" + formName + ".dbas"
+    END IF
+    RETURN stem + ".dbas"
+END FUNCTION
+
+' doFormRun — F5 in form mode. Saves the .dbproj, regenerates the
+' partner .dbas for the ACTIVE form (per-form file in multi-form
+' projects), hands the terminal to dbasic run.
 FUNCTION doFormRun(m AS POINTER TO Model) AS tea.Cmd
     IF m.Tabs[m.TabIdx].Path = "" THEN
         m.Status = "save the form first (Ctrl+S)"
         RETURN NIL
     END IF
     saveForm(m)
-    DIM stem AS STRING = strings.TrimSuffix(m.Tabs[m.TabIdx].Path, ".dbproj")
-    DIM outPath AS STRING = stem + ".dbas"
-    ' Merge: regenerate the prelude (Model/Update/View/Main/dispatch),
-    ' then graft on whatever user code already lives below the marker
-    ' in `outPath`. First run on a brand-new form seeds empty stubs.
+    ' Pull form count from disk so single-form projects still emit
+    ' <stem>.dbas (legacy) and multi-form projects get per-form files.
+    DIM proj AS Project
+    DIM pok  AS BOOLEAN
+    proj, pok = readProjectFromDisk(m.Tabs[m.TabIdx].Path)
+    DIM nForms AS INTEGER = 1
+    IF pok THEN nForms = LEN(proj.Forms)
+    DIM outPath AS STRING = formOutputPath(m.Tabs[m.TabIdx].Path, m.Tabs[m.TabIdx].FormName, nForms)
     DIM code AS STRING = mergeFormDbas(m.Tabs[m.TabIdx].Form, outPath)
     DIM werr AS ERROR = os.WriteFile(outPath, Encode(code), 0644)
     IF werr <> NIL THEN

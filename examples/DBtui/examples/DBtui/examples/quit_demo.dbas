@@ -5,6 +5,10 @@ IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
 
+SUB _dbtuiKeepFmtAlive()
+    _ = fmt.Sprintf("")
+END SUB
+
 TYPE Model
     DIM Width  AS INTEGER
     DIM Height AS INTEGER

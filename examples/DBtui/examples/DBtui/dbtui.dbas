@@ -574,6 +574,7 @@ FUNCTION buildMenus(m AS Model) AS []MenuDef
     DIM viewItems AS []MenuItem
     viewItems = APPEND(viewItems, mkItem("(F)orm Designer  F7", "view.form"))
     viewItems = APPEND(viewItems, mkItem("(C)ode Editor    F7", "view.code"))
+    viewItems = APPEND(viewItems, mkItem("(N)ew Form          ", "view.newform"))
     menus = APPEND(menus, mkMenu("(V)iew", viewItems))
 
     DIM runItems AS []MenuItem
@@ -2686,21 +2687,33 @@ SUB Main()
             fmt.Fprintln(os.Stderr, "read", gpath, ":", grerr.Error())
             os.Exit(1)
         END IF
-        DIM gform AS DesignForm
-        DIM gjerr AS ERROR = encjson.Unmarshal(gdata, @gform)
-        IF gjerr <> NIL THEN
-            fmt.Fprintln(os.Stderr, "parse", gpath, ":", gjerr.Error())
+        _ = gdata
+        DIM gproj AS Project
+        DIM gpok  AS BOOLEAN
+        gproj, gpok = readProjectFromDisk(gpath)
+        IF NOT gpok THEN
+            fmt.Fprintln(os.Stderr, "parse", gpath, ": bad .dbproj")
             os.Exit(1)
         END IF
-        DIM gstem AS STRING = strings.TrimSuffix(gpath, ".dbproj")
-        DIM goutPath AS STRING = gstem + ".dbas"
-        DIM gcode AS STRING = mergeFormDbas(gform, goutPath)
-        DIM gwerr AS ERROR = os.WriteFile(goutPath, Encode(gcode), 0644)
-        IF gwerr <> NIL THEN
-            fmt.Fprintln(os.Stderr, "write", goutPath, ":", gwerr.Error())
+        IF LEN(gproj.Forms) = 0 THEN
+            fmt.Fprintln(os.Stderr, "empty project:", gpath)
             os.Exit(1)
         END IF
-        fmt.Println("wrote", goutPath)
+        ' Emit one .dbas per form. Single-form projects keep the
+        ' legacy <stem>.dbas path; multi-form projects fan out to
+        ' <stem>_<formName>.dbas.
+        DIM gfi AS INTEGER
+        FOR gfi = 0 TO LEN(gproj.Forms) - 1
+            DIM gform AS DesignForm = gproj.Forms[gfi]
+            DIM goutPath AS STRING = formOutputPath(gpath, gform.Name, LEN(gproj.Forms))
+            DIM gcode AS STRING = mergeFormDbas(gform, goutPath)
+            DIM gwerr AS ERROR = os.WriteFile(goutPath, Encode(gcode), 0644)
+            IF gwerr <> NIL THEN
+                fmt.Fprintln(os.Stderr, "write", goutPath, ":", gwerr.Error())
+                os.Exit(1)
+            END IF
+            fmt.Println("wrote", goutPath)
+        NEXT gfi
         RETURN
     END IF
 
