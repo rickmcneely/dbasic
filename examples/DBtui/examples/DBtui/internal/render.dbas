@@ -2,6 +2,73 @@
 ' Render helpers — each returns a styled string. View() composes them.
 ' -------------------------------------------------------------------------
 
+' -------------------------------------------------------------------------
+' Modal hit-rects — package-level, written by renderModal each frame so
+' the mouse handler in Update() can dispatch button clicks. View() is a
+' value receiver (the bubbletea Model contract), so it can't mutate m;
+' a small package-level scratchpad is the cleanest workaround.
+'
+' Coordinates are stored RELATIVE to the rendered modal's top-left;
+' View() also stashes the screen-origin where it placed the modal, so
+' the click handler converts (screen X, Y) → (modal X, Y) → button idx.
+' -------------------------------------------------------------------------
+TYPE ModalBtnHit
+    DIM X   AS INTEGER  ' column inside the modal (0-based, includes frame)
+    DIM Y   AS INTEGER  ' row    inside the modal
+    DIM W   AS INTEGER  ' visible width of the rendered button
+    DIM H   AS INTEGER  ' visible height (always 3 for the rounded border)
+    DIM Idx AS INTEGER  ' which ModalButtons[] entry this rect represents
+END TYPE
+
+DIM modalBtnRects   AS []ModalBtnHit
+DIM modalLastOrigX  AS INTEGER
+DIM modalLastOrigY  AS INTEGER
+
+' makeBgSpacer — build a `w`x`h` rectangle of spaces, every row
+' painted with `style`'s background. Used to fill the gaps between
+' modal buttons (and the left/right strips of the button row) with
+' the modal's own bg, so no untreated terminal-default cells leak
+' through the multi-row layout.
+FUNCTION makeBgSpacer(style AS lipgloss.Style, w AS INTEGER, h AS INTEGER) AS STRING
+    IF w <= 0 OR h <= 0 THEN RETURN ""
+    DIM row AS STRING = style.Render(strings.Repeat(" ", w))
+    DIM lines AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO h - 1
+        lines = APPEND(lines, row)
+    NEXT i
+    RETURN strings.Join(lines, "\n")
+END FUNCTION
+
+' recordModalBtnRects — compute each modal button's rect (in
+' modal-frame coordinates) and stash them in the package-level
+' scratchpad. View() shifts these by the modal origin and the
+' Update() mouse handler hit-tests them against MouseClickMsg.{X,Y}.
+'
+' Frame layout from renderModal: outer Border + Padding(1, 2) sits
+' OUTSIDE the inner content, so the inner content's (0, 0) lives at
+' modal (col 3, row 2). The vertical stack is titleLine (1 row),
+' spacer (1), bodyBlock (len(msgLines)), spacer (1), footer — so the
+' button row sits at relative Y = 2 + 1 + 1 + len(msgLines) + 1.
+SUB recordModalBtnRects(rendered AS []STRING, padL AS INTEGER, msgLines AS []STRING, btnH AS INTEGER)
+    DIM hits AS []ModalBtnHit
+    DIM x AS INTEGER = 3 + padL          ' frame border + left pad + center pad
+    DIM y AS INTEGER = 2 + 1 + 1 + LEN(msgLines) + 1  ' see comment above
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(rendered) - 1
+        DIM bw AS INTEGER = lipgloss.Width(rendered[i])
+        DIM hit AS ModalBtnHit
+        hit.X = x
+        hit.Y = y
+        hit.W = bw
+        hit.H = btnH
+        hit.Idx = i
+        hits = APPEND(hits, hit)
+        x = x + bw + 2  ' next button starts after this button + 2-col gap
+    NEXT i
+    modalBtnRects = hits
+END SUB
+
 ' padRight — right-pad s with `fill` characters so its visible width is
 ' `width` cells. Uses lipgloss.Width so multi-byte glyphs count as 1.
 FUNCTION padRight(s AS STRING, width AS INTEGER, fill AS STRING) AS STRING
@@ -750,6 +817,7 @@ FUNCTION renderModal(m AS Model) AS STRING
         DIM inputBox AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent))
         footer = inputBox.Render(m.ModalInput.View())
     ELSE
+        ' Render every button to its 3-row block.
         DIM rendered AS []STRING
         DIM bi AS INTEGER
         FOR bi = 0 TO LEN(m.ModalButtons) - 1
@@ -760,17 +828,48 @@ FUNCTION renderModal(m AS Model) AS STRING
                 rendered = APPEND(rendered, btnNormal.Render(lbl))
             END IF
         NEXT bi
+        ' Build a bg-painted multi-row separator the SAME height as the
+        ' buttons. Without this, JoinHorizontal pads "  " up to button
+        ' height using terminal-default cells — which show as raw black.
+        DIM btnH AS INTEGER = 3
+        IF LEN(rendered) > 0 THEN btnH = lipgloss.Height(rendered[0])
+        DIM bgPaint AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg))
+        DIM gapBlock AS STRING = makeBgSpacer(bgPaint, 2, btnH)
         ' DBasic doesn't support variadic spread (xs...), so dispatch
         ' by button count. Real dialogs only ever have 1–3 buttons.
         DIM btnRow AS STRING = ""
         IF LEN(rendered) = 1 THEN
             btnRow = rendered[0]
         ELSEIF LEN(rendered) = 2 THEN
-            btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1])
+            btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], gapBlock, rendered[1])
         ELSEIF LEN(rendered) >= 3 THEN
-            btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], "  ", rendered[1], "  ", rendered[2])
+            btnRow = lipgloss.JoinHorizontal(lipgloss.Top, rendered[0], gapBlock, rendered[1], gapBlock, rendered[2])
         END IF
-        footer = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Width(innerW).Align(lipgloss.Center).Render(btnRow)
+        ' Manually pad the row with bg-painted left/right strips —
+        ' lipgloss.Align(Center) only fills the FIRST line with the
+        ' style's background, leaving the other rows as raw cells.
+        DIM rowW AS INTEGER = lipgloss.Width(btnRow)
+        DIM padTotal AS INTEGER = innerW - rowW
+        IF padTotal < 0 THEN padTotal = 0
+        DIM padL AS INTEGER = padTotal / 2
+        DIM padR AS INTEGER = padTotal - padL
+        DIM leftStrip AS STRING = ""
+        DIM rightStrip AS STRING = ""
+        IF padL > 0 THEN leftStrip = makeBgSpacer(bgPaint, padL, btnH)
+        IF padR > 0 THEN rightStrip = makeBgSpacer(bgPaint, padR, btnH)
+        IF leftStrip = "" AND rightStrip = "" THEN
+            footer = btnRow
+        ELSEIF leftStrip = "" THEN
+            footer = lipgloss.JoinHorizontal(lipgloss.Top, btnRow, rightStrip)
+        ELSEIF rightStrip = "" THEN
+            footer = lipgloss.JoinHorizontal(lipgloss.Top, leftStrip, btnRow)
+        ELSE
+            footer = lipgloss.JoinHorizontal(lipgloss.Top, leftStrip, btnRow, rightStrip)
+        END IF
+        ' Record screen-relative button rectangles so mouse hit-test
+        ' can fire the same dispatch the keyboard path uses. X is in
+        ' modal-local coords; View() shifts by the modal origin.
+        recordModalBtnRects(rendered, padL, msgLines, btnH)
     END IF
 
     ' --- Spacer rows — explicit bg-filled blank line so the empty

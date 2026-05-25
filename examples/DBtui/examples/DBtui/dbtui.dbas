@@ -1452,6 +1452,34 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mcMsg, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mcMsg.Button = tea.MouseLeft THEN
+        ' (M) Modal click — takes priority over EVERY other hit target.
+        ' Convert the screen click into modal-local coords and walk the
+        ' rect list renderModal stored on each frame. A hit fires the
+        ' same dispatchModalClose path as the Enter-key handler.
+        IF m.ModalActive AND NOT m.ModalIsInput THEN
+            DIM mLocX AS INTEGER = mcMsg.X - modalLastOrigX
+            DIM mLocY AS INTEGER = mcMsg.Y - modalLastOrigY
+            DIM mbi AS INTEGER
+            FOR mbi = 0 TO LEN(modalBtnRects) - 1
+                DIM mr AS ModalBtnHit = modalBtnRects[mbi]
+                IF mLocX >= mr.X AND mLocX < mr.X + mr.W AND mLocY >= mr.Y AND mLocY < mr.Y + mr.H THEN
+                    DIM mPick AS STRING = ""
+                    IF mr.Idx >= 0 AND mr.Idx < LEN(m.ModalButtons) THEN
+                        mPick = m.ModalButtons[mr.Idx]
+                    END IF
+                    m.ModalIdx    = mr.Idx
+                    m.ModalActive = FALSE
+                    DIM mQuit AS BOOLEAN
+                    DIM mCmd  AS tea.Cmd
+                    mQuit, mCmd = dispatchModalClose(@m, mPick, "")
+                    IF mQuit THEN RETURN m, tea.Quit
+                    RETURN m, mCmd
+                END IF
+            NEXT mbi
+            ' Click inside the modal but not on a button → swallow,
+            ' don't let it leak to the panes underneath.
+            RETURN m, NIL
+        END IF
         ' (0) Splitter click — start a drag. The drag-handle is the
         '     column right at the left pane's right border (and the
         '     mirror column for the right pane). 2-cell tolerance so
@@ -1525,10 +1553,17 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         ' (3) Tabs caption row (y = 1) in code mode with open tabs.
         '     Clicking a tab also focuses the editor pane.
+        '
+        '     tabAtX / closeXOnTab work in MIDDLE-PANE-local coords
+        '     (column 1 = first tab's "[" glyph). The middle pane is
+        '     rendered at screen X = LeftW, so shift the click by that
+        '     much before hit-testing — otherwise wide left panes leave
+        '     every tab unclickable.
         IF mcMsg.Y = 1 AND m.ViewMode = "code" AND LEN(m.Tabs) > 0 THEN
-            DIM tabHit AS INTEGER = tabAtX(m, mcMsg.X)
+            DIM tabLocalX AS INTEGER = mcMsg.X - m.LeftW
+            DIM tabHit AS INTEGER = tabAtX(m, tabLocalX)
             IF tabHit >= 0 THEN
-                IF closeXOnTab(m, tabHit, mcMsg.X) THEN
+                IF closeXOnTab(m, tabHit, tabLocalX) THEN
                     _ = tryCloseTab(@m, tabHit)
                 ELSE
                     switchToTab(@m, tabHit)
@@ -2523,6 +2558,11 @@ FUNCTION (m AS Model) View() AS tea.View
             DIM mdLayer  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(md).X(xOff).Y(yOff).Z(2)
             DIM comp2 AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer2, mdLayer)
             full = comp2.Render()
+            ' Stash the modal's screen origin so the mouse handler in
+            ' Update() can convert MouseClickMsg.{X,Y} into modal-local
+            ' coords and hit-test the button rects renderModal stored.
+            modalLastOrigX = xOff
+            modalLastOrigY = yOff
         END IF
     END IF
 
