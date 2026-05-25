@@ -1902,30 +1902,71 @@ func (g *Generator) generateFor(stmt *parser.ForStatement) {
 	g.writeLine("}")
 }
 
-// isNegativeStep checks if the step expression is a negative value
+// isNegativeStep checks if the step expression evaluates to a negative
+// value. Handles literal negatives (`-1`), prefix-minus on a literal
+// (`-(1)`), and any compile-time-foldable integer arithmetic — most
+// importantly `0 - 1`, which is what BASIC code typically writes when
+// it can't use the prefix-minus form (e.g. parser context disallows it).
+// Float literals fall back to a direct sign check.
+//
+// When this returns true the FOR codegen flips the loop comparison
+// from `<=` to `>=`; an incorrect false here is the classic "downward
+// FOR runs once when the slice is empty" bug.
 func (g *Generator) isNegativeStep(step parser.Expression) bool {
 	if step == nil {
 		return false
 	}
-
-	// Check for prefix expression with minus operator (e.g., -1)
-	if prefix, ok := step.(*parser.PrefixExpression); ok {
-		if prefix.Operator == "-" {
-			return true
-		}
+	if v, ok := constFoldInt(step); ok {
+		return v < 0
 	}
-
-	// Check for negative integer literal
-	if intLit, ok := step.(*parser.IntegerLiteral); ok {
-		return intLit.Value < 0
-	}
-
-	// Check for negative float literal
 	if floatLit, ok := step.(*parser.FloatLiteral); ok {
 		return floatLit.Value < 0
 	}
-
 	return false
+}
+
+// constFoldInt walks an expression tree and, if every leaf is an
+// integer literal joined by +, -, *, / or unary +/-, returns the
+// folded value. Returns (0, false) for anything that touches an
+// identifier, function call, or non-int literal — those have to
+// stay as runtime expressions in the emitted Go.
+func constFoldInt(e parser.Expression) (int64, bool) {
+	switch n := e.(type) {
+	case *parser.IntegerLiteral:
+		return n.Value, true
+	case *parser.PrefixExpression:
+		v, ok := constFoldInt(n.Right)
+		if !ok {
+			return 0, false
+		}
+		switch n.Operator {
+		case "-":
+			return -v, true
+		case "+":
+			return v, true
+		}
+		return 0, false
+	case *parser.InfixExpression:
+		l, lok := constFoldInt(n.Left)
+		r, rok := constFoldInt(n.Right)
+		if !lok || !rok {
+			return 0, false
+		}
+		switch n.Operator {
+		case "+":
+			return l + r, true
+		case "-":
+			return l - r, true
+		case "*":
+			return l * r, true
+		case "/":
+			if r == 0 {
+				return 0, false
+			}
+			return l / r, true
+		}
+	}
+	return 0, false
 }
 
 func (g *Generator) generateWhile(stmt *parser.WhileStatement) {

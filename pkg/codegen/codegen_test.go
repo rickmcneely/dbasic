@@ -164,6 +164,41 @@ END SUB`
 	}
 }
 
+// Regression: `STEP 0 - 1` parses to an InfixExpression rather than a
+// PrefixExpression, so the original isNegativeStep returned false and
+// the loop condition stayed `<=`. On an empty slice (`LEN(xs) - 1` = -1)
+// the loop entered with i = -1 and panicked indexing xs.
+//
+// isNegativeStep now constant-folds the step expression, so any
+// compile-time-foldable negative — including `0 - 1`, `-(1)`, `2 - 5` —
+// flips the comparison to `>=`.
+func TestGenerateForLoopWithFoldedNegativeStep(t *testing.T) {
+	cases := []struct {
+		name string
+		step string
+	}{
+		{"binary subtraction", "0 - 1"},
+		{"prefix on parenthesized", "-(1)"},
+		{"nested arithmetic", "2 - 5"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := `SUB Main()
+    FOR i = 10 TO 0 STEP ` + tc.step + `
+        PRINT i
+    NEXT
+END SUB`
+			code := compile(input)
+			if !strings.Contains(code, "i >= 0") {
+				t.Errorf("expected downward loop comparison (i >= 0), got:\n%s", code)
+			}
+			if strings.Contains(code, "i <= 0;") {
+				t.Errorf("downward loop still using upward comparison (i <= 0), got:\n%s", code)
+			}
+		})
+	}
+}
+
 func TestGenerateWhileLoop(t *testing.T) {
 	input := `SUB Main()
     DIM x AS INTEGER = 10
