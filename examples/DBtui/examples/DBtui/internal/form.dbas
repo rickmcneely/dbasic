@@ -294,8 +294,13 @@ FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
         selGrid = APPEND(selGrid, srow)
     NEXT r
     ' Paint widgets. Multi-row widgets (ListBox, vertical ScrollBar)
-    ' return one string per row via widgetVisibleLines; the loop walks
-    ' each row and writes it byte-by-byte to the grid at (X, Y + i).
+    ' return one string per row via widgetVisibleLines.
+    '
+    ' Important: walk each row UTF-8 codepoint by codepoint, not byte
+    ' by byte. The new widgets use multi-byte glyphs (▶ ▲ ▼ │ █ ░);
+    ' splitting on bytes would store half-glyphs in adjacent grid
+    ' slots and visually shorten the rendered row, letting the
+    ' terminal-default bg leak through at the right edge.
     DIM wi AS INTEGER
     FOR wi = 0 TO LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1
         DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[wi]
@@ -304,15 +309,32 @@ FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
         DIM rj AS INTEGER
         FOR rj = 0 TO LEN(rows) - 1
             DIM line AS STRING = rows[rj]
-            DIM ci AS INTEGER
-            FOR ci = 0 TO LEN(line) - 1
-                DIM pCol AS INTEGER = w.X + ci
+            DIM bx AS INTEGER = 0    ' current byte offset into line
+            DIM cellCol AS INTEGER = 0  ' current visible cell offset
+            DO WHILE bx < LEN(line)
+                ' Decode the next UTF-8 codepoint's byte length from
+                ' the leading byte: 110xxxxx = 2, 1110xxxx = 3,
+                ' 11110xxx = 4, anything else = 1.
+                DIM lead AS INTEGER = Asc(Mid(line, bx + 1, 1))
+                DIM nb AS INTEGER = 1
+                IF lead >= 240 THEN
+                    nb = 4
+                ELSEIF lead >= 224 THEN
+                    nb = 3
+                ELSEIF lead >= 192 THEN
+                    nb = 2
+                END IF
+                IF bx + nb > LEN(line) THEN nb = LEN(line) - bx
+                DIM cell AS STRING = Mid(line, bx + 1, nb)
+                DIM pCol AS INTEGER = w.X + cellCol
                 DIM pRow AS INTEGER = w.Y + rj
                 IF pRow >= 0 AND pRow < gridH AND pCol >= 0 AND pCol < width THEN
-                    grid[pRow][pCol] = Mid(line, ci + 1, 1)
+                    grid[pRow][pCol] = cell
                     IF isSel THEN selGrid[pRow][pCol] = TRUE
                 END IF
-            NEXT ci
+                bx = bx + nb
+                cellCol = cellCol + 1
+            LOOP
         NEXT rj
     NEXT wi
     ' Render rows.
