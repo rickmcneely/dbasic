@@ -18,6 +18,7 @@ SUB showModal(m AS POINTER TO Model, title AS STRING, message AS STRING, buttons
     m.ModalIdx = 0
     m.ModalContext = context
     m.ModalIsInput = FALSE
+    m.ModalUserMoved = FALSE
     m.ModalActive = TRUE
 END SUB
 
@@ -36,6 +37,15 @@ SUB showInputModal(m AS POINTER TO Model, title AS STRING, prompt AS STRING, def
     m.ModalInput.CursorEnd()
     DIM fcmd AS tea.Cmd = m.ModalInput.Focus()
     _ = fcmd
+    ' Input modals get explicit OK / Cancel buttons too so the visual
+    ' affordances match the rest of the dialog family. Enter and OK
+    ' both commit; Esc, ✕, and Cancel all dismiss.
+    DIM ibtns AS []STRING
+    ibtns = APPEND(ibtns, "OK")
+    ibtns = APPEND(ibtns, "Cancel")
+    m.ModalButtons = ibtns
+    m.ModalIdx = 0
+    m.ModalUserMoved = FALSE
     m.ModalActive = TRUE
 END SUB
 

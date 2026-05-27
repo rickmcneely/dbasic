@@ -382,6 +382,18 @@ TYPE Model
     DIM ModalContext AS STRING
     DIM ModalIsInput AS BOOLEAN
     DIM ModalInput   AS textinput.Model
+    ' Modal positioning. ModalUserMoved=FALSE means "auto-center each
+    ' frame"; once the user drags the title bar we flip it to TRUE and
+    ' honour ModalX/ModalY instead. The ModalDrag* fields snapshot the
+    ' starting state of a move drag so motion events can compute a
+    ' delta from a stable anchor.
+    DIM ModalX          AS INTEGER
+    DIM ModalY          AS INTEGER
+    DIM ModalUserMoved  AS BOOLEAN
+    DIM ModalDragSX     AS INTEGER
+    DIM ModalDragSY     AS INTEGER
+    DIM ModalDragOX     AS INTEGER
+    DIM ModalDragOY     AS INTEGER
 END TYPE
 
 ' setExpanded — toggle whether `path` is in the TreeExpanded "set".
@@ -1426,6 +1438,14 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             clampSplitters(@m)
             RETURN m, NIL
         END IF
+        IF m.DragMode = "modalMove" THEN
+            m.ModalX = m.ModalDragOX + (mmMsg.X - m.ModalDragSX)
+            m.ModalY = m.ModalDragOY + (mmMsg.Y - m.ModalDragSY)
+            IF m.ModalX < 0 THEN m.ModalX = 0
+            IF m.ModalY < 0 THEN m.ModalY = 0
+            m.ModalUserMoved = TRUE
+            RETURN m, NIL
+        END IF
         ' Form-canvas move-drag: cursor moves the selected widget.
         IF m.DragMode = "formMove" AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
             DIM fmx AS INTEGER
@@ -1544,12 +1564,36 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     mcMsg, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mcMsg.Button = tea.MouseLeft THEN
         ' (M) Modal click — takes priority over EVERY other hit target.
-        ' Convert the screen click into modal-local coords and walk the
-        ' rect list renderModal stored on each frame. A hit fires the
-        ' same dispatchModalClose path as the Enter-key handler.
-        IF m.ModalActive AND NOT m.ModalIsInput THEN
+        ' Convert the screen click into modal-local coords. The top
+        ' border (ly = 0) hosts the ✕ close glyph (two cells in from
+        ' the right corner) and the move-drag handle (everywhere else
+        ' on that row). Button rects are checked next; remaining clicks
+        ' inside the modal rect are swallowed.
+        IF m.ModalActive THEN
             DIM mLocX AS INTEGER = mcMsg.X - modalLastOrigX
             DIM mLocY AS INTEGER = mcMsg.Y - modalLastOrigY
+            DIM inModal AS BOOLEAN = mLocX >= 0 AND mLocY >= 0 AND mLocX < modalLastW AND mLocY < modalLastH
+            IF inModal AND mLocY = 0 THEN
+                IF mLocX = modalLastW - 3 OR mLocX = modalLastW - 2 THEN
+                    ' ✕ close — treat as cancel for either modal kind.
+                    m.ModalActive = FALSE
+                    m.ModalIsInput = FALSE
+                    m.Status = "cancelled"
+                    RETURN m, NIL
+                END IF
+                ' Anywhere else on the top border begins a move drag.
+                m.DragMode = "modalMove"
+                m.ModalDragSX = mcMsg.X
+                m.ModalDragSY = mcMsg.Y
+                IF m.ModalUserMoved THEN
+                    m.ModalDragOX = m.ModalX
+                    m.ModalDragOY = m.ModalY
+                ELSE
+                    m.ModalDragOX = modalLastOrigX
+                    m.ModalDragOY = modalLastOrigY
+                END IF
+                RETURN m, NIL
+            END IF
             DIM mbi AS INTEGER
             FOR mbi = 0 TO LEN(modalBtnRects) - 1
                 DIM mr AS ModalBtnHit = modalBtnRects[mbi]
@@ -1557,6 +1601,24 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     DIM mPick AS STRING = ""
                     IF mr.Idx >= 0 AND mr.Idx < LEN(m.ModalButtons) THEN
                         mPick = m.ModalButtons[mr.Idx]
+                    END IF
+                    IF m.ModalIsInput THEN
+                        ' OK = commit typed text (Enter equivalent);
+                        ' Cancel (or anything else) = dismiss (Esc).
+                        IF mPick = "OK" THEN
+                            DIM typedIn AS STRING = m.ModalInput.Value()
+                            m.ModalActive = FALSE
+                            m.ModalIsInput = FALSE
+                            DIM iQuit AS BOOLEAN
+                            DIM iCmd  AS tea.Cmd
+                            iQuit, iCmd = dispatchModalClose(@m, "", typedIn)
+                            IF iQuit THEN RETURN m, tea.Quit
+                            RETURN m, iCmd
+                        END IF
+                        m.ModalActive = FALSE
+                        m.ModalIsInput = FALSE
+                        m.Status = "cancelled"
+                        RETURN m, NIL
                     END IF
                     m.ModalIdx    = mr.Idx
                     m.ModalActive = FALSE
@@ -1567,8 +1629,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     RETURN m, mCmd
                 END IF
             NEXT mbi
-            ' Click inside the modal but not on a button → swallow,
-            ' don't let it leak to the panes underneath.
+            _ = inModal
+            ' Any other click while a modal is up is swallowed —
+            ' nothing under the modal should be reachable.
             RETURN m, NIL
         END IF
         ' (0) Splitter click — start a drag. The drag-handle is the
@@ -2733,14 +2796,26 @@ FUNCTION (m AS Model) View() AS tea.View
     END IF
 
     ' --- Modal overlay (drawn last so it sits on top of the
-    '     FileDialog when both are active).
+    '     FileDialog when both are active). Auto-centered until the
+    '     user drags the title bar; after that we honour m.ModalX/Y.
     IF m.ModalActive THEN
         DIM md AS STRING = renderModal(m)
         IF md <> "" THEN
             DIM mdW AS INTEGER = lipgloss.Width(md)
             DIM mdH AS INTEGER = lipgloss.Height(md)
-            DIM xOff AS INTEGER = (w - mdW) / 2
-            DIM yOff AS INTEGER = (h - mdH) / 2
+            DIM xOff AS INTEGER
+            DIM yOff AS INTEGER
+            IF m.ModalUserMoved THEN
+                xOff = m.ModalX
+                yOff = m.ModalY
+            ELSE
+                xOff = (w - mdW) / 2
+                yOff = (h - mdH) / 2
+            END IF
+            IF xOff < 0 THEN xOff = 0
+            IF yOff < 0 THEN yOff = 0
+            IF xOff + mdW > w THEN xOff = w - mdW
+            IF yOff + mdH > h THEN yOff = h - mdH
             IF xOff < 0 THEN xOff = 0
             IF yOff < 0 THEN yOff = 0
             DIM bgLayer2 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)

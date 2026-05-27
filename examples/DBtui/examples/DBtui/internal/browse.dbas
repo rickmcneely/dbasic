@@ -768,15 +768,17 @@ END FUNCTION
 ' ----------------------------------------------------------------------
 
 ' fdSide — wrap an inner-row body with the left + right side borders so
-' every interior row lines up regardless of what it contains.
+' every interior row lines up regardless of what it contains. The cell
+' under the border char is painted cBg so the whole frame sits on the
+' same indigo surface as the rest of the dialog.
 FUNCTION fdSide(innerBody AS STRING) AS STRING
-    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder)).Background(lipgloss.Color(cBg))
     RETURN borderStyle.Render("│") + innerBody + borderStyle.Render("│")
 END FUNCTION
 
 FUNCTION fdFieldRow(label AS STRING, content AS STRING, focused AS BOOLEAN, innerW AS INTEGER) AS STRING
-    DIM labelStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
-    DIM fieldStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg))
+    DIM labelStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM fieldStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cBg))
     DIM fieldFocused AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color("#2d4f67"))
     DIM useStyle AS lipgloss.Style = fieldStyle
     IF focused THEN useStyle = fieldFocused
@@ -789,11 +791,11 @@ FUNCTION fdFieldRow(label AS STRING, content AS STRING, focused AS BOOLEAN, inne
 END FUNCTION
 
 FUNCTION fdListsRows(d AS FileDialog, innerW AS INTEGER) AS []STRING
-    DIM headStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
-    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
-    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg))
+    DIM headStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder)).Background(lipgloss.Color(cBg))
+    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cBg))
     DIM cursorStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color("#2d4f67")).Bold(TRUE)
-    DIM dimStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    DIM dimStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder)).Background(lipgloss.Color(cBg))
 
     DIM colW AS INTEGER = fdSplitColW(d, innerW)
     DIM colWR AS INTEGER = innerW - 1 - colW
@@ -857,8 +859,9 @@ FUNCTION fdListsRows(d AS FileDialog, innerW AS INTEGER) AS []STRING
 END FUNCTION
 
 FUNCTION fdButtonsRow(d AS FileDialog, innerW AS INTEGER) AS STRING
-    DIM btnStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg))
+    DIM btnStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cBg))
     DIM btnFocused AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color("#2d4f67")).Bold(TRUE)
+    DIM bgFill AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg))
 
     DIM nwLabel AS STRING = "[ New Folder ]"
     DIM okLabel AS STRING = "[ OK ]"
@@ -884,22 +887,22 @@ FUNCTION fdButtonsRow(d AS FileDialog, innerW AS INTEGER) AS STRING
     DIM rightW AS INTEGER = lipgloss.Width(nwLabel) + 2 + lipgloss.Width(okLabel) + 2 + lipgloss.Width(cnLabel) + 1
     DIM pad AS INTEGER = innerW - rightW
     IF pad < 0 THEN pad = 0
-    RETURN fdSide(strings.Repeat(" ", pad) + nwText + "  " + okText + "  " + cnText + " ")
+    RETURN fdSide(bgFill.Render(strings.Repeat(" ", pad)) + nwText + bgFill.Render("  ") + okText + bgFill.Render("  ") + cnText + bgFill.Render(" "))
 END FUNCTION
 
 ' fdInnerHr — horizontal rule between sections, using ├──┤ T-connectors
 ' so the inner separators tie cleanly into the side borders.
 FUNCTION fdInnerHr(innerW AS INTEGER) AS STRING
-    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder)).Background(lipgloss.Color(cBg))
     RETURN borderStyle.Render("├" + strings.Repeat("─", innerW) + "┤")
 END FUNCTION
 
 ' fdTopBorder — top border with the title embedded (matching titledBox)
 ' and a ✕ close glyph one cell in from the right edge.
 FUNCTION fdTopBorder(title AS STRING, innerW AS INTEGER) AS STRING
-    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
-    DIM titleStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Italic(TRUE)
-    DIM closeStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder)).Background(lipgloss.Color(cBg))
+    DIM titleStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg)).Bold(TRUE).Italic(TRUE)
+    DIM closeStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cHotkey)).Background(lipgloss.Color(cBg)).Bold(TRUE)
     DIM titleLen AS INTEGER = lipgloss.Width(" " + title + " ")
     ' Layout: ╭─ Title ─…─ ✕ ╮  — innerW dashes total; subtract title
     ' + " ✕ " (3 cells) + leading "─" (1 cell).
@@ -911,8 +914,8 @@ END FUNCTION
 ' fdBotBorder — bottom border with the ◢ resize handle replacing the
 ' usual `╯` corner.
 FUNCTION fdBotBorder(innerW AS INTEGER) AS STRING
-    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
-    DIM grabStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent))
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder)).Background(lipgloss.Color(cBg))
+    DIM grabStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg))
     RETURN borderStyle.Render("╰" + strings.Repeat("─", innerW)) + grabStyle.Render("◢")
 END FUNCTION
 
