@@ -48,16 +48,26 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         m.Status = "quit cancelled"
         RETURN FALSE, NIL
     END IF
-    ' "newfolder" — typed name from the File Browser's New Folder
-    ' button. Creates the directory inside the browser's current
-    ' BrowseDir and refreshes the listing so the new entry appears
-    ' immediately. The browser stays active beneath the modal.
+    ' "newfolder" — typed name from the FileDialog's New Folder
+    ' button. Creates the directory inside the dialog's current
+    ' CurDir and re-reads so the new entry appears immediately.
     IF m.ModalContext = "newfolder" THEN
-        IF m.BrowseActive THEN
-            browseCreateDir(m, text)
-            ' Move focus back to the dirs column so the user sees
-            ' the new folder selected on next interaction.
-            m.BrowseFocus = "dirs"
+        IF m.FileDlg.Active THEN
+            DIM nfName AS STRING = strings.TrimSpace(text)
+            IF nfName <> "" THEN
+                DIM nfFull AS STRING = filepath.Join(m.FileDlg.CurDir, nfName)
+                DIM nfErr AS ERROR = os.Mkdir(nfFull, 0755)
+                IF nfErr <> NIL THEN
+                    m.Status = "mkdir " + nfFull + ": " + nfErr.Error()
+                ELSE
+                    m.Status = "created " + nfFull
+                    m.FileDlg.ReadDir()
+                    ' 2 = FdFocusFolders. CONST in browse.dbas isn't
+                    ' visible to this module's analyzer pass (INCLUDE
+                    ' order). Keep this literal in sync with browse.dbas.
+                    m.FileDlg.Focus = 2
+                END IF
+            END IF
         END IF
         RETURN FALSE, NIL
     END IF

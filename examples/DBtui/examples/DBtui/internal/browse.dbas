@@ -1,745 +1,1035 @@
 
 ' -------------------------------------------------------------------------
-' File browser modal — used for New Project / Open / Save As / Save Form.
+' FileDialog — charm-based file picker. Built entirely on top of the
+' charmbracelet stack (bubbles/textinput for editable fields, lipgloss
+' for framing + row styling). The Folders/Files lists are hand-managed
+' cursor+offset rows styled with lipgloss, matching the established
+' DBtui pattern in quickopen.dbas / palette.dbas.
 '
-' Layout matches a traditional Windows / DOS file dialog:
+' Two layouts:
+'   - open mode: Title, Path, Folders/Files, Buttons
+'   - save mode: Title, Path, Filename, Folders/Files, Buttons
 '
-'   ┌─ <title> ────────────────────────────────────────┐
-'   │ Path: [/home/zditech/DBasic/...                ] │
-'   │                                                  │
-'   │ Folders:               Files:                    │
-'   │  ../                    dbtui                    │
-'   │  examples/              dbtui.dbas               │
-'   │  internal/              crap.dbas                │
-'   │  ...                                             │
-'   │                                                  │
-'   │ Name: [_______________________________________ ] │  (save mode)
-'   │                                                  │
-'   │ [ New Folder ] [ Open / Save ] [ Cancel ]        │
-'   │                                                  │
-'   │ Tab cycle  Enter activate  Esc cancel            │
-'   └──────────────────────────────────────────────────┘
-'
-' While m.BrowseActive is TRUE, Update routes every key/mouse event
-' through here before the editor sees anything. Once the user
-' commits (Open/Save button, Enter on a file row, Enter on filename
-' input), the chosen path is fed back through dispatchModalClose via
-' BrowseContext — so "open" still calls openFile, "saveas" still
-' kicks off the overwrite-confirm flow, etc.
+' The host wires it via openFileDialog() (sets Active + records the
+' commit context) and routes input through fileDialogUpdate() while
+' Active is TRUE. On commit, the picked path is fed back through
+' dispatchModalClose with the original context — so "open", "saveas",
+' "newproject", "openproject", "saveform" all keep working.
 ' -------------------------------------------------------------------------
 
-' Button hit-rects for the bottom row — populated by renderBrowser
-' each frame so the mouse handler can hit-test them in screen coords.
-TYPE BrowseBtnHit
-    DIM X   AS INTEGER  ' relative to browser origin
-    DIM Y   AS INTEGER
-    DIM W   AS INTEGER
-    DIM H   AS INTEGER
-    DIM Key AS STRING   ' "btnNew" / "btnOK" / "btnCancel"
+' Focus areas. Tab cycles forward in declared order; Name is skipped
+' in open mode (no filename field is drawn).
+CONST FdFocusPath    AS INTEGER = 0
+CONST FdFocusName    AS INTEGER = 1
+CONST FdFocusFolders AS INTEGER = 2
+CONST FdFocusFiles   AS INTEGER = 3
+CONST FdFocusNew     AS INTEGER = 4
+CONST FdFocusOK      AS INTEGER = 5
+CONST FdFocusCancel  AS INTEGER = 6
+CONST FdFocusCount   AS INTEGER = 7
+
+TYPE FileDialog
+    DIM Active   AS BOOLEAN
+    DIM Title    AS STRING
+    DIM Mode     AS STRING        ' "open" | "save"
+    DIM Mask     AS STRING        ' glob filter on files, e.g. "*.dbproj"
+    DIM Context  AS STRING        ' dispatchModalClose key
+    DIM CurDir   AS STRING        ' canonical resolved directory
+    DIM Folders  AS []STRING
+    DIM Files    AS []STRING
+    DIM PathInput AS textinput.Model ' editable directory path
+    DIM NameInput AS textinput.Model ' filename (save mode only)
+    DIM Focus    AS INTEGER
+    DIM FoldCur  AS INTEGER
+    DIM FoldOff  AS INTEGER
+    DIM FileCur  AS INTEGER
+    DIM FileOff  AS INTEGER
+    DIM X        AS INTEGER       ' screen origin (set by Open / Render)
+    DIM Y        AS INTEGER
+    DIM Width    AS INTEGER
+    DIM Height   AS INTEGER
+    DIM FoldColW AS INTEGER       ' user-adjustable Folders column width
+                                  ' (0 = auto-compute on render)
+    DIM RequestNewFolder AS BOOLEAN ' raised by the New Folder button;
+                                     ' fileDialogUpdate consumes it and
+                                     ' pops a "newfolder" input modal.
+    ' Drag state. "" = idle, "move" = title-bar drag (relocate the
+    ' dialog), "resize" = bottom-right corner drag, "split" =
+    ' Folders|Files column divider drag. The DragStartW/H fields
+    ' double as DragStartDlgX/Y while a move is in progress (they're
+    ' only meaningful to resize otherwise).
+    DIM Drag           AS STRING
+    DIM DragStartX     AS INTEGER
+    DIM DragStartY     AS INTEGER
+    DIM DragStartW     AS INTEGER
+    DIM DragStartH     AS INTEGER
+    DIM DragStartSplit AS INTEGER
 END TYPE
 
-' Per-row hit-rects for dirs and files columns. Same modal-relative
-' coords; mouse handler shifts by browseOrigX/Y.
-TYPE BrowseRowHit
-    DIM X   AS INTEGER
-    DIM Y   AS INTEGER
-    DIM W   AS INTEGER
-    DIM Col AS STRING   ' "dirs" / "files"
-    DIM Idx AS INTEGER  ' index into BrowseDirs / BrowseFiles
-END TYPE
+' ----------------------------------------------------------------------
+' Helpers
+' ----------------------------------------------------------------------
 
-DIM browseBtnRects AS []BrowseBtnHit
-DIM browseRowRects AS []BrowseRowHit
-DIM browseOrigX    AS INTEGER
-DIM browseOrigY    AS INTEGER
+FUNCTION fdDirOf(p AS STRING) AS STRING
+    DIM dd AS STRING = filepath.Dir(p)
+    IF dd = "" THEN RETURN "."
+    RETURN dd
+END FUNCTION
 
-' Geometry constants — kept in one place so render + hit-test agree.
-CONST browseInnerW AS INTEGER = 64
-CONST browseListH  AS INTEGER = 12
-CONST browseColW   AS INTEGER = 28
+FUNCTION fdTruncR(s AS STRING, w AS INTEGER) AS STRING
+    IF lipgloss.Width(s) <= w THEN RETURN s
+    IF w <= 1 THEN RETURN "…"
+    DIM out AS STRING = s
+    DO WHILE lipgloss.Width(out + "…") > w AND LEN(out) > 0
+        out = Mid(out, 1, LEN(out) - 1)
+    LOOP
+    RETURN out + "…"
+END FUNCTION
 
-' browseRefresh — re-list BrowseDir into BrowseDirs + BrowseFiles.
-' Dirs are alphabetical with ".." injected at the top (unless we're
-' already at filesystem root). Files are alphabetical. Dotfiles are
-' hidden. Clamps selections / scrolls back into range.
-SUB browseRefresh(m AS POINTER TO Model)
-    DIM dir AS STRING = m.BrowseDir
-    IF dir = "" THEN dir = "."
-    DIM dirs  AS []BrowseEntry
-    DIM files AS []BrowseEntry
-    IF dir <> "/" THEN
-        DIM up AS BrowseEntry
-        up.Name  = ".."
-        up.IsDir = TRUE
-        dirs = APPEND(dirs, up)
-    END IF
-    DIM raw AS []os.DirEntry
-    DIM rerr AS ERROR
-    raw, rerr = os.ReadDir(dir)
-    IF rerr <> NIL THEN
-        m.BrowseDirs    = dirs
-        m.BrowseFiles   = files
-        m.BrowseDirSel  = 0
-        m.BrowseFileSel = 0
-        m.Status = "browse " + dir + ": " + rerr.Error()
-        RETURN
-    END IF
-    DIM ri AS INTEGER
-    FOR ri = 0 TO LEN(raw) - 1
-        DIM nm AS STRING = raw[ri].Name()
-        IF strings.HasPrefix(nm, ".") THEN
-            ' skip hidden
-        ELSE
-            DIM e AS BrowseEntry
-            e.Name  = nm
-            e.IsDir = raw[ri].IsDir()
-            IF e.IsDir THEN
-                dirs = APPEND(dirs, e)
+' ----------------------------------------------------------------------
+' Directory scanning
+' ----------------------------------------------------------------------
+
+SUB (d AS POINTER TO FileDialog) ReadDir()
+    DIM folders AS []STRING
+    DIM files   AS []STRING
+    IF d.CurDir <> "/" THEN folders = APPEND(folders, "..")
+    DIM entries AS []os.DirEntry
+    DIM err AS ERROR
+    entries, err = os.ReadDir(d.CurDir)
+    IF err = NIL THEN
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(entries) - 1
+            DIM e AS os.DirEntry = entries[i]
+            DIM nm AS STRING = e.Name()
+            IF strings.HasPrefix(nm, ".") THEN
+                ' skip dotfiles
+            ELSEIF e.IsDir() THEN
+                folders = APPEND(folders, nm)
             ELSE
-                files = APPEND(files, e)
-            END IF
-        END IF
-    NEXT ri
-    m.BrowseDirs  = dirs
-    m.BrowseFiles = files
-    IF m.BrowseDirSel >= LEN(dirs) THEN m.BrowseDirSel = LEN(dirs) - 1
-    IF m.BrowseDirSel < 0 THEN m.BrowseDirSel = 0
-    IF m.BrowseFileSel >= LEN(files) THEN m.BrowseFileSel = LEN(files) - 1
-    IF m.BrowseFileSel < 0 THEN m.BrowseFileSel = 0
-    IF m.BrowseDirScrl < 0 THEN m.BrowseDirScrl = 0
-    IF m.BrowseFileScrl < 0 THEN m.BrowseFileScrl = 0
-    ' Refresh the path field's display so it tracks navigation.
-    m.BrowsePath.SetValue(dir)
-END SUB
-
-' openBrowser — show the browser overlay. context = existing modal
-' context key (so dispatchModalClose handles the commit). mode =
-' "open" or "save". initialDir = where to start listing.
-' initialFilename = pre-fills the filename input (save mode).
-SUB openBrowser(m AS POINTER TO Model, context AS STRING, title AS STRING, mode AS STRING, initialDir AS STRING, initialFilename AS STRING)
-    m.BrowseActive  = TRUE
-    m.BrowseContext = context
-    m.BrowseTitle   = title
-    m.BrowseMode    = mode
-    DIM dir AS STRING = initialDir
-    IF dir = "" THEN
-        DIM cwd AS STRING
-        DIM cerr AS ERROR
-        cwd, cerr = os.Getwd()
-        IF cerr <> NIL THEN cwd = "."
-        dir = cwd
-    END IF
-    m.BrowseDir       = dir
-    m.BrowseDirSel    = 0
-    m.BrowseFileSel   = 0
-    m.BrowseDirScrl   = 0
-    m.BrowseFileScrl  = 0
-    DIM pti AS textinput.Model = textinput.New()
-    pti.SetValue(dir)
-    m.BrowsePath = pti
-    DIM fti AS textinput.Model = textinput.New()
-    fti.SetValue(initialFilename)
-    m.BrowseFilename = fti
-    DIM ndi AS textinput.Model = textinput.New()
-    m.BrowseNewDir = ndi
-    ' Default focus: filename in save mode, files-column in open mode.
-    IF mode = "save" THEN
-        m.BrowseFocus = "filename"
-        DIM fcmd AS tea.Cmd = m.BrowseFilename.Focus()
-        _ = fcmd
-    ELSE
-        m.BrowseFocus = "files"
-    END IF
-    browseRefresh(m)
-    browseSyncTextFocus(m)
-END SUB
-
-' closeBrowser — tear down the overlay without committing.
-SUB closeBrowser(m AS POINTER TO Model)
-    m.BrowseActive = FALSE
-    m.BrowseFocus  = ""
-END SUB
-
-' browseSyncTextFocus — make the textinput.Model that maps to the
-' current BrowseFocus actively focused (so its cursor blinks and
-' it receives key events) and blur the others. Call after every
-' focus change. Also sets a sensible Width so the cursor row fits
-' inside the inner column.
-SUB browseSyncTextFocus(m AS POINTER TO Model)
-    DIM fieldW AS INTEGER = browseInnerW - 10
-    IF fieldW < 10 THEN fieldW = 10
-    m.BrowsePath.SetWidth(fieldW)
-    m.BrowseFilename.SetWidth(fieldW)
-    IF m.BrowseFocus = "path" THEN
-        DIM pFocusCmd AS tea.Cmd = m.BrowsePath.Focus()
-        _ = pFocusCmd
-    ELSE
-        m.BrowsePath.Blur()
-    END IF
-    IF m.BrowseFocus = "filename" THEN
-        DIM fFocusCmd AS tea.Cmd = m.BrowseFilename.Focus()
-        _ = fFocusCmd
-    ELSE
-        m.BrowseFilename.Blur()
-    END IF
-END SUB
-
-' browseJoinPath — join `child` onto `dir`. Handles ".." by popping
-' the last segment. Trims duplicated slashes.
-FUNCTION browseJoinPath(dir AS STRING, child AS STRING) AS STRING
-    IF child = ".." THEN
-        IF dir = "" OR dir = "/" THEN RETURN "/"
-        DIM trimmed AS STRING = dir
-        IF strings.HasSuffix(trimmed, "/") AND LEN(trimmed) > 1 THEN
-            trimmed = Mid(trimmed, 1, LEN(trimmed) - 1)
-        END IF
-        DIM slash AS INTEGER = strings.LastIndex(trimmed, "/")
-        IF slash <= 0 THEN RETURN "/"
-        RETURN Mid(trimmed, 1, slash)
-    END IF
-    IF dir = "" THEN RETURN child
-    IF strings.HasSuffix(dir, "/") THEN RETURN dir + child
-    RETURN dir + "/" + child
-END FUNCTION
-
-' browseSetDir — switch BrowseDir to `path`, refresh entries.
-' Resets selections + scroll so the new listing starts at the top.
-SUB browseSetDir(m AS POINTER TO Model, path AS STRING)
-    m.BrowseDir = path
-    m.BrowseDirSel   = 0
-    m.BrowseFileSel  = 0
-    m.BrowseDirScrl  = 0
-    m.BrowseFileScrl = 0
-    browseRefresh(m)
-END SUB
-
-' browseCommit — apply the user's pick. In save mode uses the
-' filename input; in open mode uses the selected file. Routes
-' the absolute path through dispatchModalClose with BrowseContext.
-FUNCTION browseCommit(m AS POINTER TO Model) AS (BOOLEAN, tea.Cmd)
-    DIM ctx AS STRING = m.BrowseContext
-    DIM mode AS STRING = m.BrowseMode
-    DIM path AS STRING = ""
-    IF mode = "save" THEN
-        DIM fn AS STRING = strings.TrimSpace(m.BrowseFilename.Value())
-        IF fn = "" THEN
-            m.Status = "filename required"
-            RETURN FALSE, NIL
-        END IF
-        path = browseJoinPath(m.BrowseDir, fn)
-    ELSE
-        IF m.BrowseFileSel < 0 OR m.BrowseFileSel >= LEN(m.BrowseFiles) THEN
-            m.Status = "pick a file first"
-            RETURN FALSE, NIL
-        END IF
-        path = browseJoinPath(m.BrowseDir, m.BrowseFiles[m.BrowseFileSel].Name)
-    END IF
-    closeBrowser(m)
-    m.ModalContext = ctx
-    DIM bQuit AS BOOLEAN
-    DIM bCmd AS tea.Cmd
-    bQuit, bCmd = dispatchModalClose(m, "", path)
-    RETURN bQuit, bCmd
-END FUNCTION
-
-' browseActivateDir — Enter on a dir row. ".." pops; otherwise we
-' descend into the named subdirectory.
-SUB browseActivateDir(m AS POINTER TO Model, idx AS INTEGER)
-    IF idx < 0 OR idx >= LEN(m.BrowseDirs) THEN RETURN
-    browseSetDir(m, browseJoinPath(m.BrowseDir, m.BrowseDirs[idx].Name))
-END SUB
-
-' browseCreateDir — os.Mkdir(BrowseDir/name), refresh on success.
-SUB browseCreateDir(m AS POINTER TO Model, name AS STRING)
-    DIM trim AS STRING = strings.TrimSpace(name)
-    IF trim = "" THEN
-        m.Status = "folder name required"
-        RETURN
-    END IF
-    DIM full AS STRING = browseJoinPath(m.BrowseDir, trim)
-    DIM merr AS ERROR = os.Mkdir(full, 0755)
-    IF merr <> NIL THEN
-        m.Status = "mkdir " + full + ": " + merr.Error()
-        RETURN
-    END IF
-    m.Status = "created " + full
-    browseRefresh(m)
-END SUB
-
-' browseClickButton — apply the press of one of the bottom-row buttons.
-FUNCTION browseClickButton(m AS POINTER TO Model, key AS STRING) AS (BOOLEAN, tea.Cmd)
-    IF key = "btnCancel" THEN
-        closeBrowser(m)
-        m.Status = "browser cancelled"
-        RETURN FALSE, NIL
-    END IF
-    IF key = "btnNew" THEN
-        ' Pop a regular input modal on top of the browser. The
-        ' "newfolder" handler in dispatchModalClose calls
-        ' browseCreateDir against the browser's current BrowseDir
-        ' (which is preserved while the modal is up — the browser
-        ' just stops handling input). After commit, browseRefresh
-        ' re-reads the dir so the new folder appears in the list.
-        showInputModal(m, "New Folder", "Folder name:", "", "newfolder")
-        RETURN FALSE, NIL
-    END IF
-    IF key = "btnOK" THEN RETURN browseCommit(m)
-    RETURN FALSE, NIL
-END FUNCTION
-
-' Tab cycle order — cycles forward through every focusable field.
-' Filename field is skipped in open mode (it has no input).
-FUNCTION browseNextFocus(m AS Model) AS STRING
-    DIM cur AS STRING = m.BrowseFocus
-    IF cur = "path" THEN RETURN "dirs"
-    IF cur = "dirs" THEN RETURN "files"
-    IF cur = "files" THEN
-        IF m.BrowseMode = "save" THEN RETURN "filename"
-        RETURN "btnNew"
-    END IF
-    IF cur = "filename" THEN RETURN "btnNew"
-    IF cur = "btnNew" THEN RETURN "btnOK"
-    IF cur = "btnOK" THEN RETURN "btnCancel"
-    IF cur = "btnCancel" THEN RETURN "path"
-    RETURN "files"
-END FUNCTION
-
-FUNCTION browsePrevFocus(m AS Model) AS STRING
-    DIM cur AS STRING = m.BrowseFocus
-    IF cur = "path" THEN RETURN "btnCancel"
-    IF cur = "dirs" THEN RETURN "path"
-    IF cur = "files" THEN RETURN "dirs"
-    IF cur = "filename" THEN RETURN "files"
-    IF cur = "btnNew" THEN
-        IF m.BrowseMode = "save" THEN RETURN "filename"
-        RETURN "files"
-    END IF
-    IF cur = "btnOK" THEN RETURN "btnNew"
-    IF cur = "btnCancel" THEN RETURN "btnOK"
-    RETURN "files"
-END FUNCTION
-
-' browseUpdate — handle one tea.Msg while the browser is active.
-' Returns the (model, cmd) tuple Update should propagate.
-FUNCTION browseUpdate(m AS POINTER TO Model, msg AS tea.Msg) AS (tea.Model, tea.Cmd)
-    ' Re-sync the textinput focus / blur every tick so the cursor
-    ' always blinks in the right field. Cheap enough to do on
-    ' every event rather than threading focus mutations.
-    browseSyncTextFocus(m)
-    ' --- Mouse first so button clicks beat focus-routing ----------
-    DIM bmc AS tea.MouseClickMsg
-    DIM bmcOk AS BOOLEAN
-    bmc, bmcOk = msg.(tea.MouseClickMsg)
-    IF bmcOk AND bmc.Button = tea.MouseLeft THEN
-        DIM lx AS INTEGER = bmc.X - browseOrigX
-        DIM ly AS INTEGER = bmc.Y - browseOrigY
-        ' Check button hits first.
-        DIM bi AS INTEGER
-        FOR bi = 0 TO LEN(browseBtnRects) - 1
-            DIM br AS BrowseBtnHit = browseBtnRects[bi]
-            IF lx >= br.X AND lx < br.X + br.W AND ly >= br.Y AND ly < br.Y + br.H THEN
-                DIM bcQuit AS BOOLEAN
-                DIM bcCmd  AS tea.Cmd
-                bcQuit, bcCmd = browseClickButton(m, br.Key)
-                IF bcQuit THEN RETURN ^m, tea.Quit
-                RETURN ^m, bcCmd
-            END IF
-        NEXT bi
-        ' Then row hits — single-click selects, also re-focuses
-        ' that column; double-click semantics deferred.
-        DIM ri AS INTEGER
-        FOR ri = 0 TO LEN(browseRowRects) - 1
-            DIM rr AS BrowseRowHit = browseRowRects[ri]
-            IF lx >= rr.X AND lx < rr.X + rr.W AND ly = rr.Y THEN
-                IF rr.Col = "dirs" THEN
-                    m.BrowseFocus  = "dirs"
-                    m.BrowseDirSel = rr.Idx
-                    ' Re-clicking the already-selected dir descends.
-                    IF rr.Idx = m.BrowseDirSel THEN browseActivateDir(m, rr.Idx)
-                ELSE
-                    m.BrowseFocus   = "files"
-                    m.BrowseFileSel = rr.Idx
+                DIM matched AS BOOLEAN = TRUE
+                IF d.Mask <> "" AND d.Mask <> "*" THEN
+                    DIM matchErr AS ERROR
+                    matched, matchErr = filepath.Match(d.Mask, nm)
+                    _ = matchErr
                 END IF
-                RETURN ^m, NIL
+                IF matched THEN files = APPEND(files, nm)
             END IF
-        NEXT ri
-        ' Click inside the browser frame elsewhere → swallow.
-        RETURN ^m, NIL
+        NEXT i
+        sort.Strings(folders)
+        sort.Strings(files)
     END IF
-
-    DIM k AS tea.KeyPressMsg
-    DIM kOk AS BOOLEAN
-    k, kOk = msg.(tea.KeyPressMsg)
-    IF NOT kOk THEN RETURN ^m, NIL
-    DIM key AS STRING = k.String()
-
-    IF key = "esc" THEN
-        closeBrowser(m)
-        m.Status = "browser cancelled"
-        RETURN ^m, NIL
-    END IF
-
-    ' --- Tab cycle ------------------------------------------------
-    IF key = "tab" THEN
-        m.BrowseFocus = browseNextFocus(^m)
-        RETURN ^m, NIL
-    END IF
-    IF key = "shift+tab" THEN
-        m.BrowseFocus = browsePrevFocus(^m)
-        RETURN ^m, NIL
-    END IF
-
-    ' --- Path input field ------------------------------------------
-    IF m.BrowseFocus = "path" THEN
-        IF key = "enter" THEN
-            ' Navigate to whatever the user typed.
-            DIM np AS STRING = strings.TrimSpace(m.BrowsePath.Value())
-            IF np <> "" THEN browseSetDir(m, np)
-            m.BrowseFocus = "files"
-            RETURN ^m, NIL
-        END IF
-        DIM pNew AS textinput.Model
-        DIM pCmd AS tea.Cmd
-        pNew, pCmd = m.BrowsePath.Update(msg)
-        m.BrowsePath = pNew
-        RETURN ^m, pCmd
-    END IF
-
-    ' --- Filename input field --------------------------------------
-    IF m.BrowseFocus = "filename" THEN
-        IF key = "enter" THEN
-            DIM cQuit AS BOOLEAN
-            DIM cCmd  AS tea.Cmd
-            cQuit, cCmd = browseCommit(m)
-            IF cQuit THEN RETURN ^m, tea.Quit
-            RETURN ^m, cCmd
-        END IF
-        DIM fnNew AS textinput.Model
-        DIM fnCmd AS tea.Cmd
-        fnNew, fnCmd = m.BrowseFilename.Update(msg)
-        m.BrowseFilename = fnNew
-        RETURN ^m, fnCmd
-    END IF
-
-    ' --- Button focus: Enter / Space activate ----------------------
-    IF strings.HasPrefix(m.BrowseFocus, "btn") THEN
-        IF key = "enter" OR key = "space" THEN
-            DIM bnQuit AS BOOLEAN
-            DIM bnCmd  AS tea.Cmd
-            bnQuit, bnCmd = browseClickButton(m, m.BrowseFocus)
-            IF bnQuit THEN RETURN ^m, tea.Quit
-            RETURN ^m, bnCmd
-        END IF
-        RETURN ^m, NIL
-    END IF
-
-    ' --- Dirs column ----------------------------------------------
-    IF m.BrowseFocus = "dirs" THEN
-        IF key = "up" THEN
-            IF m.BrowseDirSel > 0 THEN m.BrowseDirSel = m.BrowseDirSel - 1
-            RETURN ^m, NIL
-        END IF
-        IF key = "down" THEN
-            IF m.BrowseDirSel < LEN(m.BrowseDirs) - 1 THEN m.BrowseDirSel = m.BrowseDirSel + 1
-            RETURN ^m, NIL
-        END IF
-        IF key = "pgup" THEN
-            m.BrowseDirSel = m.BrowseDirSel - 8
-            IF m.BrowseDirSel < 0 THEN m.BrowseDirSel = 0
-            RETURN ^m, NIL
-        END IF
-        IF key = "pgdown" THEN
-            m.BrowseDirSel = m.BrowseDirSel + 8
-            IF m.BrowseDirSel >= LEN(m.BrowseDirs) THEN m.BrowseDirSel = LEN(m.BrowseDirs) - 1
-            RETURN ^m, NIL
-        END IF
-        IF key = "home" THEN
-            m.BrowseDirSel = 0
-            RETURN ^m, NIL
-        END IF
-        IF key = "end" THEN
-            m.BrowseDirSel = LEN(m.BrowseDirs) - 1
-            RETURN ^m, NIL
-        END IF
-        IF key = "enter" OR key = "right" THEN
-            browseActivateDir(m, m.BrowseDirSel)
-            RETURN ^m, NIL
-        END IF
-        IF key = "left" OR key = "backspace" THEN
-            browseSetDir(m, browseJoinPath(m.BrowseDir, ".."))
-            RETURN ^m, NIL
-        END IF
-        RETURN ^m, NIL
-    END IF
-
-    ' --- Files column ---------------------------------------------
-    IF m.BrowseFocus = "files" THEN
-        IF key = "up" THEN
-            IF m.BrowseFileSel > 0 THEN m.BrowseFileSel = m.BrowseFileSel - 1
-            RETURN ^m, NIL
-        END IF
-        IF key = "down" THEN
-            IF m.BrowseFileSel < LEN(m.BrowseFiles) - 1 THEN m.BrowseFileSel = m.BrowseFileSel + 1
-            RETURN ^m, NIL
-        END IF
-        IF key = "pgup" THEN
-            m.BrowseFileSel = m.BrowseFileSel - 8
-            IF m.BrowseFileSel < 0 THEN m.BrowseFileSel = 0
-            RETURN ^m, NIL
-        END IF
-        IF key = "pgdown" THEN
-            m.BrowseFileSel = m.BrowseFileSel + 8
-            IF m.BrowseFileSel >= LEN(m.BrowseFiles) THEN m.BrowseFileSel = LEN(m.BrowseFiles) - 1
-            RETURN ^m, NIL
-        END IF
-        IF key = "home" THEN
-            m.BrowseFileSel = 0
-            RETURN ^m, NIL
-        END IF
-        IF key = "end" THEN
-            m.BrowseFileSel = LEN(m.BrowseFiles) - 1
-            RETURN ^m, NIL
-        END IF
-        IF key = "enter" THEN
-            ' Open mode: commit. Save mode: copy name into filename + jump.
-            IF m.BrowseMode = "save" AND m.BrowseFileSel >= 0 AND m.BrowseFileSel < LEN(m.BrowseFiles) THEN
-                m.BrowseFilename.SetValue(m.BrowseFiles[m.BrowseFileSel].Name)
-                m.BrowseFocus = "filename"
-                RETURN ^m, NIL
-            END IF
-            DIM ofQuit AS BOOLEAN
-            DIM ofCmd  AS tea.Cmd
-            ofQuit, ofCmd = browseCommit(m)
-            IF ofQuit THEN RETURN ^m, tea.Quit
-            RETURN ^m, ofCmd
-        END IF
-        RETURN ^m, NIL
-    END IF
-
-    RETURN ^m, NIL
-END FUNCTION
-
-' renderBrowserListColumn — render one scrolling column of entries
-' as a styled multi-line string. Selected row inverts when this is
-' the focused column.
-FUNCTION renderBrowserListColumn(entries AS []BrowseEntry, sel AS INTEGER, scrollTop AS INTEGER, w AS INTEGER, h AS INTEGER, focused AS BOOLEAN, isDirCol AS BOOLEAN) AS STRING
-    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg)).Width(w)
-    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE).Width(w)
-    DIM dimSelStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cFg)).Width(w)
-    DIM lines AS []STRING
-    DIM li AS INTEGER
-    FOR li = 0 TO h - 1
-        DIM idx AS INTEGER = scrollTop + li
-        DIM txt AS STRING = ""
-        IF idx < LEN(entries) THEN
-            DIM nm AS STRING = entries[idx].Name
-            IF isDirCol THEN
-                txt = " " + nm + "/"
-            ELSE
-                txt = " " + nm
-            END IF
-            IF LEN(txt) > w THEN txt = Mid(txt, 1, w - 1) + "…"
-        END IF
-        IF idx = sel AND idx < LEN(entries) THEN
-            IF focused THEN
-                lines = APPEND(lines, selStyle.Render(txt))
-            ELSE
-                lines = APPEND(lines, dimSelStyle.Render(txt))
-            END IF
-        ELSE
-            lines = APPEND(lines, rowStyle.Render(txt))
-        END IF
-    NEXT li
-    RETURN strings.Join(lines, "\n")
-END FUNCTION
-
-' recordBrowserRowRects — populate browseRowRects with the visible
-' row hit-boxes for both columns (modal-relative coords).
-SUB recordBrowserRowRects(m AS Model, dirsX AS INTEGER, filesX AS INTEGER, listY AS INTEGER, w AS INTEGER, h AS INTEGER)
-    DIM rects AS []BrowseRowHit
-    DIM li AS INTEGER
-    FOR li = 0 TO h - 1
-        DIM dIdx AS INTEGER = m.BrowseDirScrl + li
-        IF dIdx < LEN(m.BrowseDirs) THEN
-            DIM dr AS BrowseRowHit
-            dr.X   = dirsX
-            dr.Y   = listY + li
-            dr.W   = w
-            dr.Col = "dirs"
-            dr.Idx = dIdx
-            rects = APPEND(rects, dr)
-        END IF
-        DIM fIdx AS INTEGER = m.BrowseFileScrl + li
-        IF fIdx < LEN(m.BrowseFiles) THEN
-            DIM fr AS BrowseRowHit
-            fr.X   = filesX
-            fr.Y   = listY + li
-            fr.W   = w
-            fr.Col = "files"
-            fr.Idx = fIdx
-            rects = APPEND(rects, fr)
-        END IF
-    NEXT li
-    browseRowRects = rects
+    d.Folders = folders
+    d.Files = files
+    IF d.FoldCur >= LEN(folders) THEN d.FoldCur = LEN(folders) - 1
+    IF d.FoldCur < 0 THEN d.FoldCur = 0
+    IF d.FileCur >= LEN(files) THEN d.FileCur = LEN(files) - 1
+    IF d.FileCur < 0 THEN d.FileCur = 0
+    d.FoldOff = 0
+    d.FileOff = 0
 END SUB
 
-' renderBrowserButton — one styled button with focus inversion.
-FUNCTION renderBrowserButton(label AS STRING, focused AS BOOLEAN) AS STRING
-    IF focused THEN
-        RETURN lipgloss.NewStyle().Background(lipgloss.Color(cHotkey)).Foreground(lipgloss.Color(cBg)).Bold(TRUE).Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cHotkey)).Render(label)
+' ----------------------------------------------------------------------
+' Lifecycle
+' ----------------------------------------------------------------------
+
+SUB (d AS POINTER TO FileDialog) Open(title AS STRING, mode AS STRING, mask AS STRING, initialPath AS STRING, screenW AS INTEGER, screenH AS INTEGER)
+    d.Active = TRUE
+    d.Title = title
+    d.Mode = mode
+    d.Mask = mask
+    d.FoldCur = 0
+    d.FoldOff = 0
+    d.FileCur = 0
+    d.FileOff = 0
+    d.FoldColW = 0  ' auto on first render
+    d.RequestNewFolder = FALSE
+    d.Drag = ""
+
+    ' Resolve the starting directory and (in save mode) initial filename
+    ' from initialPath. initialPath may be either a bare directory ("…/")
+    ' or "dir/filename"; callers via openBrowser() build the latter when
+    ' they want to seed the filename field (e.g. "untitled.dbproj").
+    DIM startPath AS STRING = initialPath
+    IF startPath = "" THEN
+        DIM wd AS STRING
+        DIM wdErr AS ERROR
+        wd, wdErr = os.Getwd()
+        IF wdErr = NIL THEN startPath = wd + "/"
     END IF
-    RETURN lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg)).Padding(0, 1).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder)).Render(label)
+    DIM startDir AS STRING = fdDirOf(startPath)
+    IF NOT filepath.IsAbs(startDir) THEN
+        DIM wd2 AS STRING
+        DIM wdErr2 AS ERROR
+        wd2, wdErr2 = os.Getwd()
+        IF wdErr2 = NIL THEN startDir = filepath.Join(wd2, startDir)
+    END IF
+    d.CurDir = startDir
+
+    ' Pull a filename out of initialPath if there is one — that's the
+    ' "name prompt" seed for save mode. Done by hand because DBasic's
+    ' parser reserves `Base` after a dot (OPTION BASE keyword bleed).
+    DIM startName AS STRING = ""
+    IF NOT strings.HasSuffix(initialPath, "/") AND initialPath <> "" THEN
+        DIM lastSlash AS INTEGER = strings.LastIndex(initialPath, "/")
+        IF lastSlash < 0 THEN
+            startName = initialPath
+        ELSEIF lastSlash + 1 < LEN(initialPath) THEN
+            startName = Mid(initialPath, lastSlash + 2, LEN(initialPath) - lastSlash - 1)
+        END IF
+        IF startName = "." OR startName = "/" THEN startName = ""
+    END IF
+
+    ' Path field — a bubbles textinput pre-filled with the current dir.
+    d.PathInput = textinput.New()
+    d.PathInput.Placeholder = "directory"
+    d.PathInput.SetValue(d.CurDir)
+    d.PathInput.CursorEnd()
+
+    ' Filename field — only used in save mode; we still construct it so
+    ' the type is initialised, but it stays unfocused and unrendered in
+    ' open mode.
+    d.NameInput = textinput.New()
+    d.NameInput.Placeholder = "filename"
+    d.NameInput.SetValue(startName)
+    d.NameInput.CursorEnd()
+
+    ' Default focus: save mode lands on the filename field (so the user
+    ' sees the name prompt and can immediately type); open mode lands
+    ' on the path field.
+    IF mode = "save" THEN
+        d.Focus = FdFocusName
+        DIM fc1 AS tea.Cmd = d.NameInput.Focus()
+        _ = fc1
+    ELSE
+        d.Focus = FdFocusPath
+        DIM fc2 AS tea.Cmd = d.PathInput.Focus()
+        _ = fc2
+    END IF
+
+    d.ReadDir()
+
+    ' Size the dialog. Save mode needs one extra inner row for the
+    ' filename field.
+    DIM dw AS INTEGER = 72
+    DIM dh AS INTEGER = 20
+    IF mode = "save" THEN dh = 21
+    IF dw > screenW - 2 THEN dw = screenW - 2
+    IF dh > screenH - 2 THEN dh = screenH - 2
+    IF dw < 40 THEN dw = 40
+    IF dh < 12 THEN dh = 12
+    d.Width = dw
+    d.Height = dh
+    d.X = (screenW - dw) / 2
+    d.Y = (screenH - dh) / 2
+    IF d.X < 0 THEN d.X = 0
+    IF d.Y < 0 THEN d.Y = 0
+END SUB
+
+SUB (d AS POINTER TO FileDialog) Close()
+    d.Active = FALSE
+END SUB
+
+' chdir into a folder (or "..") and refresh the listings. The path
+' input is updated to the new directory so the user can see where they
+' are. The filename input (save mode) is left untouched — that's how
+' the name prompt survives folder navigation.
+SUB (d AS POINTER TO FileDialog) CdInto(folderName AS STRING)
+    DIM newDir AS STRING
+    IF folderName = ".." THEN
+        newDir = filepath.Dir(d.CurDir)
+    ELSE
+        newDir = filepath.Join(d.CurDir, folderName)
+    END IF
+    d.CurDir = newDir
+    d.PathInput.SetValue(newDir)
+    d.PathInput.CursorEnd()
+    d.ReadDir()
+END SUB
+
+' ----------------------------------------------------------------------
+' Geometry helpers
+' ----------------------------------------------------------------------
+
+FUNCTION (d AS POINTER TO FileDialog) ListH() AS INTEGER
+    ' Title is embedded in the top border (one row), so the inner rows
+    ' are: path (1), [name (1) save only], hr (1), header (1), …list…,
+    ' hr (1), buttons (1) — plus top+bottom borders (2).
+    DIM extra AS INTEGER = 0
+    IF d.Mode = "save" THEN extra = 1
+    DIM n AS INTEGER = d.Height - 7 - extra
+    IF n < 3 THEN n = 3
+    RETURN n
 END FUNCTION
 
-' renderBrowser — build the browser overlay. Records button + row
-' rects (in modal-relative coords) for the mouse hit-tester; View
-' captures the screen origin after the compositor places it.
-FUNCTION renderBrowser(m AS Model) AS STRING
-    IF NOT m.BrowseActive THEN RETURN ""
-    DIM bgPaint AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cFg))
-    DIM titleStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cHotkey)).Bold(TRUE).Width(browseInnerW).Align(lipgloss.Center)
-    DIM lblStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cMenuFg))
-    DIM hintStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cStatusFg)).Width(browseInnerW)
-    DIM colHdrStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+' rowOf — y-offset of a logical row inside the dialog frame.
+' Rows are: 0=top border (with title), 1=path, 2=name(save) or hr,
+' 3=hr(save) or header(open), … List rows follow the header, then hr,
+' then the buttons row, then the bottom border.
+FUNCTION (d AS POINTER TO FileDialog) rowName() AS INTEGER
+    RETURN 2
+END FUNCTION
+FUNCTION (d AS POINTER TO FileDialog) rowHr1() AS INTEGER
+    IF d.Mode = "save" THEN RETURN 3
+    RETURN 2
+END FUNCTION
+FUNCTION (d AS POINTER TO FileDialog) rowHeader() AS INTEGER
+    RETURN d.rowHr1() + 1
+END FUNCTION
+FUNCTION (d AS POINTER TO FileDialog) rowList0() AS INTEGER
+    RETURN d.rowHeader() + 1
+END FUNCTION
+FUNCTION (d AS POINTER TO FileDialog) rowButtons() AS INTEGER
+    RETURN d.rowList0() + d.ListH() + 1
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' List navigation
+' ----------------------------------------------------------------------
+
+SUB (d AS POINTER TO FileDialog) ListMove(listIdx AS INTEGER, delta AS INTEGER)
+    DIM lh AS INTEGER = d.ListH()
+    IF listIdx = 0 THEN
+        DIM n AS INTEGER = LEN(d.Folders)
+        IF n = 0 THEN RETURN
+        d.FoldCur = d.FoldCur + delta
+        IF d.FoldCur < 0 THEN d.FoldCur = 0
+        IF d.FoldCur >= n THEN d.FoldCur = n - 1
+        IF d.FoldCur < d.FoldOff THEN d.FoldOff = d.FoldCur
+        IF d.FoldCur >= d.FoldOff + lh THEN d.FoldOff = d.FoldCur - lh + 1
+        RETURN
+    END IF
+    DIM nf AS INTEGER = LEN(d.Files)
+    IF nf = 0 THEN RETURN
+    d.FileCur = d.FileCur + delta
+    IF d.FileCur < 0 THEN d.FileCur = 0
+    IF d.FileCur >= nf THEN d.FileCur = nf - 1
+    IF d.FileCur < d.FileOff THEN d.FileOff = d.FileCur
+    IF d.FileCur >= d.FileOff + lh THEN d.FileOff = d.FileCur - lh + 1
+END SUB
+
+' ----------------------------------------------------------------------
+' Focus cycling + textinput focus mirroring
+' ----------------------------------------------------------------------
+
+' nextFocus — advance focus by `delta` (+1 or -1), skipping FdFocusName
+' in open mode so Tab feels right.
+SUB (d AS POINTER TO FileDialog) advanceFocus(delta AS INTEGER)
+    DIM step AS INTEGER = delta
+    IF step = 0 THEN step = 1
+    DIM tries AS INTEGER = 0
+    DO WHILE tries < FdFocusCount
+        d.Focus = d.Focus + step
+        IF d.Focus < 0 THEN d.Focus = FdFocusCount - 1
+        IF d.Focus >= FdFocusCount THEN d.Focus = 0
+        IF d.Focus = FdFocusName AND d.Mode <> "save" THEN
+            ' skip
+        ELSE
+            RETURN
+        END IF
+        tries = tries + 1
+    LOOP
+END SUB
+
+' syncTextInputFocus — call Focus()/Blur() on PathInput and NameInput
+' so the cursor lights up under the field that's currently focused.
+SUB (d AS POINTER TO FileDialog) syncTextInputFocus()
+    IF d.Focus = FdFocusPath THEN
+        DIM c AS tea.Cmd = d.PathInput.Focus()
+        _ = c
+    ELSE
+        d.PathInput.Blur()
+    END IF
+    IF d.Focus = FdFocusName THEN
+        DIM c2 AS tea.Cmd = d.NameInput.Focus()
+        _ = c2
+    ELSE
+        d.NameInput.Blur()
+    END IF
+END SUB
+
+' ----------------------------------------------------------------------
+' Commit semantics — turn the dialog's current state into a path string
+' for dispatchModalClose. In open mode we hand back the resolved file;
+' in save mode we hand back CurDir + the typed filename, so the name
+' prompt is honoured even after the user navigates folders.
+' ----------------------------------------------------------------------
+
+FUNCTION (d AS POINTER TO FileDialog) committedPath() AS STRING
+    IF d.Mode = "save" THEN
+        DIM nm AS STRING = strings.TrimSpace(d.NameInput.Value())
+        IF nm = "" THEN RETURN ""
+        RETURN filepath.Join(d.CurDir, nm)
+    END IF
+    ' open mode: prefer a selected file in the Files list, otherwise the
+    ' literal path typed into PathInput.
+    IF d.FileCur >= 0 AND d.FileCur < LEN(d.Files) THEN
+        RETURN filepath.Join(d.CurDir, d.Files[d.FileCur])
+    END IF
+    RETURN d.PathInput.Value()
+END FUNCTION
+
+' applyPathEdit — user hit Enter in the path field; treat its value as a
+' chdir target. Stays on the path field on failure (no commit).
+SUB (d AS POINTER TO FileDialog) applyPathEdit()
+    DIM p AS STRING = strings.TrimSpace(d.PathInput.Value())
+    IF p = "" THEN RETURN
+    DIM info AS os.FileInfo
+    DIM err AS ERROR
+    info, err = os.Stat(p)
+    IF err <> NIL THEN RETURN
+    IF info.IsDir() THEN
+        d.CurDir = p
+        d.PathInput.SetValue(p)
+        d.PathInput.CursorEnd()
+        d.ReadDir()
+    END IF
+END SUB
+
+' ----------------------------------------------------------------------
+' Update — single entry point for every tea.Msg the host routes here.
+' Returns (committed, picked, cancelled, cmd). cmd is the bubbles
+' textinput command (cursor blink) that needs to flow back to runtime.
+' ----------------------------------------------------------------------
+
+FUNCTION (d AS POINTER TO FileDialog) Update(msg AS tea.Msg) AS (BOOLEAN, STRING, BOOLEAN, tea.Cmd)
+    ' Mouse release ends any in-progress drag (resize / divider).
+    DIM relMsg AS tea.MouseReleaseMsg
+    DIM rOk AS BOOLEAN
+    relMsg, rOk = msg.(tea.MouseReleaseMsg)
+    IF rOk THEN
+        _ = relMsg
+        IF d.Drag <> "" THEN d.Drag = ""
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Mouse motion drives drags. When no drag is active, motion is
+    ' simply consumed (the host has already suppressed hover styling on
+    ' the surface beneath the dialog).
+    DIM motMsg AS tea.MouseMotionMsg
+    DIM mOk AS BOOLEAN
+    motMsg, mOk = msg.(tea.MouseMotionMsg)
+    IF mOk THEN
+        IF d.Drag <> "" THEN d.applyDragMotion(motMsg.X, motMsg.Y)
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Mouse click — handled separately because textinput doesn't care
+    ' about clicks outside its own row.
+    DIM clickMsg AS tea.MouseClickMsg
+    DIM cOk AS BOOLEAN
+    clickMsg, cOk = msg.(tea.MouseClickMsg)
+    IF cOk THEN
+        IF clickMsg.Button = tea.MouseLeft THEN
+            RETURN d.handleClick(clickMsg.X, clickMsg.Y)
+        END IF
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    DIM keyMsg AS tea.KeyPressMsg
+    DIM kOk AS BOOLEAN
+    keyMsg, kOk = msg.(tea.KeyPressMsg)
+    IF NOT kOk THEN RETURN FALSE, "", FALSE, NIL
+
+    DIM k AS STRING = keyMsg.String()
+
+    ' Always-on global keys.
+    IF k = "esc" THEN RETURN FALSE, "", TRUE, NIL
+    IF k = "tab" THEN
+        d.advanceFocus(1)
+        d.syncTextInputFocus()
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+    IF k = "shift+tab" THEN
+        d.advanceFocus(0 - 1)
+        d.syncTextInputFocus()
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Per-focus routing.
+    IF d.Focus = FdFocusFolders THEN
+        IF k = "up" THEN
+            d.ListMove(0, 0 - 1)
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF k = "down" THEN
+            d.ListMove(0, 1)
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF k = "pgup" THEN
+            d.ListMove(0, 0 - d.ListH())
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF k = "pgdown" THEN
+            d.ListMove(0, d.ListH())
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF k = "enter" OR k = "space" THEN
+            IF d.FoldCur >= 0 AND d.FoldCur < LEN(d.Folders) THEN
+                d.CdInto(d.Folders[d.FoldCur])
+            END IF
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    IF d.Focus = FdFocusFiles THEN
+        IF k = "up" THEN
+            d.ListMove(1, 0 - 1)
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF k = "down" THEN
+            d.ListMove(1, 1)
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF k = "pgup" THEN
+            d.ListMove(1, 0 - d.ListH())
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF k = "pgdown" THEN
+            d.ListMove(1, d.ListH())
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF k = "enter" THEN
+            IF d.FileCur >= 0 AND d.FileCur < LEN(d.Files) THEN
+                IF d.Mode = "save" THEN
+                    ' In save mode, picking a file in the list means
+                    ' "use that name" — seed NameInput, don't commit
+                    ' (user still has to click OK to overwrite).
+                    d.NameInput.SetValue(d.Files[d.FileCur])
+                    d.NameInput.CursorEnd()
+                    d.Focus = FdFocusName
+                    d.syncTextInputFocus()
+                    RETURN FALSE, "", FALSE, NIL
+                END IF
+                RETURN TRUE, filepath.Join(d.CurDir, d.Files[d.FileCur]), FALSE, NIL
+            END IF
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    IF d.Focus = FdFocusNew THEN
+        IF k = "enter" OR k = "space" THEN
+            d.RequestNewFolder = TRUE
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    IF d.Focus = FdFocusOK THEN
+        IF k = "enter" OR k = "space" THEN
+            DIM p AS STRING = d.committedPath()
+            IF p = "" THEN RETURN FALSE, "", FALSE, NIL
+            RETURN TRUE, p, FALSE, NIL
+        END IF
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    IF d.Focus = FdFocusCancel THEN
+        IF k = "enter" OR k = "space" THEN RETURN FALSE, "", TRUE, NIL
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Path field — Enter chdirs; everything else flows into textinput.
+    IF d.Focus = FdFocusPath THEN
+        IF k = "enter" THEN
+            d.applyPathEdit()
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        DIM newPi AS textinput.Model
+        DIM piCmd AS tea.Cmd
+        newPi, piCmd = d.PathInput.Update(msg)
+        d.PathInput = newPi
+        RETURN FALSE, "", FALSE, piCmd
+    END IF
+
+    ' Filename field — Enter commits; everything else flows into
+    ' textinput.
+    IF d.Focus = FdFocusName THEN
+        IF k = "enter" THEN
+            DIM p2 AS STRING = d.committedPath()
+            IF p2 = "" THEN RETURN FALSE, "", FALSE, NIL
+            RETURN TRUE, p2, FALSE, NIL
+        END IF
+        DIM newNi AS textinput.Model
+        DIM niCmd AS tea.Cmd
+        newNi, niCmd = d.NameInput.Update(msg)
+        d.NameInput = newNi
+        RETURN FALSE, "", FALSE, niCmd
+    END IF
+
+    RETURN FALSE, "", FALSE, NIL
+END FUNCTION
+
+' fdSplitColW — resolve the Folders column width. Honours the
+' user-adjusted FoldColW when set, otherwise auto-computes (half the
+' inner width, capped at 25). Clamped to leave at least 8 cells on
+' either side.
+FUNCTION fdSplitColW(d AS FileDialog, innerW AS INTEGER) AS INTEGER
+    DIM colW AS INTEGER = d.FoldColW
+    IF colW <= 0 THEN
+        colW = (innerW - 1) / 2
+        IF colW > 25 THEN colW = 25
+    END IF
+    IF colW < 8 THEN colW = 8
+    IF colW > innerW - 9 THEN colW = innerW - 9
+    RETURN colW
+END FUNCTION
+
+' applyDragMotion — translate a mouse-motion event into a move, resize,
+' or divider drag depending on what was started in handleClick.
+SUB (d AS POINTER TO FileDialog) applyDragMotion(x AS INTEGER, y AS INTEGER)
+    IF d.Drag = "move" THEN
+        ' DragStartW / DragStartH hold the dialog's origin at the moment
+        ' the drag began (reused storage — see TYPE comment).
+        DIM nx AS INTEGER = d.DragStartW + (x - d.DragStartX)
+        DIM ny AS INTEGER = d.DragStartH + (y - d.DragStartY)
+        IF nx < 0 THEN nx = 0
+        IF ny < 0 THEN ny = 0
+        d.X = nx
+        d.Y = ny
+        RETURN
+    END IF
+    IF d.Drag = "resize" THEN
+        DIM nw AS INTEGER = d.DragStartW + (x - d.DragStartX)
+        DIM nh AS INTEGER = d.DragStartH + (y - d.DragStartY)
+        IF nw < 40 THEN nw = 40
+        IF nh < 12 THEN nh = 12
+        d.Width = nw
+        d.Height = nh
+        RETURN
+    END IF
+    IF d.Drag = "split" THEN
+        DIM innerW AS INTEGER = d.Width - 2
+        DIM newCol AS INTEGER = d.DragStartSplit + (x - d.DragStartX)
+        IF newCol < 8 THEN newCol = 8
+        IF newCol > innerW - 9 THEN newCol = innerW - 9
+        d.FoldColW = newCol
+    END IF
+END SUB
+
+' handleClick — convert screen coords to dialog-local coords and
+' dispatch to the row the click landed in. Clicks outside the dialog
+' rect are swallowed (no commit, no cancel) so they don't dismiss it.
+FUNCTION (d AS POINTER TO FileDialog) handleClick(x AS INTEGER, y AS INTEGER) AS (BOOLEAN, STRING, BOOLEAN, tea.Cmd)
+    DIM lx AS INTEGER = x - d.X
+    DIM ly AS INTEGER = y - d.Y
+    IF lx < 0 OR ly < 0 OR lx >= d.Width OR ly >= d.Height THEN
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+    DIM innerW AS INTEGER = d.Width - 2
+    DIM listH AS INTEGER = d.ListH()
+
+    ' Close glyph (✕) in the top-right of the border row — same effect
+    ' as Cancel. The renderer paints it at col d.Width-3 (between two
+    ' spaces, before the ╮). Accept the glyph cell and the space just
+    ' to the right of it so the click target isn't a single cell.
+    IF ly = 0 AND (lx = d.Width - 3 OR lx = d.Width - 2) THEN
+        RETURN FALSE, "", TRUE, NIL
+    END IF
+
+    ' Title bar — click anywhere on the top border (except the close
+    ' glyph above) begins a move drag.
+    IF ly = 0 THEN
+        d.Drag = "move"
+        d.DragStartX = x
+        d.DragStartY = y
+        d.DragStartW = d.X
+        d.DragStartH = d.Y
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Resize handle — the ◢ glyph at the bottom-right corner. Click
+    ' begins a drag; motion adjusts Width/Height until release.
+    IF ly = d.Height - 1 AND lx = d.Width - 1 THEN
+        d.Drag = "resize"
+        d.DragStartX = x
+        d.DragStartY = y
+        d.DragStartW = d.Width
+        d.DragStartH = d.Height
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Column divider — the vertical separator between the Folders and
+    ' Files columns. Click anywhere on the divider column inside the
+    ' header / list rows begins a divider drag.
+    DIM divCol AS INTEGER = 1 + fdSplitColW(^d, innerW)
+    IF lx = divCol AND ly >= d.rowHeader() AND ly < d.rowList0() + listH THEN
+        d.Drag = "split"
+        d.DragStartX = x
+        d.DragStartY = y
+        d.DragStartSplit = fdSplitColW(^d, innerW)
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Path row (always row 1 — title is embedded in the top border).
+    IF ly = 1 THEN
+        d.Focus = FdFocusPath
+        d.syncTextInputFocus()
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Name row (save mode, row 3).
+    IF d.Mode = "save" AND ly = d.rowName() THEN
+        d.Focus = FdFocusName
+        d.syncTextInputFocus()
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Header row — focus only.
+    IF ly = d.rowHeader() THEN
+        DIM colWH AS INTEGER = (innerW - 1) / 2
+        IF colWH > 25 THEN colWH = 25
+        IF lx >= 1 AND lx < 1 + colWH THEN
+            d.Focus = FdFocusFolders
+        ELSEIF lx > 1 + colWH AND lx <= innerW THEN
+            d.Focus = FdFocusFiles
+        END IF
+        d.syncTextInputFocus()
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' List rows.
+    DIM list0 AS INTEGER = d.rowList0()
+    IF ly >= list0 AND ly < list0 + listH THEN
+        DIM rowIdx AS INTEGER = ly - list0
+        DIM colW2 AS INTEGER = (innerW - 1) / 2
+        IF colW2 > 25 THEN colW2 = 25
+        IF lx >= 1 AND lx < 1 + colW2 THEN
+            d.Focus = FdFocusFolders
+            d.syncTextInputFocus()
+            DIM fIdx AS INTEGER = d.FoldOff + rowIdx
+            IF fIdx < 0 OR fIdx >= LEN(d.Folders) THEN RETURN FALSE, "", FALSE, NIL
+            d.FoldCur = fIdx
+            ' Single-click cd's for ergonomics.
+            d.CdInto(d.Folders[fIdx])
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF lx > 1 + colW2 AND lx <= innerW THEN
+            d.Focus = FdFocusFiles
+            d.syncTextInputFocus()
+            DIM fileIdx AS INTEGER = d.FileOff + rowIdx
+            IF fileIdx < 0 OR fileIdx >= LEN(d.Files) THEN RETURN FALSE, "", FALSE, NIL
+            d.FileCur = fileIdx
+            ' In open mode, mirror the picked file into PathInput so the
+            ' user can see what OK will commit. In save mode, seed
+            ' NameInput.
+            IF d.Mode = "save" THEN
+                d.NameInput.SetValue(d.Files[fileIdx])
+                d.NameInput.CursorEnd()
+            ELSE
+                d.PathInput.SetValue(filepath.Join(d.CurDir, d.Files[fileIdx]))
+                d.PathInput.CursorEnd()
+            END IF
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    ' Buttons row.
+    IF ly = d.rowButtons() THEN
+        DIM nwLen AS INTEGER = 14   ' "[ New Folder ]"
+        DIM okLen AS INTEGER = 6    ' "[ OK ]"
+        DIM cnLen AS INTEGER = 10   ' "[ Cancel ]"
+        DIM rightW AS INTEGER = nwLen + 2 + okLen + 2 + cnLen + 1
+        DIM pad AS INTEGER = innerW - rightW
+        IF pad < 0 THEN pad = 0
+        DIM nwStart AS INTEGER = 1 + pad
+        DIM nwEnd   AS INTEGER = nwStart + nwLen
+        DIM okStart AS INTEGER = nwEnd + 2
+        DIM okEnd   AS INTEGER = okStart + okLen
+        DIM cnStart AS INTEGER = okEnd + 2
+        DIM cnEnd   AS INTEGER = cnStart + cnLen
+        IF lx >= nwStart AND lx < nwEnd THEN
+            d.Focus = FdFocusNew
+            d.syncTextInputFocus()
+            d.RequestNewFolder = TRUE
+            RETURN FALSE, "", FALSE, NIL
+        END IF
+        IF lx >= okStart AND lx < okEnd THEN
+            DIM p AS STRING = d.committedPath()
+            IF p = "" THEN RETURN FALSE, "", FALSE, NIL
+            RETURN TRUE, p, FALSE, NIL
+        END IF
+        IF lx >= cnStart AND lx < cnEnd THEN
+            RETURN FALSE, "", TRUE, NIL
+        END IF
+        RETURN FALSE, "", FALSE, NIL
+    END IF
+
+    RETURN FALSE, "", FALSE, NIL
+END FUNCTION
+
+' ----------------------------------------------------------------------
+' Render — DBtui-styled frame: rounded border with the title embedded
+' in the top edge (matching titledBox), ✕ close glyph in the top-right,
+' ◢ resize handle in the bottom-right corner.
+' ----------------------------------------------------------------------
+
+' fdSide — wrap an inner-row body with the left + right side borders so
+' every interior row lines up regardless of what it contains.
+FUNCTION fdSide(innerBody AS STRING) AS STRING
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    RETURN borderStyle.Render("│") + innerBody + borderStyle.Render("│")
+END FUNCTION
+
+FUNCTION fdFieldRow(label AS STRING, content AS STRING, focused AS BOOLEAN, innerW AS INTEGER) AS STRING
+    DIM labelStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM fieldStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg))
+    DIM fieldFocused AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color("#2d4f67"))
+    DIM useStyle AS lipgloss.Style = fieldStyle
+    IF focused THEN useStyle = fieldFocused
+    DIM labelW AS INTEGER = lipgloss.Width(label)
+    DIM fieldW AS INTEGER = innerW - labelW
+    DIM visible AS STRING = fdTruncR(content, fieldW - 1)
+    DIM pad AS INTEGER = fieldW - lipgloss.Width(visible) - 1
+    IF pad < 0 THEN pad = 0
+    RETURN fdSide(labelStyle.Render(label) + useStyle.Render(" " + visible + strings.Repeat(" ", pad)))
+END FUNCTION
+
+FUNCTION fdListsRows(d AS FileDialog, innerW AS INTEGER) AS []STRING
+    DIM headStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM sepStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    DIM rowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg))
+    DIM cursorStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color("#2d4f67")).Bold(TRUE)
+    DIM dimStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+
+    DIM colW AS INTEGER = fdSplitColW(d, innerW)
+    DIM colWR AS INTEGER = innerW - 1 - colW
+
+    DIM foldHead AS STRING = " Folders"
+    DIM fileHead AS STRING = " Files"
+    IF d.Mask <> "" AND d.Mask <> "*" THEN fileHead = fileHead + " (" + d.Mask + ")"
+    DIM foldHeadPad AS INTEGER = colW - lipgloss.Width(foldHead)
+    IF foldHeadPad < 0 THEN foldHeadPad = 0
+    DIM fileHeadPad AS INTEGER = colWR - lipgloss.Width(fileHead)
+    IF fileHeadPad < 0 THEN fileHeadPad = 0
+    DIM headRow AS STRING = fdSide(headStyle.Render(foldHead + strings.Repeat(" ", foldHeadPad)) + sepStyle.Render("│") + headStyle.Render(fileHead + strings.Repeat(" ", fileHeadPad)))
+
+    DIM rows AS []STRING
+    rows = APPEND(rows, headRow)
+    DIM listH AS INTEGER = d.ListH()
+    DIM r AS INTEGER
+    FOR r = 0 TO listH - 1
+        DIM foldIdx AS INTEGER = d.FoldOff + r
+        DIM fileIdx AS INTEGER = d.FileOff + r
+
+        DIM foldText AS STRING = ""
+        DIM foldDim AS BOOLEAN = TRUE
+        IF foldIdx >= 0 AND foldIdx < LEN(d.Folders) THEN
+            foldText = d.Folders[foldIdx] + "/"
+            foldDim = FALSE
+        END IF
+        DIM foldVis AS STRING = " " + fdTruncR(foldText, colW - 1)
+        DIM foldPad AS INTEGER = colW - lipgloss.Width(foldVis)
+        IF foldPad < 0 THEN foldPad = 0
+        DIM foldRendered AS STRING
+        IF foldDim THEN
+            foldRendered = dimStyle.Render(foldVis + strings.Repeat(" ", foldPad))
+        ELSEIF foldIdx = d.FoldCur AND d.Focus = FdFocusFolders THEN
+            foldRendered = cursorStyle.Render(foldVis + strings.Repeat(" ", foldPad))
+        ELSE
+            foldRendered = rowStyle.Render(foldVis + strings.Repeat(" ", foldPad))
+        END IF
+
+        DIM fileText AS STRING = ""
+        DIM fileDim AS BOOLEAN = TRUE
+        IF fileIdx >= 0 AND fileIdx < LEN(d.Files) THEN
+            fileText = d.Files[fileIdx]
+            fileDim = FALSE
+        END IF
+        DIM fileVis AS STRING = " " + fdTruncR(fileText, colWR - 1)
+        DIM filePad AS INTEGER = colWR - lipgloss.Width(fileVis)
+        IF filePad < 0 THEN filePad = 0
+        DIM fileRendered AS STRING
+        IF fileDim THEN
+            fileRendered = dimStyle.Render(fileVis + strings.Repeat(" ", filePad))
+        ELSEIF fileIdx = d.FileCur AND d.Focus = FdFocusFiles THEN
+            fileRendered = cursorStyle.Render(fileVis + strings.Repeat(" ", filePad))
+        ELSE
+            fileRendered = rowStyle.Render(fileVis + strings.Repeat(" ", filePad))
+        END IF
+
+        rows = APPEND(rows, fdSide(foldRendered + sepStyle.Render("│") + fileRendered))
+    NEXT r
+    RETURN rows
+END FUNCTION
+
+FUNCTION fdButtonsRow(d AS FileDialog, innerW AS INTEGER) AS STRING
+    DIM btnStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg))
+    DIM btnFocused AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color("#2d4f67")).Bold(TRUE)
+
+    DIM nwLabel AS STRING = "[ New Folder ]"
+    DIM okLabel AS STRING = "[ OK ]"
+    DIM cnLabel AS STRING = "[ Cancel ]"
+    DIM nwText AS STRING
+    IF d.Focus = FdFocusNew THEN
+        nwText = btnFocused.Render(nwLabel)
+    ELSE
+        nwText = btnStyle.Render(nwLabel)
+    END IF
+    DIM okText AS STRING
+    IF d.Focus = FdFocusOK THEN
+        okText = btnFocused.Render(okLabel)
+    ELSE
+        okText = btnStyle.Render(okLabel)
+    END IF
+    DIM cnText AS STRING
+    IF d.Focus = FdFocusCancel THEN
+        cnText = btnFocused.Render(cnLabel)
+    ELSE
+        cnText = btnStyle.Render(cnLabel)
+    END IF
+    DIM rightW AS INTEGER = lipgloss.Width(nwLabel) + 2 + lipgloss.Width(okLabel) + 2 + lipgloss.Width(cnLabel) + 1
+    DIM pad AS INTEGER = innerW - rightW
+    IF pad < 0 THEN pad = 0
+    RETURN fdSide(strings.Repeat(" ", pad) + nwText + "  " + okText + "  " + cnText + " ")
+END FUNCTION
+
+' fdInnerHr — horizontal rule between sections, using ├──┤ T-connectors
+' so the inner separators tie cleanly into the side borders.
+FUNCTION fdInnerHr(innerW AS INTEGER) AS STRING
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    RETURN borderStyle.Render("├" + strings.Repeat("─", innerW) + "┤")
+END FUNCTION
+
+' fdTopBorder — top border with the title embedded (matching titledBox)
+' and a ✕ close glyph one cell in from the right edge.
+FUNCTION fdTopBorder(title AS STRING, innerW AS INTEGER) AS STRING
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    DIM titleStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Italic(TRUE)
+    DIM closeStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
+    DIM titleLen AS INTEGER = lipgloss.Width(" " + title + " ")
+    ' Layout: ╭─ Title ─…─ ✕ ╮  — innerW dashes total; subtract title
+    ' + " ✕ " (3 cells) + leading "─" (1 cell).
+    DIM dashLen AS INTEGER = innerW - titleLen - 4
+    IF dashLen < 0 THEN dashLen = 0
+    RETURN borderStyle.Render("╭─") + titleStyle.Render(" " + title + " ") + borderStyle.Render(strings.Repeat("─", dashLen) + " ") + closeStyle.Render("✕") + borderStyle.Render(" ╮")
+END FUNCTION
+
+' fdBotBorder — bottom border with the ◢ resize handle replacing the
+' usual `╯` corner.
+FUNCTION fdBotBorder(innerW AS INTEGER) AS STRING
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
+    DIM grabStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent))
+    RETURN borderStyle.Render("╰" + strings.Repeat("─", innerW)) + grabStyle.Render("◢")
+END FUNCTION
+
+' Render returns (overlay-string, x, y). Empty string if dialog not active.
+FUNCTION (d AS FileDialog) Render() AS (STRING, INTEGER, INTEGER)
+    IF NOT d.Active THEN RETURN "", 0, 0
+    DIM innerW AS INTEGER = d.Width - 2
+    IF innerW < 30 THEN innerW = 30
+
+    ' Width the textinput widgets so View() paints at the right size.
+    DIM fieldInnerW AS INTEGER = innerW - lipgloss.Width(" Path: ") - 2
+    IF fieldInnerW < 8 THEN fieldInnerW = 8
+    d.PathInput.SetWidth(fieldInnerW)
+    DIM pathRow AS STRING = fdFieldRow(" Path: ", d.PathInput.View(), d.Focus = FdFocusPath, innerW)
+
+    DIM nameRow AS STRING = ""
+    IF d.Mode = "save" THEN
+        DIM nameInnerW AS INTEGER = innerW - lipgloss.Width(" Name: ") - 2
+        IF nameInnerW < 8 THEN nameInnerW = 8
+        d.NameInput.SetWidth(nameInnerW)
+        nameRow = fdFieldRow(" Name: ", d.NameInput.View(), d.Focus = FdFocusName, innerW)
+    END IF
+
+    DIM listRows AS []STRING = fdListsRows(d, innerW)
+    DIM buttonsRow AS STRING = fdButtonsRow(d, innerW)
+    DIM innerHr AS STRING = fdInnerHr(innerW)
 
     DIM lines AS []STRING
-    lines = APPEND(lines, titleStyle.Render(m.BrowseTitle))
-
-    ' --- Path input row -------------------------------------------
-    ' Render the actual textinput so the user sees a real cursor
-    ' when typing. SetWidth/Focus/Blur are applied in browseUpdate
-    ' on focus changes; here we just read the View().
-    DIM pathLbl AS STRING = "Path: "
-    DIM pathFocus AS BOOLEAN = (m.BrowseFocus = "path")
-    DIM pathCaret AS STRING = "  "
-    IF pathFocus THEN pathCaret = "▶ "
-    DIM pathLine AS STRING = pathCaret + lblStyle.Render(pathLbl) + bgPaint.Render(m.BrowsePath.View())
-    lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(pathLine))
-    lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(""))
-
-    ' --- Column headers + body ------------------------------------
-    DIM dirsHdr  AS STRING = colHdrStyle.Render("Folders:")
-    DIM filesHdr AS STRING = colHdrStyle.Render("Files:")
-    DIM hdrLine AS STRING = " " + dirsHdr + strings.Repeat(" ", browseColW - LEN("Folders:")) + filesHdr
-    lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(hdrLine))
-
-    ' Scroll-window each column so the cursor stays visible.
-    IF m.BrowseDirSel < m.BrowseDirScrl THEN m.BrowseDirScrl = m.BrowseDirSel
-    IF m.BrowseDirSel >= m.BrowseDirScrl + browseListH THEN m.BrowseDirScrl = m.BrowseDirSel - browseListH + 1
-    IF m.BrowseFileSel < m.BrowseFileScrl THEN m.BrowseFileScrl = m.BrowseFileSel
-    IF m.BrowseFileSel >= m.BrowseFileScrl + browseListH THEN m.BrowseFileScrl = m.BrowseFileSel - browseListH + 1
-    IF m.BrowseDirScrl < 0 THEN m.BrowseDirScrl = 0
-    IF m.BrowseFileScrl < 0 THEN m.BrowseFileScrl = 0
-
-    DIM dirsCol  AS STRING = renderBrowserListColumn(m.BrowseDirs, m.BrowseDirSel, m.BrowseDirScrl, browseColW, browseListH, m.BrowseFocus = "dirs", TRUE)
-    DIM filesCol AS STRING = renderBrowserListColumn(m.BrowseFiles, m.BrowseFileSel, m.BrowseFileScrl, browseColW, browseListH, m.BrowseFocus = "files", FALSE)
-    ' Side-by-side columns separated by 2 bg-painted spaces.
-    DIM gap AS STRING = bgPaint.Render("  ")
-    DIM colRow AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, dirsCol, gap, filesCol)
-    lines = APPEND(lines, colRow)
-
-    lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(""))
-
-    ' --- Filename input (save mode only) --------------------------
-    DIM fnRowYOffset AS INTEGER = 0
-    IF m.BrowseMode = "save" THEN
-        DIM fnFocus AS BOOLEAN = (m.BrowseFocus = "filename")
-        DIM fnCaret AS STRING = "  "
-        IF fnFocus THEN fnCaret = "▶ "
-        DIM fnLbl AS STRING = "Name: "
-        DIM fnLine AS STRING = fnCaret + lblStyle.Render(fnLbl) + bgPaint.Render(m.BrowseFilename.View())
-        lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(fnLine))
-        lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(""))
-        fnRowYOffset = 2
+    lines = APPEND(lines, fdTopBorder(d.Title, innerW))
+    lines = APPEND(lines, pathRow)
+    IF d.Mode = "save" THEN
+        lines = APPEND(lines, nameRow)
     END IF
-
-    ' --- Button row -----------------------------------------------
-    DIM okLbl AS STRING = "Open"
-    IF m.BrowseMode = "save" THEN okLbl = "Save"
-    DIM btnNew    AS STRING = renderBrowserButton("New Folder", m.BrowseFocus = "btnNew")
-    DIM btnOK     AS STRING = renderBrowserButton(okLbl, m.BrowseFocus = "btnOK")
-    DIM btnCancel AS STRING = renderBrowserButton("Cancel", m.BrowseFocus = "btnCancel")
-    ' Compose with bg-painted gaps.
-    DIM btnGap AS STRING = bgPaint.Render(" \n \n ")
-    DIM btnRow AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, btnNew, btnGap, btnOK, btnGap, btnCancel)
-    DIM rowW AS INTEGER = lipgloss.Width(btnRow)
-    DIM leftPad AS INTEGER = (browseInnerW - rowW) / 2
-    IF leftPad < 0 THEN leftPad = 0
-    DIM padLines AS []STRING
-    padLines = APPEND(padLines, bgPaint.Render(strings.Repeat(" ", leftPad)))
-    padLines = APPEND(padLines, bgPaint.Render(strings.Repeat(" ", leftPad)))
-    padLines = APPEND(padLines, bgPaint.Render(strings.Repeat(" ", leftPad)))
-    DIM leftStrip AS STRING = strings.Join(padLines, "\n")
-    DIM finalBtnRow AS STRING = lipgloss.JoinHorizontal(lipgloss.Top, leftStrip, btnRow)
-    ' Width-pad the right side with bg.
-    DIM rightPad AS INTEGER = browseInnerW - leftPad - rowW
-    IF rightPad > 0 THEN
-        DIM rPadLines AS []STRING
-        rPadLines = APPEND(rPadLines, bgPaint.Render(strings.Repeat(" ", rightPad)))
-        rPadLines = APPEND(rPadLines, bgPaint.Render(strings.Repeat(" ", rightPad)))
-        rPadLines = APPEND(rPadLines, bgPaint.Render(strings.Repeat(" ", rightPad)))
-        finalBtnRow = lipgloss.JoinHorizontal(lipgloss.Top, finalBtnRow, strings.Join(rPadLines, "\n"))
-    END IF
-    lines = APPEND(lines, finalBtnRow)
-
-    lines = APPEND(lines, bgPaint.Width(browseInnerW).Render(""))
-    lines = APPEND(lines, hintStyle.Render(" Tab cycle  Enter activate  Esc cancel"))
-
-    ' Record button rects for mouse hit-test. Frame Padding(1,2) +
-    ' Border puts inner content at (col 3, row 2). The button row
-    ' Y depends on whether filename / newdir rows are present.
-    '
-    ' Layout (rel. to inner content origin):
-    '   0  title
-    '   1  path row
-    '   2  blank
-    '   3  column headers
-    '   4..4+listH-1   columns
-    '   4+listH        blank
-    '   ... save mode +2 (filename + blank)
-    '   ... newdir focus +2 (newdir + blank)
-    '   <fnRowYOffset>   <-- button row
-    DIM contentX AS INTEGER = 3
-    DIM contentY AS INTEGER = 2
-    DIM btnRowY AS INTEGER = contentY + 4 + browseListH + 1 + fnRowYOffset
-    ' First button starts at leftPad + contentX.
-    DIM btnRects AS []BrowseBtnHit
-    DIM bx AS INTEGER = contentX + leftPad
-    DIM btnW1 AS INTEGER = lipgloss.Width(btnNew)
-    DIM btnW2 AS INTEGER = lipgloss.Width(btnOK)
-    DIM btnW3 AS INTEGER = lipgloss.Width(btnCancel)
-    DIM h1 AS BrowseBtnHit
-    h1.X = bx
-    h1.Y = btnRowY
-    h1.W = btnW1
-    h1.H = 3
-    h1.Key = "btnNew"
-    btnRects = APPEND(btnRects, h1)
-    bx = bx + btnW1 + 1
-    DIM h2 AS BrowseBtnHit
-    h2.X = bx
-    h2.Y = btnRowY
-    h2.W = btnW2
-    h2.H = 3
-    h2.Key = "btnOK"
-    btnRects = APPEND(btnRects, h2)
-    bx = bx + btnW2 + 1
-    DIM h3 AS BrowseBtnHit
-    h3.X = bx
-    h3.Y = btnRowY
-    h3.W = btnW3
-    h3.H = 3
-    h3.Key = "btnCancel"
-    btnRects = APPEND(btnRects, h3)
-    browseBtnRects = btnRects
-
-    ' Record row rects for clickable file/dir rows.
-    DIM dirsX  AS INTEGER = contentX + 1            ' " " padding from renderBrowserListColumn
-    DIM filesX AS INTEGER = contentX + browseColW + 2 + 1
-    DIM listYRel AS INTEGER = contentY + 4
-    recordBrowserRowRects(m, dirsX, filesX, listYRel, browseColW, browseListH)
-
-    DIM stacked AS STRING = strings.Join(lines, "\n")
-    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg)).Padding(1, 2)
-    RETURN frame.Render(stacked)
+    lines = APPEND(lines, innerHr)
+    DIM li AS INTEGER
+    FOR li = 0 TO LEN(listRows) - 1
+        lines = APPEND(lines, listRows[li])
+    NEXT li
+    lines = APPEND(lines, innerHr)
+    lines = APPEND(lines, buttonsRow)
+    lines = APPEND(lines, fdBotBorder(innerW))
+    RETURN strings.Join(lines, "\n"), d.X, d.Y
 END FUNCTION
+
+' ----------------------------------------------------------------------
+' Host integration — wrappers around the existing dispatchModalClose
+' contexts so all previous call sites keep working.
+' ----------------------------------------------------------------------
+
+' openFileDialog — set up the FileDialog on m and start showing it.
+' `context` is the dispatchModalClose key (e.g. "open", "saveas",
+' "newproject", "openproject", "saveform"); `mask` is "*" or a glob.
+SUB openFileDialog(m AS POINTER TO Model, context AS STRING, title AS STRING, mode AS STRING, mask AS STRING, initialPath AS STRING)
+    DIM sw AS INTEGER = m.Width
+    DIM sh AS INTEGER = m.Height
+    IF sw < 60 THEN sw = 80
+    IF sh < 20 THEN sh = 24
+    m.FileDlg.Open(title, mode, mask, initialPath, sw, sh)
+    m.FileDlg.Context = context
+END SUB
+
+' fileDialogConsumeNewFolder — if the dialog raised RequestNewFolder,
+' pop a small input modal asking for the folder name. The "newfolder"
+' handler in dispatchModalClose mkdirs inside d.CurDir and ReadDir()s
+' so the new entry appears immediately.
+SUB fileDialogConsumeNewFolder(m AS POINTER TO Model)
+    IF m.FileDlg.RequestNewFolder THEN
+        m.FileDlg.RequestNewFolder = FALSE
+        showInputModal(m, "New Folder", "Folder name:", "", "newfolder")
+    END IF
+END SUB
+
+' fileDialogUpdate — route one tea.Msg through the FileDialog. On
+' commit we hand the picked path off to dispatchModalClose with the
+' captured context; on cancel we just close.
+FUNCTION fileDialogUpdate(m AS POINTER TO Model, msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    DIM commit AS BOOLEAN
+    DIM picked AS STRING
+    DIM cancel AS BOOLEAN
+    DIM fdCmd  AS tea.Cmd
+    commit, picked, cancel, fdCmd = m.FileDlg.Update(msg)
+    IF cancel THEN
+        m.FileDlg.Close()
+        m.Status = "cancelled"
+        RETURN ^m, NIL
+    END IF
+    IF commit THEN
+        DIM ctx AS STRING = m.FileDlg.Context
+        m.FileDlg.Close()
+        m.ModalContext = ctx
+        DIM cQuit AS BOOLEAN
+        DIM cCmd  AS tea.Cmd
+        cQuit, cCmd = dispatchModalClose(m, "", picked)
+        IF cQuit THEN RETURN ^m, tea.Quit
+        RETURN ^m, cCmd
+    END IF
+    fileDialogConsumeNewFolder(m)
+    RETURN ^m, fdCmd
+END FUNCTION
+
+' Compatibility shim — preserve the openBrowser() name used by every
+' previous call site (dispatch, hotkeys). New code can call
+' openFileDialog directly.
+SUB openBrowser(m AS POINTER TO Model, context AS STRING, title AS STRING, mode AS STRING, initialDir AS STRING, initialFilename AS STRING)
+    DIM mask AS STRING = "*"
+    ' Pick a sensible glob from the context so the Files column filters
+    ' down to relevant entries.
+    IF context = "newproject" OR context = "openproject" OR context = "saveform" THEN mask = "*.dbproj"
+    DIM initial AS STRING = initialDir
+    IF initialFilename <> "" THEN
+        IF strings.HasSuffix(initial, "/") THEN
+            initial = initial + initialFilename
+        ELSE
+            initial = initial + "/" + initialFilename
+        END IF
+    ELSE
+        IF NOT strings.HasSuffix(initial, "/") THEN initial = initial + "/"
+    END IF
+    openFileDialog(m, context, title, mode, mask, initial)
+END SUB

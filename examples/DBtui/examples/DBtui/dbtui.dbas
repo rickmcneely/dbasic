@@ -24,6 +24,8 @@ IMPORT "encoding/json" AS encjson
 IMPORT "fmt"
 IMPORT "os"
 IMPORT "os/exec" AS osexec
+IMPORT "path/filepath"
+IMPORT "sort"
 IMPORT "strconv"
 IMPORT "strings"
 IMPORT "time"
@@ -235,23 +237,10 @@ TYPE Model
     ' "saveform") so the existing dispatchModalClose handlers apply
     ' the committed path without each needing a separate browser-
     ' aware code path.
-    DIM BrowseActive   AS BOOLEAN
-    DIM BrowseContext  AS STRING
-    DIM BrowseTitle    AS STRING
-    DIM BrowseMode     AS STRING         ' "open" or "save"
-    DIM BrowseDir      AS STRING         ' currently-listed directory (absolute)
-    DIM BrowsePath     AS textinput.Model ' editable path field at the top
-    DIM BrowseDirs     AS []BrowseEntry  ' subdirectories of BrowseDir (".." first)
-    DIM BrowseFiles    AS []BrowseEntry  ' regular files in BrowseDir
-    DIM BrowseDirSel   AS INTEGER        ' cursor into BrowseDirs
-    DIM BrowseFileSel  AS INTEGER        ' cursor into BrowseFiles
-    DIM BrowseDirScrl  AS INTEGER        ' top-of-list scroll for dirs column
-    DIM BrowseFileScrl AS INTEGER        ' top-of-list scroll for files column
-    DIM BrowseFilename AS textinput.Model ' editable filename (save mode)
-    DIM BrowseFocus    AS STRING         ' "path" / "dirs" / "files" /
-                                         ' "filename" / "newdir" /
-                                         ' "btnNew" / "btnOK" / "btnCancel"
-    DIM BrowseNewDir   AS textinput.Model ' inline New Folder input
+    ' Self-contained FileDialog (port of the original DBtui's
+    ' working dialog). All open/save flows route through this; see
+    ' internal/browse.dbas for the lifecycle / render / input code.
+    DIM FileDlg AS FileDialog
 
     ' Menubar state.
     DIM Menus       AS []MenuDef         ' definitions built once at startup
@@ -1324,16 +1313,14 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         RETURN m, NIL
     END IF
 
-    ' --- File browser overlay handles every event UNLESS a regular
-    '     modal has popped on top of it (e.g. the New Folder prompt).
-    '     When ModalActive, fall through so the modal's key handler
-    '     gets first crack.
-    IF m.BrowseActive AND NOT m.ModalActive THEN
-        DIM brModel AS tea.Model
-        DIM brCmd   AS tea.Cmd
-        brModel, brCmd = browseUpdate(@m, msg)
-        _ = brModel
-        RETURN m, brCmd
+    ' --- FileDialog overlay handles every event UNLESS a regular
+    '     modal has popped on top of it (e.g. an overwrite prompt).
+    IF m.FileDlg.Active AND NOT m.ModalActive THEN
+        DIM fdModel AS tea.Model
+        DIM fdCmd   AS tea.Cmd
+        fdModel, fdCmd = fileDialogUpdate(@m, msg)
+        _ = fdModel
+        RETURN m, fdCmd
     END IF
 
     ' --- Async file load finished --------------------------------
@@ -2611,6 +2598,15 @@ FUNCTION (m AS Model) View() AS tea.View
     IF w < 60 THEN w = 80
     IF h < 20 THEN h = 24
 
+    ' When an overlay (FileDialog or modal) is on top, suppress
+    ' hover-driven highlights on the obscured surface beneath it.
+    ' View() has a value receiver so mutating m here doesn't escape
+    ' to the next frame — Update()'s real hover state is preserved.
+    IF m.FileDlg.Active OR m.ModalActive THEN
+        m.HoverX = 0 - 1
+        m.HoverY = 0 - 1
+    END IF
+
     ' Column widths come from Model — splitter drag and Alt+arrows
     ' adjust LeftW / RightW; clampSplitters keeps them sane.
     DIM leftW  AS INTEGER = m.LeftW
@@ -2718,9 +2714,26 @@ FUNCTION (m AS Model) View() AS tea.View
         full = ldComp.Render()
     END IF
 
-    ' --- Modal overlay (Z=2 so it floats above an open dropdown) ---
-    ' Centered on the visible screen using lipgloss.Width / Height
-    ' for visible-cell math (the box uses multi-byte border chars).
+    ' --- FileDialog overlay (drawn before the regular modal so a
+    '     modal popped on top of the FileDialog — e.g. the "New
+    '     Folder" name prompt or an overwrite confirmation — is
+    '     visible to the user. Input precedence in Update() already
+    '     gives the modal priority over the FileDialog.
+    IF m.FileDlg.Active THEN
+        DIM fdStr AS STRING
+        DIM fdX   AS INTEGER
+        DIM fdY   AS INTEGER
+        fdStr, fdX, fdY = m.FileDlg.Render()
+        IF fdStr <> "" THEN
+            DIM fdBgL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM fdL   AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fdStr).X(fdX).Y(fdY).Z(5)
+            DIM fdComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(fdBgL, fdL)
+            full = fdComp.Render()
+        END IF
+    END IF
+
+    ' --- Modal overlay (drawn last so it sits on top of the
+    '     FileDialog when both are active).
     IF m.ModalActive THEN
         DIM md AS STRING = renderModal(m)
         IF md <> "" THEN
@@ -2731,7 +2744,7 @@ FUNCTION (m AS Model) View() AS tea.View
             IF xOff < 0 THEN xOff = 0
             IF yOff < 0 THEN yOff = 0
             DIM bgLayer2 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
-            DIM mdLayer  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(md).X(xOff).Y(yOff).Z(2)
+            DIM mdLayer  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(md).X(xOff).Y(yOff).Z(6)
             DIM comp2 AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer2, mdLayer)
             full = comp2.Render()
             ' Stash the modal's screen origin so the mouse handler in
@@ -2739,26 +2752,6 @@ FUNCTION (m AS Model) View() AS tea.View
             ' coords and hit-test the button rects renderModal stored.
             modalLastOrigX = xOff
             modalLastOrigY = yOff
-        END IF
-    END IF
-
-    ' --- File browser overlay (Z=5 so it floats above the regular
-    '     modal — same compositor pattern as the modal above).
-    IF m.BrowseActive THEN
-        DIM br AS STRING = renderBrowser(m)
-        IF br <> "" THEN
-            DIM brW AS INTEGER = lipgloss.Width(br)
-            DIM brH AS INTEGER = lipgloss.Height(br)
-            DIM bxOff AS INTEGER = (w - brW) / 2
-            DIM byOff AS INTEGER = (h - brH) / 2
-            IF bxOff < 0 THEN bxOff = 0
-            IF byOff < 0 THEN byOff = 0
-            DIM bgL3 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
-            DIM brL  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(br).X(bxOff).Y(byOff).Z(5)
-            DIM brComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgL3, brL)
-            full = brComp.Render()
-            browseOrigX = bxOff
-            browseOrigY = byOff
         END IF
     END IF
 
