@@ -488,6 +488,8 @@ FUNCTION findFormByName(proj AS Project, name AS STRING) AS (DesignForm, INTEGER
 END FUNCTION
 
 ' writeProjectToDisk — JSON-marshal `proj` to `path` (pretty-printed).
+' Refuses to write 0-byte payloads (defensive: a valid Project marshals
+' to at least "{}", so empty output means something went wrong upstream).
 SUB writeProjectToDisk(path AS STRING, proj AS Project, status AS POINTER TO STRING)
     DIM data AS BYTES
     DIM merr AS ERROR
@@ -496,12 +498,16 @@ SUB writeProjectToDisk(path AS STRING, proj AS Project, status AS POINTER TO STR
         ^status = "marshal failed: " + merr.Error()
         RETURN
     END IF
+    IF LEN(data) = 0 THEN
+        ^status = "marshal returned 0 bytes — refusing to write empty " + path
+        RETURN
+    END IF
     DIM werr AS ERROR = os.WriteFile(path, data, 0644)
     IF werr <> NIL THEN
         ^status = "save failed: " + werr.Error()
         RETURN
     END IF
-    ^status = fmt.Sprintf("saved project %s (%d bytes)", path, LEN(data))
+    ^status = fmt.Sprintf("saved project %s (%d bytes, %d forms)", path, LEN(data), LEN(proj.Forms))
 END SUB
 
 ' addFormToActiveProject — append a fresh DesignForm to the project

@@ -1033,6 +1033,14 @@ SUB saveCurrent(m AS POINTER TO Model)
         m.Status = "nothing open to save"
         RETURN
     END IF
+    ' Defensive: never write the (effectively empty) code-editor buffer
+    ' over a form tab's .dbproj — that's how the project file gets
+    ' clobbered to 0 bytes when Ctrl+S misroutes. saveForm is the right
+    ' path for form tabs.
+    IF m.Tabs[m.TabIdx].Kind = "form" THEN
+        saveForm(m)
+        RETURN
+    END IF
     DIM path AS STRING = m.Tabs[m.TabIdx].Path
     DIM body AS STRING = m.Tabs[m.TabIdx].Editor.Value()
     DIM err  AS ERROR  = os.WriteFile(path, Encode(body), 0644)
@@ -2243,10 +2251,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF key = "ctrl+s" THEN
-            ' In form mode, Ctrl+S saves the .dbproj instead of the
-            ' code buffer. saveForm pops a Save As prompt when the
-            ' form has no path yet.
-            IF m.ViewMode = "form" THEN
+            ' Route by the active tab's KIND, not by ViewMode — the
+            ' two can drift apart (e.g. the user toggled ViewMode to
+            ' "code" on a form tab) and saveCurrent writing the empty
+            ' editor buffer over a .dbproj has corrupted projects to
+            ' 0 bytes in the past. saveForm pops a Save As prompt
+            ' when the form has no path yet.
+            IF hasActiveTab(m) AND m.Tabs[m.TabIdx].Kind = "form" THEN
                 saveForm(@m)
                 RETURN m, NIL
             END IF
