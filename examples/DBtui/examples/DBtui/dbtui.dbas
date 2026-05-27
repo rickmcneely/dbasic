@@ -2661,11 +2661,18 @@ FUNCTION (m AS Model) View() AS tea.View
     IF w < 60 THEN w = 80
     IF h < 20 THEN h = 24
 
-    ' When an overlay (FileDialog or modal) is on top, suppress
-    ' hover-driven highlights on the obscured surface beneath it.
-    ' View() has a value receiver so mutating m here doesn't escape
-    ' to the next frame — Update()'s real hover state is preserved.
-    IF m.FileDlg.Active OR m.ModalActive THEN
+    ' When any overlay is on top, suppress hover-driven highlights on
+    ' the obscured surface beneath it. View() has a value receiver so
+    ' mutating m here doesn't escape to the next frame — Update()'s
+    ' real hover state is preserved. The MenuActive >= 0 case keeps an
+    ' open dropdown's body from being seen as a hover by the tree /
+    ' tabs / editor underneath. The menubar's own hover (Y=0) is
+    ' handled by the dropdown renderer directly.
+    DIM overlayUp AS BOOLEAN = m.FileDlg.Active OR m.ModalActive OR m.QuickOpenActive OR m.CmdPaletteActive
+    IF NOT overlayUp AND m.MenuActive >= 0 AND m.HoverY > 0 THEN
+        overlayUp = TRUE
+    END IF
+    IF overlayUp THEN
         m.HoverX = 0 - 1
         m.HoverY = 0 - 1
     END IF
