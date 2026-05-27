@@ -361,30 +361,15 @@ FUNCTION (d AS POINTER TO FileDialog) committedPath() AS STRING
         IF nm = "" THEN RETURN ""
         RETURN filepath.Join(d.CurDir, nm)
     END IF
-    ' open mode: prefer a selected file in the Files list, otherwise the
-    ' literal path typed into PathInput.
-    IF d.FileCur >= 0 AND d.FileCur < LEN(d.Files) THEN
-        RETURN filepath.Join(d.CurDir, d.Files[d.FileCur])
-    END IF
+    ' open mode: PathInput is the source of truth. A click on a file in
+    ' the Files list already mirrors the full path into PathInput
+    ' (handleClick), so OK / Enter on the Path field commits whatever
+    ' the user has visibly chosen. Returning a "default" file from
+    ' Files[FileCur] when the user hadn't actually clicked one was a
+    ' footgun — it could dispatch a wrong file when the dialog has a
+    ' .dbproj cursor sitting on the wrong entry by default.
     RETURN d.PathInput.Value()
 END FUNCTION
-
-' applyPathEdit — user hit Enter in the path field; treat its value as a
-' chdir target. Stays on the path field on failure (no commit).
-SUB (d AS POINTER TO FileDialog) applyPathEdit()
-    DIM p AS STRING = strings.TrimSpace(d.PathInput.Value())
-    IF p = "" THEN RETURN
-    DIM info AS os.FileInfo
-    DIM err AS ERROR
-    info, err = os.Stat(p)
-    IF err <> NIL THEN RETURN
-    IF info.IsDir() THEN
-        d.CurDir = p
-        d.PathInput.SetValue(p)
-        d.PathInput.CursorEnd()
-        d.ReadDir()
-    END IF
-END SUB
 
 ' ----------------------------------------------------------------------
 ' Update — single entry point for every tea.Msg the host routes here.
@@ -531,10 +516,29 @@ FUNCTION (d AS POINTER TO FileDialog) Update(msg AS tea.Msg) AS (BOOLEAN, STRING
         RETURN FALSE, "", FALSE, NIL
     END IF
 
-    ' Path field — Enter chdirs; everything else flows into textinput.
+    ' Path field — Enter: chdir into a directory; in open mode, commit
+    ' if the path is a file. Everything else flows into the textinput.
     IF d.Focus = FdFocusPath THEN
         IF k = "enter" THEN
-            d.applyPathEdit()
+            DIM pVal AS STRING = strings.TrimSpace(d.PathInput.Value())
+            IF pVal <> "" THEN
+                DIM pInfo AS os.FileInfo
+                DIM pErr  AS ERROR
+                pInfo, pErr = os.Stat(pVal)
+                IF pErr = NIL THEN
+                    IF pInfo.IsDir() THEN
+                        d.CurDir = pVal
+                        d.PathInput.SetValue(pVal)
+                        d.PathInput.CursorEnd()
+                        d.ReadDir()
+                        RETURN FALSE, "", FALSE, NIL
+                    END IF
+                    ' Existing file. In open mode, commit it.
+                    IF d.Mode = "open" THEN
+                        RETURN TRUE, pVal, FALSE, NIL
+                    END IF
+                END IF
+            END IF
             RETURN FALSE, "", FALSE, NIL
         END IF
         DIM newPi AS textinput.Model

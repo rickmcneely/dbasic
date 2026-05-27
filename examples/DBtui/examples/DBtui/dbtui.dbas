@@ -113,9 +113,9 @@ END TYPE
 TYPE DesignWidget
     DIM Kind AS STRING       ' Button / Label / TextInput / Checkbox /
                              ' RadioButton / ComboBox / ListBox /
-                             ' ProgressBar / ScrollBar
+                             ' ProgressBar / ScrollBar / Dialog
     DIM Name AS STRING       ' identifier, e.g. "btnOK"
-    DIM Text AS STRING       ' visible label
+    DIM Text AS STRING       ' visible label (Dialog: window title)
     DIM X    AS INTEGER      ' col offset within canvas
     DIM Y    AS INTEGER      ' row offset within canvas
     DIM W    AS INTEGER
@@ -124,7 +124,8 @@ TYPE DesignWidget
     ' --- kind-specific fields (zero-valued / ignored for kinds that
     ' don't use them; JSON-marshalled in full — small price for
     ' avoiding a kind-tagged sum type) -------------------------------
-    DIM Items    AS []STRING   ' ComboBox / ListBox initial entries
+    DIM Items    AS []STRING   ' ComboBox / ListBox initial entries;
+                               ' Dialog (confirm): button labels
     DIM Selected AS INTEGER    ' ComboBox / ListBox initial index
     DIM Checked  AS BOOLEAN    ' RadioButton initial state
     DIM Group    AS STRING     ' RadioButton mutex group (one selected per group)
@@ -132,6 +133,18 @@ TYPE DesignWidget
     DIM Max      AS INTEGER    ' ScrollBar / ProgressBar upper bound
     DIM Value    AS INTEGER    ' ScrollBar / ProgressBar current value
     DIM Orient   AS STRING     ' ScrollBar: "h" or "v"
+
+    ' --- Dialog widget fields ----------------------------------------
+    ' Non-visual at runtime — the design-time canvas shows a stamp
+    ' so the user can see / select it. Codegen turns it into a runtime
+    ' dialog that user code shows via Show<Name>(@m).
+    DIM DialogKind AS STRING   ' "confirm" | "input" | "file"
+    DIM DialogMsg  AS STRING   ' confirm: body message;
+                               ' input:   prompt above the field;
+                               ' file:    (unused)
+    DIM DialogDef  AS STRING   ' input: default text in the field
+    DIM DialogMode AS STRING   ' file: "open" | "save"
+    DIM DialogMask AS STRING   ' file: glob filter, e.g. "*.dbas"
 END TYPE
 
 TYPE DesignForm
@@ -2873,9 +2886,10 @@ SUB Main()
         _ = gdata
         DIM gproj AS Project
         DIM gpok  AS BOOLEAN
-        gproj, gpok = readProjectFromDisk(gpath)
+        DIM greason AS STRING
+        gproj, gpok, greason = readProjectFromDisk(gpath)
         IF NOT gpok THEN
-            fmt.Fprintln(os.Stderr, "parse", gpath, ": bad .dbproj")
+            fmt.Fprintln(os.Stderr, "parse", gpath, ": bad .dbproj —", greason)
             os.Exit(1)
         END IF
         IF LEN(gproj.Forms) = 0 THEN

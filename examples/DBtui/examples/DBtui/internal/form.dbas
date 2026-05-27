@@ -12,9 +12,9 @@
 ' Persistence + codegen come in a follow-up.
 ' =========================================================================
 
-CONST formPaletteKinds AS INTEGER = 9   ' Button, Label, TextInput, Checkbox,
+CONST formPaletteKinds AS INTEGER = 10  ' Button, Label, TextInput, Checkbox,
                                         ' RadioButton, ComboBox, ListBox,
-                                        ' ProgressBar, ScrollBar
+                                        ' ProgressBar, ScrollBar, Dialog
 
 ' formKindByIdx — fixed list of widget kinds in palette display order.
 ' The order is the order entries appear in the right-pane Widgets
@@ -29,6 +29,7 @@ FUNCTION formKindByIdx(i AS INTEGER) AS STRING
     IF i = 6 THEN RETURN "ListBox"
     IF i = 7 THEN RETURN "ProgressBar"
     IF i = 8 THEN RETURN "ScrollBar"
+    IF i = 9 THEN RETURN "Dialog"
     RETURN ""
 END FUNCTION
 
@@ -83,6 +84,19 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
         w.Max    = 100
         w.Value  = 0
         w.Orient = "v"
+    ELSEIF kind = "Dialog" THEN
+        ' Non-visual at runtime — the canvas stamp is just a marker.
+        ' Default is a confirm dialog with OK/Cancel buttons; user
+        ' changes DialogKind, Items, etc. via the Properties panel.
+        w.Text       = "Dialog Title"
+        w.DialogKind = "confirm"
+        w.DialogMsg  = "Are you sure?"
+        DIM dbtns AS []STRING
+        dbtns = APPEND(dbtns, "OK")
+        dbtns = APPEND(dbtns, "Cancel")
+        w.Items      = dbtns
+        w.W          = 22
+        w.H          = 1
     END IF
     RETURN w
 END FUNCTION
@@ -167,6 +181,15 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
         ' Render a 1-cell-wide vertical scrollbar caret on the first
         ' line. widgetVisibleLines fills the rest of the height.
         RETURN "▲"
+    END IF
+    IF w.Kind = "Dialog" THEN
+        ' Non-visual marker: shows the dialog kind so the designer can
+        ' tell at a glance what will pop at runtime. Stamps render as
+        ' "◇ Dialog(kind): Title" — the leading ◇ matches the tree-pane
+        ' leaf glyph.
+        DIM dk AS STRING = w.DialogKind
+        IF dk = "" THEN dk = "confirm"
+        RETURN "◇ Dialog(" + dk + "): " + w.Text
     END IF
     RETURN w.Text
 END FUNCTION
@@ -412,14 +435,17 @@ END SUB
 
 ' readProjectFromDisk — parse `path` as a .dbproj JSON file into a
 ' Project value. Handles both shapes: the new Project format and the
-' legacy single-DesignForm format (auto-wrapped). Returns (proj, ok)
-' so callers can flag bad JSON without panicking on a zero-value.
-FUNCTION readProjectFromDisk(path AS STRING) AS (Project, BOOLEAN)
+' legacy single-DesignForm format (auto-wrapped). Returns (proj, ok,
+' reason). On ok=FALSE, `reason` is a short human-readable string
+' the caller can show in the status bar so the user can tell whether
+' the file is missing, empty, or malformed.
+FUNCTION readProjectFromDisk(path AS STRING) AS (Project, BOOLEAN, STRING)
     DIM emptyProj AS Project
     DIM data AS BYTES
     DIM rerr AS ERROR
     data, rerr = os.ReadFile(path)
-    IF rerr <> NIL THEN RETURN emptyProj, FALSE
+    IF rerr <> NIL THEN RETURN emptyProj, FALSE, "read failed: " + rerr.Error()
+    IF LEN(data) = 0 THEN RETURN emptyProj, FALSE, "file is empty (0 bytes)"
     ' Try the new Project shape first.
     DIM p AS Project
     DIM jerr AS ERROR = encjson.Unmarshal(data, @p)
@@ -433,17 +459,21 @@ FUNCTION readProjectFromDisk(path AS STRING) AS (Project, BOOLEAN)
             END IF
         NEXT nameI
         IF p.StartForm = "" THEN p.StartForm = p.Forms[0].Name
-        RETURN p, TRUE
+        RETURN p, TRUE, ""
     END IF
     ' Fall back to legacy single-DesignForm and wrap in a Project.
     DIM legacy AS DesignForm
     DIM jerr2 AS ERROR = encjson.Unmarshal(data, @legacy)
-    IF jerr2 <> NIL THEN RETURN emptyProj, FALSE
+    IF jerr2 <> NIL THEN
+        DIM reason AS STRING = "invalid JSON: " + jerr2.Error()
+        IF jerr <> NIL THEN reason = "invalid JSON: " + jerr.Error()
+        RETURN emptyProj, FALSE, reason
+    END IF
     IF legacy.Name = "" THEN legacy.Name = "frmStart"
     DIM wrap AS Project
     wrap.Forms     = APPEND(wrap.Forms, legacy)
     wrap.StartForm = legacy.Name
-    RETURN wrap, TRUE
+    RETURN wrap, TRUE, ""
 END FUNCTION
 
 ' findFormByName — locate a form within a project by Name. Returns
@@ -487,9 +517,10 @@ SUB addFormToActiveProject(m AS POINTER TO Model)
     DIM path AS STRING = m.Tabs[m.TabIdx].Path
     DIM proj AS Project
     DIM pok  AS BOOLEAN
-    proj, pok = readProjectFromDisk(path)
+    DIM preason AS STRING
+    proj, pok, preason = readProjectFromDisk(path)
     IF NOT pok THEN
-        m.Status = "couldn't read " + path + " — saving the active form first might help"
+        m.Status = "couldn't read " + path + " (" + preason + ") — saving the active form first might help"
         RETURN
     END IF
     ' Find a free frmN slot.
@@ -520,9 +551,10 @@ END SUB
 SUB loadFormFromDisk(m AS POINTER TO Model, path AS STRING)
     DIM proj AS Project
     DIM pok AS BOOLEAN
-    proj, pok = readProjectFromDisk(path)
+    DIM lreason AS STRING
+    proj, pok, lreason = readProjectFromDisk(path)
     IF NOT pok THEN
-        m.Status = "bad .dbproj: " + path
+        m.Status = "bad .dbproj: " + path + " (" + lreason + ")"
         RETURN
     END IF
     IF LEN(proj.Forms) = 0 THEN
@@ -599,7 +631,9 @@ SUB saveForm(m AS POINTER TO Model)
     DIM path AS STRING = m.Tabs[m.TabIdx].Path
     DIM proj AS Project
     DIM pok AS BOOLEAN
-    proj, pok = readProjectFromDisk(path)
+    DIM rreason AS STRING
+    proj, pok, rreason = readProjectFromDisk(path)
+    _ = rreason
     IF NOT pok THEN
         ' File doesn't exist yet (Save As) or was deleted — start a
         ' fresh project containing just this tab's form.
@@ -680,6 +714,28 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
     END IF
     IF w.Kind = "ScrollBar" THEN
         IF rowIdx = cursor THEN RETURN "Edit Orient", "h or v:", w.Orient, "wprop:orient"
+        cursor = cursor + 1
+    END IF
+    IF w.Kind = "Dialog" THEN
+        DIM dlgK AS STRING = w.DialogKind
+        IF dlgK = "" THEN dlgK = "confirm"
+        IF rowIdx = cursor THEN RETURN "Edit Dialog Kind", "confirm | input | file:", dlgK, "wprop:dialogkind"
+        cursor = cursor + 1
+        IF dlgK = "confirm" THEN
+            IF rowIdx = cursor THEN RETURN "Edit Message", "Body text:", w.DialogMsg, "wprop:dialogmsg"
+            cursor = cursor + 1
+            IF rowIdx = cursor THEN RETURN "Edit Buttons", "comma-separated:", strings.Join(w.Items, ", "), "wprop:items"
+        ELSEIF dlgK = "input" THEN
+            IF rowIdx = cursor THEN RETURN "Edit Prompt", "Prompt:", w.DialogMsg, "wprop:dialogmsg"
+            cursor = cursor + 1
+            IF rowIdx = cursor THEN RETURN "Edit Default", "Default value:", w.DialogDef, "wprop:dialogdef"
+        ELSEIF dlgK = "file" THEN
+            DIM fm2 AS STRING = w.DialogMode
+            IF fm2 = "" THEN fm2 = "open"
+            IF rowIdx = cursor THEN RETURN "Edit Mode", "open | save:", fm2, "wprop:dialogmode"
+            cursor = cursor + 1
+            IF rowIdx = cursor THEN RETURN "Edit Mask", "Glob, e.g. *.dbas:", w.DialogMask, "wprop:dialogmask"
+        END IF
     END IF
     RETURN "", "", "", ""
 END FUNCTION
@@ -1343,7 +1399,9 @@ FUNCTION doFormRun(m AS POINTER TO Model) AS tea.Cmd
     ' <stem>.dbas (legacy) and multi-form projects get per-form files.
     DIM proj AS Project
     DIM pok  AS BOOLEAN
-    proj, pok = readProjectFromDisk(m.Tabs[m.TabIdx].Path)
+    DIM ureason AS STRING
+    proj, pok, ureason = readProjectFromDisk(m.Tabs[m.TabIdx].Path)
+    _ = ureason
     DIM nForms AS INTEGER = 1
     IF pok THEN nForms = LEN(proj.Forms)
     DIM outPath AS STRING = formOutputPath(m.Tabs[m.TabIdx].Path, m.Tabs[m.TabIdx].FormName, nForms)

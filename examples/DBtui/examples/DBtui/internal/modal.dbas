@@ -413,6 +413,45 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         END IF
         RETURN FALSE, NIL
     END IF
+    ' "wprop:dialog*" — Dialog widget property edits. dialogkind is
+    ' constrained to confirm | input | file; dialogmode to open | save.
+    ' Out-of-band values are silently rejected.
+    IF m.ModalContext = "wprop:dialogkind" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            DIM dkLo AS STRING = strings.ToLower(strings.TrimSpace(text))
+            IF dkLo = "confirm" OR dkLo = "input" OR dkLo = "file" THEN
+                m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].DialogKind = dkLo
+            END IF
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:dialogmsg" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].DialogMsg = text
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:dialogdef" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].DialogDef = text
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:dialogmode" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            DIM dmLo AS STRING = strings.ToLower(strings.TrimSpace(text))
+            IF dmLo = "open" OR dmLo = "save" THEN
+                m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].DialogMode = dmLo
+            END IF
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:dialogmask" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].DialogMask = strings.TrimSpace(text)
+        END IF
+        RETURN FALSE, NIL
+    END IF
     ' "watch:reload" — file-watcher prompt. Reload reads disk;
     ' Keep silences the prompt by refreshing LoadedMtime to the
     ' current disk mtime; Cancel does nothing (next tick will

@@ -729,6 +729,23 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             IF sw.Kind = "ScrollBar" THEN
                 propRows = APPEND(propRows, "Orient " + sw.Orient)
             END IF
+            IF sw.Kind = "Dialog" THEN
+                DIM dlgK AS STRING = sw.DialogKind
+                IF dlgK = "" THEN dlgK = "confirm"
+                propRows = APPEND(propRows, "DlgKind " + dlgK)
+                IF dlgK = "confirm" THEN
+                    propRows = APPEND(propRows, "Message " + sw.DialogMsg)
+                    propRows = APPEND(propRows, "Buttons " + strings.Join(sw.Items, ", "))
+                ELSEIF dlgK = "input" THEN
+                    propRows = APPEND(propRows, "Prompt  " + sw.DialogMsg)
+                    propRows = APPEND(propRows, "Default " + sw.DialogDef)
+                ELSEIF dlgK = "file" THEN
+                    DIM fm AS STRING = sw.DialogMode
+                    IF fm = "" THEN fm = "open"
+                    propRows = APPEND(propRows, "Mode    " + fm)
+                    propRows = APPEND(propRows, "Mask    " + sw.DialogMask)
+                END IF
+            END IF
         ELSE
             propRows = APPEND(propRows, "(no widget selected)")
             propRows = APPEND(propRows, "Click palette to add,")
