@@ -722,6 +722,10 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         IF rowIdx = cursor THEN RETURN "Edit Orient", "h or v:", w.Orient, "wprop:orient"
         cursor = cursor + 1
     END IF
+    IF w.Kind = "Button" THEN
+        IF rowIdx = cursor THEN RETURN "OnClick Dialog", "Dialog widget name (blank = none):", w.OnClickDialog, "wprop:onclickdialog"
+        cursor = cursor + 1
+    END IF
     IF w.Kind = "Dialog" THEN
         DIM dlgK AS STRING = w.DialogKind
         IF dlgK = "" THEN dlgK = "confirm"
@@ -877,8 +881,15 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' similar helpers without us having to thread `m` through every
     ' dispatch path. Only valid for the lifetime of an Update call;
     ' bubbletea copies the Model in/out so it's harmless after that.
+    ' _dlg* fields are written by View when a dialog overlay renders;
+    ' Update reads them to hit-test clicks against the dialog's actual
+    ' on-screen rect.
     IF hasDialog THEN
         s = s + "DIM _currentModel AS POINTER TO Model\n"
+        s = s + "DIM _dlgX AS INTEGER\n"
+        s = s + "DIM _dlgY AS INTEGER\n"
+        s = s + "DIM _dlgW AS INTEGER\n"
+        s = s + "DIM _dlgH AS INTEGER\n"
         s = s + "\n"
     END IF
     s = s + "FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)\n"
@@ -953,6 +964,72 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    DIM mcOk AS BOOLEAN\n"
     s = s + "    mc, mcOk = msg.(tea.MouseClickMsg)\n"
     s = s + "    IF mcOk AND mc.Button = tea.MouseLeft THEN\n"
+    ' Dialog priority — hit-test the active dialog's ✕ glyph + button
+    ' row in modal-local coords. Other clicks inside the dialog rect
+    ' are swallowed; clicks outside fall through to the widget hit-
+    ' tests below (so a stray click outside doesn't get blocked).
+    IF hasDialog THEN
+        DIM dcI AS INTEGER
+        FOR dcI = 0 TO n - 1
+            DIM dcW AS DesignWidget = f.Widgets[dcI]
+            IF dcW.Kind = "Dialog" THEN
+                DIM dcN AS INTEGER = LEN(dcW.Items)
+                IF dcN = 0 THEN dcN = 1
+                s = s + "        IF m." + dcW.Name + "_Active AND _dlgW > 0 THEN\n"
+                s = s + "            DIM lx" + dcW.Name + " AS INTEGER = mc.X - _dlgX\n"
+                s = s + "            DIM ly" + dcW.Name + " AS INTEGER = mc.Y - _dlgY\n"
+                s = s + "            IF lx" + dcW.Name + " >= 0 AND ly" + dcW.Name + " >= 0 AND lx" + dcW.Name + " < _dlgW AND ly" + dcW.Name + " < _dlgH THEN\n"
+                ' ✕ close glyph on the hand-rolled top border
+                ' (relative Y=0). Glyph sits at col totalW-3 (one
+                ' space + ✕ + space + ╮); accept a 2-cell hit zone
+                ' covering the leading space + glyph itself.
+                s = s + "                IF ly" + dcW.Name + " = 0 AND (lx" + dcW.Name + " = _dlgW - 3 OR lx" + dcW.Name + " = _dlgW - 4) THEN\n"
+                s = s + "                    m." + dcW.Name + "_Active = FALSE\n"
+                s = s + "                    " + dcW.Name + "_Close(" + qt + qt + ")\n"
+                s = s + "                    RETURN m, NIL\n"
+                s = s + "                END IF\n"
+                ' Button row hit-test (row Y = 4 for single-line msg:
+                ' top border + top pad + body + spacer + buttons).
+                ' Compute right-justified button X positions from the
+                ' static button labels — same math as fdRenderConfirm
+                ' so the positions stay in sync.
+                s = s + "                IF ly" + dcW.Name + " = 4 THEN\n"
+                s = s + "                    DIM btnW" + dcW.Name + " AS []INTEGER\n"
+                s = s + "                    DIM btnT" + dcW.Name + " AS INTEGER = 0\n"
+                DIM dcBi AS INTEGER
+                FOR dcBi = 0 TO LEN(dcW.Items) - 1
+                    DIM bWid AS INTEGER = lipgloss.Width("[ " + dcW.Items[dcBi] + " ]")
+                    s = s + "                    btnW" + dcW.Name + " = APPEND(btnW" + dcW.Name + ", " + strconv.Itoa(bWid) + ")\n"
+                    s = s + "                    btnT" + dcW.Name + " = btnT" + dcW.Name + " + " + strconv.Itoa(bWid) + "\n"
+                    IF dcBi < LEN(dcW.Items) - 1 THEN
+                        s = s + "                    btnT" + dcW.Name + " = btnT" + dcW.Name + " + 2\n"
+                    END IF
+                NEXT dcBi
+                s = s + "                    DIM innerDW" + dcW.Name + " AS INTEGER = _dlgW - 6\n"
+                s = s + "                    DIM padD" + dcW.Name + " AS INTEGER = innerDW" + dcW.Name + " - btnT" + dcW.Name + "\n"
+                s = s + "                    IF padD" + dcW.Name + " < 0 THEN padD" + dcW.Name + " = 0\n"
+                s = s + "                    DIM bxD" + dcW.Name + " AS INTEGER = 3 + padD" + dcW.Name + "\n"
+                s = s + "                    DIM bkD" + dcW.Name + " AS INTEGER\n"
+                s = s + "                    FOR bkD" + dcW.Name + " = 0 TO LEN(btnW" + dcW.Name + ") - 1\n"
+                s = s + "                        IF lx" + dcW.Name + " >= bxD" + dcW.Name + " AND lx" + dcW.Name + " < bxD" + dcW.Name + " + btnW" + dcW.Name + "[bkD" + dcW.Name + "] THEN\n"
+                s = s + "                            DIM clickedLbl" + dcW.Name + " AS STRING = " + qt + qt + "\n"
+                FOR dcBi = 0 TO LEN(dcW.Items) - 1
+                    s = s + "                            IF bkD" + dcW.Name + " = " + strconv.Itoa(dcBi) + " THEN clickedLbl" + dcW.Name + " = " + qt + escapeForDBString(dcW.Items[dcBi]) + qt + "\n"
+                NEXT dcBi
+                s = s + "                            m." + dcW.Name + "_Active = FALSE\n"
+                s = s + "                            " + dcW.Name + "_Close(clickedLbl" + dcW.Name + ")\n"
+                s = s + "                            RETURN m, NIL\n"
+                s = s + "                        END IF\n"
+                s = s + "                        bxD" + dcW.Name + " = bxD" + dcW.Name + " + btnW" + dcW.Name + "[bkD" + dcW.Name + "] + 2\n"
+                s = s + "                    NEXT bkD" + dcW.Name + "\n"
+                s = s + "                END IF\n"
+                ' Click inside dialog but not on hot spot — swallow.
+                s = s + "                RETURN m, NIL\n"
+                s = s + "            END IF\n"
+                s = s + "        END IF\n"
+            END IF
+        NEXT dcI
+    END IF
     ' DBasic identifiers are case-insensitive AND codegen hoists
     ' DIMs to function-scope, so every new local in this generator
     ' has to dodge collisions with the other loops above (mi/mw in
@@ -1289,8 +1366,12 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' + wheel; lighter than MouseModeAllMotion and we don't need
     ' continuous motion events in v1 (no drag yet).
     s = s + "    DIM fullView AS STRING = strings.Join(rows, " + qt + "\\n" + qt + ")\n"
-    ' Dialog overlay — composite via lipgloss compositor so the
-    ' overlay sits on top of the widget grid below.
+    ' Dialog overlay. When a dialog is active we manually overlay each
+    ' of its rows onto the widget grid via overlayRowAt (which counts
+    ' visible cells, not bytes), then return that. When none is active
+    ' the widget grid is returned as-is. Going through the lipgloss
+    ' compositor here left the dialog's top row "stuck" on the next
+    ' frame in some terminals; manual overlay sidesteps that.
     IF hasDialog THEN
         s = s + "    DIM dlgStr AS STRING = " + qt + qt + "\n"
         DIM dlgVI AS INTEGER
@@ -1314,14 +1395,35 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "        DIM dwY AS INTEGER = (h - dwH) / 2\n"
         s = s + "        IF dwX < 0 THEN dwX = 0\n"
         s = s + "        IF dwY < 0 THEN dwY = 0\n"
-        s = s + "        DIM bgLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)\n"
-        s = s + "        DIM dlgLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dlgStr).X(dwX).Y(dwY).Z(5)\n"
-        s = s + "        DIM comp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer, dlgLayer)\n"
-        s = s + "        fullView = comp.Render()\n"
+        ' Stash the rect so Update's click handler can hit-test
+        ' against the on-screen dialog position.
+        s = s + "        _dlgX = dwX\n"
+        s = s + "        _dlgY = dwY\n"
+        s = s + "        _dlgW = dwW\n"
+        s = s + "        _dlgH = dwH\n"
+        ' Overlay each line of the dialog onto its corresponding
+        ' row in the grid.
+        s = s + "        DIM dlgLines AS []STRING = strings.Split(dlgStr, " + qt + "\\n" + qt + ")\n"
+        s = s + "        DIM dlgRi AS INTEGER\n"
+        s = s + "        FOR dlgRi = 0 TO LEN(dlgLines) - 1\n"
+        s = s + "            DIM tgtY AS INTEGER = dwY + dlgRi\n"
+        s = s + "            IF tgtY >= 0 AND tgtY < LEN(rows) THEN\n"
+        s = s + "                rows[tgtY] = overlayRowAt(rows[tgtY], dwX, dlgLines[dlgRi])\n"
+        s = s + "            END IF\n"
+        s = s + "        NEXT dlgRi\n"
+        s = s + "        fullView = strings.Join(rows, " + qt + "\\n" + qt + ")\n"
+        s = s + "    ELSE\n"
+        s = s + "        _dlgW = 0\n"
+        s = s + "        _dlgH = 0\n"
         s = s + "    END IF\n"
     END IF
     s = s + "    DIM vw AS tea.View = tea.NewView(fullView)\n"
     s = s + "    vw.MouseMode = tea.MouseModeCellMotion\n"
+    ' Alt-screen mode so bubbletea owns the whole terminal and clears
+    ' it cleanly between frames. Without this, content that shrinks
+    ' (e.g. a dialog closing) can leave residue from the previous
+    ' frame in the regular terminal scrollback.
+    s = s + "    vw.AltScreen = TRUE\n"
     s = s + "    RETURN vw\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
@@ -1361,18 +1463,43 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    RETURN lf + txt + rt\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
+    ' overlayRowAt — splice a (possibly ANSI-styled) string into `row`
+    ' at visible column `col`, replacing `lipgloss.Width(txt)` cells of
+    ' the row's plain-ascii content. Used by the dialog overlay so the
+    ' styled dialog cells line up correctly with the plain-space grid
+    ' underneath. Only emit when hasDialog (needs lipgloss).
+    IF hasDialog THEN
+        s = s + "FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING\n"
+        s = s + "    DIM lf AS STRING = " + qt + qt + "\n"
+        s = s + "    IF col > 0 AND col <= LEN(row) THEN lf = Mid(row, 1, col)\n"
+        s = s + "    DIM cells AS INTEGER = lipgloss.Width(txt)\n"
+        s = s + "    DIM rt AS STRING = " + qt + qt + "\n"
+        s = s + "    IF col + cells < LEN(row) THEN rt = Mid(row, col + cells + 1, LEN(row) - col - cells)\n"
+        s = s + "    RETURN lf + txt + rt\n"
+        s = s + "END FUNCTION\n"
+        s = s + "\n"
+    END IF
     ' --- dispatchClick — generated jump-table from widget Id to
     '     the user-defined SUB. Must live in the prelude so the
     '     generated Update can call it; the SUB bodies live below
     '     the marker so they survive regen.
     s = s + "' Generated dispatcher — routes a Button click to its user handler.\n"
+    s = s + "' When a Button has OnClickDialog set, the dialog's Show<Name>()\n"
+    s = s + "' fires first so the user doesn't have to wire it from code.\n"
     s = s + "SUB dispatchClick(id AS STRING)\n"
     DIM hadClick AS BOOLEAN = FALSE
     DIM di AS INTEGER
     FOR di = 0 TO n - 1
         DIM dw AS DesignWidget = f.Widgets[di]
         IF dw.Kind = "Button" THEN
-            s = s + "    IF id = " + qt + dw.Name + qt + " THEN " + dw.Name + "_Click()\n"
+            IF dw.OnClickDialog <> "" THEN
+                s = s + "    IF id = " + qt + dw.Name + qt + " THEN\n"
+                s = s + "        Show" + dw.OnClickDialog + "()\n"
+                s = s + "        " + dw.Name + "_Click()\n"
+                s = s + "    END IF\n"
+            ELSE
+                s = s + "    IF id = " + qt + dw.Name + qt + " THEN " + dw.Name + "_Click()\n"
+            END IF
             hadClick = TRUE
         END IF
     NEXT di
@@ -1423,9 +1550,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             END IF
         NEXT dlgI
 
-        ' fdRenderConfirm — title-in-frame + flat right-justified
-        ' buttons, matching DBtui's own confirm-dialog style. Drawn at
-        ' fixed innerW=48 so it stays compact.
+        ' fdRenderConfirm — body + button row wrapped in a lipgloss
+        ' frame with BorderTop(FALSE), then a hand-rolled top border
+        ' carrying the title (left) + ✕ close glyph (right). Matches
+        ' DBtui's own FileDialog / modal style. innerW fixed at 48.
         s = s + "\n"
         s = s + "FUNCTION fdRenderConfirm(title AS STRING, msg AS STRING, buttons AS []STRING, activeIdx AS INTEGER) AS STRING\n"
         s = s + "    DIM innerW AS INTEGER = 48\n"
@@ -1434,18 +1562,15 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "    DIM cAccent AS STRING = " + qt + "#7dcfff" + qt + "\n"
         s = s + "    DIM cBorder AS STRING = " + qt + "#3b3d5e" + qt + "\n"
         s = s + "    DIM cHl     AS STRING = " + qt + "#2d4f67" + qt + "\n"
+        s = s + "    DIM cClose  AS STRING = " + qt + "#f9e2af" + qt + "\n"
         s = s + "    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder)).Background(lipgloss.Color(cBg))\n"
         s = s + "    DIM titleStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg)).Bold(TRUE).Italic(TRUE)\n"
         s = s + "    DIM bodyStyle   AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cBg)).Width(innerW)\n"
         s = s + "    DIM btnStyle    AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cBg))\n"
         s = s + "    DIM btnActive   AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cHl)).Bold(TRUE)\n"
         s = s + "    DIM bgFill      AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg))\n"
-        ' Top border (title embedded, ✕ close glyph).
-        s = s + "    DIM titleLen AS INTEGER = lipgloss.Width(" + qt + " " + qt + " + title + " + qt + " " + qt + ")\n"
-        s = s + "    DIM dashLen  AS INTEGER = innerW + 6 - titleLen - 6\n"
-        s = s + "    IF dashLen < 0 THEN dashLen = 0\n"
-        s = s + "    DIM topBorder AS STRING = borderStyle.Render(" + qt + "╭─" + qt + ") + titleStyle.Render(" + qt + " " + qt + " + title + " + qt + " " + qt + ") + borderStyle.Render(strings.Repeat(" + qt + "─" + qt + ", dashLen) + " + qt + " " + qt + ") + lipgloss.NewStyle().Foreground(lipgloss.Color(" + qt + "#f9e2af" + qt + ")).Background(lipgloss.Color(cBg)).Bold(TRUE).Render(" + qt + "✕" + qt + ") + borderStyle.Render(" + qt + " ╮" + qt + ")\n"
-        ' Body (single-line for now — Phase 4 can wrap multi-line).
+        s = s + "    DIM closeStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cClose)).Background(lipgloss.Color(cBg)).Bold(TRUE)\n"
+        ' Body — single line for now; Phase 4 can wrap multi-line.
         s = s + "    DIM body AS STRING = bodyStyle.Render(msg)\n"
         ' Button row.
         s = s + "    DIM totalW AS INTEGER = 0\n"
@@ -1466,12 +1591,21 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "        END IF\n"
         s = s + "        IF bi < LEN(buttons) - 1 THEN btnRow = btnRow + bgFill.Render(" + qt + "  " + qt + ")\n"
         s = s + "    NEXT bi\n"
-        ' Stack body + spacer + buttons, wrap in lipgloss border (top
-        ' suppressed — already rendered by hand above).
+        ' Stack body / spacer / buttons, wrap in a frame with the top
+        ' border suppressed; lipgloss draws the sides + bottom.
         s = s + "    DIM spacer AS STRING = bodyStyle.Render(" + qt + " " + qt + ")\n"
         s = s + "    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, body, spacer, btnRow)\n"
         s = s + "    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderTop(FALSE).BorderForeground(lipgloss.Color(cBorder)).BorderBackground(lipgloss.Color(cBg)).Background(lipgloss.Color(cBg)).Padding(1, 2)\n"
-        s = s + "    RETURN topBorder + " + qt + "\\n" + qt + " + frame.Render(stacked)\n"
+        s = s + "    DIM bodyStr AS STRING = frame.Render(stacked)\n"
+        s = s + "    DIM totalDW AS INTEGER = lipgloss.Width(bodyStr)\n"
+        ' Hand-rolled top border: ╭─ Title ─…─ ✕ ╮ — title embedded
+        ' left, ✕ embedded one cell in from the right corner.
+        s = s + "    DIM titleTxt AS STRING = " + qt + " " + qt + " + title + " + qt + " " + qt + "\n"
+        s = s + "    DIM titleLen AS INTEGER = lipgloss.Width(titleTxt)\n"
+        s = s + "    DIM dashLen AS INTEGER = totalDW - titleLen - 6\n"
+        s = s + "    IF dashLen < 0 THEN dashLen = 0\n"
+        s = s + "    DIM topBorder AS STRING = borderStyle.Render(" + qt + "╭─" + qt + ") + titleStyle.Render(titleTxt) + borderStyle.Render(strings.Repeat(" + qt + "─" + qt + ", dashLen) + " + qt + " " + qt + ") + closeStyle.Render(" + qt + "✕" + qt + ") + borderStyle.Render(" + qt + " ╮" + qt + ")\n"
+        s = s + "    RETURN topBorder + " + qt + "\\n" + qt + " + bodyStr\n"
         s = s + "END FUNCTION\n"
     END IF
 

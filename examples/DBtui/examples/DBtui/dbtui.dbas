@@ -137,7 +137,7 @@ TYPE DesignWidget
     ' --- Dialog widget fields ----------------------------------------
     ' Non-visual at runtime — the design-time canvas shows a stamp
     ' so the user can see / select it. Codegen turns it into a runtime
-    ' dialog that user code shows via Show<Name>(@m).
+    ' dialog that user code shows via Show<Name>().
     DIM DialogKind AS STRING   ' "confirm" | "input" | "file"
     DIM DialogMsg  AS STRING   ' confirm: body message;
                                ' input:   prompt above the field;
@@ -145,6 +145,13 @@ TYPE DesignWidget
     DIM DialogDef  AS STRING   ' input: default text in the field
     DIM DialogMode AS STRING   ' file: "open" | "save"
     DIM DialogMask AS STRING   ' file: glob filter, e.g. "*.dbas"
+
+    ' --- Button auto-wire --------------------------------------------
+    ' OnClickDialog names a Dialog widget to fire automatically when
+    ' this Button is clicked. Codegen prepends Show<X>() to the
+    ' dispatchClick branch for this button; the user's _Click handler
+    ' still runs afterwards so they can layer extra logic.
+    DIM OnClickDialog AS STRING
 END TYPE
 
 TYPE DesignForm

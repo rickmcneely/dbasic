@@ -729,6 +729,9 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             IF sw.Kind = "ScrollBar" THEN
                 propRows = APPEND(propRows, "Orient " + sw.Orient)
             END IF
+            IF sw.Kind = "Button" THEN
+                propRows = APPEND(propRows, "OnClick " + sw.OnClickDialog)
+            END IF
             IF sw.Kind = "Dialog" THEN
                 DIM dlgK AS STRING = sw.DialogKind
                 IF dlgK = "" THEN dlgK = "confirm"
