@@ -1,0 +1,65 @@
+{
+  "Name": "dialog_demo",
+  "StartForm": "frmStart",
+  "Forms": [
+    {
+      "Name": "frmStart",
+      "Title": "Dialog click test",
+      "Widgets": [
+        {
+          "Kind": "Button",
+          "Name": "btnOpen",
+          "Text": "Open Confirm",
+          "X": 4,
+          "Y": 4,
+          "W": 16,
+          "H": 1,
+          "OnClickDialog": "dlgConfirm"
+        },
+        {
+          "Kind": "Button",
+          "Name": "btnAsk",
+          "Text": "Ask Name",
+          "X": 4,
+          "Y": 6,
+          "W": 12,
+          "H": 1,
+          "OnClickDialog": "dlgAskName"
+        },
+        {
+          "Kind": "Button",
+          "Name": "btnPlain",
+          "Text": "Plain",
+          "X": 4,
+          "Y": 8,
+          "W": 12,
+          "H": 1
+        },
+        {
+          "Kind": "Dialog",
+          "Name": "dlgConfirm",
+          "Text": "Confirm",
+          "X": 30,
+          "Y": 4,
+          "W": 12,
+          "H": 5,
+          "DialogKind": "confirm",
+          "DialogMsg": "Are you sure?",
+          "Items": ["OK", "Cancel"]
+        },
+        {
+          "Kind": "Dialog",
+          "Name": "dlgAskName",
+          "Text": "Your Name",
+          "X": 30,
+          "Y": 10,
+          "W": 12,
+          "H": 5,
+          "DialogKind": "input",
+          "DialogMsg": "What is your name?",
+          "DialogDef": "anonymous"
+        }
+      ]
+    }
+  ]
+}
