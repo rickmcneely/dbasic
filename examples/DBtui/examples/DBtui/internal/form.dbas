@@ -1825,6 +1825,36 @@ FUNCTION subDefined(userCode AS STRING, name AS STRING) AS BOOLEAN
     RETURN strings.Contains(userCode, needle)
 END FUNCTION
 
+' ensureSubSig — if `userCode` already declares `SUB <name>(...)`,
+' rewrite ONLY that signature line so its parameter list matches
+' `wantSig`, leaving the body untouched. Returns the patched code
+' (unchanged if the stub is absent or already matches).
+'
+' This keeps a Dialog's auto-generated _Close stub in sync when the
+' user flips the dialog kind in the designer: confirm uses
+' `(button AS STRING)` while input uses `(button AS STRING, text AS
+' STRING)`, and the generated call sites change arity to match. Go
+' does not flag unused parameters, so widening a preserved stub is
+' always build-safe; narrowing only breaks if the user's own body
+' referenced the dropped parameter, which is their edit to own.
+FUNCTION ensureSubSig(userCode AS STRING, name AS STRING, wantSig AS STRING) AS STRING
+    DIM marker AS STRING = "SUB " + name + "("
+    DIM at AS INTEGER = strings.Index(userCode, marker)
+    IF at < 0 THEN RETURN userCode      ' stub not present — nothing to fix
+    ' Length of the signature line (from the "SUB" up to, but not
+    ' including, its terminating newline). strings.Index is 0-based;
+    ' Mid is 1-based, so position at+1 == 0-based offset `at`.
+    DIM rest AS STRING = Mid(userCode, at + 1, LEN(userCode) - at)
+    DIM nl AS INTEGER = strings.Index(rest, "\n")
+    IF nl < 0 THEN nl = LEN(rest)        ' signature runs to end of file
+    DIM oldLine AS STRING = Mid(userCode, at + 1, nl)
+    DIM newLine AS STRING = "SUB " + name + wantSig
+    IF oldLine = newLine THEN RETURN userCode   ' already correct
+    DIM prefix AS STRING = Mid(userCode, 1, at)
+    DIM suffix AS STRING = Mid(userCode, at + nl + 1, LEN(userCode) - (at + nl))
+    RETURN prefix + newLine + suffix
+END FUNCTION
+
 ' generateUserStubs — produce the user section. On a fresh form
 ' (existingUser empty) seed it with a friendly preamble + an empty
 ' SUB <name>_Click() for every Button. On subsequent regens, keep
@@ -1870,6 +1900,12 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
                 stubBody  = stubBody + "    ' for Esc / ✕ close. Add your branching code here.\n"
                 stubBody  = stubBody + "    _ = button\n"
             END IF
+        END IF
+        ' A Dialog's _Close arity depends on its kind, and the kind can
+        ' change between regens. If the stub already exists, repair its
+        ' signature in place so it matches the current call sites.
+        IF w.Kind = "Dialog" THEN
+            out = ensureSubSig(out, stubName, stubSig)
         END IF
         IF stubName <> "" AND NOT subDefined(out, stubName) THEN
             IF NOT trailing THEN out = out + "\n"
