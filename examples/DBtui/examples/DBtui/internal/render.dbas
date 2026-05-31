@@ -744,6 +744,12 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             IF sw.Kind = "ScrollPanel" THEN
                 propRows = APPEND(propRows, "Lines  " + strings.Join(sw.Items, ", "))
             END IF
+            IF sw.Kind = "Menubar" THEN
+                propRows = APPEND(propRows, "Menus  " + strings.Join(sw.Items, ", "))
+            END IF
+            IF sw.Kind = "StatusBar" THEN
+                propRows = APPEND(propRows, "Segs   " + strings.Join(sw.Items, ", "))
+            END IF
             IF sw.Kind = "Button" THEN
                 propRows = APPEND(propRows, "OnClick " + sw.OnClickDialog)
             END IF

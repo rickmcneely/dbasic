@@ -12,11 +12,11 @@
 ' Persistence + codegen come in a follow-up.
 ' =========================================================================
 
-CONST formPaletteKinds AS INTEGER = 15  ' Button, Label, TextInput, Checkbox,
+CONST formPaletteKinds AS INTEGER = 17  ' Button, Label, TextInput, Checkbox,
                                         ' RadioButton, ComboBox, ListBox,
                                         ' ProgressBar, ScrollBar, Dialog,
                                         ' TabStrip, Tree, TextArea, PropGrid,
-                                        ' ScrollPanel
+                                        ' ScrollPanel, Menubar, StatusBar
 
 ' formKindByIdx — fixed list of widget kinds in palette display order.
 ' The order is the order entries appear in the right-pane Widgets
@@ -37,6 +37,8 @@ FUNCTION formKindByIdx(i AS INTEGER) AS STRING
     IF i = 12 THEN RETURN "TextArea"
     IF i = 13 THEN RETURN "PropGrid"
     IF i = 14 THEN RETURN "ScrollPanel"
+    IF i = 15 THEN RETURN "Menubar"
+    IF i = 16 THEN RETURN "StatusBar"
     RETURN ""
 END FUNCTION
 
@@ -167,6 +169,38 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
             splines = APPEND(splines, "Content line " + strconv.Itoa(spk))
         NEXT spk
         w.Items = splines
+    ELSEIF kind = "Menubar" THEN
+        ' Top menu strip. Items are dash-depth encoded (like Tree): a
+        ' depth-0 entry is a menu title, each following depth-1 ("-")
+        ' entry is an item under it. Runtime tracks the active menu /
+        ' open state / highlighted item; selecting fires <Name>_Select.
+        w.Text = "Menubar"
+        w.W    = 44
+        w.H    = 1
+        DIM mbentries AS []STRING
+        mbentries = APPEND(mbentries, "File")
+        mbentries = APPEND(mbentries, "-New")
+        mbentries = APPEND(mbentries, "-Open")
+        mbentries = APPEND(mbentries, "-Quit")
+        mbentries = APPEND(mbentries, "Edit")
+        mbentries = APPEND(mbentries, "-Cut")
+        mbentries = APPEND(mbentries, "-Copy")
+        mbentries = APPEND(mbentries, "-Paste")
+        mbentries = APPEND(mbentries, "Help")
+        mbentries = APPEND(mbentries, "-About")
+        w.Items = mbentries
+    ELSEIF kind = "StatusBar" THEN
+        ' Bottom status strip. Items are segments shown across the bar
+        ' (joined by │). Runtime <Name>_Text, when non-empty, overrides
+        ' the segments. Passive (no events).
+        w.Text = "StatusBar"
+        w.W    = 44
+        w.H    = 1
+        DIM sbsegs AS []STRING
+        sbsegs = APPEND(sbsegs, "Ready")
+        sbsegs = APPEND(sbsegs, "Ln 1, Col 1")
+        sbsegs = APPEND(sbsegs, "UTF-8")
+        w.Items = sbsegs
     END IF
     RETURN w
 END FUNCTION
@@ -249,6 +283,75 @@ FUNCTION treeLabel(item AS STRING) AS STRING
     RETURN Mid(item, d + 1, LEN(item) - d)
 END FUNCTION
 
+' statusBarText joins StatusBar segments with │ for display.
+' menubarTitles renders a Menubar's depth-0 entries as a " title "
+' strip (design-time, no active highlight). Both shared by the canvas.
+FUNCTION statusBarText(items AS []STRING) AS STRING
+    RETURN strings.Join(items, " │ ")
+END FUNCTION
+
+FUNCTION menubarTitles(items AS []STRING) AS STRING
+    DIM bar AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items) - 1
+        IF treeDepth(items[i]) = 0 THEN bar = bar + " " + treeLabel(items[i]) + " "
+    NEXT i
+    RETURN bar
+END FUNCTION
+
+' Menubar Items decode (codegen-side). A depth-0 entry is a menu
+' title; the depth-1 entries after it are its items.
+FUNCTION menubarMenuCount(items AS []STRING) AS INTEGER
+    DIM c AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items) - 1
+        IF treeDepth(items[i]) = 0 THEN c = c + 1
+    NEXT i
+    RETURN c
+END FUNCTION
+
+FUNCTION menubarTitleAt(items AS []STRING, k AS INTEGER) AS STRING
+    DIM c AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items) - 1
+        IF treeDepth(items[i]) = 0 THEN
+            IF c = k THEN RETURN treeLabel(items[i])
+            c = c + 1
+        END IF
+    NEXT i
+    RETURN ""
+END FUNCTION
+
+FUNCTION menubarItemsAt(items AS []STRING, k AS INTEGER) AS []STRING
+    DIM out AS []STRING
+    DIM c AS INTEGER = 0 - 1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items) - 1
+        IF treeDepth(items[i]) = 0 THEN
+            c = c + 1
+        ELSEIF c = k THEN
+            out = APPEND(out, treeLabel(items[i]))
+        END IF
+    NEXT i
+    RETURN out
+END FUNCTION
+
+' menubarColAt — column offset of the k-th title within the title bar,
+' where each title occupies width(label)+2 cells.
+FUNCTION menubarColAt(items AS []STRING, k AS INTEGER) AS INTEGER
+    DIM col AS INTEGER = 0
+    DIM c AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items) - 1
+        IF treeDepth(items[i]) = 0 THEN
+            IF c = k THEN RETURN col
+            col = col + lipgloss.Width(treeLabel(items[i])) + 2
+            c = c + 1
+        END IF
+    NEXT i
+    RETURN col
+END FUNCTION
+
 ' propKey / propVal split a PropGrid "key=value" Items entry on the
 ' first '='. A missing '=' makes the whole entry the key with an empty
 ' value. Shared by the canvas + codegen.
@@ -329,6 +432,8 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
         ' Width proxy; widgetVisibleLines paints the framed scroll box.
         RETURN "┌" + strings.Repeat("─", w.W - 2) + "┐"
     END IF
+    IF w.Kind = "StatusBar" THEN RETURN statusBarText(w.Items)
+    IF w.Kind = "Menubar"   THEN RETURN menubarTitles(w.Items)
     IF w.Kind = "Dialog" THEN
         ' Non-visual marker: shows the dialog kind so the designer can
         ' tell at a glance what will pop at runtime. Stamps render as
@@ -1004,6 +1109,14 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         IF rowIdx = cursor THEN RETURN "Edit Content", "comma-separated lines:", strings.Join(w.Items, ", "), "wprop:items"
         cursor = cursor + 1
     END IF
+    IF w.Kind = "Menubar" THEN
+        IF rowIdx = cursor THEN RETURN "Edit Menus", "comma list, '-' = item:", strings.Join(w.Items, ", "), "wprop:items"
+        cursor = cursor + 1
+    END IF
+    IF w.Kind = "StatusBar" THEN
+        IF rowIdx = cursor THEN RETURN "Edit Segments", "comma-separated:", strings.Join(w.Items, ", "), "wprop:items"
+        cursor = cursor + 1
+    END IF
     IF w.Kind = "Button" THEN
         IF rowIdx = cursor THEN RETURN "OnClick Dialog", "Dialog widget name (blank = none):", w.OnClickDialog, "wprop:onclickdialog"
         cursor = cursor + 1
@@ -1117,6 +1230,8 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     DIM hasTextArea AS BOOLEAN = FALSE
     DIM hasPropGrid AS BOOLEAN = FALSE
     DIM hasScrollPanel AS BOOLEAN = FALSE
+    DIM hasMenubar AS BOOLEAN = FALSE
+    DIM hasStatusBar AS BOOLEAN = FALSE
     DIM scanI AS INTEGER
     FOR scanI = 0 TO n - 1
         IF f.Widgets[scanI].Kind = "Dialog" THEN hasDialog = TRUE
@@ -1124,6 +1239,8 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         IF f.Widgets[scanI].Kind = "TextArea" THEN hasTextArea = TRUE
         IF f.Widgets[scanI].Kind = "PropGrid" THEN hasPropGrid = TRUE
         IF f.Widgets[scanI].Kind = "ScrollPanel" THEN hasScrollPanel = TRUE
+        IF f.Widgets[scanI].Kind = "Menubar" THEN hasMenubar = TRUE
+        IF f.Widgets[scanI].Kind = "StatusBar" THEN hasStatusBar = TRUE
     NEXT scanI
     s = s + "' === GENERATED BY DBtui — rewritten on every F5 (do not edit above the marker) ===\n"
     s = s + "\n"
@@ -1131,7 +1248,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "IMPORT " + qt + "fmt" + qt + "\n"
     s = s + "IMPORT " + qt + "os" + qt + "\n"
     s = s + "IMPORT " + qt + "strings" + qt + "\n"
-    IF hasDialog OR hasTextArea OR hasPropGrid OR hasScrollPanel THEN
+    IF hasDialog OR hasTextArea OR hasPropGrid OR hasScrollPanel OR hasMenubar OR hasStatusBar THEN
         s = s + "IMPORT " + qt + "charm.land/lipgloss/v2" + qt + " AS lipgloss\n"
     END IF
     s = s + "\n"
@@ -1169,6 +1286,14 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         ELSEIF w.Kind = "ScrollPanel" THEN
             ' Top visible content line.
             s = s + "    DIM " + w.Name + "_Scroll AS INTEGER\n"
+        ELSEIF w.Kind = "Menubar" THEN
+            ' Active (highlighted) menu, open state, highlighted item.
+            s = s + "    DIM " + w.Name + "_Active AS INTEGER\n"
+            s = s + "    DIM " + w.Name + "_Open   AS BOOLEAN\n"
+            s = s + "    DIM " + w.Name + "_Item   AS INTEGER\n"
+        ELSEIF w.Kind = "StatusBar" THEN
+            ' Runtime override text; empty = show the static segments.
+            s = s + "    DIM " + w.Name + "_Text AS STRING\n"
         ELSEIF w.Kind = "Dialog" THEN
             s = s + "    DIM " + w.Name + "_Active AS BOOLEAN\n"
             s = s + "    DIM " + w.Name + "_Idx    AS INTEGER\n"
@@ -1197,16 +1322,31 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' _dlg* fields are written by View when a dialog overlay renders;
     ' Update reads them to hit-test clicks against the dialog's actual
     ' on-screen rect.
-    IF hasDialog THEN
+    ' _currentModel lets no-arg user handlers (_Click / _Change /
+    ' _Close / _Select) mutate model state; needed whenever such a
+    ' handler might want to (dialogs, and Menubar _Select).
+    IF hasDialog OR hasMenubar THEN
         s = s + "DIM _currentModel AS POINTER TO Model\n"
+    END IF
+    IF hasDialog THEN
         s = s + "DIM _dlgX AS INTEGER\n"
         s = s + "DIM _dlgY AS INTEGER\n"
         s = s + "DIM _dlgW AS INTEGER\n"
         s = s + "DIM _dlgH AS INTEGER\n"
         s = s + "\n"
     END IF
+    ' _mb* rect of the currently-open Menubar dropdown — written by
+    ' View, read by Update's click hit-test (mirrors _dlg* for dialogs).
+    ' _mbItemY is the screen row of the first dropdown item.
+    IF hasMenubar THEN
+        s = s + "DIM _mbX AS INTEGER\n"
+        s = s + "DIM _mbItemY AS INTEGER\n"
+        s = s + "DIM _mbW AS INTEGER\n"
+        s = s + "DIM _mbN AS INTEGER\n"
+        s = s + "\n"
+    END IF
     s = s + "FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)\n"
-    IF hasDialog THEN
+    IF hasDialog OR hasMenubar THEN
         s = s + "    _currentModel = @m\n"
     END IF
     s = s + "    DIM sz AS tea.WindowSizeMsg\n"
@@ -1218,11 +1358,12 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "        RETURN m, NIL\n"
     s = s + "    END IF\n"
 
-    ' --- Dialog priority — when a dialog is active, swallow input
-    '     there. Keys: Esc cancels; Tab/arrows cycle; Enter/Space
-    '     commits. On commit, <Name>_Close(button) fires (user
-    '     handler below the marker; "" = cancelled).
-    IF hasDialog THEN
+    ' --- Dialog / open-menu priority — when a dialog is active or a
+    '     Menubar dropdown is open, route keys there first (so e.g. Esc
+    '     closes the menu instead of quitting). Dialog: Esc cancels;
+    '     Tab/arrows cycle; Enter/Space commits. Menu: arrows navigate;
+    '     Enter selects; Esc closes.
+    IF hasDialog OR hasMenubar THEN
         s = s + "    DIM kpd AS tea.KeyPressMsg\n"
         s = s + "    DIM kpdOk AS BOOLEAN\n"
         s = s + "    kpd, kpdOk = msg.(tea.KeyPressMsg)\n"
@@ -1342,6 +1483,65 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 END IF
             END IF
         NEXT dlgUI
+        ' Open-menu key handling (modal while a dropdown is showing).
+        DIM mbKI AS INTEGER
+        FOR mbKI = 0 TO n - 1
+            DIM mbKW AS DesignWidget = f.Widgets[mbKI]
+            IF mbKW.Kind = "Menubar" THEN
+                DIM mbKn AS STRING = mbKW.Name
+                DIM mbKc AS INTEGER = menubarMenuCount(mbKW.Items)
+                DIM mbKcm1 AS STRING = strconv.Itoa(mbKc - 1)
+                s = s + "        IF m." + mbKn + "_Open THEN\n"
+                s = s + "            IF kpdK = " + qt + "esc" + qt + " THEN\n"
+                s = s + "                m." + mbKn + "_Open = FALSE\n"
+                s = s + "                RETURN m, NIL\n"
+                s = s + "            END IF\n"
+                s = s + "            IF kpdK = " + qt + "up" + qt + " THEN\n"
+                s = s + "                IF m." + mbKn + "_Item > 0 THEN m." + mbKn + "_Item = m." + mbKn + "_Item - 1\n"
+                s = s + "                RETURN m, NIL\n"
+                s = s + "            END IF\n"
+                s = s + "            IF kpdK = " + qt + "down" + qt + " THEN\n"
+                s = s + "                DIM mbMx" + mbKn + " AS INTEGER = 0\n"
+                DIM mbKk AS INTEGER
+                FOR mbKk = 0 TO mbKc - 1
+                    DIM mbKcnt AS INTEGER = LEN(menubarItemsAt(mbKW.Items, mbKk))
+                    s = s + "                IF m." + mbKn + "_Active = " + strconv.Itoa(mbKk) + " THEN mbMx" + mbKn + " = " + strconv.Itoa(mbKcnt - 1) + "\n"
+                NEXT mbKk
+                s = s + "                IF m." + mbKn + "_Item < mbMx" + mbKn + " THEN m." + mbKn + "_Item = m." + mbKn + "_Item + 1\n"
+                s = s + "                RETURN m, NIL\n"
+                s = s + "            END IF\n"
+                s = s + "            IF kpdK = " + qt + "left" + qt + " THEN\n"
+                s = s + "                IF m." + mbKn + "_Active > 0 THEN\n"
+                s = s + "                    m." + mbKn + "_Active = m." + mbKn + "_Active - 1\n"
+                s = s + "                    m." + mbKn + "_Item = 0\n"
+                s = s + "                END IF\n"
+                s = s + "                RETURN m, NIL\n"
+                s = s + "            END IF\n"
+                s = s + "            IF kpdK = " + qt + "right" + qt + " THEN\n"
+                s = s + "                IF m." + mbKn + "_Active < " + mbKcm1 + " THEN\n"
+                s = s + "                    m." + mbKn + "_Active = m." + mbKn + "_Active + 1\n"
+                s = s + "                    m." + mbKn + "_Item = 0\n"
+                s = s + "                END IF\n"
+                s = s + "                RETURN m, NIL\n"
+                s = s + "            END IF\n"
+                s = s + "            IF kpdK = " + qt + "enter" + qt + " OR kpdK = " + qt + "space" + qt + " THEN\n"
+                s = s + "                DIM mbPick" + mbKn + " AS STRING = " + qt + qt + "\n"
+                FOR mbKk = 0 TO mbKc - 1
+                    DIM mbKits AS []STRING = menubarItemsAt(mbKW.Items, mbKk)
+                    DIM mbKj AS INTEGER
+                    FOR mbKj = 0 TO LEN(mbKits) - 1
+                        s = s + "                IF m." + mbKn + "_Active = " + strconv.Itoa(mbKk) + " AND m." + mbKn + "_Item = " + strconv.Itoa(mbKj) + " THEN mbPick" + mbKn + " = " + qt + escapeForDBString(mbKits[mbKj]) + qt + "\n"
+                    NEXT mbKj
+                NEXT mbKk
+                s = s + "                m." + mbKn + "_Open = FALSE\n"
+                s = s + "                " + mbKn + "_Select(mbPick" + mbKn + ")\n"
+                s = s + "                RETURN m, NIL\n"
+                s = s + "            END IF\n"
+                ' Swallow any other key while the menu is open.
+                s = s + "            RETURN m, NIL\n"
+                s = s + "        END IF\n"
+            END IF
+        NEXT mbKI
         s = s + "    END IF\n"
     END IF
     ' --- Mouse click hit-test — back-to-front so a later (drawn-on-
@@ -1447,6 +1647,36 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             END IF
         NEXT dcI
     END IF
+    ' Open-menu dropdown-item click priority — hit-test against the
+    ' _mb* rect stashed by View (the open dropdown's on-screen box).
+    IF hasMenubar THEN
+        DIM mbMI AS INTEGER
+        FOR mbMI = 0 TO n - 1
+            DIM mbMW AS DesignWidget = f.Widgets[mbMI]
+            IF mbMW.Kind = "Menubar" THEN
+                DIM mbMn AS STRING = mbMW.Name
+                s = s + "        IF m." + mbMn + "_Open AND _mbN > 0 THEN\n"
+                s = s + "            DIM mbCY" + mbMn + " AS INTEGER = mc.Y - _mbItemY\n"
+                s = s + "            IF mc.X >= _mbX AND mc.X < _mbX + _mbW AND mbCY" + mbMn + " >= 0 AND mbCY" + mbMn + " < _mbN THEN\n"
+                s = s + "                m." + mbMn + "_Item = mbCY" + mbMn + "\n"
+                s = s + "                DIM mbCPick" + mbMn + " AS STRING = " + qt + qt + "\n"
+                DIM mbMc AS INTEGER = menubarMenuCount(mbMW.Items)
+                DIM mbMk AS INTEGER
+                FOR mbMk = 0 TO mbMc - 1
+                    DIM mbMits AS []STRING = menubarItemsAt(mbMW.Items, mbMk)
+                    DIM mbMj AS INTEGER
+                    FOR mbMj = 0 TO LEN(mbMits) - 1
+                        s = s + "                IF m." + mbMn + "_Active = " + strconv.Itoa(mbMk) + " AND m." + mbMn + "_Item = " + strconv.Itoa(mbMj) + " THEN mbCPick" + mbMn + " = " + qt + escapeForDBString(mbMits[mbMj]) + qt + "\n"
+                    NEXT mbMj
+                NEXT mbMk
+                s = s + "                m." + mbMn + "_Open = FALSE\n"
+                s = s + "                " + mbMn + "_Select(mbCPick" + mbMn + ")\n"
+                s = s + "                RETURN m, NIL\n"
+                s = s + "            END IF\n"
+                s = s + "        END IF\n"
+            END IF
+        NEXT mbMI
+    END IF
     ' DBasic identifiers are case-insensitive AND codegen hoists
     ' DIMs to function-scope, so every new local in this generator
     ' has to dodge collisions with the other loops above (mi/mw in
@@ -1528,6 +1758,27 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
                 s = s + "            END IF\n"
             END IF
+        ELSEIF mcw.Kind = "Menubar" THEN
+            ' Title-row click: pick the menu by column. Clicking the
+            ' already-open active menu closes it; otherwise open it.
+            s = s + "            DIM mbTX" + mcIStr + " AS INTEGER = mc.X - " + mcXs + "\n"
+            DIM mbWi AS INTEGER = menubarMenuCount(mcw.Items)
+            DIM mbWcol AS INTEGER = 0
+            DIM mbWk AS INTEGER
+            FOR mbWk = 0 TO mbWi - 1
+                DIM mbWtitle AS STRING = menubarTitleAt(mcw.Items, mbWk)
+                DIM mbWw AS INTEGER = lipgloss.Width(mbWtitle) + 2
+                s = s + "            IF mbTX" + mcIStr + " >= " + strconv.Itoa(mbWcol) + " AND mbTX" + mcIStr + " < " + strconv.Itoa(mbWcol + mbWw) + " THEN\n"
+                s = s + "                IF m." + mcw.Name + "_Open AND m." + mcw.Name + "_Active = " + strconv.Itoa(mbWk) + " THEN\n"
+                s = s + "                    m." + mcw.Name + "_Open = FALSE\n"
+                s = s + "                ELSE\n"
+                s = s + "                    m." + mcw.Name + "_Active = " + strconv.Itoa(mbWk) + "\n"
+                s = s + "                    m." + mcw.Name + "_Open = TRUE\n"
+                s = s + "                    m." + mcw.Name + "_Item = 0\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+                mbWcol = mbWcol + mbWw
+            NEXT mbWk
         ELSEIF mcw.Kind = "ScrollPanel" THEN
             ' Click the ▲ row (relative Y = 1) scrolls up; the ▼ row
             ' (relative Y = H-2) scrolls down.
@@ -1737,6 +1988,18 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "                END IF\n"
                 s = s + "            END IF\n"
                 s = s + "            IF key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN dispatchChange(" + qt + ww.Name + qt + ")\n"
+            ELSEIF ww.Kind = "Menubar" THEN
+                ' Closed-state keys (the open dropdown is handled in the
+                ' priority block above). Left/Right move the active menu;
+                ' Down / Enter / Space open it.
+                DIM mbCloseCount AS INTEGER = menubarMenuCount(ww.Items)
+                DIM mbCloseM1 AS STRING = strconv.Itoa(mbCloseCount - 1)
+                s = s + "            IF key = " + qt + "left" + qt + " AND m." + ww.Name + "_Active > 0 THEN m." + ww.Name + "_Active = m." + ww.Name + "_Active - 1\n"
+                s = s + "            IF key = " + qt + "right" + qt + " AND m." + ww.Name + "_Active < " + mbCloseM1 + " THEN m." + ww.Name + "_Active = m." + ww.Name + "_Active + 1\n"
+                s = s + "            IF key = " + qt + "down" + qt + " OR key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN\n"
+                s = s + "                m." + ww.Name + "_Open = TRUE\n"
+                s = s + "                m." + ww.Name + "_Item = 0\n"
+                s = s + "            END IF\n"
             ELSEIF ww.Kind = "ScrollPanel" THEN
                 ' Scroll the viewport. maxScroll is fixed at codegen time
                 ' from the line count and visible height.
@@ -2061,6 +2324,31 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "    DIM spBot" + sfx + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + spBordStr + ") + " + qt + "┘" + qt + "\n"
             s = s + "    DIM spBotY" + sfx + " AS INTEGER = " + ys + " + " + strconv.Itoa(wv.H - 1) + "\n"
             s = s + "    IF spBotY" + sfx + " >= 0 AND spBotY" + sfx + " < LEN(rows) THEN rows[spBotY" + sfx + "] = overlayRow(rows[spBotY" + sfx + "], " + xs + ", spBot" + sfx + ")\n"
+        ELSEIF wv.Kind = "StatusBar" THEN
+            ' Single row: <name>_Text if set, else the static segments,
+            ' clipped to W.
+            DIM sbWStr AS STRING = strconv.Itoa(wv.W)
+            s = s + "    DIM sbTxt" + sfx + " AS STRING = m." + wv.Name + "_Text\n"
+            s = s + "    IF sbTxt" + sfx + " = " + qt + qt + " THEN sbTxt" + sfx + " = " + qt + escapeForDBString(statusBarText(wv.Items)) + qt + "\n"
+            s = s + "    IF lipgloss.Width(sbTxt" + sfx + ") > " + sbWStr + " THEN sbTxt" + sfx + " = Mid(sbTxt" + sfx + ", 1, " + sbWStr + ")\n"
+            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", sbTxt" + sfx + ")\n"
+        ELSEIF wv.Kind = "Menubar" THEN
+            ' Title bar; the active title is bracketed when the bar is
+            ' focused or open. The dropdown (when open) is drawn in a
+            ' post-pass after this loop so it overlays other widgets.
+            s = s + "    DIM mbFoc" + sfx + " AS BOOLEAN = (m.Focus = " + sfx + ") OR m." + wv.Name + "_Open\n"
+            s = s + "    DIM mbBar" + sfx + " AS STRING = " + qt + qt + "\n"
+            DIM mbVcount AS INTEGER = menubarMenuCount(wv.Items)
+            DIM mbVk AS INTEGER
+            FOR mbVk = 0 TO mbVcount - 1
+                DIM mbVtitle AS STRING = escapeForDBString(menubarTitleAt(wv.Items, mbVk))
+                s = s + "    IF mbFoc" + sfx + " AND m." + wv.Name + "_Active = " + strconv.Itoa(mbVk) + " THEN\n"
+                s = s + "        mbBar" + sfx + " = mbBar" + sfx + " + " + qt + "[" + qt + " + " + qt + mbVtitle + qt + " + " + qt + "]" + qt + "\n"
+                s = s + "    ELSE\n"
+                s = s + "        mbBar" + sfx + " = mbBar" + sfx + " + " + qt + " " + qt + " + " + qt + mbVtitle + qt + " + " + qt + " " + qt + "\n"
+                s = s + "    END IF\n"
+            NEXT mbVk
+            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", mbBar" + sfx + ")\n"
         ELSE
         ' --- Single-row kinds: build body string, prefix focus
         '     marker, overlay onto the target row in `rows`.
@@ -2130,6 +2418,60 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         END IF
         _ = isMulti
     NEXT i
+    ' --- Menubar dropdown post-pass. Drawn after every widget so the
+    '     open dropdown overlays whatever is beneath it. Also stashes the
+    '     dropdown rect into _mb* for Update's click hit-test.
+    IF hasMenubar THEN
+        DIM mbPI AS INTEGER
+        FOR mbPI = 0 TO n - 1
+            DIM mbPW AS DesignWidget = f.Widgets[mbPI]
+            IF mbPW.Kind = "Menubar" THEN
+                DIM mbPsfx AS STRING = strconv.Itoa(mbPI)
+                DIM mbPcount AS INTEGER = menubarMenuCount(mbPW.Items)
+                s = s + "    IF m." + mbPW.Name + "_Open THEN\n"
+                DIM mbPk AS INTEGER
+                FOR mbPk = 0 TO mbPcount - 1
+                    DIM mbPits AS []STRING = menubarItemsAt(mbPW.Items, mbPk)
+                    DIM mbPcnt AS INTEGER = LEN(mbPits)
+                    DIM mbPmaxW AS INTEGER = 1
+                    DIM mbPjj AS INTEGER
+                    FOR mbPjj = 0 TO mbPcnt - 1
+                        DIM mbPlw AS INTEGER = lipgloss.Width(mbPits[mbPjj])
+                        IF mbPlw > mbPmaxW THEN mbPmaxW = mbPlw
+                    NEXT mbPjj
+                    DIM mbPinner AS INTEGER = mbPmaxW + 2
+                    DIM mbPboxX AS INTEGER = mbPW.X + menubarColAt(mbPW.Items, mbPk)
+                    DIM mbPtopY AS INTEGER = mbPW.Y + 1
+                    DIM mbPkStr AS STRING = strconv.Itoa(mbPk)
+                    DIM mbPtag AS STRING = mbPsfx + "x" + mbPkStr
+                    s = s + "        IF m." + mbPW.Name + "_Active = " + mbPkStr + " THEN\n"
+                    s = s + "            DIM mbT" + mbPtag + " AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + strconv.Itoa(mbPinner) + ") + " + qt + "┐" + qt + "\n"
+                    s = s + "            IF " + strconv.Itoa(mbPtopY) + " >= 0 AND " + strconv.Itoa(mbPtopY) + " < LEN(rows) THEN rows[" + strconv.Itoa(mbPtopY) + "] = overlayRow(rows[" + strconv.Itoa(mbPtopY) + "], " + strconv.Itoa(mbPboxX) + ", mbT" + mbPtag + ")\n"
+                    DIM mbPj AS INTEGER
+                    FOR mbPj = 0 TO mbPcnt - 1
+                        DIM mbPlabel AS STRING = mbPits[mbPj]
+                        DIM mbPpad AS INTEGER = mbPmaxW - lipgloss.Width(mbPlabel)
+                        DIM mbPtail AS STRING = " " + mbPlabel + strings.Repeat(" ", mbPpad) + "│"
+                        DIM mbPitemY AS INTEGER = mbPtopY + 1 + mbPj
+                        DIM mbPjTag AS STRING = mbPtag + "y" + strconv.Itoa(mbPj)
+                        s = s + "            DIM mbMk" + mbPjTag + " AS STRING = " + qt + " " + qt + "\n"
+                        s = s + "            IF m." + mbPW.Name + "_Item = " + strconv.Itoa(mbPj) + " THEN mbMk" + mbPjTag + " = " + qt + ">" + qt + "\n"
+                        s = s + "            DIM mbR" + mbPjTag + " AS STRING = " + qt + "│" + qt + " + mbMk" + mbPjTag + " + " + qt + escapeForDBString(mbPtail) + qt + "\n"
+                        s = s + "            IF " + strconv.Itoa(mbPitemY) + " >= 0 AND " + strconv.Itoa(mbPitemY) + " < LEN(rows) THEN rows[" + strconv.Itoa(mbPitemY) + "] = overlayRow(rows[" + strconv.Itoa(mbPitemY) + "], " + strconv.Itoa(mbPboxX) + ", mbR" + mbPjTag + ")\n"
+                    NEXT mbPj
+                    DIM mbPbotY AS INTEGER = mbPtopY + 1 + mbPcnt
+                    s = s + "            DIM mbB" + mbPtag + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + strconv.Itoa(mbPinner) + ") + " + qt + "┘" + qt + "\n"
+                    s = s + "            IF " + strconv.Itoa(mbPbotY) + " >= 0 AND " + strconv.Itoa(mbPbotY) + " < LEN(rows) THEN rows[" + strconv.Itoa(mbPbotY) + "] = overlayRow(rows[" + strconv.Itoa(mbPbotY) + "], " + strconv.Itoa(mbPboxX) + ", mbB" + mbPtag + ")\n"
+                    s = s + "            _mbX = " + strconv.Itoa(mbPboxX) + "\n"
+                    s = s + "            _mbItemY = " + strconv.Itoa(mbPtopY + 1) + "\n"
+                    s = s + "            _mbW = " + strconv.Itoa(mbPinner + 2) + "\n"
+                    s = s + "            _mbN = " + strconv.Itoa(mbPcnt) + "\n"
+                    s = s + "        END IF\n"
+                NEXT mbPk
+                s = s + "    END IF\n"
+            END IF
+        NEXT mbPI
+    END IF
     s = s + "    rows = APPEND(rows, " + qt + " — Tab to cycle focus, Esc to quit" + qt + ")\n"
     ' Enable mouse capture so the Update handler above receives
     ' MouseClickMsg. MouseModeCellMotion reports clicks + release
@@ -2689,6 +3031,13 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
                 stubBody  = stubBody + "    ' for Esc / ✕ close. Add your branching code here.\n"
                 stubBody  = stubBody + "    _ = button\n"
             END IF
+        ELSEIF w.Kind = "Menubar" THEN
+            stubName  = w.Name + "_Select"
+            stubLabel = "Select"
+            stubSig   = "(item AS STRING)"
+            stubBody  = "    ' Called when a menu item is chosen from " + w.Name + ".\n"
+            stubBody  = stubBody + "    ' `item` is the selected item's label.\n"
+            stubBody  = stubBody + "    _ = item\n"
         END IF
         ' A Dialog's _Close arity depends on its kind, and the kind can
         ' change between regens. If the stub already exists, repair its
