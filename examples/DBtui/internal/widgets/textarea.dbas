@@ -1,0 +1,207 @@
+' =========================================================================
+' widgets/textarea.dbas — TextArea (multi-line editor) widget.
+'
+' Code extracted verbatim from internal/form.dbas during the per-widget
+' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
+'
+' A framed multi-line edit box. Runtime: <Name>_Val is the text (STRING,
+' newlines embedded), <Name>_Cur is the insertion-point byte offset. Full
+' cursor editing — printable insert, space/enter/backspace/delete, and
+' arrow/Home/End/Up/Down movement via the generated taLineHome/taLineEnd/
+' taMoveVert/taRowCol helpers (emitted by textAreaEmitHelpers when any
+' TextArea is present).
+'
+' Owns: A default, B visibleText, C visibleLines, E Model (_Val+_Cur),
+' F keyboard (full edit), H View, textAreaEmitSeed (NewModel seed), and
+' textAreaEmitHelpers (the ta* helper-function block). Uses shared
+' overlayRow/escapeForDBString. Stays inline: property rows, hasTextArea
+' scan flag.
+' =========================================================================
+
+' A — defaults: a 28x6 box with placeholder content.
+FUNCTION textAreaDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "Edit me..."
+    w.W    = 28
+    w.H    = 6
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: a top-border proxy (visibleLines paints the box).
+FUNCTION textAreaVisibleText(w AS DesignWidget) AS STRING
+    RETURN "┌" + strings.Repeat("─", w.W - 2) + "┐"
+END FUNCTION
+
+' C — multi-row design render: framed box, H-2 content rows from the initial
+' Text split on newlines.
+FUNCTION textAreaVisibleLines(w AS DesignWidget) AS []STRING
+    DIM lines AS []STRING
+    DIM aw AS INTEGER = w.W
+    IF aw < 3 THEN aw = 3
+    DIM ah AS INTEGER = w.H
+    IF ah < 3 THEN ah = 3
+    DIM inW AS INTEGER = aw - 2
+    DIM clines AS []STRING = strings.Split(w.Text, "\n")
+    lines = APPEND(lines, "┌" + strings.Repeat("─", inW) + "┐")
+    DIM ai AS INTEGER
+    FOR ai = 0 TO ah - 3
+        DIM aln AS STRING = ""
+        IF ai < LEN(clines) THEN aln = clines[ai]
+        IF lipgloss.Width(aln) > inW THEN aln = Mid(aln, 1, inW)
+        IF lipgloss.Width(aln) < inW THEN aln = aln + strings.Repeat(" ", inW - lipgloss.Width(aln))
+        lines = APPEND(lines, "│" + aln + "│")
+    NEXT ai
+    lines = APPEND(lines, "└" + strings.Repeat("─", inW) + "┘")
+    RETURN lines
+END FUNCTION
+
+' E — Model fields: the text plus the cursor byte offset.
+FUNCTION textAreaEmitModel(w AS DesignWidget) AS STRING
+    DIM s AS STRING = ""
+    s = s + "    DIM " + w.Name + "_Val AS STRING\n"
+    s = s + "    DIM " + w.Name + "_Cur AS INTEGER\n"
+    RETURN s
+END FUNCTION
+
+' Seed line in NewModel: load the initial content, cursor at end.
+FUNCTION textAreaEmitSeed(mw AS DesignWidget, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "    m." + mw.Name + "_Val = " + qt + escapeForDBString(mw.Text) + qt + "\n"
+    s = s + "    m." + mw.Name + "_Cur = LEN(m." + mw.Name + "_Val)\n"
+    RETURN s
+END FUNCTION
+
+' F — keyboard: full cursor editing. Byte-offset based (exact for ASCII).
+FUNCTION textAreaEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
+    DIM tan AS STRING = ww.Name
+    DIM s AS STRING = ""
+    ' Insert a printable char at the cursor.
+    s = s + "            IF LEN(key) = 1 THEN\n"
+    s = s + "                m." + tan + "_Val = Mid(m." + tan + "_Val, 1, m." + tan + "_Cur) + key + Mid(m." + tan + "_Val, m." + tan + "_Cur + 1, LEN(m." + tan + "_Val) - m." + tan + "_Cur)\n"
+    s = s + "                m." + tan + "_Cur = m." + tan + "_Cur + 1\n"
+    s = s + "            END IF\n"
+    s = s + "            IF key = " + qt + "space" + qt + " THEN\n"
+    s = s + "                m." + tan + "_Val = Mid(m." + tan + "_Val, 1, m." + tan + "_Cur) + " + qt + " " + qt + " + Mid(m." + tan + "_Val, m." + tan + "_Cur + 1, LEN(m." + tan + "_Val) - m." + tan + "_Cur)\n"
+    s = s + "                m." + tan + "_Cur = m." + tan + "_Cur + 1\n"
+    s = s + "            END IF\n"
+    s = s + "            IF key = " + qt + "enter" + qt + " THEN\n"
+    s = s + "                m." + tan + "_Val = Mid(m." + tan + "_Val, 1, m." + tan + "_Cur) + " + qt + "\\n" + qt + " + Mid(m." + tan + "_Val, m." + tan + "_Cur + 1, LEN(m." + tan + "_Val) - m." + tan + "_Cur)\n"
+    s = s + "                m." + tan + "_Cur = m." + tan + "_Cur + 1\n"
+    s = s + "            END IF\n"
+    ' Backspace deletes the char before the cursor.
+    s = s + "            IF key = " + qt + "backspace" + qt + " AND m." + tan + "_Cur > 0 THEN\n"
+    s = s + "                m." + tan + "_Val = Mid(m." + tan + "_Val, 1, m." + tan + "_Cur - 1) + Mid(m." + tan + "_Val, m." + tan + "_Cur + 1, LEN(m." + tan + "_Val) - m." + tan + "_Cur)\n"
+    s = s + "                m." + tan + "_Cur = m." + tan + "_Cur - 1\n"
+    s = s + "            END IF\n"
+    ' Delete removes the char under the cursor.
+    s = s + "            IF key = " + qt + "delete" + qt + " AND m." + tan + "_Cur < LEN(m." + tan + "_Val) THEN\n"
+    s = s + "                m." + tan + "_Val = Mid(m." + tan + "_Val, 1, m." + tan + "_Cur) + Mid(m." + tan + "_Val, m." + tan + "_Cur + 2, LEN(m." + tan + "_Val) - m." + tan + "_Cur - 1)\n"
+    s = s + "            END IF\n"
+    ' Movement.
+    s = s + "            IF key = " + qt + "left" + qt + " AND m." + tan + "_Cur > 0 THEN m." + tan + "_Cur = m." + tan + "_Cur - 1\n"
+    s = s + "            IF key = " + qt + "right" + qt + " AND m." + tan + "_Cur < LEN(m." + tan + "_Val) THEN m." + tan + "_Cur = m." + tan + "_Cur + 1\n"
+    s = s + "            IF key = " + qt + "home" + qt + " THEN m." + tan + "_Cur = taLineHome(m." + tan + "_Val, m." + tan + "_Cur)\n"
+    s = s + "            IF key = " + qt + "end" + qt + " THEN m." + tan + "_Cur = taLineEnd(m." + tan + "_Val, m." + tan + "_Cur)\n"
+    s = s + "            IF key = " + qt + "up" + qt + " THEN m." + tan + "_Cur = taMoveVert(m." + tan + "_Val, m." + tan + "_Cur, 0 - 1)\n"
+    s = s + "            IF key = " + qt + "down" + qt + " THEN m." + tan + "_Cur = taMoveVert(m." + tan + "_Val, m." + tan + "_Cur, 1)\n"
+    RETURN s
+END FUNCTION
+
+' H — View paint: framed box; taRowCol maps _Cur to (row,col); the view
+' scrolls vertically so the cursor row stays visible and draws a █ block at
+' the cursor cell when focused.
+FUNCTION textAreaEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+    DIM taInWStr AS STRING = strconv.Itoa(wv.W - 2)
+    DIM taHStr AS STRING = strconv.Itoa(wv.H)
+    DIM taVisStr AS STRING = strconv.Itoa(wv.H - 2)
+    DIM s AS STRING = ""
+    s = s + "    DIM taTop" + sfx + " AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + taInWStr + ") + " + qt + "┐" + qt + "\n"
+    s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", taTop" + sfx + ")\n"
+    s = s + "    DIM taLines" + sfx + " AS []STRING = strings.Split(m." + wv.Name + "_Val, " + qt + "\\n" + qt + ")\n"
+    s = s + "    DIM taCRow" + sfx + " AS INTEGER\n"
+    s = s + "    DIM taCCol" + sfx + " AS INTEGER\n"
+    s = s + "    taCRow" + sfx + ", taCCol" + sfx + " = taRowCol(m." + wv.Name + "_Val, m." + wv.Name + "_Cur)\n"
+    s = s + "    DIM taStart" + sfx + " AS INTEGER = 0\n"
+    s = s + "    IF taCRow" + sfx + " >= " + taVisStr + " THEN taStart" + sfx + " = taCRow" + sfx + " - " + taVisStr + " + 1\n"
+    s = s + "    DIM taRow" + sfx + " AS INTEGER\n"
+    s = s + "    FOR taRow" + sfx + " = 0 TO " + taVisStr + " - 1\n"
+    s = s + "        DIM taSrc" + sfx + " AS INTEGER = taStart" + sfx + " + taRow" + sfx + "\n"
+    s = s + "        DIM taLn" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "        IF taSrc" + sfx + " < LEN(taLines" + sfx + ") THEN taLn" + sfx + " = taLines" + sfx + "[taSrc" + sfx + "]\n"
+    s = s + "        IF m.Focus = " + sfx + " AND taSrc" + sfx + " = taCRow" + sfx + " THEN\n"
+    s = s + "            DIM taCp" + sfx + " AS INTEGER = taCCol" + sfx + "\n"
+    s = s + "            IF taCp" + sfx + " >= LEN(taLn" + sfx + ") THEN\n"
+    s = s + "                taLn" + sfx + " = taLn" + sfx + " + " + qt + "█" + qt + "\n"
+    s = s + "            ELSE\n"
+    s = s + "                taLn" + sfx + " = Mid(taLn" + sfx + ", 1, taCp" + sfx + ") + " + qt + "█" + qt + " + Mid(taLn" + sfx + ", taCp" + sfx + " + 2, LEN(taLn" + sfx + ") - taCp" + sfx + " - 1)\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    s = s + "        IF lipgloss.Width(taLn" + sfx + ") > " + taInWStr + " THEN taLn" + sfx + " = Mid(taLn" + sfx + ", 1, " + taInWStr + ")\n"
+    s = s + "        IF lipgloss.Width(taLn" + sfx + ") < " + taInWStr + " THEN taLn" + sfx + " = taLn" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + taInWStr + " - lipgloss.Width(taLn" + sfx + "))\n"
+    s = s + "        DIM taLine" + sfx + " AS STRING = " + qt + "│" + qt + " + taLn" + sfx + " + " + qt + "│" + qt + "\n"
+    s = s + "        DIM taY" + sfx + " AS INTEGER = " + ys + " + 1 + taRow" + sfx + "\n"
+    s = s + "        IF taY" + sfx + " >= 0 AND taY" + sfx + " < LEN(rows) THEN rows[taY" + sfx + "] = overlayRow(rows[taY" + sfx + "], " + xs + ", taLine" + sfx + ")\n"
+    s = s + "    NEXT taRow" + sfx + "\n"
+    s = s + "    DIM taBot" + sfx + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + taInWStr + ") + " + qt + "┘" + qt + "\n"
+    s = s + "    DIM taBotY" + sfx + " AS INTEGER = " + ys + " + " + taHStr + " - 1\n"
+    s = s + "    IF taBotY" + sfx + " >= 0 AND taBotY" + sfx + " < LEN(rows) THEN rows[taBotY" + sfx + "] = overlayRow(rows[taBotY" + sfx + "], " + xs + ", taBot" + sfx + ")\n"
+    RETURN s
+END FUNCTION
+
+' Helper-function emitter: byte-offset cursor helpers, emitted once when any
+' TextArea is present (the prelude's `IF hasTextArea` block).
+FUNCTION textAreaEmitHelpers(qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "\n"
+    s = s + "FUNCTION taLineHome(text AS STRING, cur AS INTEGER) AS INTEGER\n"
+    s = s + "    DIM h AS INTEGER = cur\n"
+    s = s + "    DO WHILE h > 0 AND Mid(text, h, 1) <> " + qt + "\\n" + qt + "\n"
+    s = s + "        h = h - 1\n"
+    s = s + "    LOOP\n"
+    s = s + "    RETURN h\n"
+    s = s + "END FUNCTION\n"
+    s = s + "\n"
+    s = s + "FUNCTION taLineEnd(text AS STRING, cur AS INTEGER) AS INTEGER\n"
+    s = s + "    DIM e AS INTEGER = cur\n"
+    s = s + "    DO WHILE e < LEN(text) AND Mid(text, e + 1, 1) <> " + qt + "\\n" + qt + "\n"
+    s = s + "        e = e + 1\n"
+    s = s + "    LOOP\n"
+    s = s + "    RETURN e\n"
+    s = s + "END FUNCTION\n"
+    s = s + "\n"
+    s = s + "FUNCTION taMoveVert(text AS STRING, cur AS INTEGER, dir AS INTEGER) AS INTEGER\n"
+    s = s + "    DIM home AS INTEGER = taLineHome(text, cur)\n"
+    s = s + "    DIM col AS INTEGER = cur - home\n"
+    s = s + "    IF dir < 0 THEN\n"
+    s = s + "        IF home = 0 THEN RETURN cur\n"
+    s = s + "        DIM prevHome AS INTEGER = taLineHome(text, home - 1)\n"
+    s = s + "        DIM prevLen AS INTEGER = (home - 1) - prevHome\n"
+    s = s + "        DIM ncol AS INTEGER = col\n"
+    s = s + "        IF ncol > prevLen THEN ncol = prevLen\n"
+    s = s + "        RETURN prevHome + ncol\n"
+    s = s + "    END IF\n"
+    s = s + "    DIM le AS INTEGER = taLineEnd(text, cur)\n"
+    s = s + "    IF le >= LEN(text) THEN RETURN cur\n"
+    s = s + "    DIM nextHome AS INTEGER = le + 1\n"
+    s = s + "    DIM nextEnd AS INTEGER = taLineEnd(text, nextHome)\n"
+    s = s + "    DIM nextLen AS INTEGER = nextEnd - nextHome\n"
+    s = s + "    DIM ncol2 AS INTEGER = col\n"
+    s = s + "    IF ncol2 > nextLen THEN ncol2 = nextLen\n"
+    s = s + "    RETURN nextHome + ncol2\n"
+    s = s + "END FUNCTION\n"
+    s = s + "\n"
+    s = s + "FUNCTION taRowCol(text AS STRING, cur AS INTEGER) AS (INTEGER, INTEGER)\n"
+    s = s + "    DIM row AS INTEGER = 0\n"
+    s = s + "    DIM col AS INTEGER = 0\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO cur - 1\n"
+    s = s + "        IF i < LEN(text) AND Mid(text, i + 1, 1) = " + qt + "\\n" + qt + " THEN\n"
+    s = s + "            row = row + 1\n"
+    s = s + "            col = 0\n"
+    s = s + "        ELSE\n"
+    s = s + "            col = col + 1\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN row, col\n"
+    s = s + "END FUNCTION\n"
+    RETURN s
+END FUNCTION
