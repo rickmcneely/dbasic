@@ -12,10 +12,10 @@
 ' Persistence + codegen come in a follow-up.
 ' =========================================================================
 
-CONST formPaletteKinds AS INTEGER = 11  ' Button, Label, TextInput, Checkbox,
+CONST formPaletteKinds AS INTEGER = 12  ' Button, Label, TextInput, Checkbox,
                                         ' RadioButton, ComboBox, ListBox,
                                         ' ProgressBar, ScrollBar, Dialog,
-                                        ' TabStrip
+                                        ' TabStrip, Tree
 
 ' formKindByIdx — fixed list of widget kinds in palette display order.
 ' The order is the order entries appear in the right-pane Widgets
@@ -32,6 +32,7 @@ FUNCTION formKindByIdx(i AS INTEGER) AS STRING
     IF i = 8 THEN RETURN "ScrollBar"
     IF i = 9 THEN RETURN "Dialog"
     IF i = 10 THEN RETURN "TabStrip"
+    IF i = 11 THEN RETURN "Tree"
     RETURN ""
 END FUNCTION
 
@@ -112,6 +113,23 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
         tstabs = APPEND(tstabs, "About")
         w.Items    = tstabs
         w.Selected = 0
+    ELSEIF kind = "Tree" THEN
+        ' Hierarchical node list. Depth is encoded by leading dashes in
+        ' each Items entry ("-" = one level) so it survives the comma-
+        ' separated property editor's TrimSpace. Selected is the cursor;
+        ' runtime adds per-node collapse state.
+        w.Text = "Tree"
+        w.W    = 26
+        w.H    = 7
+        DIM tnodes AS []STRING
+        tnodes = APPEND(tnodes, "Project")
+        tnodes = APPEND(tnodes, "-src")
+        tnodes = APPEND(tnodes, "--main.dbas")
+        tnodes = APPEND(tnodes, "--util.dbas")
+        tnodes = APPEND(tnodes, "-docs")
+        tnodes = APPEND(tnodes, "--README.md")
+        w.Items    = tnodes
+        w.Selected = 0
     END IF
     RETURN w
 END FUNCTION
@@ -177,6 +195,23 @@ FUNCTION tabStripBar(items AS []STRING, active AS INTEGER, width AS INTEGER) AS 
     RETURN bar
 END FUNCTION
 
+' treeDepth — count leading '-' characters in a Tree node entry; each
+' dash is one level of nesting. treeLabel returns the entry with that
+' depth prefix stripped. Shared by the canvas + the codegen so the two
+' agree on how a node string decodes.
+FUNCTION treeDepth(item AS STRING) AS INTEGER
+    DIM d AS INTEGER = 0
+    DO WHILE d < LEN(item) AND Mid(item, d + 1, 1) = "-"
+        d = d + 1
+    LOOP
+    RETURN d
+END FUNCTION
+
+FUNCTION treeLabel(item AS STRING) AS STRING
+    DIM d AS INTEGER = treeDepth(item)
+    RETURN Mid(item, d + 1, LEN(item) - d)
+END FUNCTION
+
 ' widgetVisibleText — single-line preview for a widget. Used by the
 ' generated code and by widgetVisibleLines for simple kinds.
 FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
@@ -221,6 +256,12 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
         ' Tab row only; widgetVisibleLines paints the rule + content
         ' rows below it.
         RETURN tabStripBar(w.Items, w.Selected, w.W)
+    END IF
+    IF w.Kind = "Tree" THEN
+        ' Width proxy — the root node label. widgetVisibleLines paints
+        ' the full indented tree.
+        IF LEN(w.Items) > 0 THEN RETURN "▾ " + treeLabel(w.Items[0])
+        RETURN "(empty tree)"
     END IF
     IF w.Kind = "Dialog" THEN
         ' Non-visual marker: shows the dialog kind so the designer can
@@ -295,6 +336,26 @@ FUNCTION widgetVisibleLines(w AS DesignWidget) AS []STRING
                 lines = APPEND(lines, strings.Repeat(" ", w.W))
             END IF
         NEXT tj
+    ELSEIF w.Kind = "Tree" THEN
+        ' One row per node (design-time shows the tree fully expanded).
+        ' Glyph: ▾ for a parent, • for a leaf. Cursor row marked ▶.
+        DIM nh AS INTEGER = w.H
+        IF nh < 1 THEN nh = 1
+        DIM nri AS INTEGER
+        FOR nri = 0 TO nh - 1
+            DIM nline AS STRING = ""
+            IF nri < LEN(w.Items) THEN
+                DIM nd AS INTEGER = treeDepth(w.Items[nri])
+                DIM nIsP AS BOOLEAN = (nri + 1 < LEN(w.Items)) AND (treeDepth(w.Items[nri + 1]) > nd)
+                DIM ng AS STRING = "•"
+                IF nIsP THEN ng = "▾"
+                DIM nmk AS STRING = "  "
+                IF nri = w.Selected THEN nmk = "▶ "
+                nline = nmk + strings.Repeat("  ", nd) + ng + " " + treeLabel(w.Items[nri])
+            END IF
+            IF lipgloss.Width(nline) < w.W THEN nline = nline + strings.Repeat(" ", w.W - lipgloss.Width(nline))
+            lines = APPEND(lines, nline)
+        NEXT nri
     ELSE
         lines = APPEND(lines, widgetVisibleText(w))
     END IF
@@ -788,6 +849,12 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         IF rowIdx = cursor THEN RETURN "Edit Active", "index (0-based):", strconv.Itoa(w.Selected), "wprop:selected"
         cursor = cursor + 1
     END IF
+    IF w.Kind = "Tree" THEN
+        IF rowIdx = cursor THEN RETURN "Edit Nodes", "comma list, '-' = depth:", strings.Join(w.Items, ", "), "wprop:items"
+        cursor = cursor + 1
+        IF rowIdx = cursor THEN RETURN "Edit Cursor", "index (0-based):", strconv.Itoa(w.Selected), "wprop:selected"
+        cursor = cursor + 1
+    END IF
     IF w.Kind = "Button" THEN
         IF rowIdx = cursor THEN RETURN "OnClick Dialog", "Dialog widget name (blank = none):", w.OnClickDialog, "wprop:onclickdialog"
         cursor = cursor + 1
@@ -892,9 +959,11 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' Scan once for Dialog widgets — they need extra plumbing
     ' (lipgloss import, Model fields, Show subs, View overlay).
     DIM hasDialog AS BOOLEAN = FALSE
+    DIM hasTree AS BOOLEAN = FALSE
     DIM scanI AS INTEGER
     FOR scanI = 0 TO n - 1
         IF f.Widgets[scanI].Kind = "Dialog" THEN hasDialog = TRUE
+        IF f.Widgets[scanI].Kind = "Tree" THEN hasTree = TRUE
     NEXT scanI
     s = s + "' === GENERATED BY DBtui — rewritten on every F5 (do not edit above the marker) ===\n"
     s = s + "\n"
@@ -929,6 +998,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "    DIM " + w.Name + "_Val AS BOOLEAN\n"
         ELSEIF w.Kind = "ComboBox" OR w.Kind = "ListBox" OR w.Kind = "ScrollBar" OR w.Kind = "ProgressBar" OR w.Kind = "TabStrip" THEN
             s = s + "    DIM " + w.Name + "_Val AS INTEGER\n"
+        ELSEIF w.Kind = "Tree" THEN
+            ' Cursor index into the node list + a per-node collapse flag.
+            s = s + "    DIM " + w.Name + "_Val AS INTEGER\n"
+            s = s + "    DIM " + w.Name + "_Collapsed AS []BOOLEAN\n"
         ELSEIF w.Kind = "Dialog" THEN
             s = s + "    DIM " + w.Name + "_Active AS BOOLEAN\n"
             s = s + "    DIM " + w.Name + "_Idx    AS INTEGER\n"
@@ -1278,6 +1351,21 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
                 s = s + "            END IF\n"
             END IF
+        ELSEIF mcw.Kind = "Tree" THEN
+            ' Click maps the relative row to a VISIBLE node. Clicking a
+            ' parent toggles its collapse; clicking a leaf moves the
+            ' cursor and fires _Change.
+            s = s + "            DIM tmRel" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
+            s = s + "            DIM tmVis" + mcIStr + " AS []INTEGER = treeVisibleRows(" + mcw.Name + "_depths(), m." + mcw.Name + "_Collapsed)\n"
+            s = s + "            IF tmRel" + mcIStr + " >= 0 AND tmRel" + mcIStr + " < LEN(tmVis" + mcIStr + ") THEN\n"
+            s = s + "                DIM tmIdx" + mcIStr + " AS INTEGER = tmVis" + mcIStr + "[tmRel" + mcIStr + "]\n"
+            s = s + "                m." + mcw.Name + "_Val = tmIdx" + mcIStr + "\n"
+            s = s + "                IF " + mcw.Name + "_isParent(tmIdx" + mcIStr + ") THEN\n"
+            s = s + "                    IF tmIdx" + mcIStr + " < LEN(m." + mcw.Name + "_Collapsed) THEN m." + mcw.Name + "_Collapsed[tmIdx" + mcIStr + "] = NOT m." + mcw.Name + "_Collapsed[tmIdx" + mcIStr + "]\n"
+            s = s + "                ELSE\n"
+            s = s + "                    dispatchChange(" + qt + mcw.Name + qt + ")\n"
+            s = s + "                END IF\n"
+            s = s + "            END IF\n"
         ELSEIF mcw.Kind = "TabStrip" THEN
             ' Only the tab row (relative Y = 0) is clickable; the click
             ' column is mapped to a tab via the static label widths
@@ -1407,6 +1495,36 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "            IF key = " + qt + "right" + qt + " THEN\n"
                 s = s + "                IF m." + ww.Name + "_Val < " + nTabsStr + " - 1 THEN\n"
                 s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
+                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+            ELSEIF ww.Kind = "Tree" THEN
+                ' Up/Down move the cursor among VISIBLE nodes (skipping
+                ' anything under a collapsed parent), firing _Change.
+                ' Enter/Space toggles collapse on a parent node, or fires
+                ' _Change on a leaf (activate).
+                s = s + "            DIM tkVis" + ww.Name + " AS []INTEGER = treeVisibleRows(" + ww.Name + "_depths(), m." + ww.Name + "_Collapsed)\n"
+                s = s + "            DIM tkPos" + ww.Name + " AS INTEGER = 0\n"
+                s = s + "            DIM tkI" + ww.Name + " AS INTEGER\n"
+                s = s + "            FOR tkI" + ww.Name + " = 0 TO LEN(tkVis" + ww.Name + ") - 1\n"
+                s = s + "                IF tkVis" + ww.Name + "[tkI" + ww.Name + "] = m." + ww.Name + "_Val THEN tkPos" + ww.Name + " = tkI" + ww.Name + "\n"
+                s = s + "            NEXT tkI" + ww.Name + "\n"
+                s = s + "            IF key = " + qt + "up" + qt + " THEN\n"
+                s = s + "                IF tkPos" + ww.Name + " > 0 THEN\n"
+                s = s + "                    m." + ww.Name + "_Val = tkVis" + ww.Name + "[tkPos" + ww.Name + " - 1]\n"
+                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+                s = s + "            IF key = " + qt + "down" + qt + " THEN\n"
+                s = s + "                IF tkPos" + ww.Name + " < LEN(tkVis" + ww.Name + ") - 1 THEN\n"
+                s = s + "                    m." + ww.Name + "_Val = tkVis" + ww.Name + "[tkPos" + ww.Name + " + 1]\n"
+                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+                s = s + "            IF key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN\n"
+                s = s + "                IF " + ww.Name + "_isParent(m." + ww.Name + "_Val) THEN\n"
+                s = s + "                    IF m." + ww.Name + "_Val < LEN(m." + ww.Name + "_Collapsed) THEN m." + ww.Name + "_Collapsed[m." + ww.Name + "_Val] = NOT m." + ww.Name + "_Collapsed[m." + ww.Name + "_Val]\n"
+                s = s + "                ELSE\n"
                 s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
                 s = s + "                END IF\n"
                 s = s + "            END IF\n"
@@ -1540,6 +1658,34 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "    DIM tsContent" + sfx + " AS STRING = " + qt + " " + qt + " + tsAct" + sfx + " + " + qt + " tab" + qt + "\n"
             s = s + "    DIM tsContentY" + sfx + " AS INTEGER = " + ys + " + 2\n"
             s = s + "    IF tsContentY" + sfx + " >= 0 AND tsContentY" + sfx + " < LEN(rows) THEN rows[tsContentY" + sfx + "] = overlayRow(rows[tsContentY" + sfx + "], " + xs + ", tsContent" + sfx + ")\n"
+        ELSEIF wv.Kind = "Tree" THEN
+            ' Paint one grid row per VISIBLE node (collapsed subtrees
+            ' hidden), capped at H. Each: indent + glyph (▾/▸ parent,
+            ' • leaf) + label; the cursor node gets a > marker.
+            DIM tnHStr AS STRING = strconv.Itoa(wv.H)
+            s = s + "    DIM tnVis" + sfx + " AS []INTEGER = treeVisibleRows(" + wv.Name + "_depths(), m." + wv.Name + "_Collapsed)\n"
+            s = s + "    DIM tnDep" + sfx + " AS []INTEGER = " + wv.Name + "_depths()\n"
+            s = s + "    DIM tnLab" + sfx + " AS []STRING = " + wv.Name + "_labels()\n"
+            s = s + "    DIM tnR" + sfx + " AS INTEGER\n"
+            s = s + "    FOR tnR" + sfx + " = 0 TO " + tnHStr + " - 1\n"
+            s = s + "        IF tnR" + sfx + " < LEN(tnVis" + sfx + ") THEN\n"
+            s = s + "            DIM tnIdx" + sfx + " AS INTEGER = tnVis" + sfx + "[tnR" + sfx + "]\n"
+            s = s + "            DIM tnD" + sfx + " AS INTEGER = tnDep" + sfx + "[tnIdx" + sfx + "]\n"
+            s = s + "            DIM tnG" + sfx + " AS STRING = " + qt + "•" + qt + "\n"
+            s = s + "            IF " + wv.Name + "_isParent(tnIdx" + sfx + ") THEN\n"
+            s = s + "                tnG" + sfx + " = " + qt + "▾" + qt + "\n"
+            s = s + "                IF tnIdx" + sfx + " < LEN(m." + wv.Name + "_Collapsed) AND m." + wv.Name + "_Collapsed[tnIdx" + sfx + "] THEN tnG" + sfx + " = " + qt + "▸" + qt + "\n"
+            s = s + "            END IF\n"
+            s = s + "            DIM tnLine" + sfx + " AS STRING = strings.Repeat(" + qt + "  " + qt + ", tnD" + sfx + ") + tnG" + sfx + " + " + qt + " " + qt + " + tnLab" + sfx + "[tnIdx" + sfx + "]\n"
+            s = s + "            IF tnIdx" + sfx + " = m." + wv.Name + "_Val THEN\n"
+            s = s + "                tnLine" + sfx + " = " + qt + ">" + qt + " + tnLine" + sfx + "\n"
+            s = s + "            ELSE\n"
+            s = s + "                tnLine" + sfx + " = " + qt + " " + qt + " + tnLine" + sfx + "\n"
+            s = s + "            END IF\n"
+            s = s + "            DIM tnY" + sfx + " AS INTEGER = " + ys + " + tnR" + sfx + "\n"
+            s = s + "            IF tnY" + sfx + " >= 0 AND tnY" + sfx + " < LEN(rows) THEN rows[tnY" + sfx + "] = overlayRow(rows[tnY" + sfx + "], " + xs + ", tnLine" + sfx + ")\n"
+            s = s + "        END IF\n"
+            s = s + "    NEXT tnR" + sfx + "\n"
         ELSE
         ' --- Single-row kinds: build body string, prefix focus
         '     marker, overlay onto the target row in `rows`.
@@ -1702,6 +1848,13 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "    m." + mw.Name + "_Val = " + strconv.Itoa(mw.Selected) + "\n"
         ELSEIF mw.Kind = "ScrollBar" OR mw.Kind = "ProgressBar" THEN
             s = s + "    m." + mw.Name + "_Val = " + strconv.Itoa(mw.Value) + "\n"
+        ELSEIF mw.Kind = "Tree" THEN
+            ' Cursor starts at Selected; every node starts expanded.
+            s = s + "    m." + mw.Name + "_Val = " + strconv.Itoa(mw.Selected) + "\n"
+            s = s + "    DIM seedC" + mw.Name + " AS INTEGER\n"
+            s = s + "    FOR seedC" + mw.Name + " = 0 TO " + strconv.Itoa(LEN(mw.Items) - 1) + "\n"
+            s = s + "        m." + mw.Name + "_Collapsed = APPEND(m." + mw.Name + "_Collapsed, FALSE)\n"
+            s = s + "    NEXT seedC" + mw.Name + "\n"
         END IF
     NEXT mi
     s = s + "    DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)\n"
@@ -1779,7 +1932,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     DIM dchI AS INTEGER
     FOR dchI = 0 TO n - 1
         DIM dchW AS DesignWidget = f.Widgets[dchI]
-        IF dchW.Kind = "Checkbox" OR dchW.Kind = "RadioButton" OR dchW.Kind = "ComboBox" OR dchW.Kind = "ListBox" OR dchW.Kind = "ScrollBar" OR dchW.Kind = "TabStrip" THEN
+        IF dchW.Kind = "Checkbox" OR dchW.Kind = "RadioButton" OR dchW.Kind = "ComboBox" OR dchW.Kind = "ListBox" OR dchW.Kind = "ScrollBar" OR dchW.Kind = "TabStrip" OR dchW.Kind = "Tree" THEN
             s = s + "    IF id = " + qt + dchW.Name + qt + " THEN " + dchW.Name + "_Change()\n"
             hadChange = TRUE
         END IF
@@ -1788,6 +1941,66 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "    _ = id\n"
     END IF
     s = s + "END SUB\n"
+
+    ' --- Tree widget plumbing. A shared treeVisibleRows() walks the
+    '     node depths + per-node collapse flags to produce the list of
+    '     visible node indices (descendants of a collapsed parent are
+    '     skipped). Per-tree _depths()/_labels()/_isParent() helpers
+    '     bake the static node structure decoded from the leading-dash
+    '     depth prefixes so both Update and View can read it.
+    IF hasTree THEN
+        s = s + "\n"
+        s = s + "FUNCTION treeVisibleRows(depths AS []INTEGER, collapsed AS []BOOLEAN) AS []INTEGER\n"
+        s = s + "    DIM out AS []INTEGER\n"
+        s = s + "    DIM i AS INTEGER = 0\n"
+        s = s + "    DO WHILE i < LEN(depths)\n"
+        s = s + "        out = APPEND(out, i)\n"
+        s = s + "        IF i < LEN(collapsed) AND collapsed[i] THEN\n"
+        s = s + "            DIM d AS INTEGER = depths[i]\n"
+        s = s + "            DIM j AS INTEGER = i + 1\n"
+        s = s + "            DO WHILE j < LEN(depths) AND depths[j] > d\n"
+        s = s + "                j = j + 1\n"
+        s = s + "            LOOP\n"
+        s = s + "            i = j\n"
+        s = s + "        ELSE\n"
+        s = s + "            i = i + 1\n"
+        s = s + "        END IF\n"
+        s = s + "    LOOP\n"
+        s = s + "    RETURN out\n"
+        s = s + "END FUNCTION\n"
+        DIM trI AS INTEGER
+        FOR trI = 0 TO n - 1
+            DIM trW AS DesignWidget = f.Widgets[trI]
+            IF trW.Kind = "Tree" THEN
+                ' _depths()
+                s = s + "\n"
+                s = s + "FUNCTION " + trW.Name + "_depths() AS []INTEGER\n"
+                s = s + "    DIM d AS []INTEGER\n"
+                DIM trN AS INTEGER
+                FOR trN = 0 TO LEN(trW.Items) - 1
+                    s = s + "    d = APPEND(d, " + strconv.Itoa(treeDepth(trW.Items[trN])) + ")\n"
+                NEXT trN
+                s = s + "    RETURN d\n"
+                s = s + "END FUNCTION\n"
+                ' _labels()
+                s = s + "\n"
+                s = s + "FUNCTION " + trW.Name + "_labels() AS []STRING\n"
+                s = s + "    DIM l AS []STRING\n"
+                FOR trN = 0 TO LEN(trW.Items) - 1
+                    s = s + "    l = APPEND(l, " + qt + escapeForDBString(treeLabel(trW.Items[trN])) + qt + ")\n"
+                NEXT trN
+                s = s + "    RETURN l\n"
+                s = s + "END FUNCTION\n"
+                ' _isParent(i)
+                s = s + "\n"
+                s = s + "FUNCTION " + trW.Name + "_isParent(i AS INTEGER) AS BOOLEAN\n"
+                s = s + "    DIM d AS []INTEGER = " + trW.Name + "_depths()\n"
+                s = s + "    IF i < 0 OR i + 1 >= LEN(d) THEN RETURN FALSE\n"
+                s = s + "    RETURN d[i + 1] > d[i]\n"
+                s = s + "END FUNCTION\n"
+            END IF
+        NEXT trI
+    END IF
 
     ' --- Dialog widget plumbing (confirm kind only — Phase 2).
     '     For each Dialog widget: a Show<Name> SUB the user calls to
@@ -2016,7 +2229,7 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
         IF w.Kind = "Button" THEN
             stubName = w.Name + "_Click"
             stubLabel = "Click"
-        ELSEIF w.Kind = "Checkbox" OR w.Kind = "RadioButton" OR w.Kind = "ComboBox" OR w.Kind = "ListBox" OR w.Kind = "ScrollBar" OR w.Kind = "TabStrip" THEN
+        ELSEIF w.Kind = "Checkbox" OR w.Kind = "RadioButton" OR w.Kind = "ComboBox" OR w.Kind = "ListBox" OR w.Kind = "ScrollBar" OR w.Kind = "TabStrip" OR w.Kind = "Tree" THEN
             stubName = w.Name + "_Change"
             stubLabel = "Change"
         ELSEIF w.Kind = "Dialog" THEN
