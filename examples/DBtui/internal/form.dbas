@@ -833,6 +833,11 @@ SUB openFormTab(m AS POINTER TO Model, path AS STRING, proj AS Project, formName
     setFocus(m, "tree")
     rebuildMenus(m)
     invalidateEditorCache(m)
+    ' Record the .dbproj's mtime so the file-watcher doesn't think the
+    ' project was "modified externally" on every tick. Form tabs took a
+    ' separate load path that (unlike code tabs) never set LoadedMtime,
+    ' so it stayed at the zero time and the watcher prompted forever.
+    refreshActiveMtime(m)
     m.Status = "loaded " + formName + " from " + path
 END SUB
 
@@ -885,6 +890,10 @@ SUB saveForm(m AS POINTER TO Model)
     END IF
     IF proj.StartForm = "" THEN proj.StartForm = key
     writeProjectToDisk(path, proj, @m.Status)
+    ' We just wrote the file, so its mtime now post-dates LoadedMtime.
+    ' Refresh it so the watcher doesn't flag our own save as an
+    ' external edit on the next tick.
+    refreshActiveMtime(m)
 END SUB
 
 ' -------------------------------------------------------------------------
