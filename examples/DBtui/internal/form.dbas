@@ -52,10 +52,9 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
     w.W = 12
     w.H = 1
     IF kind = "Button" THEN
-        w.Text = "Button"
+        RETURN buttonDefault(w)
     ELSEIF kind = "Label" THEN
-        w.Text = "Label"
-        w.W = 10
+        RETURN labelDefault(w)
     ELSEIF kind = "TextInput" THEN
         w.Text = ""
         w.W = 16
@@ -392,8 +391,8 @@ END FUNCTION
 ' widgetVisibleText — single-line preview for a widget. Used by the
 ' generated code and by widgetVisibleLines for simple kinds.
 FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
-    IF w.Kind = "Button"    THEN RETURN "[ " + w.Text + " ]"
-    IF w.Kind = "Label"     THEN RETURN w.Text
+    IF w.Kind = "Button"    THEN RETURN buttonVisibleText(w)
+    IF w.Kind = "Label"     THEN RETURN labelVisibleText(w)
     IF w.Kind = "TextInput" THEN
         DIM inner AS STRING = w.Text
         IF LEN(inner) < w.W - 2 THEN inner = inner + strings.Repeat(" ", w.W - 2 - LEN(inner))
@@ -1749,7 +1748,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "        IF mc.X >= " + mcXs + " AND mc.X < " + mcXs + " + " + mcWs + " AND mc.Y >= " + mcYs + " AND mc.Y < " + mcYs + " + " + mcHs + " THEN\n"
         s = s + "            m.Focus = " + mcIStr + "\n"
         IF mcw.Kind = "Button" THEN
-            s = s + "            dispatchClick(" + qt + mcw.Name + qt + ")\n"
+            s = s + buttonEmitMouse(mcw, qt)
         ELSEIF mcw.Kind = "Checkbox" THEN
             s = s + "            m." + mcw.Name + "_Val = NOT m." + mcw.Name + "_Val\n"
             s = s + "            dispatchChange(" + qt + mcw.Name + qt + ")\n"
@@ -2120,10 +2119,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "                END IF\n"
                 s = s + "            END IF\n"
             ELSEIF ww.Kind = "Button" THEN
-                ' Enter / Space on a focused Button fires its
-                ' _Click handler via dispatchClick. The user's body
-                ' lives in the preserved section below the marker.
-                s = s + "            IF key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN dispatchClick(" + qt + ww.Name + qt + ")\n"
+                s = s + buttonEmitKey(ww, qt)
             ELSEIF ww.Kind = "Panel" THEN
                 ' Scroll the child viewport. maxScroll comes from the
                 ' lowest child extent vs the visible height.
@@ -2837,14 +2833,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     FOR di = 0 TO n - 1
         DIM dw AS DesignWidget = f.Widgets[di]
         IF dw.Kind = "Button" AND dw.Parent = "" THEN
-            IF dw.OnClickDialog <> "" THEN
-                s = s + "    IF id = " + qt + dw.Name + qt + " THEN\n"
-                s = s + "        Show" + dw.OnClickDialog + "()\n"
-                s = s + "        " + dw.Name + "_Click()\n"
-                s = s + "    END IF\n"
-            ELSE
-                s = s + "    IF id = " + qt + dw.Name + qt + " THEN " + dw.Name + "_Click()\n"
-            END IF
+            s = s + buttonEmitClickDispatch(dw, qt)
             hadClick = TRUE
         END IF
     NEXT di

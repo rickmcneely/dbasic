@@ -2686,6 +2686,8 @@ END FUNCTION
 
 INCLUDE "internal/pad.dbas"
 INCLUDE "internal/form.dbas"
+INCLUDE "internal/widgets/label.dbas"
+INCLUDE "internal/widgets/button.dbas"
 INCLUDE "internal/browse.dbas"
 INCLUDE "internal/render.dbas"
 

@@ -1,0 +1,65 @@
+' =========================================================================
+' widgets/button.dbas — Button widget (per-kind module).
+'
+' A Button is a single-line, click-to-fire control. It carries no runtime
+' _Val state (so no Model field), and its design/runtime preview is the
+' shared "[ Text ]" string. The interesting part is the codegen emitters:
+' a focused Button fires its _Click handler on Enter/Space (keyboard) or
+' on a left-click (mouse), routed through the generated dispatchClick().
+'
+' Dispatch points this module owns:
+'   A  buttonDefault            — defaultWidget() defaults
+'   B  buttonVisibleText        — single-line preview
+'   F  buttonEmitKey            — Update() keyboard fragment
+'   G  buttonEmitMouse          — Update() mouse-click fragment
+'      buttonEmitClickDispatch  — per-button block inside SUB dispatchClick
+'
+' Each emitter RETURNS the generated-code fragment as a string; the router
+' in form.dbas appends it (s = s + buttonEmitKey(w, qt)). All context the
+' branch needs — the widget and the quote char qt — is passed in, so the
+' fragment is self-contained.
+'
+' Deferred (still inline in form.dbas, need a non-emitter signature shape):
+'   D  the OnClickDialog property row (cursor-machine in propRowEditContext)
+'   I  the _Click stub metadata (name/label in generateUserStubs)
+' =========================================================================
+
+' A — defaults. Generic W=12/H=1 already set by the caller; Button only
+' names itself.
+FUNCTION buttonDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "Button"
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: the label in brackets.
+FUNCTION buttonVisibleText(w AS DesignWidget) AS STRING
+    RETURN "[ " + w.Text + " ]"
+END FUNCTION
+
+' F — keyboard: Enter / Space on a focused Button fires its _Click handler
+' via dispatchClick. The user's body lives in the preserved section below
+' the marker.
+FUNCTION buttonEmitKey(w AS DesignWidget, qt AS STRING) AS STRING
+    RETURN "            IF key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN dispatchClick(" + qt + w.Name + qt + ")\n"
+END FUNCTION
+
+' G — mouse: a left-click inside a Button's rect fires its _Click handler.
+FUNCTION buttonEmitMouse(w AS DesignWidget, qt AS STRING) AS STRING
+    RETURN "            dispatchClick(" + qt + w.Name + qt + ")\n"
+END FUNCTION
+
+' dispatchClick block for one top-level Button. When OnClickDialog is set,
+' the dialog's Show<Name>() fires first so the user doesn't have to wire it
+' from code, then the user's _Click runs.
+FUNCTION buttonEmitClickDispatch(w AS DesignWidget, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    IF w.OnClickDialog <> "" THEN
+        s = s + "    IF id = " + qt + w.Name + qt + " THEN\n"
+        s = s + "        Show" + w.OnClickDialog + "()\n"
+        s = s + "        " + w.Name + "_Click()\n"
+        s = s + "    END IF\n"
+    ELSE
+        s = s + "    IF id = " + qt + w.Name + qt + " THEN " + w.Name + "_Click()\n"
+    END IF
+    RETURN s
+END FUNCTION

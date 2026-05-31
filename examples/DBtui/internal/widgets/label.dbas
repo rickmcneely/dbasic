@@ -1,0 +1,29 @@
+' =========================================================================
+' widgets/label.dbas — Label widget (per-kind module).
+'
+' A Label is the simplest widget: static, non-interactive text. It has no
+' runtime state, no keyboard/mouse handling, and no codegen branch of its
+' own (the generated Update/View fold it into the shared "static text via
+' widgetVisibleText" and "_ = key" no-op groups). So this module only owns
+' two of the eight dispatch points:
+'
+'   A  labelDefault      — defaultWidget() defaults
+'   B  labelVisibleText  — single-line design-time + runtime preview
+'
+' This is the pilot's warm-up extraction: it validates the per-widget
+' file + INCLUDE + thin-router pattern with the smallest possible blast
+' radius before the codegen-bearing kinds (Button, TabStrip) follow.
+' =========================================================================
+
+' A — defaults. The caller (defaultWidget) has already set Kind/W/H to the
+' generic defaults (W=12, H=1); we override only what Label needs.
+FUNCTION labelDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "Label"
+    w.W = 10
+    RETURN w
+END FUNCTION
+
+' B — single-line preview. A Label just shows its Text verbatim.
+FUNCTION labelVisibleText(w AS DesignWidget) AS STRING
+    RETURN w.Text
+END FUNCTION
