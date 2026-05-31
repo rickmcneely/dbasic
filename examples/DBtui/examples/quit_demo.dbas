@@ -114,8 +114,10 @@ FUNCTION (m AS Model) View() AS tea.View
     END IF
     IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayRow(rows[4], 18, body2)
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
-    DIM vw AS tea.View = tea.NewView(strings.Join(rows, "\n"))
+    DIM fullView AS STRING = strings.Join(rows, "\n")
+    DIM vw AS tea.View = tea.NewView(fullView)
     vw.MouseMode = tea.MouseModeCellMotion
+    vw.AltScreen = TRUE
     RETURN vw
 END FUNCTION
 
@@ -138,6 +140,8 @@ FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
 END FUNCTION
 
 ' Generated dispatcher — routes a Button click to its user handler.
+' When a Button has OnClickDialog set, the dialog's Show<Name>()
+' fires first so the user doesn't have to wire it from code.
 SUB dispatchClick(id AS STRING)
     IF id = "btnDiscard" THEN btnDiscard_Click()
     IF id = "btnCancel" THEN btnCancel_Click()
