@@ -108,18 +108,7 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
         w.W          = 22
         w.H          = 1
     ELSEIF kind = "TabStrip" THEN
-        ' A row of tabs (Items) over a content area. Selected names the
-        ' active tab; runtime tracks it in <Name>_Val so user code can
-        ' branch on the active page.
-        w.Text = "TabStrip"
-        w.W    = 34
-        w.H    = 6
-        DIM tstabs AS []STRING
-        tstabs = APPEND(tstabs, "General")
-        tstabs = APPEND(tstabs, "Advanced")
-        tstabs = APPEND(tstabs, "About")
-        w.Items    = tstabs
-        w.Selected = 0
+        RETURN tabStripDefault(w)
     ELSEIF kind = "Tree" THEN
         ' Hierarchical node list. Depth is encoded by leading dashes in
         ' each Items entry ("-" = one level) so it survives the comma-
@@ -428,11 +417,7 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
         ' line. widgetVisibleLines fills the rest of the height.
         RETURN "▲"
     END IF
-    IF w.Kind = "TabStrip" THEN
-        ' Tab row only; widgetVisibleLines paints the rule + content
-        ' rows below it.
-        RETURN tabStripBar(w.Items, w.Selected, w.W)
-    END IF
+    IF w.Kind = "TabStrip" THEN RETURN tabStripVisibleText(w)
     IF w.Kind = "Tree" THEN
         ' Width proxy — the root node label. widgetVisibleLines paints
         ' the full indented tree.
@@ -510,25 +495,7 @@ FUNCTION widgetVisibleLines(w AS DesignWidget) AS []STRING
         NEXT sj
         lines = APPEND(lines, "▼")
     ELSEIF w.Kind = "TabStrip" THEN
-        ' Row 0: tab bar. Row 1: horizontal rule. Rows 2..H-1: the
-        ' active tab's content placeholder (the generated program shows
-        ' the active label; real page content is the user's to add).
-        DIM th AS INTEGER = w.H
-        IF th < 3 THEN th = 3
-        lines = APPEND(lines, tabStripBar(w.Items, w.Selected, w.W))
-        lines = APPEND(lines, strings.Repeat("─", w.W))
-        DIM activeLbl AS STRING = ""
-        IF w.Selected >= 0 AND w.Selected < LEN(w.Items) THEN activeLbl = w.Items[w.Selected]
-        DIM tj AS INTEGER
-        FOR tj = 2 TO th - 1
-            IF tj = 2 THEN
-                DIM crow AS STRING = " " + activeLbl + " tab"
-                IF lipgloss.Width(crow) < w.W THEN crow = crow + strings.Repeat(" ", w.W - lipgloss.Width(crow))
-                lines = APPEND(lines, crow)
-            ELSE
-                lines = APPEND(lines, strings.Repeat(" ", w.W))
-            END IF
-        NEXT tj
+        lines = tabStripVisibleLines(w)
     ELSEIF w.Kind = "Tree" THEN
         ' One row per node (design-time shows the tree fully expanded).
         ' Glyph: ▾ for a parent, • for a leaf. Cursor row marked ▶.
@@ -1860,27 +1827,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "                END IF\n"
             s = s + "            END IF\n"
         ELSEIF mcw.Kind = "TabStrip" THEN
-            ' Only the tab row (relative Y = 0) is clickable; the click
-            ' column is mapped to a tab via the static label widths
-            ' (" label " = width+2, "│" separators add 1). Selecting a
-            ' new tab fires _Change.
-            s = s + "            DIM mcTsY" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
-            s = s + "            DIM mcTsX" + mcIStr + " AS INTEGER = mc.X - " + mcXs + "\n"
-            s = s + "            IF mcTsY" + mcIStr + " = 0 THEN\n"
-            DIM mcTsCol AS INTEGER = 0
-            DIM mcTsi AS INTEGER
-            FOR mcTsi = 0 TO LEN(mcw.Items) - 1
-                DIM mcTsCellW AS INTEGER = lipgloss.Width(mcw.Items[mcTsi]) + 2
-                s = s + "                IF mcTsX" + mcIStr + " >= " + strconv.Itoa(mcTsCol) + " AND mcTsX" + mcIStr + " < " + strconv.Itoa(mcTsCol + mcTsCellW) + " THEN\n"
-                s = s + "                    IF m." + mcw.Name + "_Val <> " + strconv.Itoa(mcTsi) + " THEN\n"
-                s = s + "                        m." + mcw.Name + "_Val = " + strconv.Itoa(mcTsi) + "\n"
-                s = s + "                        dispatchChange(" + qt + mcw.Name + qt + ")\n"
-                s = s + "                    END IF\n"
-                s = s + "                END IF\n"
-                mcTsCol = mcTsCol + mcTsCellW
-                IF mcTsi < LEN(mcw.Items) - 1 THEN mcTsCol = mcTsCol + 1
-            NEXT mcTsi
-            s = s + "            END IF\n"
+            s = s + tabStripEmitMouse(mcw, mcIStr, mcXs, mcYs, qt)
         ELSEIF mcw.Kind = "Panel" THEN
             ' Click the ▲ row (rel Y = 1) scrolls up; the ▼ row
             ' (rel Y = H-2) scrolls down.
@@ -2023,21 +1970,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "                END IF\n"
                 s = s + "            END IF\n"
             ELSEIF ww.Kind = "TabStrip" THEN
-                ' Left / Right move between tabs; each move fires
-                ' _Change so user code can react to the new active page.
-                DIM nTabsStr AS STRING = strconv.Itoa(LEN(ww.Items))
-                s = s + "            IF key = " + qt + "left" + qt + " THEN\n"
-                s = s + "                IF m." + ww.Name + "_Val > 0 THEN\n"
-                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val - 1\n"
-                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            END IF\n"
-                s = s + "            IF key = " + qt + "right" + qt + " THEN\n"
-                s = s + "                IF m." + ww.Name + "_Val < " + nTabsStr + " - 1 THEN\n"
-                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
-                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            END IF\n"
+                s = s + tabStripEmitKey(ww, qt)
             ELSEIF ww.Kind = "PropGrid" THEN
                 ' Up/Down move the row cursor (firing _Change); Enter/
                 ' Space activates the current row (also _Change).
@@ -2236,39 +2169,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "        IF svY" + sfx + " >= 0 AND svY" + sfx + " < LEN(rows) THEN rows[svY" + sfx + "] = overlayRow(rows[svY" + sfx + "], " + xs + ", svGlyph" + sfx + ")\n"
             s = s + "    NEXT svi" + sfx + "\n"
         ELSEIF wv.Kind = "TabStrip" THEN
-            ' Row 0: tab bar (active tab in [brackets], reading
-            ' <name>_Val). Row 1: rule. Row 2: active-tab content
-            ' placeholder. Plain text — no lipgloss dependency.
-            DIM tsWStr AS STRING = strconv.Itoa(wv.W)
-            s = s + "    DIM tsItems" + sfx + " AS []STRING\n"
-            DIM tsvI AS INTEGER
-            FOR tsvI = 0 TO LEN(wv.Items) - 1
-                s = s + "    tsItems" + sfx + " = APPEND(tsItems" + sfx + ", " + qt + escapeForDBString(wv.Items[tsvI]) + qt + ")\n"
-            NEXT tsvI
-            s = s + "    DIM tsBar" + sfx + " AS STRING = " + qt + qt + "\n"
-            s = s + "    DIM tsk" + sfx + " AS INTEGER\n"
-            s = s + "    FOR tsk" + sfx + " = 0 TO LEN(tsItems" + sfx + ") - 1\n"
-            s = s + "        IF tsk" + sfx + " > 0 THEN tsBar" + sfx + " = tsBar" + sfx + " + " + qt + "│" + qt + "\n"
-            s = s + "        IF tsk" + sfx + " = m." + wv.Name + "_Val THEN\n"
-            s = s + "            tsBar" + sfx + " = tsBar" + sfx + " + " + qt + "[" + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + "]" + qt + "\n"
-            s = s + "        ELSE\n"
-            s = s + "            tsBar" + sfx + " = tsBar" + sfx + " + " + qt + " " + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + " " + qt + "\n"
-            s = s + "        END IF\n"
-            s = s + "    NEXT tsk" + sfx + "\n"
-            s = s + "    IF m.Focus = " + sfx + " THEN\n"
-            s = s + "        tsBar" + sfx + " = " + qt + ">" + qt + " + tsBar" + sfx + "\n"
-            s = s + "    ELSE\n"
-            s = s + "        tsBar" + sfx + " = " + qt + " " + qt + " + tsBar" + sfx + "\n"
-            s = s + "    END IF\n"
-            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", tsBar" + sfx + ")\n"
-            s = s + "    DIM tsRule" + sfx + " AS STRING = " + qt + " " + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + tsWStr + ")\n"
-            s = s + "    DIM tsRuleY" + sfx + " AS INTEGER = " + ys + " + 1\n"
-            s = s + "    IF tsRuleY" + sfx + " >= 0 AND tsRuleY" + sfx + " < LEN(rows) THEN rows[tsRuleY" + sfx + "] = overlayRow(rows[tsRuleY" + sfx + "], " + xs + ", tsRule" + sfx + ")\n"
-            s = s + "    DIM tsAct" + sfx + " AS STRING = " + qt + qt + "\n"
-            s = s + "    IF m." + wv.Name + "_Val >= 0 AND m." + wv.Name + "_Val < LEN(tsItems" + sfx + ") THEN tsAct" + sfx + " = tsItems" + sfx + "[m." + wv.Name + "_Val]\n"
-            s = s + "    DIM tsContent" + sfx + " AS STRING = " + qt + " " + qt + " + tsAct" + sfx + " + " + qt + " tab" + qt + "\n"
-            s = s + "    DIM tsContentY" + sfx + " AS INTEGER = " + ys + " + 2\n"
-            s = s + "    IF tsContentY" + sfx + " >= 0 AND tsContentY" + sfx + " < LEN(rows) THEN rows[tsContentY" + sfx + "] = overlayRow(rows[tsContentY" + sfx + "], " + xs + ", tsContent" + sfx + ")\n"
+            s = s + tabStripEmitView(wv, sfx, xs, ys, qt)
         ELSEIF wv.Kind = "Tree" THEN
             ' Paint one grid row per VISIBLE node (collapsed subtrees
             ' hidden), capped at H. Each: indent + glyph (▾/▸ parent,
