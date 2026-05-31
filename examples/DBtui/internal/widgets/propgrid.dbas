@@ -1,0 +1,128 @@
+' =========================================================================
+' widgets/propgrid.dbas — PropGrid (two-column key/value grid) widget.
+'
+' Code extracted verbatim from internal/form.dbas during the per-widget
+' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
+'
+' Each Items entry is "key=value"; the cursor row index lives in <Name>_Val
+' (INTEGER — shared Model group stays in form.dbas). Up/Down (keyboard) or a
+' row click moves the cursor and fires _Change. Uses shared propKey/propVal
+' (split on "=") and overlayRow/escapeForDBString.
+'
+' Owns: A default, B visibleText, C visibleLines, F keyboard, G mouse,
+' H View. Stays inline: Model _Val, seed line, property rows,
+' dispatchChange membership, _Change stub.
+' =========================================================================
+
+' A — defaults: a 4-row sample grid.
+FUNCTION propGridDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "PropGrid"
+    w.W    = 30
+    w.H    = 5
+    DIM gprops AS []STRING
+    gprops = APPEND(gprops, "Name=Widget1")
+    gprops = APPEND(gprops, "Width=100")
+    gprops = APPEND(gprops, "Height=40")
+    gprops = APPEND(gprops, "Visible=true")
+    w.Items    = gprops
+    w.Selected = 0
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: the first key/value pair as a width proxy.
+FUNCTION propGridVisibleText(w AS DesignWidget) AS STRING
+    IF LEN(w.Items) > 0 THEN RETURN propKey(w.Items[0]) + " │ " + propVal(w.Items[0])
+    RETURN "(empty grid)"
+END FUNCTION
+
+' C — multi-row design render: one row per pair, ▶ cursor + padded key + │
+' + value, capped at H.
+FUNCTION propGridVisibleLines(w AS DesignWidget) AS []STRING
+    DIM lines AS []STRING
+    DIM gh AS INTEGER = w.H
+    IF gh < 1 THEN gh = 1
+    DIM gcolW AS INTEGER = (w.W - 4) / 2
+    IF gcolW < 3 THEN gcolW = 3
+    DIM gri AS INTEGER
+    FOR gri = 0 TO gh - 1
+        DIM growKey AS STRING = ""
+        DIM growVal AS STRING = ""
+        IF gri < LEN(w.Items) THEN
+            growKey = propKey(w.Items[gri])
+            growVal = propVal(w.Items[gri])
+        END IF
+        IF LEN(growKey) > gcolW THEN growKey = Mid(growKey, 1, gcolW)
+        IF LEN(growKey) < gcolW THEN growKey = growKey + strings.Repeat(" ", gcolW - LEN(growKey))
+        DIM gmark AS STRING = "  "
+        IF gri = w.Selected THEN gmark = "▶ "
+        lines = APPEND(lines, gmark + growKey + " │ " + growVal)
+    NEXT gri
+    RETURN lines
+END FUNCTION
+
+' G — mouse: click row N selects it (if it exists), firing _Change.
+FUNCTION propGridEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcYs AS STRING, qt AS STRING) AS STRING
+    DIM mcGridN AS STRING = strconv.Itoa(LEN(mcw.Items))
+    DIM s AS STRING = ""
+    IF LEN(mcw.Items) > 0 THEN
+        s = s + "            DIM mcGRow" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
+        s = s + "            IF mcGRow" + mcIStr + " >= 0 AND mcGRow" + mcIStr + " < " + mcGridN + " THEN\n"
+        s = s + "                m." + mcw.Name + "_Val = mcGRow" + mcIStr + "\n"
+        s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
+        s = s + "            END IF\n"
+    END IF
+    RETURN s
+END FUNCTION
+
+' F — keyboard: Up/Down move the row cursor (firing _Change); Enter/Space
+' activates the current row (also _Change).
+FUNCTION propGridEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
+    DIM nGridStr AS STRING = strconv.Itoa(LEN(ww.Items))
+    DIM s AS STRING = ""
+    s = s + "            IF key = " + qt + "up" + qt + " THEN\n"
+    s = s + "                IF m." + ww.Name + "_Val > 0 THEN\n"
+    s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val - 1\n"
+    s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            IF key = " + qt + "down" + qt + " THEN\n"
+    s = s + "                IF m." + ww.Name + "_Val < " + nGridStr + " - 1 THEN\n"
+    s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
+    s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            IF key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN dispatchChange(" + qt + ww.Name + qt + ")\n"
+    RETURN s
+END FUNCTION
+
+' H — View paint: two-column rows; cursor row (reading _Val) gets ▶. Keys
+' padded to a half-width column, capped at H rows.
+FUNCTION propGridEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+    DIM pgHStr AS STRING = strconv.Itoa(wv.H)
+    DIM pgColW AS INTEGER = (wv.W - 4) / 2
+    IF pgColW < 3 THEN pgColW = 3
+    DIM pgColWStr AS STRING = strconv.Itoa(pgColW)
+    DIM s AS STRING = ""
+    s = s + "    DIM pgKeys" + sfx + " AS []STRING\n"
+    s = s + "    DIM pgVals" + sfx + " AS []STRING\n"
+    DIM pgItI AS INTEGER
+    FOR pgItI = 0 TO LEN(wv.Items) - 1
+        s = s + "    pgKeys" + sfx + " = APPEND(pgKeys" + sfx + ", " + qt + escapeForDBString(propKey(wv.Items[pgItI])) + qt + ")\n"
+        s = s + "    pgVals" + sfx + " = APPEND(pgVals" + sfx + ", " + qt + escapeForDBString(propVal(wv.Items[pgItI])) + qt + ")\n"
+    NEXT pgItI
+    s = s + "    DIM pgR" + sfx + " AS INTEGER\n"
+    s = s + "    FOR pgR" + sfx + " = 0 TO " + pgHStr + " - 1\n"
+    s = s + "        DIM pgKey" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "        IF pgR" + sfx + " < LEN(pgKeys" + sfx + ") THEN pgKey" + sfx + " = pgKeys" + sfx + "[pgR" + sfx + "]\n"
+    s = s + "        DIM pgVal" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "        IF pgR" + sfx + " < LEN(pgVals" + sfx + ") THEN pgVal" + sfx + " = pgVals" + sfx + "[pgR" + sfx + "]\n"
+    s = s + "        IF LEN(pgKey" + sfx + ") > " + pgColWStr + " THEN pgKey" + sfx + " = Mid(pgKey" + sfx + ", 1, " + pgColWStr + ")\n"
+    s = s + "        IF LEN(pgKey" + sfx + ") < " + pgColWStr + " THEN pgKey" + sfx + " = pgKey" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + pgColWStr + " - LEN(pgKey" + sfx + "))\n"
+    s = s + "        DIM pgMark" + sfx + " AS STRING = " + qt + "  " + qt + "\n"
+    s = s + "        IF pgR" + sfx + " = m." + wv.Name + "_Val THEN pgMark" + sfx + " = " + qt + "▶ " + qt + "\n"
+    s = s + "        DIM pgLine" + sfx + " AS STRING = pgMark" + sfx + " + pgKey" + sfx + " + " + qt + " │ " + qt + " + pgVal" + sfx + "\n"
+    s = s + "        DIM pgY" + sfx + " AS INTEGER = " + ys + " + pgR" + sfx + "\n"
+    s = s + "        IF pgY" + sfx + " >= 0 AND pgY" + sfx + " < LEN(rows) THEN rows[pgY" + sfx + "] = overlayRow(rows[pgY" + sfx + "], " + xs + ", pgLine" + sfx + ")\n"
+    s = s + "    NEXT pgR" + sfx + "\n"
+    RETURN s
+END FUNCTION

@@ -95,19 +95,7 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
     ELSEIF kind = "TextArea" THEN
         RETURN textAreaDefault(w)
     ELSEIF kind = "PropGrid" THEN
-        ' Two-column key/value grid. Each Items entry is "key=value";
-        ' Selected is the cursor row. Runtime tracks the cursor in
-        ' <Name>_Val.
-        w.Text = "PropGrid"
-        w.W    = 30
-        w.H    = 5
-        DIM gprops AS []STRING
-        gprops = APPEND(gprops, "Name=Widget1")
-        gprops = APPEND(gprops, "Width=100")
-        gprops = APPEND(gprops, "Height=40")
-        gprops = APPEND(gprops, "Visible=true")
-        w.Items    = gprops
-        w.Selected = 0
+        RETURN propGridDefault(w)
     ELSEIF kind = "ScrollPanel" THEN
         ' Scrollable content viewport with an embedded vertical
         ' scrollbar. Items are the content lines; runtime tracks the
@@ -353,12 +341,7 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
     IF w.Kind = "TabStrip" THEN RETURN tabStripVisibleText(w)
     IF w.Kind = "Tree" THEN RETURN treeVisibleText(w)
     IF w.Kind = "TextArea" THEN RETURN textAreaVisibleText(w)
-    IF w.Kind = "PropGrid" THEN
-        ' Width proxy — first key/value pair. widgetVisibleLines paints
-        ' the full two-column grid.
-        IF LEN(w.Items) > 0 THEN RETURN propKey(w.Items[0]) + " │ " + propVal(w.Items[0])
-        RETURN "(empty grid)"
-    END IF
+    IF w.Kind = "PropGrid" THEN RETURN propGridVisibleText(w)
     IF w.Kind = "ScrollPanel" THEN
         ' Width proxy; widgetVisibleLines paints the framed scroll box.
         RETURN "┌" + strings.Repeat("─", w.W - 2) + "┐"
@@ -1685,22 +1668,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             ELSEIF ww.Kind = "TabStrip" THEN
                 s = s + tabStripEmitKey(ww, qt)
             ELSEIF ww.Kind = "PropGrid" THEN
-                ' Up/Down move the row cursor (firing _Change); Enter/
-                ' Space activates the current row (also _Change).
-                DIM nGridStr AS STRING = strconv.Itoa(LEN(ww.Items))
-                s = s + "            IF key = " + qt + "up" + qt + " THEN\n"
-                s = s + "                IF m." + ww.Name + "_Val > 0 THEN\n"
-                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val - 1\n"
-                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            END IF\n"
-                s = s + "            IF key = " + qt + "down" + qt + " THEN\n"
-                s = s + "                IF m." + ww.Name + "_Val < " + nGridStr + " - 1 THEN\n"
-                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
-                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            END IF\n"
-                s = s + "            IF key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN dispatchChange(" + qt + ww.Name + qt + ")\n"
+                s = s + propGridEmitKey(ww, qt)
             ELSEIF ww.Kind = "Menubar" THEN
                 ' Closed-state keys (the open dropdown is handled in the
                 ' priority block above). Left/Right move the active menu;
