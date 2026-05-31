@@ -452,6 +452,14 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         END IF
         RETURN FALSE, NIL
     END IF
+    ' "wprop:parent" — container membership. Names the Panel this
+    ' widget lives inside; blank = top-level.
+    IF m.ModalContext = "wprop:parent" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Parent = strings.TrimSpace(text)
+        END IF
+        RETURN FALSE, NIL
+    END IF
     ' "wprop:onclickdialog" — Button.OnClickDialog field. Blank
     ' value clears the auto-wire.
     IF m.ModalContext = "wprop:onclickdialog" THEN

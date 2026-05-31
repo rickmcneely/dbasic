@@ -154,6 +154,13 @@ TYPE DesignWidget
     ' dispatchClick branch for this button; the user's _Click handler
     ' still runs afterwards so they can layer extra logic.
     DIM OnClickDialog AS STRING
+
+    ' --- Container membership ----------------------------------------
+    ' Parent names a Panel widget this widget lives inside. A child is
+    ' rendered (display-only in v1) within the parent's scrollable,
+    ' clipped viewport at its own (X, Y) minus the panel's scroll
+    ' offset; empty Parent means a normal top-level widget.
+    DIM Parent AS STRING
 END TYPE
 
 TYPE DesignForm

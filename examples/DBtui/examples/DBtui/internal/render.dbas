@@ -793,6 +793,9 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
                     propRows = APPEND(propRows, "Mask    " + sw.DialogMask)
                 END IF
             END IF
+            IF sw.Kind <> "Panel" THEN
+                propRows = APPEND(propRows, "Parent " + sw.Parent)
+            END IF
         ELSE
             propRows = APPEND(propRows, "(no widget selected)")
             propRows = APPEND(propRows, "Click palette to add,")
