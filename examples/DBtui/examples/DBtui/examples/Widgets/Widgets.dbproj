@@ -26,7 +26,8 @@
           "DialogMsg": "",
           "DialogDef": "",
           "DialogMode": "",
-          "DialogMask": ""
+          "DialogMask": "",
+          "OnClickDialog": ""
         },
         {
           "Kind": "Label",
@@ -48,7 +49,8 @@
           "DialogMsg": "",
           "DialogDef": "",
           "DialogMode": "",
-          "DialogMask": ""
+          "DialogMask": "",
+          "OnClickDialog": ""
         },
         {
           "Kind": "TextInput",
@@ -70,7 +72,8 @@
           "DialogMsg": "",
           "DialogDef": "",
           "DialogMode": "",
-          "DialogMask": ""
+          "DialogMask": "",
+          "OnClickDialog": ""
         },
         {
           "Kind": "Checkbox",
@@ -92,7 +95,8 @@
           "DialogMsg": "",
           "DialogDef": "",
           "DialogMode": "",
-          "DialogMask": ""
+          "DialogMask": "",
+          "OnClickDialog": ""
         },
         {
           "Kind": "RadioButton",
@@ -114,7 +118,8 @@
           "DialogMsg": "",
           "DialogDef": "",
           "DialogMode": "",
-          "DialogMask": ""
+          "DialogMask": "",
+          "OnClickDialog": ""
         },
         {
           "Kind": "ComboBox",
@@ -140,7 +145,8 @@
           "DialogMsg": "",
           "DialogDef": "",
           "DialogMode": "",
-          "DialogMask": ""
+          "DialogMask": "",
+          "OnClickDialog": ""
         },
         {
           "Kind": "ListBox",
@@ -166,7 +172,8 @@
           "DialogMsg": "",
           "DialogDef": "",
           "DialogMode": "",
-          "DialogMask": ""
+          "DialogMask": "",
+          "OnClickDialog": ""
         },
         {
           "Kind": "ProgressBar",
@@ -188,7 +195,8 @@
           "DialogMsg": "",
           "DialogDef": "",
           "DialogMode": "",
-          "DialogMask": ""
+          "DialogMask": "",
+          "OnClickDialog": ""
         },
         {
           "Kind": "ScrollBar",
@@ -210,7 +218,66 @@
           "DialogMsg": "",
           "DialogDef": "",
           "DialogMode": "",
-          "DialogMask": ""
+          "DialogMask": "",
+          "OnClickDialog": ""
+        },
+        {
+          "Kind": "TabStrip",
+          "Name": "tabstrip1",
+          "Text": "TabStrip",
+          "X": 30,
+          "Y": 1,
+          "W": 28,
+          "H": 5,
+          "Items": [
+            "General",
+            "Advanced",
+            "About"
+          ],
+          "Selected": 0
+        },
+        {
+          "Kind": "Tree",
+          "Name": "tree1",
+          "Text": "Tree",
+          "X": 30,
+          "Y": 7,
+          "W": 24,
+          "H": 6,
+          "Items": [
+            "Project",
+            "-src",
+            "--main.dbas",
+            "--util.dbas",
+            "-docs",
+            "--README.md"
+          ],
+          "Selected": 0
+        },
+        {
+          "Kind": "TextArea",
+          "Name": "textarea1",
+          "Text": "Edit me...",
+          "X": 56,
+          "Y": 1,
+          "W": 22,
+          "H": 5
+        },
+        {
+          "Kind": "PropGrid",
+          "Name": "propgrid1",
+          "Text": "PropGrid",
+          "X": 56,
+          "Y": 7,
+          "W": 24,
+          "H": 5,
+          "Items": [
+            "Name=Widget1",
+            "Width=100",
+            "Height=40",
+            "Visible=true"
+          ],
+          "Selected": 0
         }
       ]
     }

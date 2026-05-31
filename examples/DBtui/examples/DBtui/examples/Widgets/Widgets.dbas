@@ -4,6 +4,7 @@ IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
 
 SUB _dbtuiKeepFmtAlive()
     _ = fmt.Sprintf("")
@@ -20,6 +21,11 @@ TYPE Model
     DIM listbox1_Val AS INTEGER
     DIM progressbar1_Val AS INTEGER
     DIM scrollbar1_Val AS INTEGER
+    DIM tabstrip1_Val AS INTEGER
+    DIM tree1_Val AS INTEGER
+    DIM tree1_Collapsed AS []BOOLEAN
+    DIM textarea1_Val AS STRING
+    DIM propgrid1_Val AS INTEGER
 END TYPE
 
 FUNCTION (m AS Model) Init() AS tea.Cmd
@@ -39,6 +45,61 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mc, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mc.Button = tea.MouseLeft THEN
+        IF mc.X >= 56 AND mc.X < 56 + 24 AND mc.Y >= 7 AND mc.Y < 7 + 5 THEN
+            m.Focus = 12
+            DIM mcGRow12 AS INTEGER = mc.Y - 7
+            IF mcGRow12 >= 0 AND mcGRow12 < 4 THEN
+                m.propgrid1_Val = mcGRow12
+                dispatchChange("propgrid1")
+            END IF
+            RETURN m, NIL
+        END IF
+        IF mc.X >= 56 AND mc.X < 56 + 22 AND mc.Y >= 1 AND mc.Y < 1 + 5 THEN
+            m.Focus = 11
+            _ = mc
+            RETURN m, NIL
+        END IF
+        IF mc.X >= 30 AND mc.X < 30 + 24 AND mc.Y >= 7 AND mc.Y < 7 + 6 THEN
+            m.Focus = 10
+            DIM tmRel10 AS INTEGER = mc.Y - 7
+            DIM tmVis10 AS []INTEGER = treeVisibleRows(tree1_depths(), m.tree1_Collapsed)
+            IF tmRel10 >= 0 AND tmRel10 < LEN(tmVis10) THEN
+                DIM tmIdx10 AS INTEGER = tmVis10[tmRel10]
+                m.tree1_Val = tmIdx10
+                IF tree1_isParent(tmIdx10) THEN
+                    IF tmIdx10 < LEN(m.tree1_Collapsed) THEN m.tree1_Collapsed[tmIdx10] = NOT m.tree1_Collapsed[tmIdx10]
+                ELSE
+                    dispatchChange("tree1")
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
+        IF mc.X >= 30 AND mc.X < 30 + 28 AND mc.Y >= 1 AND mc.Y < 1 + 5 THEN
+            m.Focus = 9
+            DIM mcTsY9 AS INTEGER = mc.Y - 1
+            DIM mcTsX9 AS INTEGER = mc.X - 30
+            IF mcTsY9 = 0 THEN
+                IF mcTsX9 >= 0 AND mcTsX9 < 9 THEN
+                    IF m.tabstrip1_Val <> 0 THEN
+                        m.tabstrip1_Val = 0
+                        dispatchChange("tabstrip1")
+                    END IF
+                END IF
+                IF mcTsX9 >= 10 AND mcTsX9 < 20 THEN
+                    IF m.tabstrip1_Val <> 1 THEN
+                        m.tabstrip1_Val = 1
+                        dispatchChange("tabstrip1")
+                    END IF
+                END IF
+                IF mcTsX9 >= 21 AND mcTsX9 < 28 THEN
+                    IF m.tabstrip1_Val <> 2 THEN
+                        m.tabstrip1_Val = 2
+                        dispatchChange("tabstrip1")
+                    END IF
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
         IF mc.X >= 2 AND mc.X < 2 + 1 AND mc.Y >= 9 AND mc.Y < 9 + 8 THEN
             m.Focus = 8
             DIM mcRelY8 AS INTEGER = mc.Y - 9
@@ -106,12 +167,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM key AS STRING = k.String()
         IF key = "ctrl+c" OR key = "esc" THEN RETURN m, tea.Quit
         IF key = "tab" THEN
-            m.Focus = (m.Focus + 1) MOD 9
+            m.Focus = (m.Focus + 1) MOD 13
             RETURN m, NIL
         END IF
         IF key = "shift+tab" THEN
             m.Focus = m.Focus - 1
-            IF m.Focus < 0 THEN m.Focus = 8
+            IF m.Focus < 0 THEN m.Focus = 12
             RETURN m, NIL
         END IF
         IF m.Focus = 0 THEN
@@ -191,6 +252,74 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     dispatchChange("scrollbar1")
                 END IF
             END IF
+            RETURN m, NIL
+        END IF
+        IF m.Focus = 9 THEN
+            IF key = "left" THEN
+                IF m.tabstrip1_Val > 0 THEN
+                    m.tabstrip1_Val = m.tabstrip1_Val - 1
+                    dispatchChange("tabstrip1")
+                END IF
+            END IF
+            IF key = "right" THEN
+                IF m.tabstrip1_Val < 3 - 1 THEN
+                    m.tabstrip1_Val = m.tabstrip1_Val + 1
+                    dispatchChange("tabstrip1")
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
+        IF m.Focus = 10 THEN
+            DIM tkVistree1 AS []INTEGER = treeVisibleRows(tree1_depths(), m.tree1_Collapsed)
+            DIM tkPostree1 AS INTEGER = 0
+            DIM tkItree1 AS INTEGER
+            FOR tkItree1 = 0 TO LEN(tkVistree1) - 1
+                IF tkVistree1[tkItree1] = m.tree1_Val THEN tkPostree1 = tkItree1
+            NEXT tkItree1
+            IF key = "up" THEN
+                IF tkPostree1 > 0 THEN
+                    m.tree1_Val = tkVistree1[tkPostree1 - 1]
+                    dispatchChange("tree1")
+                END IF
+            END IF
+            IF key = "down" THEN
+                IF tkPostree1 < LEN(tkVistree1) - 1 THEN
+                    m.tree1_Val = tkVistree1[tkPostree1 + 1]
+                    dispatchChange("tree1")
+                END IF
+            END IF
+            IF key = "enter" OR key = "space" THEN
+                IF tree1_isParent(m.tree1_Val) THEN
+                    IF m.tree1_Val < LEN(m.tree1_Collapsed) THEN m.tree1_Collapsed[m.tree1_Val] = NOT m.tree1_Collapsed[m.tree1_Val]
+                ELSE
+                    dispatchChange("tree1")
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
+        IF m.Focus = 11 THEN
+            IF LEN(key) = 1 THEN m.textarea1_Val = m.textarea1_Val + key
+            IF key = "space" THEN m.textarea1_Val = m.textarea1_Val + " "
+            IF key = "enter" THEN m.textarea1_Val = m.textarea1_Val + "\n"
+            IF key = "backspace" AND LEN(m.textarea1_Val) > 0 THEN
+                m.textarea1_Val = Mid(m.textarea1_Val, 1, LEN(m.textarea1_Val) - 1)
+            END IF
+            RETURN m, NIL
+        END IF
+        IF m.Focus = 12 THEN
+            IF key = "up" THEN
+                IF m.propgrid1_Val > 0 THEN
+                    m.propgrid1_Val = m.propgrid1_Val - 1
+                    dispatchChange("propgrid1")
+                END IF
+            END IF
+            IF key = "down" THEN
+                IF m.propgrid1_Val < 4 - 1 THEN
+                    m.propgrid1_Val = m.propgrid1_Val + 1
+                    dispatchChange("propgrid1")
+                END IF
+            END IF
+            IF key = "enter" OR key = "space" THEN dispatchChange("propgrid1")
             RETURN m, NIL
         END IF
     END IF
@@ -328,6 +457,102 @@ FUNCTION (m AS Model) View() AS tea.View
         DIM svY8 AS INTEGER = 9 + svi8
         IF svY8 >= 0 AND svY8 < LEN(rows) THEN rows[svY8] = overlayRow(rows[svY8], 2, svGlyph8)
     NEXT svi8
+    DIM tsItems9 AS []STRING
+    tsItems9 = APPEND(tsItems9, "General")
+    tsItems9 = APPEND(tsItems9, "Advanced")
+    tsItems9 = APPEND(tsItems9, "About")
+    DIM tsBar9 AS STRING = ""
+    DIM tsk9 AS INTEGER
+    FOR tsk9 = 0 TO LEN(tsItems9) - 1
+        IF tsk9 > 0 THEN tsBar9 = tsBar9 + "│"
+        IF tsk9 = m.tabstrip1_Val THEN
+            tsBar9 = tsBar9 + "[" + tsItems9[tsk9] + "]"
+        ELSE
+            tsBar9 = tsBar9 + " " + tsItems9[tsk9] + " "
+        END IF
+    NEXT tsk9
+    IF m.Focus = 9 THEN
+        tsBar9 = ">" + tsBar9
+    ELSE
+        tsBar9 = " " + tsBar9
+    END IF
+    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayRow(rows[1], 30, tsBar9)
+    DIM tsRule9 AS STRING = " " + strings.Repeat("─", 28)
+    DIM tsRuleY9 AS INTEGER = 1 + 1
+    IF tsRuleY9 >= 0 AND tsRuleY9 < LEN(rows) THEN rows[tsRuleY9] = overlayRow(rows[tsRuleY9], 30, tsRule9)
+    DIM tsAct9 AS STRING = ""
+    IF m.tabstrip1_Val >= 0 AND m.tabstrip1_Val < LEN(tsItems9) THEN tsAct9 = tsItems9[m.tabstrip1_Val]
+    DIM tsContent9 AS STRING = " " + tsAct9 + " tab"
+    DIM tsContentY9 AS INTEGER = 1 + 2
+    IF tsContentY9 >= 0 AND tsContentY9 < LEN(rows) THEN rows[tsContentY9] = overlayRow(rows[tsContentY9], 30, tsContent9)
+    DIM tnVis10 AS []INTEGER = treeVisibleRows(tree1_depths(), m.tree1_Collapsed)
+    DIM tnDep10 AS []INTEGER = tree1_depths()
+    DIM tnLab10 AS []STRING = tree1_labels()
+    DIM tnR10 AS INTEGER
+    FOR tnR10 = 0 TO 6 - 1
+        IF tnR10 < LEN(tnVis10) THEN
+            DIM tnIdx10 AS INTEGER = tnVis10[tnR10]
+            DIM tnD10 AS INTEGER = tnDep10[tnIdx10]
+            DIM tnG10 AS STRING = "•"
+            IF tree1_isParent(tnIdx10) THEN
+                tnG10 = "▾"
+                IF tnIdx10 < LEN(m.tree1_Collapsed) AND m.tree1_Collapsed[tnIdx10] THEN tnG10 = "▸"
+            END IF
+            DIM tnLine10 AS STRING = strings.Repeat("  ", tnD10) + tnG10 + " " + tnLab10[tnIdx10]
+            IF tnIdx10 = m.tree1_Val THEN
+                tnLine10 = ">" + tnLine10
+            ELSE
+                tnLine10 = " " + tnLine10
+            END IF
+            DIM tnY10 AS INTEGER = 7 + tnR10
+            IF tnY10 >= 0 AND tnY10 < LEN(rows) THEN rows[tnY10] = overlayRow(rows[tnY10], 30, tnLine10)
+        END IF
+    NEXT tnR10
+    DIM taTop11 AS STRING = "┌" + strings.Repeat("─", 20) + "┐"
+    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayRow(rows[1], 56, taTop11)
+    DIM taLines11 AS []STRING = strings.Split(m.textarea1_Val, "\n")
+    DIM taN11 AS INTEGER = LEN(taLines11)
+    DIM taStart11 AS INTEGER = taN11 - (5 - 2)
+    IF taStart11 < 0 THEN taStart11 = 0
+    DIM taRow11 AS INTEGER
+    FOR taRow11 = 0 TO (5 - 2) - 1
+        DIM taSrc11 AS INTEGER = taStart11 + taRow11
+        DIM taLn11 AS STRING = ""
+        IF taSrc11 < taN11 THEN taLn11 = taLines11[taSrc11]
+        IF m.Focus = 11 AND taSrc11 = taN11 - 1 THEN taLn11 = taLn11 + "█"
+        IF lipgloss.Width(taLn11) > 20 THEN taLn11 = Mid(taLn11, 1, 20)
+        IF lipgloss.Width(taLn11) < 20 THEN taLn11 = taLn11 + strings.Repeat(" ", 20 - lipgloss.Width(taLn11))
+        DIM taLine11 AS STRING = "│" + taLn11 + "│"
+        DIM taY11 AS INTEGER = 1 + 1 + taRow11
+        IF taY11 >= 0 AND taY11 < LEN(rows) THEN rows[taY11] = overlayRow(rows[taY11], 56, taLine11)
+    NEXT taRow11
+    DIM taBot11 AS STRING = "└" + strings.Repeat("─", 20) + "┘"
+    DIM taBotY11 AS INTEGER = 1 + 5 - 1
+    IF taBotY11 >= 0 AND taBotY11 < LEN(rows) THEN rows[taBotY11] = overlayRow(rows[taBotY11], 56, taBot11)
+    DIM gKeys12 AS []STRING
+    DIM gVals12 AS []STRING
+    gKeys12 = APPEND(gKeys12, "Name")
+    gVals12 = APPEND(gVals12, "Widget1")
+    gKeys12 = APPEND(gKeys12, "Width")
+    gVals12 = APPEND(gVals12, "100")
+    gKeys12 = APPEND(gKeys12, "Height")
+    gVals12 = APPEND(gVals12, "40")
+    gKeys12 = APPEND(gKeys12, "Visible")
+    gVals12 = APPEND(gVals12, "true")
+    DIM gRow12 AS INTEGER
+    FOR gRow12 = 0 TO 5 - 1
+        IF gRow12 < LEN(gKeys12) THEN
+            DIM gk12 AS STRING = gKeys12[gRow12]
+            DIM gv12 AS STRING = gVals12[gRow12]
+            IF lipgloss.Width(gk12) > 10 THEN gk12 = Mid(gk12, 1, 10)
+            IF lipgloss.Width(gk12) < 10 THEN gk12 = gk12 + strings.Repeat(" ", 10 - lipgloss.Width(gk12))
+            DIM gmk12 AS STRING = "  "
+            IF gRow12 = m.propgrid1_Val THEN gmk12 = "▶ "
+            DIM gLine12 AS STRING = gmk12 + gk12 + "│ " + gv12
+            DIM gY12 AS INTEGER = 7 + gRow12
+            IF gY12 >= 0 AND gY12 < LEN(rows) THEN rows[gY12] = overlayRow(rows[gY12], 56, gLine12)
+        END IF
+    NEXT gRow12
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
     DIM fullView AS STRING = strings.Join(rows, "\n")
     DIM vw AS tea.View = tea.NewView(fullView)
@@ -342,6 +567,14 @@ SUB Main()
     m.listbox1_Val = 0
     m.progressbar1_Val = 40
     m.scrollbar1_Val = 0
+    m.tabstrip1_Val = 0
+    m.tree1_Val = 0
+    DIM seedCtree1 AS INTEGER
+    FOR seedCtree1 = 0 TO 5
+        m.tree1_Collapsed = APPEND(m.tree1_Collapsed, FALSE)
+    NEXT seedCtree1
+    m.textarea1_Val = "Edit me..."
+    m.propgrid1_Val = 0
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)
     DIM final AS tea.Model
     DIM rerr AS ERROR
@@ -372,7 +605,57 @@ SUB dispatchChange(id AS STRING)
     IF id = "combobox1" THEN combobox1_Change()
     IF id = "listbox1" THEN listbox1_Change()
     IF id = "scrollbar1" THEN scrollbar1_Change()
+    IF id = "tabstrip1" THEN tabstrip1_Change()
+    IF id = "tree1" THEN tree1_Change()
+    IF id = "propgrid1" THEN propgrid1_Change()
 END SUB
+
+FUNCTION treeVisibleRows(depths AS []INTEGER, collapsed AS []BOOLEAN) AS []INTEGER
+    DIM out AS []INTEGER
+    DIM i AS INTEGER = 0
+    DO WHILE i < LEN(depths)
+        out = APPEND(out, i)
+        IF i < LEN(collapsed) AND collapsed[i] THEN
+            DIM d AS INTEGER = depths[i]
+            DIM j AS INTEGER = i + 1
+            DO WHILE j < LEN(depths) AND depths[j] > d
+                j = j + 1
+            LOOP
+            i = j
+        ELSE
+            i = i + 1
+        END IF
+    LOOP
+    RETURN out
+END FUNCTION
+
+FUNCTION tree1_depths() AS []INTEGER
+    DIM d AS []INTEGER
+    d = APPEND(d, 0)
+    d = APPEND(d, 1)
+    d = APPEND(d, 2)
+    d = APPEND(d, 2)
+    d = APPEND(d, 1)
+    d = APPEND(d, 2)
+    RETURN d
+END FUNCTION
+
+FUNCTION tree1_labels() AS []STRING
+    DIM l AS []STRING
+    l = APPEND(l, "Project")
+    l = APPEND(l, "src")
+    l = APPEND(l, "main.dbas")
+    l = APPEND(l, "util.dbas")
+    l = APPEND(l, "docs")
+    l = APPEND(l, "README.md")
+    RETURN l
+END FUNCTION
+
+FUNCTION tree1_isParent(i AS INTEGER) AS BOOLEAN
+    DIM d AS []INTEGER = tree1_depths()
+    IF i < 0 OR i + 1 >= LEN(d) THEN RETURN FALSE
+    RETURN d[i + 1] > d[i]
+END FUNCTION
 
 ' ===== DBTUI:USER ===== DO NOT EDIT OR DELETE THIS LINE =====
 ' Your code below — DBtui preserves everything here on F5.
@@ -404,5 +687,20 @@ END SUB
 
 ' Change handler for scrollbar1 — edit freely.
 SUB scrollbar1_Change()
+    ' TODO: your code here.
+END SUB
+
+' Change handler for tabstrip1 — edit freely.
+SUB tabstrip1_Change()
+    ' TODO: your code here.
+END SUB
+
+' Change handler for tree1 — edit freely.
+SUB tree1_Change()
+    ' TODO: your code here.
+END SUB
+
+' Change handler for propgrid1 — edit freely.
+SUB propgrid1_Change()
     ' TODO: your code here.
 END SUB
