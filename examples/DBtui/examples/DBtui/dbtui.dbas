@@ -115,7 +115,7 @@ TYPE DesignWidget
                              ' RadioButton / ComboBox / ListBox /
                              ' ProgressBar / ScrollBar / Dialog /
                              ' TabStrip / Tree / TextArea / PropGrid /
-                             ' ScrollPanel
+                             ' ScrollPanel / Menubar / StatusBar / Panel
     DIM Name AS STRING       ' identifier, e.g. "btnOK"
     DIM Text AS STRING       ' visible label (Dialog: window title)
     DIM X    AS INTEGER      ' col offset within canvas
