@@ -1,0 +1,53 @@
+' =========================================================================
+' widgets/tree.dbas — Tree (collapsible hierarchy) widget.
+'
+' Code extracted verbatim from internal/form.dbas during the per-widget
+' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
+'
+' PARTIAL extraction: only the two dispatch points below are wired into the
+' router in form.dbas. The remaining Tree sites (default, multi-row design
+' lines, keyboard, mouse, and the generated helper block) are still inline
+' in form.dbas and have NOT been moved here yet — finishing them is future
+' work. Both functions here use the shared treeDepth/treeLabel/overlayRow/
+' escapeForDBString helpers that live in form.dbas.
+'
+'   B  treeVisibleText  — single-line preview (root node label proxy)
+'   H  treeEmitView     — View() paint fragment (one row per visible node)
+' =========================================================================
+
+' B — single-line preview: the root node label as a width proxy.
+FUNCTION treeVisibleText(w AS DesignWidget) AS STRING
+    IF LEN(w.Items) > 0 THEN RETURN "▾ " + treeLabel(w.Items[0])
+    RETURN "(empty tree)"
+END FUNCTION
+
+' H — View paint: one grid row per VISIBLE node (collapsed subtrees hidden),
+' capped at H; indent + glyph (▾/▸ parent, • leaf) + label, cursor gets >.
+FUNCTION treeEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+    DIM tnHStr AS STRING = strconv.Itoa(wv.H)
+    DIM s AS STRING = ""
+    s = s + "    DIM tnVis" + sfx + " AS []INTEGER = treeVisibleRows(" + wv.Name + "_depths(), m." + wv.Name + "_Collapsed)\n"
+    s = s + "    DIM tnDep" + sfx + " AS []INTEGER = " + wv.Name + "_depths()\n"
+    s = s + "    DIM tnLab" + sfx + " AS []STRING = " + wv.Name + "_labels()\n"
+    s = s + "    DIM tnR" + sfx + " AS INTEGER\n"
+    s = s + "    FOR tnR" + sfx + " = 0 TO " + tnHStr + " - 1\n"
+    s = s + "        IF tnR" + sfx + " < LEN(tnVis" + sfx + ") THEN\n"
+    s = s + "            DIM tnIdx" + sfx + " AS INTEGER = tnVis" + sfx + "[tnR" + sfx + "]\n"
+    s = s + "            DIM tnD" + sfx + " AS INTEGER = tnDep" + sfx + "[tnIdx" + sfx + "]\n"
+    s = s + "            DIM tnG" + sfx + " AS STRING = " + qt + "•" + qt + "\n"
+    s = s + "            IF " + wv.Name + "_isParent(tnIdx" + sfx + ") THEN\n"
+    s = s + "                tnG" + sfx + " = " + qt + "▾" + qt + "\n"
+    s = s + "                IF tnIdx" + sfx + " < LEN(m." + wv.Name + "_Collapsed) AND m." + wv.Name + "_Collapsed[tnIdx" + sfx + "] THEN tnG" + sfx + " = " + qt + "▸" + qt + "\n"
+    s = s + "            END IF\n"
+    s = s + "            DIM tnLine" + sfx + " AS STRING = strings.Repeat(" + qt + "  " + qt + ", tnD" + sfx + ") + tnG" + sfx + " + " + qt + " " + qt + " + tnLab" + sfx + "[tnIdx" + sfx + "]\n"
+    s = s + "            IF tnIdx" + sfx + " = m." + wv.Name + "_Val THEN\n"
+    s = s + "                tnLine" + sfx + " = " + qt + ">" + qt + " + tnLine" + sfx + "\n"
+    s = s + "            ELSE\n"
+    s = s + "                tnLine" + sfx + " = " + qt + " " + qt + " + tnLine" + sfx + "\n"
+    s = s + "            END IF\n"
+    s = s + "            DIM tnY" + sfx + " AS INTEGER = " + ys + " + tnR" + sfx + "\n"
+    s = s + "            IF tnY" + sfx + " >= 0 AND tnY" + sfx + " < LEN(rows) THEN rows[tnY" + sfx + "] = overlayRow(rows[tnY" + sfx + "], " + xs + ", tnLine" + sfx + ")\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT tnR" + sfx + "\n"
+    RETURN s
+END FUNCTION

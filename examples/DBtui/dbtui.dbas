@@ -2696,6 +2696,7 @@ INCLUDE "internal/widgets/radiobutton.dbas"
 INCLUDE "internal/widgets/combobox.dbas"
 INCLUDE "internal/widgets/listbox.dbas"
 INCLUDE "internal/widgets/scrollbar.dbas"
+INCLUDE "internal/widgets/tree.dbas"
 INCLUDE "internal/browse.dbas"
 INCLUDE "internal/render.dbas"
 

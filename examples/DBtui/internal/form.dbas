@@ -370,12 +370,7 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
     IF w.Kind = "ProgressBar" THEN RETURN progressBarVisibleText(w)
     IF w.Kind = "ScrollBar" THEN RETURN scrollBarVisibleText(w)
     IF w.Kind = "TabStrip" THEN RETURN tabStripVisibleText(w)
-    IF w.Kind = "Tree" THEN
-        ' Width proxy — the root node label. widgetVisibleLines paints
-        ' the full indented tree.
-        IF LEN(w.Items) > 0 THEN RETURN "▾ " + treeLabel(w.Items[0])
-        RETURN "(empty tree)"
-    END IF
+    IF w.Kind = "Tree" THEN RETURN treeVisibleText(w)
     IF w.Kind = "TextArea" THEN
         ' Width proxy; widgetVisibleLines paints the framed box.
         RETURN "┌" + strings.Repeat("─", w.W - 2) + "┐"
@@ -1940,33 +1935,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         ELSEIF wv.Kind = "TabStrip" THEN
             s = s + tabStripEmitView(wv, sfx, xs, ys, qt)
         ELSEIF wv.Kind = "Tree" THEN
-            ' Paint one grid row per VISIBLE node (collapsed subtrees
-            ' hidden), capped at H. Each: indent + glyph (▾/▸ parent,
-            ' • leaf) + label; the cursor node gets a > marker.
-            DIM tnHStr AS STRING = strconv.Itoa(wv.H)
-            s = s + "    DIM tnVis" + sfx + " AS []INTEGER = treeVisibleRows(" + wv.Name + "_depths(), m." + wv.Name + "_Collapsed)\n"
-            s = s + "    DIM tnDep" + sfx + " AS []INTEGER = " + wv.Name + "_depths()\n"
-            s = s + "    DIM tnLab" + sfx + " AS []STRING = " + wv.Name + "_labels()\n"
-            s = s + "    DIM tnR" + sfx + " AS INTEGER\n"
-            s = s + "    FOR tnR" + sfx + " = 0 TO " + tnHStr + " - 1\n"
-            s = s + "        IF tnR" + sfx + " < LEN(tnVis" + sfx + ") THEN\n"
-            s = s + "            DIM tnIdx" + sfx + " AS INTEGER = tnVis" + sfx + "[tnR" + sfx + "]\n"
-            s = s + "            DIM tnD" + sfx + " AS INTEGER = tnDep" + sfx + "[tnIdx" + sfx + "]\n"
-            s = s + "            DIM tnG" + sfx + " AS STRING = " + qt + "•" + qt + "\n"
-            s = s + "            IF " + wv.Name + "_isParent(tnIdx" + sfx + ") THEN\n"
-            s = s + "                tnG" + sfx + " = " + qt + "▾" + qt + "\n"
-            s = s + "                IF tnIdx" + sfx + " < LEN(m." + wv.Name + "_Collapsed) AND m." + wv.Name + "_Collapsed[tnIdx" + sfx + "] THEN tnG" + sfx + " = " + qt + "▸" + qt + "\n"
-            s = s + "            END IF\n"
-            s = s + "            DIM tnLine" + sfx + " AS STRING = strings.Repeat(" + qt + "  " + qt + ", tnD" + sfx + ") + tnG" + sfx + " + " + qt + " " + qt + " + tnLab" + sfx + "[tnIdx" + sfx + "]\n"
-            s = s + "            IF tnIdx" + sfx + " = m." + wv.Name + "_Val THEN\n"
-            s = s + "                tnLine" + sfx + " = " + qt + ">" + qt + " + tnLine" + sfx + "\n"
-            s = s + "            ELSE\n"
-            s = s + "                tnLine" + sfx + " = " + qt + " " + qt + " + tnLine" + sfx + "\n"
-            s = s + "            END IF\n"
-            s = s + "            DIM tnY" + sfx + " AS INTEGER = " + ys + " + tnR" + sfx + "\n"
-            s = s + "            IF tnY" + sfx + " >= 0 AND tnY" + sfx + " < LEN(rows) THEN rows[tnY" + sfx + "] = overlayRow(rows[tnY" + sfx + "], " + xs + ", tnLine" + sfx + ")\n"
-            s = s + "        END IF\n"
-            s = s + "    NEXT tnR" + sfx + "\n"
+            s = s + treeEmitView(wv, sfx, xs, ys, qt)
         ELSEIF wv.Kind = "TextArea" THEN
             ' Framed multi-line box. taRowCol maps the _Cur byte offset to
             ' a (row, col); the view scrolls vertically so the cursor row
