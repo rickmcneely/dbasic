@@ -729,6 +729,10 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             IF sw.Kind = "ScrollBar" THEN
                 propRows = APPEND(propRows, "Orient " + sw.Orient)
             END IF
+            IF sw.Kind = "TabStrip" THEN
+                propRows = APPEND(propRows, "Tabs   " + strings.Join(sw.Items, ", "))
+                propRows = APPEND(propRows, fmt.Sprintf("Active %d", sw.Selected))
+            END IF
             IF sw.Kind = "Button" THEN
                 propRows = APPEND(propRows, "OnClick " + sw.OnClickDialog)
             END IF

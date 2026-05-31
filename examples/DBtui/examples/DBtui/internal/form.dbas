@@ -12,9 +12,10 @@
 ' Persistence + codegen come in a follow-up.
 ' =========================================================================
 
-CONST formPaletteKinds AS INTEGER = 10  ' Button, Label, TextInput, Checkbox,
+CONST formPaletteKinds AS INTEGER = 11  ' Button, Label, TextInput, Checkbox,
                                         ' RadioButton, ComboBox, ListBox,
-                                        ' ProgressBar, ScrollBar, Dialog
+                                        ' ProgressBar, ScrollBar, Dialog,
+                                        ' TabStrip
 
 ' formKindByIdx — fixed list of widget kinds in palette display order.
 ' The order is the order entries appear in the right-pane Widgets
@@ -30,6 +31,7 @@ FUNCTION formKindByIdx(i AS INTEGER) AS STRING
     IF i = 7 THEN RETURN "ProgressBar"
     IF i = 8 THEN RETURN "ScrollBar"
     IF i = 9 THEN RETURN "Dialog"
+    IF i = 10 THEN RETURN "TabStrip"
     RETURN ""
 END FUNCTION
 
@@ -97,6 +99,19 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
         w.Items      = dbtns
         w.W          = 22
         w.H          = 1
+    ELSEIF kind = "TabStrip" THEN
+        ' A row of tabs (Items) over a content area. Selected names the
+        ' active tab; runtime tracks it in <Name>_Val so user code can
+        ' branch on the active page.
+        w.Text = "TabStrip"
+        w.W    = 34
+        w.H    = 6
+        DIM tstabs AS []STRING
+        tstabs = APPEND(tstabs, "General")
+        tstabs = APPEND(tstabs, "Advanced")
+        tstabs = APPEND(tstabs, "About")
+        w.Items    = tstabs
+        w.Selected = 0
     END IF
     RETURN w
 END FUNCTION
@@ -142,6 +157,26 @@ SUB formDeleteSelected(m AS POINTER TO Model)
     m.Status = "widget deleted"
 END SUB
 
+' tabStripBar — render a TabStrip's tab row: each tab as " label ",
+' the active one as "[label]", joined by "│" and padded out to width.
+' Shared by the design-time canvas; the generated runtime builds the
+' same string inline so the two views match.
+FUNCTION tabStripBar(items AS []STRING, active AS INTEGER, width AS INTEGER) AS STRING
+    DIM bar AS STRING = ""
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(items) - 1
+        IF ti > 0 THEN bar = bar + "│"
+        IF ti = active THEN
+            bar = bar + "[" + items[ti] + "]"
+        ELSE
+            bar = bar + " " + items[ti] + " "
+        END IF
+    NEXT ti
+    DIM bw AS INTEGER = lipgloss.Width(bar)
+    IF bw < width THEN bar = bar + strings.Repeat(" ", width - bw)
+    RETURN bar
+END FUNCTION
+
 ' widgetVisibleText — single-line preview for a widget. Used by the
 ' generated code and by widgetVisibleLines for simple kinds.
 FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
@@ -181,6 +216,11 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
         ' Render a 1-cell-wide vertical scrollbar caret on the first
         ' line. widgetVisibleLines fills the rest of the height.
         RETURN "▲"
+    END IF
+    IF w.Kind = "TabStrip" THEN
+        ' Tab row only; widgetVisibleLines paints the rule + content
+        ' rows below it.
+        RETURN tabStripBar(w.Items, w.Selected, w.W)
     END IF
     IF w.Kind = "Dialog" THEN
         ' Non-visual marker: shows the dialog kind so the designer can
@@ -235,6 +275,26 @@ FUNCTION widgetVisibleLines(w AS DesignWidget) AS []STRING
             END IF
         NEXT sj
         lines = APPEND(lines, "▼")
+    ELSEIF w.Kind = "TabStrip" THEN
+        ' Row 0: tab bar. Row 1: horizontal rule. Rows 2..H-1: the
+        ' active tab's content placeholder (the generated program shows
+        ' the active label; real page content is the user's to add).
+        DIM th AS INTEGER = w.H
+        IF th < 3 THEN th = 3
+        lines = APPEND(lines, tabStripBar(w.Items, w.Selected, w.W))
+        lines = APPEND(lines, strings.Repeat("─", w.W))
+        DIM activeLbl AS STRING = ""
+        IF w.Selected >= 0 AND w.Selected < LEN(w.Items) THEN activeLbl = w.Items[w.Selected]
+        DIM tj AS INTEGER
+        FOR tj = 2 TO th - 1
+            IF tj = 2 THEN
+                DIM crow AS STRING = " " + activeLbl + " tab"
+                IF lipgloss.Width(crow) < w.W THEN crow = crow + strings.Repeat(" ", w.W - lipgloss.Width(crow))
+                lines = APPEND(lines, crow)
+            ELSE
+                lines = APPEND(lines, strings.Repeat(" ", w.W))
+            END IF
+        NEXT tj
     ELSE
         lines = APPEND(lines, widgetVisibleText(w))
     END IF
@@ -722,6 +782,12 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         IF rowIdx = cursor THEN RETURN "Edit Orient", "h or v:", w.Orient, "wprop:orient"
         cursor = cursor + 1
     END IF
+    IF w.Kind = "TabStrip" THEN
+        IF rowIdx = cursor THEN RETURN "Edit Tabs", "comma-separated:", strings.Join(w.Items, ", "), "wprop:items"
+        cursor = cursor + 1
+        IF rowIdx = cursor THEN RETURN "Edit Active", "index (0-based):", strconv.Itoa(w.Selected), "wprop:selected"
+        cursor = cursor + 1
+    END IF
     IF w.Kind = "Button" THEN
         IF rowIdx = cursor THEN RETURN "OnClick Dialog", "Dialog widget name (blank = none):", w.OnClickDialog, "wprop:onclickdialog"
         cursor = cursor + 1
@@ -861,7 +927,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "    DIM " + w.Name + "_Val AS STRING\n"
         ELSEIF w.Kind = "Checkbox" OR w.Kind = "RadioButton" THEN
             s = s + "    DIM " + w.Name + "_Val AS BOOLEAN\n"
-        ELSEIF w.Kind = "ComboBox" OR w.Kind = "ListBox" OR w.Kind = "ScrollBar" OR w.Kind = "ProgressBar" THEN
+        ELSEIF w.Kind = "ComboBox" OR w.Kind = "ListBox" OR w.Kind = "ScrollBar" OR w.Kind = "ProgressBar" OR w.Kind = "TabStrip" THEN
             s = s + "    DIM " + w.Name + "_Val AS INTEGER\n"
         ELSEIF w.Kind = "Dialog" THEN
             s = s + "    DIM " + w.Name + "_Active AS BOOLEAN\n"
@@ -1212,6 +1278,28 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
                 s = s + "            END IF\n"
             END IF
+        ELSEIF mcw.Kind = "TabStrip" THEN
+            ' Only the tab row (relative Y = 0) is clickable; the click
+            ' column is mapped to a tab via the static label widths
+            ' (" label " = width+2, "│" separators add 1). Selecting a
+            ' new tab fires _Change.
+            s = s + "            DIM mcTsY" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
+            s = s + "            DIM mcTsX" + mcIStr + " AS INTEGER = mc.X - " + mcXs + "\n"
+            s = s + "            IF mcTsY" + mcIStr + " = 0 THEN\n"
+            DIM mcTsCol AS INTEGER = 0
+            DIM mcTsi AS INTEGER
+            FOR mcTsi = 0 TO LEN(mcw.Items) - 1
+                DIM mcTsCellW AS INTEGER = lipgloss.Width(mcw.Items[mcTsi]) + 2
+                s = s + "                IF mcTsX" + mcIStr + " >= " + strconv.Itoa(mcTsCol) + " AND mcTsX" + mcIStr + " < " + strconv.Itoa(mcTsCol + mcTsCellW) + " THEN\n"
+                s = s + "                    IF m." + mcw.Name + "_Val <> " + strconv.Itoa(mcTsi) + " THEN\n"
+                s = s + "                        m." + mcw.Name + "_Val = " + strconv.Itoa(mcTsi) + "\n"
+                s = s + "                        dispatchChange(" + qt + mcw.Name + qt + ")\n"
+                s = s + "                    END IF\n"
+                s = s + "                END IF\n"
+                mcTsCol = mcTsCol + mcTsCellW
+                IF mcTsi < LEN(mcw.Items) - 1 THEN mcTsCol = mcTsCol + 1
+            NEXT mcTsi
+            s = s + "            END IF\n"
         ELSE
             ' Label / TextInput / ProgressBar: focus follows the
             ' click but no state change. (TextInput Tier 2.)
@@ -1302,6 +1390,22 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "            END IF\n"
                 s = s + "            IF key = " + qt + incKey + qt + " THEN\n"
                 s = s + "                IF m." + ww.Name + "_Val < " + maxStr + " THEN\n"
+                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
+                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+            ELSEIF ww.Kind = "TabStrip" THEN
+                ' Left / Right move between tabs; each move fires
+                ' _Change so user code can react to the new active page.
+                DIM nTabsStr AS STRING = strconv.Itoa(LEN(ww.Items))
+                s = s + "            IF key = " + qt + "left" + qt + " THEN\n"
+                s = s + "                IF m." + ww.Name + "_Val > 0 THEN\n"
+                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val - 1\n"
+                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+                s = s + "            IF key = " + qt + "right" + qt + " THEN\n"
+                s = s + "                IF m." + ww.Name + "_Val < " + nTabsStr + " - 1 THEN\n"
                 s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
                 s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
                 s = s + "                END IF\n"
@@ -1402,6 +1506,40 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "        DIM svY" + sfx + " AS INTEGER = " + ys + " + svi" + sfx + "\n"
             s = s + "        IF svY" + sfx + " >= 0 AND svY" + sfx + " < LEN(rows) THEN rows[svY" + sfx + "] = overlayRow(rows[svY" + sfx + "], " + xs + ", svGlyph" + sfx + ")\n"
             s = s + "    NEXT svi" + sfx + "\n"
+        ELSEIF wv.Kind = "TabStrip" THEN
+            ' Row 0: tab bar (active tab in [brackets], reading
+            ' <name>_Val). Row 1: rule. Row 2: active-tab content
+            ' placeholder. Plain text — no lipgloss dependency.
+            DIM tsWStr AS STRING = strconv.Itoa(wv.W)
+            s = s + "    DIM tsItems" + sfx + " AS []STRING\n"
+            DIM tsvI AS INTEGER
+            FOR tsvI = 0 TO LEN(wv.Items) - 1
+                s = s + "    tsItems" + sfx + " = APPEND(tsItems" + sfx + ", " + qt + escapeForDBString(wv.Items[tsvI]) + qt + ")\n"
+            NEXT tsvI
+            s = s + "    DIM tsBar" + sfx + " AS STRING = " + qt + qt + "\n"
+            s = s + "    DIM tsk" + sfx + " AS INTEGER\n"
+            s = s + "    FOR tsk" + sfx + " = 0 TO LEN(tsItems" + sfx + ") - 1\n"
+            s = s + "        IF tsk" + sfx + " > 0 THEN tsBar" + sfx + " = tsBar" + sfx + " + " + qt + "│" + qt + "\n"
+            s = s + "        IF tsk" + sfx + " = m." + wv.Name + "_Val THEN\n"
+            s = s + "            tsBar" + sfx + " = tsBar" + sfx + " + " + qt + "[" + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + "]" + qt + "\n"
+            s = s + "        ELSE\n"
+            s = s + "            tsBar" + sfx + " = tsBar" + sfx + " + " + qt + " " + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + " " + qt + "\n"
+            s = s + "        END IF\n"
+            s = s + "    NEXT tsk" + sfx + "\n"
+            s = s + "    IF m.Focus = " + sfx + " THEN\n"
+            s = s + "        tsBar" + sfx + " = " + qt + ">" + qt + " + tsBar" + sfx + "\n"
+            s = s + "    ELSE\n"
+            s = s + "        tsBar" + sfx + " = " + qt + " " + qt + " + tsBar" + sfx + "\n"
+            s = s + "    END IF\n"
+            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", tsBar" + sfx + ")\n"
+            s = s + "    DIM tsRule" + sfx + " AS STRING = " + qt + " " + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + tsWStr + ")\n"
+            s = s + "    DIM tsRuleY" + sfx + " AS INTEGER = " + ys + " + 1\n"
+            s = s + "    IF tsRuleY" + sfx + " >= 0 AND tsRuleY" + sfx + " < LEN(rows) THEN rows[tsRuleY" + sfx + "] = overlayRow(rows[tsRuleY" + sfx + "], " + xs + ", tsRule" + sfx + ")\n"
+            s = s + "    DIM tsAct" + sfx + " AS STRING = " + qt + qt + "\n"
+            s = s + "    IF m." + wv.Name + "_Val >= 0 AND m." + wv.Name + "_Val < LEN(tsItems" + sfx + ") THEN tsAct" + sfx + " = tsItems" + sfx + "[m." + wv.Name + "_Val]\n"
+            s = s + "    DIM tsContent" + sfx + " AS STRING = " + qt + " " + qt + " + tsAct" + sfx + " + " + qt + " tab" + qt + "\n"
+            s = s + "    DIM tsContentY" + sfx + " AS INTEGER = " + ys + " + 2\n"
+            s = s + "    IF tsContentY" + sfx + " >= 0 AND tsContentY" + sfx + " < LEN(rows) THEN rows[tsContentY" + sfx + "] = overlayRow(rows[tsContentY" + sfx + "], " + xs + ", tsContent" + sfx + ")\n"
         ELSE
         ' --- Single-row kinds: build body string, prefix focus
         '     marker, overlay onto the target row in `rows`.
@@ -1560,7 +1698,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         DIM mw AS DesignWidget = f.Widgets[mi]
         IF mw.Kind = "RadioButton" AND mw.Checked THEN
             s = s + "    m." + mw.Name + "_Val = TRUE\n"
-        ELSEIF mw.Kind = "ComboBox" OR mw.Kind = "ListBox" THEN
+        ELSEIF mw.Kind = "ComboBox" OR mw.Kind = "ListBox" OR mw.Kind = "TabStrip" THEN
             s = s + "    m." + mw.Name + "_Val = " + strconv.Itoa(mw.Selected) + "\n"
         ELSEIF mw.Kind = "ScrollBar" OR mw.Kind = "ProgressBar" THEN
             s = s + "    m." + mw.Name + "_Val = " + strconv.Itoa(mw.Value) + "\n"
@@ -1641,7 +1779,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     DIM dchI AS INTEGER
     FOR dchI = 0 TO n - 1
         DIM dchW AS DesignWidget = f.Widgets[dchI]
-        IF dchW.Kind = "Checkbox" OR dchW.Kind = "RadioButton" OR dchW.Kind = "ComboBox" OR dchW.Kind = "ListBox" OR dchW.Kind = "ScrollBar" THEN
+        IF dchW.Kind = "Checkbox" OR dchW.Kind = "RadioButton" OR dchW.Kind = "ComboBox" OR dchW.Kind = "ListBox" OR dchW.Kind = "ScrollBar" OR dchW.Kind = "TabStrip" THEN
             s = s + "    IF id = " + qt + dchW.Name + qt + " THEN " + dchW.Name + "_Change()\n"
             hadChange = TRUE
         END IF
@@ -1878,7 +2016,7 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
         IF w.Kind = "Button" THEN
             stubName = w.Name + "_Click"
             stubLabel = "Click"
-        ELSEIF w.Kind = "Checkbox" OR w.Kind = "RadioButton" OR w.Kind = "ComboBox" OR w.Kind = "ListBox" OR w.Kind = "ScrollBar" THEN
+        ELSEIF w.Kind = "Checkbox" OR w.Kind = "RadioButton" OR w.Kind = "ComboBox" OR w.Kind = "ListBox" OR w.Kind = "ScrollBar" OR w.Kind = "TabStrip" THEN
             stubName = w.Name + "_Change"
             stubLabel = "Change"
         ELSEIF w.Kind = "Dialog" THEN
