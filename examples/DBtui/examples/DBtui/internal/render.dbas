@@ -387,7 +387,7 @@ END FUNCTION
 ' embedded in the top border. Mirrors the original DBtui's panel
 ' style. `focused` selects the border style: TRUE → square corners
 ' (the focused panel), FALSE → rounded corners (unfocused panel).
-FUNCTION titledBox(title AS STRING, body AS STRING, width AS INTEGER, height AS INTEGER, focused AS BOOLEAN) AS STRING
+FUNCTION titledBox(title AS STRING, body AS STRING, width AS INTEGER, height AS INTEGER, focused AS BOOLEAN, rightHot AS BOOLEAN, leftHot AS BOOLEAN) AS STRING
     DIM tl AS STRING = "╭"
     DIM tr AS STRING = "╮"
     DIM borderObj AS lipgloss.Border = lipgloss.RoundedBorder()
@@ -398,13 +398,25 @@ FUNCTION titledBox(title AS STRING, body AS STRING, width AS INTEGER, height AS 
     END IF
     DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder))
     DIM titleStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Bold(TRUE).Italic(TRUE)
+    ' A hovered (or dragging) splitter on the left/right edge accents
+    ' that border column + corner so it reads as a grab handle.
+    DIM hotStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cHotkey)).Bold(TRUE)
+    DIM tlStyle AS lipgloss.Style = borderStyle
+    DIM trStyle AS lipgloss.Style = borderStyle
+    IF leftHot  THEN tlStyle = hotStyle
+    IF rightHot THEN trStyle = hotStyle
     ' Top row: "{tl}─ title ──...──{tr}" (width chars total)
     DIM titleLen AS INTEGER = lipgloss.Width(" " + title + " ")
     DIM dashLen  AS INTEGER = width - 2 - 1 - titleLen
     IF dashLen < 0 THEN dashLen = 0
-    DIM top AS STRING = borderStyle.Render(tl + "─") + titleStyle.Render(" " + title + " ") + borderStyle.Render(strings.Repeat("─", dashLen) + tr)
+    DIM top AS STRING = tlStyle.Render(tl) + borderStyle.Render("─") + titleStyle.Render(" " + title + " ") + borderStyle.Render(strings.Repeat("─", dashLen)) + trStyle.Render(tr)
     ' Body box. Width(width) → total visible width includes borders.
-    DIM bodyBox AS lipgloss.Style = lipgloss.NewStyle().Border(borderObj).BorderTop(FALSE).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(height - 1)
+    ' Border{Right,Left}Foreground tints just the splitter column.
+    DIM rightCol AS STRING = cBorder
+    DIM leftCol  AS STRING = cBorder
+    IF rightHot THEN rightCol = cHotkey
+    IF leftHot  THEN leftCol  = cHotkey
+    DIM bodyBox AS lipgloss.Style = lipgloss.NewStyle().Border(borderObj).BorderTop(FALSE).BorderForeground(lipgloss.Color(cBorder)).BorderRightForeground(lipgloss.Color(rightCol)).BorderLeftForeground(lipgloss.Color(leftCol)).Width(width).Height(height - 1)
     RETURN top + "\n" + bodyBox.Render(body)
 END FUNCTION
 
@@ -465,7 +477,11 @@ FUNCTION renderLeftPane(m AS Model, width AS INTEGER, height AS INTEGER) AS STRI
     ' inner area is (width-2) chars wide × (height-2) rows tall.
     DIM body AS STRING = renderTreeBody(m, width - 2, height - 2)
     DIM treeFocused AS BOOLEAN = (m.FocusedPane = "tree")
-    RETURN titledBox("Project", body, width, height, treeFocused)
+    ' The left splitter sits at the pane's right edge (screen cols
+    ' width-1 / width). Highlight it when hovered or while dragging.
+    DIM splitHot AS BOOLEAN = (m.HoverX = width - 1 OR m.HoverX = width) AND m.HoverY >= 2
+    IF m.DragMode = "splitL" THEN splitHot = TRUE
+    RETURN titledBox("Project", body, width, height, treeFocused, splitHot, FALSE)
 END FUNCTION
 
 ' tabLabel — display label for tab `i`: basename, dirty-prefixed with
@@ -690,7 +706,14 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
         NEXT li
     END IF
     DIM listBody AS STRING = strings.Join(listLines, "\n")
-    DIM listBox  AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder)).Width(width).Height(listH)
+    ' The right splitter sits at this pane's left edge (screen cols
+    ' xOrigin / xOrigin-1). Highlight the list box's left border when
+    ' the splitter is hovered or being dragged.
+    DIM splitRHot AS BOOLEAN = (m.HoverX = xOrigin OR m.HoverX = xOrigin - 1) AND m.HoverY >= 2
+    IF m.DragMode = "splitR" THEN splitRHot = TRUE
+    DIM listLeftCol AS STRING = cBorder
+    IF splitRHot THEN listLeftCol = cHotkey
+    DIM listBox  AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cBorder)).BorderLeftForeground(lipgloss.Color(listLeftCol)).Width(width).Height(listH)
 
     ' --- Properties panel — live cursor context (code) OR selected
     '     widget props (form). titledBox draws title at the top of
@@ -855,7 +878,7 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
         END IF
     NEXT pi
     DIM propsBody   AS STRING = strings.Join(propLines, "\n")
-    DIM propsTitled AS STRING = titledBox("Properties", propsBody, width, propsH, FALSE)
+    DIM propsTitled AS STRING = titledBox("Properties", propsBody, width, propsH, FALSE, FALSE, splitRHot)
 
     RETURN lipgloss.JoinVertical(lipgloss.Left, tabs, listBox.Render(listBody), propsTitled)
 END FUNCTION
@@ -1002,5 +1025,5 @@ FUNCTION renderBottomPane(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
         showLines = APPEND(showLines, rawLines[i])
     NEXT i
     DIM body AS STRING = strings.Join(showLines, "\n")
-    RETURN titledBox(title, body, width, height, FALSE)
+    RETURN titledBox(title, body, width, height, FALSE, FALSE, FALSE)
 END FUNCTION
