@@ -2,3 +2,6 @@ DBtui
 DBtui.dbas
 dbtui
 widgets-test
+
+# editor/agent runtime state
+.claude/
