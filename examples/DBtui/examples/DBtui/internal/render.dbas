@@ -737,6 +737,10 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
                 propRows = APPEND(propRows, "Nodes  " + strings.Join(sw.Items, ", "))
                 propRows = APPEND(propRows, fmt.Sprintf("Cursor %d", sw.Selected))
             END IF
+            IF sw.Kind = "PropGrid" THEN
+                propRows = APPEND(propRows, "Rows   " + strings.Join(sw.Items, ", "))
+                propRows = APPEND(propRows, fmt.Sprintf("Cursor %d", sw.Selected))
+            END IF
             IF sw.Kind = "Button" THEN
                 propRows = APPEND(propRows, "OnClick " + sw.OnClickDialog)
             END IF
