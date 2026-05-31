@@ -25,7 +25,9 @@ TYPE Model
     DIM tree1_Val AS INTEGER
     DIM tree1_Collapsed AS []BOOLEAN
     DIM textarea1_Val AS STRING
+    DIM textarea1_Cur AS INTEGER
     DIM propgrid1_Val AS INTEGER
+    DIM scrollpanel1_Scroll AS INTEGER
 END TYPE
 
 FUNCTION (m AS Model) Init() AS tea.Cmd
@@ -45,6 +47,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mc, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mc.Button = tea.MouseLeft THEN
+        IF mc.X >= 30 AND mc.X < 30 + 26 AND mc.Y >= 14 AND mc.Y < 14 + 7 THEN
+            m.Focus = 13
+            DIM spRel13 AS INTEGER = mc.Y - 14
+            IF spRel13 = 1 AND m.scrollpanel1_Scroll > 0 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 1
+            IF spRel13 = 5 AND m.scrollpanel1_Scroll < 7 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 1
+            RETURN m, NIL
+        END IF
         IF mc.X >= 56 AND mc.X < 56 + 24 AND mc.Y >= 7 AND mc.Y < 7 + 5 THEN
             m.Focus = 12
             DIM mcGRow12 AS INTEGER = mc.Y - 7
@@ -167,12 +176,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM key AS STRING = k.String()
         IF key = "ctrl+c" OR key = "esc" THEN RETURN m, tea.Quit
         IF key = "tab" THEN
-            m.Focus = (m.Focus + 1) MOD 13
+            m.Focus = (m.Focus + 1) MOD 14
             RETURN m, NIL
         END IF
         IF key = "shift+tab" THEN
             m.Focus = m.Focus - 1
-            IF m.Focus < 0 THEN m.Focus = 12
+            IF m.Focus < 0 THEN m.Focus = 13
             RETURN m, NIL
         END IF
         IF m.Focus = 0 THEN
@@ -298,12 +307,31 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF m.Focus = 11 THEN
-            IF LEN(key) = 1 THEN m.textarea1_Val = m.textarea1_Val + key
-            IF key = "space" THEN m.textarea1_Val = m.textarea1_Val + " "
-            IF key = "enter" THEN m.textarea1_Val = m.textarea1_Val + "\n"
-            IF key = "backspace" AND LEN(m.textarea1_Val) > 0 THEN
-                m.textarea1_Val = Mid(m.textarea1_Val, 1, LEN(m.textarea1_Val) - 1)
+            IF LEN(key) = 1 THEN
+                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur) + key + Mid(m.textarea1_Val, m.textarea1_Cur + 1, LEN(m.textarea1_Val) - m.textarea1_Cur)
+                m.textarea1_Cur = m.textarea1_Cur + 1
             END IF
+            IF key = "space" THEN
+                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur) + " " + Mid(m.textarea1_Val, m.textarea1_Cur + 1, LEN(m.textarea1_Val) - m.textarea1_Cur)
+                m.textarea1_Cur = m.textarea1_Cur + 1
+            END IF
+            IF key = "enter" THEN
+                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur) + "\n" + Mid(m.textarea1_Val, m.textarea1_Cur + 1, LEN(m.textarea1_Val) - m.textarea1_Cur)
+                m.textarea1_Cur = m.textarea1_Cur + 1
+            END IF
+            IF key = "backspace" AND m.textarea1_Cur > 0 THEN
+                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur - 1) + Mid(m.textarea1_Val, m.textarea1_Cur + 1, LEN(m.textarea1_Val) - m.textarea1_Cur)
+                m.textarea1_Cur = m.textarea1_Cur - 1
+            END IF
+            IF key = "delete" AND m.textarea1_Cur < LEN(m.textarea1_Val) THEN
+                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur) + Mid(m.textarea1_Val, m.textarea1_Cur + 2, LEN(m.textarea1_Val) - m.textarea1_Cur - 1)
+            END IF
+            IF key = "left" AND m.textarea1_Cur > 0 THEN m.textarea1_Cur = m.textarea1_Cur - 1
+            IF key = "right" AND m.textarea1_Cur < LEN(m.textarea1_Val) THEN m.textarea1_Cur = m.textarea1_Cur + 1
+            IF key = "home" THEN m.textarea1_Cur = taLineHome(m.textarea1_Val, m.textarea1_Cur)
+            IF key = "end" THEN m.textarea1_Cur = taLineEnd(m.textarea1_Val, m.textarea1_Cur)
+            IF key = "up" THEN m.textarea1_Cur = taMoveVert(m.textarea1_Val, m.textarea1_Cur, 0 - 1)
+            IF key = "down" THEN m.textarea1_Cur = taMoveVert(m.textarea1_Val, m.textarea1_Cur, 1)
             RETURN m, NIL
         END IF
         IF m.Focus = 12 THEN
@@ -320,6 +348,21 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 END IF
             END IF
             IF key = "enter" OR key = "space" THEN dispatchChange("propgrid1")
+            RETURN m, NIL
+        END IF
+        IF m.Focus = 13 THEN
+            IF key = "up" AND m.scrollpanel1_Scroll > 0 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 1
+            IF key = "down" AND m.scrollpanel1_Scroll < 7 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 1
+            IF key = "pgup" THEN
+                m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 5
+                IF m.scrollpanel1_Scroll < 0 THEN m.scrollpanel1_Scroll = 0
+            END IF
+            IF key = "pgdown" THEN
+                m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 5
+                IF m.scrollpanel1_Scroll > 7 THEN m.scrollpanel1_Scroll = 7
+            END IF
+            IF key = "home" THEN m.scrollpanel1_Scroll = 0
+            IF key = "end" THEN m.scrollpanel1_Scroll = 7
             RETURN m, NIL
         END IF
     END IF
@@ -511,15 +554,24 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM taTop11 AS STRING = "┌" + strings.Repeat("─", 20) + "┐"
     IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayRow(rows[1], 56, taTop11)
     DIM taLines11 AS []STRING = strings.Split(m.textarea1_Val, "\n")
-    DIM taN11 AS INTEGER = LEN(taLines11)
-    DIM taStart11 AS INTEGER = taN11 - (5 - 2)
-    IF taStart11 < 0 THEN taStart11 = 0
+    DIM taCRow11 AS INTEGER
+    DIM taCCol11 AS INTEGER
+    taCRow11, taCCol11 = taRowCol(m.textarea1_Val, m.textarea1_Cur)
+    DIM taStart11 AS INTEGER = 0
+    IF taCRow11 >= 3 THEN taStart11 = taCRow11 - 3 + 1
     DIM taRow11 AS INTEGER
-    FOR taRow11 = 0 TO (5 - 2) - 1
+    FOR taRow11 = 0 TO 3 - 1
         DIM taSrc11 AS INTEGER = taStart11 + taRow11
         DIM taLn11 AS STRING = ""
-        IF taSrc11 < taN11 THEN taLn11 = taLines11[taSrc11]
-        IF m.Focus = 11 AND taSrc11 = taN11 - 1 THEN taLn11 = taLn11 + "█"
+        IF taSrc11 < LEN(taLines11) THEN taLn11 = taLines11[taSrc11]
+        IF m.Focus = 11 AND taSrc11 = taCRow11 THEN
+            DIM taCp11 AS INTEGER = taCCol11
+            IF taCp11 >= LEN(taLn11) THEN
+                taLn11 = taLn11 + "█"
+            ELSE
+                taLn11 = Mid(taLn11, 1, taCp11) + "█" + Mid(taLn11, taCp11 + 2, LEN(taLn11) - taCp11 - 1)
+            END IF
+        END IF
         IF lipgloss.Width(taLn11) > 20 THEN taLn11 = Mid(taLn11, 1, 20)
         IF lipgloss.Width(taLn11) < 20 THEN taLn11 = taLn11 + strings.Repeat(" ", 20 - lipgloss.Width(taLn11))
         DIM taLine11 AS STRING = "│" + taLn11 + "│"
@@ -553,6 +605,45 @@ FUNCTION (m AS Model) View() AS tea.View
             IF gY12 >= 0 AND gY12 < LEN(rows) THEN rows[gY12] = overlayRow(rows[gY12], 56, gLine12)
         END IF
     NEXT gRow12
+    DIM spItems13 AS []STRING
+    spItems13 = APPEND(spItems13, "Content line 1")
+    spItems13 = APPEND(spItems13, "Content line 2")
+    spItems13 = APPEND(spItems13, "Content line 3")
+    spItems13 = APPEND(spItems13, "Content line 4")
+    spItems13 = APPEND(spItems13, "Content line 5")
+    spItems13 = APPEND(spItems13, "Content line 6")
+    spItems13 = APPEND(spItems13, "Content line 7")
+    spItems13 = APPEND(spItems13, "Content line 8")
+    spItems13 = APPEND(spItems13, "Content line 9")
+    spItems13 = APPEND(spItems13, "Content line 10")
+    spItems13 = APPEND(spItems13, "Content line 11")
+    spItems13 = APPEND(spItems13, "Content line 12")
+    DIM spTop13 AS STRING = "┌" + strings.Repeat("─", 24) + "┐"
+    IF 14 >= 0 AND 14 < LEN(rows) THEN rows[14] = overlayRow(rows[14], 30, spTop13)
+    DIM spThumb13 AS INTEGER = 0 - 1
+    IF 7 > 0 AND 3 > 0 THEN
+        spThumb13 = (m.scrollpanel1_Scroll * (3 - 1)) / 7
+        IF spThumb13 < 0 THEN spThumb13 = 0
+        IF spThumb13 > 3 - 1 THEN spThumb13 = 3 - 1
+    END IF
+    DIM spRow13 AS INTEGER
+    FOR spRow13 = 0 TO 5 - 1
+        DIM spSrc13 AS INTEGER = m.scrollpanel1_Scroll + spRow13
+        DIM spcl13 AS STRING = ""
+        IF spSrc13 < LEN(spItems13) THEN spcl13 = spItems13[spSrc13]
+        IF lipgloss.Width(spcl13) > 23 THEN spcl13 = Mid(spcl13, 1, 23)
+        IF lipgloss.Width(spcl13) < 23 THEN spcl13 = spcl13 + strings.Repeat(" ", 23 - lipgloss.Width(spcl13))
+        DIM spsb13 AS STRING = "░"
+        IF spRow13 = 0 THEN spsb13 = "▲"
+        IF spRow13 = 5 - 1 THEN spsb13 = "▼"
+        IF spRow13 >= 1 AND spRow13 <= 5 - 2 AND (spRow13 - 1) = spThumb13 THEN spsb13 = "█"
+        DIM spLine13 AS STRING = "│" + spcl13 + spsb13 + "│"
+        DIM spY13 AS INTEGER = 14 + 1 + spRow13
+        IF spY13 >= 0 AND spY13 < LEN(rows) THEN rows[spY13] = overlayRow(rows[spY13], 30, spLine13)
+    NEXT spRow13
+    DIM spBot13 AS STRING = "└" + strings.Repeat("─", 24) + "┘"
+    DIM spBotY13 AS INTEGER = 14 + 6
+    IF spBotY13 >= 0 AND spBotY13 < LEN(rows) THEN rows[spBotY13] = overlayRow(rows[spBotY13], 30, spBot13)
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
     DIM fullView AS STRING = strings.Join(rows, "\n")
     DIM vw AS tea.View = tea.NewView(fullView)
@@ -574,6 +665,7 @@ SUB Main()
         m.tree1_Collapsed = APPEND(m.tree1_Collapsed, FALSE)
     NEXT seedCtree1
     m.textarea1_Val = "Edit me..."
+    m.textarea1_Cur = LEN(m.textarea1_Val)
     m.propgrid1_Val = 0
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)
     DIM final AS tea.Model
@@ -655,6 +747,58 @@ FUNCTION tree1_isParent(i AS INTEGER) AS BOOLEAN
     DIM d AS []INTEGER = tree1_depths()
     IF i < 0 OR i + 1 >= LEN(d) THEN RETURN FALSE
     RETURN d[i + 1] > d[i]
+END FUNCTION
+
+FUNCTION taLineHome(text AS STRING, cur AS INTEGER) AS INTEGER
+    DIM h AS INTEGER = cur
+    DO WHILE h > 0 AND Mid(text, h, 1) <> "\n"
+        h = h - 1
+    LOOP
+    RETURN h
+END FUNCTION
+
+FUNCTION taLineEnd(text AS STRING, cur AS INTEGER) AS INTEGER
+    DIM e AS INTEGER = cur
+    DO WHILE e < LEN(text) AND Mid(text, e + 1, 1) <> "\n"
+        e = e + 1
+    LOOP
+    RETURN e
+END FUNCTION
+
+FUNCTION taMoveVert(text AS STRING, cur AS INTEGER, dir AS INTEGER) AS INTEGER
+    DIM home AS INTEGER = taLineHome(text, cur)
+    DIM col AS INTEGER = cur - home
+    IF dir < 0 THEN
+        IF home = 0 THEN RETURN cur
+        DIM prevHome AS INTEGER = taLineHome(text, home - 1)
+        DIM prevLen AS INTEGER = (home - 1) - prevHome
+        DIM ncol AS INTEGER = col
+        IF ncol > prevLen THEN ncol = prevLen
+        RETURN prevHome + ncol
+    END IF
+    DIM le AS INTEGER = taLineEnd(text, cur)
+    IF le >= LEN(text) THEN RETURN cur
+    DIM nextHome AS INTEGER = le + 1
+    DIM nextEnd AS INTEGER = taLineEnd(text, nextHome)
+    DIM nextLen AS INTEGER = nextEnd - nextHome
+    DIM ncol2 AS INTEGER = col
+    IF ncol2 > nextLen THEN ncol2 = nextLen
+    RETURN nextHome + ncol2
+END FUNCTION
+
+FUNCTION taRowCol(text AS STRING, cur AS INTEGER) AS (INTEGER, INTEGER)
+    DIM row AS INTEGER = 0
+    DIM col AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO cur - 1
+        IF i < LEN(text) AND Mid(text, i + 1, 1) = "\n" THEN
+            row = row + 1
+            col = 0
+        ELSE
+            col = col + 1
+        END IF
+    NEXT i
+    RETURN row, col
 END FUNCTION
 
 ' ===== DBTUI:USER ===== DO NOT EDIT OR DELETE THIS LINE =====

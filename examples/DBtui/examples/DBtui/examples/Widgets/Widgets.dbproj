@@ -278,6 +278,29 @@
             "Visible=true"
           ],
           "Selected": 0
+        },
+        {
+          "Kind": "ScrollPanel",
+          "Name": "scrollpanel1",
+          "Text": "ScrollPanel",
+          "X": 30,
+          "Y": 14,
+          "W": 26,
+          "H": 7,
+          "Items": [
+            "Content line 1",
+            "Content line 2",
+            "Content line 3",
+            "Content line 4",
+            "Content line 5",
+            "Content line 6",
+            "Content line 7",
+            "Content line 8",
+            "Content line 9",
+            "Content line 10",
+            "Content line 11",
+            "Content line 12"
+          ]
         }
       ]
     }

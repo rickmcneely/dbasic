@@ -114,7 +114,8 @@ TYPE DesignWidget
     DIM Kind AS STRING       ' Button / Label / TextInput / Checkbox /
                              ' RadioButton / ComboBox / ListBox /
                              ' ProgressBar / ScrollBar / Dialog /
-                             ' TabStrip / Tree / TextArea / PropGrid
+                             ' TabStrip / Tree / TextArea / PropGrid /
+                             ' ScrollPanel
     DIM Name AS STRING       ' identifier, e.g. "btnOK"
     DIM Text AS STRING       ' visible label (Dialog: window title)
     DIM X    AS INTEGER      ' col offset within canvas
