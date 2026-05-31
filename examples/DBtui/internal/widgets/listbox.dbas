@@ -1,0 +1,97 @@
+' =========================================================================
+' widgets/listbox.dbas — ListBox widget (per-kind module).
+'
+' Code extracted verbatim from internal/form.dbas during the per-widget
+' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
+'
+' A multi-row scrolling list. Runtime selected index in <Name>_Val
+' (INTEGER). Up/Down (shared comboListEmitKey from combobox.dbas) or a row
+' click selects. Has no single-line preview — it is a multi-row kind, so
+' widgetVisibleText falls through and widgetVisibleLines (C) paints it.
+'
+' Owns: A default, C visibleLines, G mouse, H View (multi-row). Keyboard
+' is the shared comboListEmitKey(). Stays inline: Model _Val, Items/Selected
+' property rows, dispatchChange membership, seed, _Change stub.
+' =========================================================================
+
+' A — defaults: a 3-item, 5-row list.
+FUNCTION listBoxDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "ListBox"
+    w.W = 18
+    w.H = 5
+    w.Items    = APPEND(w.Items, "item one")
+    w.Items    = APPEND(w.Items, "item two")
+    w.Items    = APPEND(w.Items, "item three")
+    w.Selected = 0
+    RETURN w
+END FUNCTION
+
+' C — multi-row design render: one row per visible item, "▶ " on selected.
+FUNCTION listBoxVisibleLines(w AS DesignWidget) AS []STRING
+    DIM lines AS []STRING
+    DIM h AS INTEGER = w.H
+    IF h < 1 THEN h = 1
+    DIM iwid AS INTEGER = w.W - 2
+    IF iwid < 1 THEN iwid = 1
+    DIM ri AS INTEGER
+    FOR ri = 0 TO h - 1
+        DIM item AS STRING = ""
+        IF ri < LEN(w.Items) THEN item = w.Items[ri]
+        IF LEN(item) > iwid THEN item = Mid(item, 1, iwid)
+        IF LEN(item) < iwid THEN item = item + strings.Repeat(" ", iwid - LEN(item))
+        DIM mark AS STRING = "  "
+        IF ri = w.Selected THEN mark = "▶ "
+        lines = APPEND(lines, mark + Mid(item, 1, iwid - 2))
+    NEXT ri
+    RETURN lines
+END FUNCTION
+
+' G — mouse: click row N selects item N if it exists.
+FUNCTION listBoxEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcYs AS STRING, qt AS STRING) AS STRING
+    DIM mcLbN AS STRING = strconv.Itoa(LEN(mcw.Items))
+    DIM s AS STRING = ""
+    IF LEN(mcw.Items) > 0 THEN
+        s = s + "            DIM mcRelRow" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
+        s = s + "            IF mcRelRow" + mcIStr + " >= 0 AND mcRelRow" + mcIStr + " < " + mcLbN + " THEN\n"
+        s = s + "                m." + mcw.Name + "_Val = mcRelRow" + mcIStr + "\n"
+        s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
+        s = s + "            END IF\n"
+    END IF
+    RETURN s
+END FUNCTION
+
+' H — View paint: per-row loop with "▶ " on the selected row and a focus
+' caret on row 0. Caller supplies suffix + x/y origin expressions.
+FUNCTION listBoxEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+    DIM lbH AS STRING = strconv.Itoa(wv.H)
+    DIM s AS STRING = ""
+    s = s + "    DIM items" + sfx + " AS []STRING\n"
+    DIM ii AS INTEGER
+    FOR ii = 0 TO LEN(wv.Items) - 1
+        s = s + "    items" + sfx + " = APPEND(items" + sfx + ", " + qt + escapeForDBString(wv.Items[ii]) + qt + ")\n"
+    NEXT ii
+    DIM iwidStr AS STRING = strconv.Itoa(wv.W - 2)
+    IF wv.W - 2 < 1 THEN iwidStr = "1"
+    s = s + "    DIM lbi" + sfx + " AS INTEGER\n"
+    s = s + "    FOR lbi" + sfx + " = 0 TO " + lbH + " - 1\n"
+    s = s + "        DIM lbItem" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "        IF lbi" + sfx + " < LEN(items" + sfx + ") THEN lbItem" + sfx + " = items" + sfx + "[lbi" + sfx + "]\n"
+    s = s + "        IF LEN(lbItem" + sfx + ") > " + iwidStr + " THEN lbItem" + sfx + " = Mid(lbItem" + sfx + ", 1, " + iwidStr + ")\n"
+    s = s + "        IF LEN(lbItem" + sfx + ") < " + iwidStr + " THEN lbItem" + sfx + " = lbItem" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + iwidStr + " - LEN(lbItem" + sfx + "))\n"
+    s = s + "        DIM lbMark" + sfx + " AS STRING = " + qt + "  " + qt + "\n"
+    s = s + "        IF lbi" + sfx + " = m." + wv.Name + "_Val THEN lbMark" + sfx + " = " + qt + "▶ " + qt + "\n"
+    s = s + "        DIM lbRow" + sfx + " AS STRING = lbMark" + sfx + " + lbItem" + sfx + "\n"
+    s = s + "        IF lbi" + sfx + " = 0 THEN\n"
+    s = s + "            IF m.Focus = " + sfx + " THEN\n"
+    s = s + "                lbRow" + sfx + " = " + qt + ">" + qt + " + lbRow" + sfx + "\n"
+    s = s + "            ELSE\n"
+    s = s + "                lbRow" + sfx + " = " + qt + " " + qt + " + lbRow" + sfx + "\n"
+    s = s + "            END IF\n"
+    s = s + "        ELSE\n"
+    s = s + "            lbRow" + sfx + " = " + qt + " " + qt + " + lbRow" + sfx + "\n"
+    s = s + "        END IF\n"
+    s = s + "        DIM yPos" + sfx + " AS INTEGER = " + ys + " + lbi" + sfx + "\n"
+    s = s + "        IF yPos" + sfx + " >= 0 AND yPos" + sfx + " < LEN(rows) THEN rows[yPos" + sfx + "] = overlayRow(rows[yPos" + sfx + "], " + xs + ", lbRow" + sfx + ")\n"
+    s = s + "    NEXT lbi" + sfx + "\n"
+    RETURN s
+END FUNCTION

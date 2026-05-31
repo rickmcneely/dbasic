@@ -62,20 +62,9 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
     ELSEIF kind = "RadioButton" THEN
         RETURN radioButtonDefault(w)
     ELSEIF kind = "ComboBox" THEN
-        w.Text = "ComboBox"
-        w.W = 16
-        w.Items    = APPEND(w.Items, "red")
-        w.Items    = APPEND(w.Items, "green")
-        w.Items    = APPEND(w.Items, "blue")
-        w.Selected = 0
+        RETURN comboBoxDefault(w)
     ELSEIF kind = "ListBox" THEN
-        w.Text = "ListBox"
-        w.W = 18
-        w.H = 5
-        w.Items    = APPEND(w.Items, "item one")
-        w.Items    = APPEND(w.Items, "item two")
-        w.Items    = APPEND(w.Items, "item three")
-        w.Selected = 0
+        RETURN listBoxDefault(w)
     ELSEIF kind = "ProgressBar" THEN
         RETURN progressBarDefault(w)
     ELSEIF kind = "ScrollBar" THEN
@@ -377,21 +366,9 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
     IF w.Kind = "TextInput" THEN RETURN textInputVisibleText(w)
     IF w.Kind = "Checkbox"    THEN RETURN checkboxVisibleText(w)
     IF w.Kind = "RadioButton" THEN RETURN radioButtonVisibleText(w)
-    IF w.Kind = "ComboBox" THEN
-        DIM cur AS STRING = ""
-        IF w.Selected >= 0 AND w.Selected < LEN(w.Items) THEN cur = w.Items[w.Selected]
-        DIM cwid AS INTEGER = w.W - 4
-        IF cwid < 1 THEN cwid = 1
-        IF LEN(cur) > cwid THEN cur = Mid(cur, 1, cwid)
-        IF LEN(cur) < cwid THEN cur = cur + strings.Repeat(" ", cwid - LEN(cur))
-        RETURN "[" + cur + " v]"
-    END IF
+    IF w.Kind = "ComboBox" THEN RETURN comboBoxVisibleText(w)
     IF w.Kind = "ProgressBar" THEN RETURN progressBarVisibleText(w)
-    IF w.Kind = "ScrollBar" THEN
-        ' Render a 1-cell-wide vertical scrollbar caret on the first
-        ' line. widgetVisibleLines fills the rest of the height.
-        RETURN "▲"
-    END IF
+    IF w.Kind = "ScrollBar" THEN RETURN scrollBarVisibleText(w)
     IF w.Kind = "TabStrip" THEN RETURN tabStripVisibleText(w)
     IF w.Kind = "Tree" THEN
         ' Width proxy — the root node label. widgetVisibleLines paints
@@ -435,40 +412,9 @@ END FUNCTION
 FUNCTION widgetVisibleLines(w AS DesignWidget) AS []STRING
     DIM lines AS []STRING
     IF w.Kind = "ListBox" THEN
-        DIM h AS INTEGER = w.H
-        IF h < 1 THEN h = 1
-        DIM iwid AS INTEGER = w.W - 2
-        IF iwid < 1 THEN iwid = 1
-        DIM ri AS INTEGER
-        FOR ri = 0 TO h - 1
-            DIM item AS STRING = ""
-            IF ri < LEN(w.Items) THEN item = w.Items[ri]
-            IF LEN(item) > iwid THEN item = Mid(item, 1, iwid)
-            IF LEN(item) < iwid THEN item = item + strings.Repeat(" ", iwid - LEN(item))
-            DIM mark AS STRING = "  "
-            IF ri = w.Selected THEN mark = "▶ "
-            lines = APPEND(lines, mark + Mid(item, 1, iwid - 2))
-        NEXT ri
+        lines = listBoxVisibleLines(w)
     ELSEIF w.Kind = "ScrollBar" AND strings.ToLower(w.Orient) = "v" THEN
-        DIM sh AS INTEGER = w.H
-        IF sh < 3 THEN sh = 3
-        DIM thumbPos AS INTEGER = 1
-        DIM rng2 AS INTEGER = w.Max - w.Min
-        IF rng2 > 0 THEN
-            thumbPos = 1 + ((w.Value - w.Min) * (sh - 3)) / rng2
-        END IF
-        IF thumbPos < 1 THEN thumbPos = 1
-        IF thumbPos > sh - 2 THEN thumbPos = sh - 2
-        lines = APPEND(lines, "▲")
-        DIM sj AS INTEGER
-        FOR sj = 1 TO sh - 2
-            IF sj = thumbPos THEN
-                lines = APPEND(lines, "█")
-            ELSE
-                lines = APPEND(lines, "│")
-            END IF
-        NEXT sj
-        lines = APPEND(lines, "▼")
+        lines = scrollBarVisibleLines(w)
     ELSEIF w.Kind = "TabStrip" THEN
         lines = tabStripVisibleLines(w)
     ELSEIF w.Kind = "Tree" THEN
@@ -1696,46 +1642,11 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         ELSEIF mcw.Kind = "RadioButton" THEN
             s = s + radioButtonEmitMouse(mcw, mci, f.Widgets, n, qt)
         ELSEIF mcw.Kind = "ComboBox" THEN
-            ' Click cycles to next item (v1 — full dropdown is Tier 3).
-            DIM mcCbN AS STRING = strconv.Itoa(LEN(mcw.Items))
-            IF LEN(mcw.Items) > 0 THEN
-                s = s + "            m." + mcw.Name + "_Val = (m." + mcw.Name + "_Val + 1) MOD " + mcCbN + "\n"
-                s = s + "            dispatchChange(" + qt + mcw.Name + qt + ")\n"
-            END IF
+            s = s + comboBoxEmitMouse(mcw, qt)
         ELSEIF mcw.Kind = "ListBox" THEN
-            ' Click row N → select item N if it exists.
-            DIM mcLbN AS STRING = strconv.Itoa(LEN(mcw.Items))
-            IF LEN(mcw.Items) > 0 THEN
-                s = s + "            DIM mcRelRow" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
-                s = s + "            IF mcRelRow" + mcIStr + " >= 0 AND mcRelRow" + mcIStr + " < " + mcLbN + " THEN\n"
-                s = s + "                m." + mcw.Name + "_Val = mcRelRow" + mcIStr + "\n"
-                s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
-                s = s + "            END IF\n"
-            END IF
+            s = s + listBoxEmitMouse(mcw, mcIStr, mcYs, qt)
         ELSEIF mcw.Kind = "ScrollBar" THEN
-            DIM mcSbMin AS STRING = strconv.Itoa(mcw.Min)
-            DIM mcSbMax AS STRING = strconv.Itoa(mcw.Max)
-            IF strings.ToLower(mcw.Orient) = "v" THEN
-                ' Click on top arrow → dec; bottom arrow → inc.
-                s = s + "            DIM mcRelY" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
-                s = s + "            IF mcRelY" + mcIStr + " = 0 THEN\n"
-                s = s + "                IF m." + mcw.Name + "_Val > " + mcSbMin + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val - 1\n"
-                s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
-                s = s + "            ELSEIF mcRelY" + mcIStr + " = " + mcHs + " - 1 THEN\n"
-                s = s + "                IF m." + mcw.Name + "_Val < " + mcSbMax + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val + 1\n"
-                s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
-                s = s + "            END IF\n"
-            ELSE
-                ' Horizontal: click left of body → dec; right → inc.
-                s = s + "            DIM mcRelX" + mcIStr + " AS INTEGER = mc.X - " + mcXs + "\n"
-                s = s + "            IF mcRelX" + mcIStr + " = 0 THEN\n"
-                s = s + "                IF m." + mcw.Name + "_Val > " + mcSbMin + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val - 1\n"
-                s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
-                s = s + "            ELSEIF mcRelX" + mcIStr + " = " + mcWs + " - 1 THEN\n"
-                s = s + "                IF m." + mcw.Name + "_Val < " + mcSbMax + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val + 1\n"
-                s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
-                s = s + "            END IF\n"
-            END IF
+            s = s + scrollBarEmitMouse(mcw, mcIStr, mcXs, mcYs, mcWs, mcHs, qt)
         ELSEIF mcw.Kind = "PropGrid" THEN
             ' Click row N selects it (if it exists), firing _Change.
             DIM mcGridN AS STRING = strconv.Itoa(LEN(mcw.Items))
@@ -1878,40 +1789,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             ELSEIF ww.Kind = "RadioButton" THEN
                 s = s + radioButtonEmitKey(ww, i, f.Widgets, n, qt)
             ELSEIF ww.Kind = "ComboBox" OR ww.Kind = "ListBox" THEN
-                DIM nItems AS STRING = strconv.Itoa(LEN(ww.Items))
-                s = s + "            IF key = " + qt + "up" + qt + " THEN\n"
-                s = s + "                IF m." + ww.Name + "_Val > 0 THEN\n"
-                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val - 1\n"
-                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            END IF\n"
-                s = s + "            IF key = " + qt + "down" + qt + " THEN\n"
-                s = s + "                IF m." + ww.Name + "_Val < " + nItems + " - 1 THEN\n"
-                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
-                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            END IF\n"
+                s = s + comboListEmitKey(ww, qt)
             ELSEIF ww.Kind = "ScrollBar" THEN
-                DIM minStr AS STRING = strconv.Itoa(ww.Min)
-                DIM maxStr AS STRING = strconv.Itoa(ww.Max)
-                DIM decKey AS STRING = "up"
-                DIM incKey AS STRING = "down"
-                IF strings.ToLower(ww.Orient) = "h" THEN
-                    decKey = "left"
-                    incKey = "right"
-                END IF
-                s = s + "            IF key = " + qt + decKey + qt + " THEN\n"
-                s = s + "                IF m." + ww.Name + "_Val > " + minStr + " THEN\n"
-                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val - 1\n"
-                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            END IF\n"
-                s = s + "            IF key = " + qt + incKey + qt + " THEN\n"
-                s = s + "                IF m." + ww.Name + "_Val < " + maxStr + " THEN\n"
-                s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
-                s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            END IF\n"
+                s = s + scrollBarEmitKey(ww, qt)
             ELSEIF ww.Kind = "TabStrip" THEN
                 s = s + tabStripEmitKey(ww, qt)
             ELSEIF ww.Kind = "PropGrid" THEN
@@ -2054,63 +1934,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         '     are skipped here — their Panel renders them.
       IF wv.Parent = "" THEN
         IF wv.Kind = "ListBox" THEN
-            DIM lbH AS STRING = strconv.Itoa(wv.H)
-            ' Emit the runtime Items slice for this ListBox so the
-            ' loop can index into it.
-            s = s + "    DIM items" + sfx + " AS []STRING\n"
-            DIM ii AS INTEGER
-            FOR ii = 0 TO LEN(wv.Items) - 1
-                s = s + "    items" + sfx + " = APPEND(items" + sfx + ", " + qt + escapeForDBString(wv.Items[ii]) + qt + ")\n"
-            NEXT ii
-            DIM iwidStr AS STRING = strconv.Itoa(wv.W - 2)
-            IF wv.W - 2 < 1 THEN iwidStr = "1"
-            s = s + "    DIM lbi" + sfx + " AS INTEGER\n"
-            s = s + "    FOR lbi" + sfx + " = 0 TO " + lbH + " - 1\n"
-            s = s + "        DIM lbItem" + sfx + " AS STRING = " + qt + qt + "\n"
-            s = s + "        IF lbi" + sfx + " < LEN(items" + sfx + ") THEN lbItem" + sfx + " = items" + sfx + "[lbi" + sfx + "]\n"
-            s = s + "        IF LEN(lbItem" + sfx + ") > " + iwidStr + " THEN lbItem" + sfx + " = Mid(lbItem" + sfx + ", 1, " + iwidStr + ")\n"
-            s = s + "        IF LEN(lbItem" + sfx + ") < " + iwidStr + " THEN lbItem" + sfx + " = lbItem" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + iwidStr + " - LEN(lbItem" + sfx + "))\n"
-            s = s + "        DIM lbMark" + sfx + " AS STRING = " + qt + "  " + qt + "\n"
-            s = s + "        IF lbi" + sfx + " = m." + wv.Name + "_Val THEN lbMark" + sfx + " = " + qt + "▶ " + qt + "\n"
-            s = s + "        DIM lbRow" + sfx + " AS STRING = lbMark" + sfx + " + lbItem" + sfx + "\n"
-            s = s + "        IF lbi" + sfx + " = 0 THEN\n"
-            s = s + "            IF m.Focus = " + sfx + " THEN\n"
-            s = s + "                lbRow" + sfx + " = " + qt + ">" + qt + " + lbRow" + sfx + "\n"
-            s = s + "            ELSE\n"
-            s = s + "                lbRow" + sfx + " = " + qt + " " + qt + " + lbRow" + sfx + "\n"
-            s = s + "            END IF\n"
-            s = s + "        ELSE\n"
-            s = s + "            lbRow" + sfx + " = " + qt + " " + qt + " + lbRow" + sfx + "\n"
-            s = s + "        END IF\n"
-            s = s + "        DIM yPos" + sfx + " AS INTEGER = " + ys + " + lbi" + sfx + "\n"
-            s = s + "        IF yPos" + sfx + " >= 0 AND yPos" + sfx + " < LEN(rows) THEN rows[yPos" + sfx + "] = overlayRow(rows[yPos" + sfx + "], " + xs + ", lbRow" + sfx + ")\n"
-            s = s + "    NEXT lbi" + sfx + "\n"
+            s = s + listBoxEmitView(wv, sfx, xs, ys, qt)
         ELSEIF wv.Kind = "ScrollBar" AND strings.ToLower(wv.Orient) = "v" THEN
-            DIM svH AS STRING = strconv.Itoa(wv.H)
-            DIM svMin AS STRING = strconv.Itoa(wv.Min)
-            DIM svRng AS STRING = strconv.Itoa(wv.Max - wv.Min)
-            IF wv.Max - wv.Min <= 0 THEN svRng = "1"
-            s = s + "    DIM svi" + sfx + " AS INTEGER\n"
-            s = s + "    DIM svThumb" + sfx + " AS INTEGER = 1 + ((m." + wv.Name + "_Val - " + svMin + ") * (" + svH + " - 3)) / " + svRng + "\n"
-            s = s + "    IF svThumb" + sfx + " < 1 THEN svThumb" + sfx + " = 1\n"
-            s = s + "    IF svThumb" + sfx + " > " + svH + " - 2 THEN svThumb" + sfx + " = " + svH + " - 2\n"
-            s = s + "    FOR svi" + sfx + " = 0 TO " + svH + " - 1\n"
-            s = s + "        DIM svGlyph" + sfx + " AS STRING = " + qt + "│" + qt + "\n"
-            s = s + "        IF svi" + sfx + " = 0 THEN svGlyph" + sfx + " = " + qt + "▲" + qt + "\n"
-            s = s + "        IF svi" + sfx + " = " + svH + " - 1 THEN svGlyph" + sfx + " = " + qt + "▼" + qt + "\n"
-            s = s + "        IF svi" + sfx + " = svThumb" + sfx + " THEN svGlyph" + sfx + " = " + qt + "█" + qt + "\n"
-            s = s + "        IF svi" + sfx + " = 0 THEN\n"
-            s = s + "            IF m.Focus = " + sfx + " THEN\n"
-            s = s + "                svGlyph" + sfx + " = " + qt + ">" + qt + " + svGlyph" + sfx + "\n"
-            s = s + "            ELSE\n"
-            s = s + "                svGlyph" + sfx + " = " + qt + " " + qt + " + svGlyph" + sfx + "\n"
-            s = s + "            END IF\n"
-            s = s + "        ELSE\n"
-            s = s + "            svGlyph" + sfx + " = " + qt + " " + qt + " + svGlyph" + sfx + "\n"
-            s = s + "        END IF\n"
-            s = s + "        DIM svY" + sfx + " AS INTEGER = " + ys + " + svi" + sfx + "\n"
-            s = s + "        IF svY" + sfx + " >= 0 AND svY" + sfx + " < LEN(rows) THEN rows[svY" + sfx + "] = overlayRow(rows[svY" + sfx + "], " + xs + ", svGlyph" + sfx + ")\n"
-            s = s + "    NEXT svi" + sfx + "\n"
+            s = s + scrollBarEmitViewVert(wv, sfx, xs, ys, qt)
         ELSEIF wv.Kind = "TabStrip" THEN
             s = s + tabStripEmitView(wv, sfx, xs, ys, qt)
         ELSEIF wv.Kind = "Tree" THEN

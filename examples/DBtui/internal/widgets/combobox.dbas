@@ -1,0 +1,86 @@
+' =========================================================================
+' widgets/combobox.dbas — ComboBox widget (per-kind module).
+'
+' Code extracted verbatim from internal/form.dbas during the per-widget
+' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
+'
+' A single-row dropdown showing the selected item. Runtime index in
+' <Name>_Val (INTEGER — shared Model group stays in form.dbas). Up/Down
+' (keyboard, shared with ListBox) or a click cycles the selection.
+'
+' Owns: A default, B visibleText, G mouse, H View. The keyboard branch is
+' shared with ListBox, so comboListEmitKey() lives here and ListBox calls
+' it too. Stays inline: Model _Val, Items/Selected property rows,
+' dispatchChange membership, seed line, _Change stub.
+' =========================================================================
+
+' A — defaults: a red/green/blue combo.
+FUNCTION comboBoxDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "ComboBox"
+    w.W = 16
+    w.Items    = APPEND(w.Items, "red")
+    w.Items    = APPEND(w.Items, "green")
+    w.Items    = APPEND(w.Items, "blue")
+    w.Selected = 0
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: "[selected   v]" padded to W-4.
+FUNCTION comboBoxVisibleText(w AS DesignWidget) AS STRING
+    DIM cur AS STRING = ""
+    IF w.Selected >= 0 AND w.Selected < LEN(w.Items) THEN cur = w.Items[w.Selected]
+    DIM cwid AS INTEGER = w.W - 4
+    IF cwid < 1 THEN cwid = 1
+    IF LEN(cur) > cwid THEN cur = Mid(cur, 1, cwid)
+    IF LEN(cur) < cwid THEN cur = cur + strings.Repeat(" ", cwid - LEN(cur))
+    RETURN "[" + cur + " v]"
+END FUNCTION
+
+' F (shared with ListBox) — Up/Down move the selection, firing _Change.
+FUNCTION comboListEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
+    DIM nItems AS STRING = strconv.Itoa(LEN(ww.Items))
+    DIM s AS STRING = ""
+    s = s + "            IF key = " + qt + "up" + qt + " THEN\n"
+    s = s + "                IF m." + ww.Name + "_Val > 0 THEN\n"
+    s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val - 1\n"
+    s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            IF key = " + qt + "down" + qt + " THEN\n"
+    s = s + "                IF m." + ww.Name + "_Val < " + nItems + " - 1 THEN\n"
+    s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
+    s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    RETURN s
+END FUNCTION
+
+' G — mouse: a click cycles to the next item (v1; full dropdown is Tier 3).
+FUNCTION comboBoxEmitMouse(mcw AS DesignWidget, qt AS STRING) AS STRING
+    DIM mcCbN AS STRING = strconv.Itoa(LEN(mcw.Items))
+    DIM s AS STRING = ""
+    IF LEN(mcw.Items) > 0 THEN
+        s = s + "            m." + mcw.Name + "_Val = (m." + mcw.Name + "_Val + 1) MOD " + mcCbN + "\n"
+        s = s + "            dispatchChange(" + qt + mcw.Name + qt + ")\n"
+    END IF
+    RETURN s
+END FUNCTION
+
+' H — View paint: "[ selected   v]" body, value-driven and padded to W-4.
+FUNCTION comboBoxEmitView(wv AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
+    DIM cwidStr AS STRING = strconv.Itoa(wv.W - 4)
+    IF wv.W - 4 < 1 THEN cwidStr = "1"
+    DIM s AS STRING = ""
+    s = s + "    DIM cbItems" + sfx + " AS []STRING\n"
+    DIM cbI AS INTEGER
+    FOR cbI = 0 TO LEN(wv.Items) - 1
+        s = s + "    cbItems" + sfx + " = APPEND(cbItems" + sfx + ", " + qt + escapeForDBString(wv.Items[cbI]) + qt + ")\n"
+    NEXT cbI
+    s = s + "    DIM cbCur" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "    IF m." + wv.Name + "_Val >= 0 AND m." + wv.Name + "_Val < LEN(cbItems" + sfx + ") THEN cbCur" + sfx + " = cbItems" + sfx + "[m." + wv.Name + "_Val]\n"
+    s = s + "    DIM cbPad" + sfx + " AS STRING = cbCur" + sfx + "\n"
+    s = s + "    IF LEN(cbPad" + sfx + ") > " + cwidStr + " THEN cbPad" + sfx + " = Mid(cbPad" + sfx + ", 1, " + cwidStr + ")\n"
+    s = s + "    IF LEN(cbPad" + sfx + ") < " + cwidStr + " THEN cbPad" + sfx + " = cbPad" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + cwidStr + " - LEN(cbPad" + sfx + "))\n"
+    s = s + "    body" + sfx + " = " + qt + "[" + qt + " + cbPad" + sfx + " + " + qt + " v]" + qt + "\n"
+    RETURN s
+END FUNCTION

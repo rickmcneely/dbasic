@@ -1,0 +1,164 @@
+' =========================================================================
+' widgets/scrollbar.dbas — ScrollBar widget (per-kind module).
+'
+' Code extracted verbatim from internal/form.dbas during the per-widget
+' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
+'
+' A value slider, vertical ("v") or horizontal ("h") per Orient. Runtime
+' value in <Name>_Val (INTEGER). Vertical is a multi-row kind (▲ thumb ▼);
+' horizontal is a single-row "◄──█──►". Arrows (Up/Down or Left/Right) and
+' arrow-cell clicks step the value, firing _Change.
+'
+' Owns: A default, B visibleText (vertical caret proxy), C visibleLines
+' (vertical), F keyboard, G mouse, H View (both orientations). Stays inline:
+' Model _Val, Min/Max/Value/Orient property rows, dispatchChange, seed.
+' =========================================================================
+
+' A — defaults: a vertical 0..100 bar at 30. (Redundant W/H re-assignments
+' preserved verbatim from the original for byte-identical behaviour.)
+FUNCTION scrollBarDefault(w AS DesignWidget) AS DesignWidget
+    w.Text   = ""
+    w.W      = 1
+    w.H      = 8
+    w.Min    = 0
+    w.Max    = 100
+    w.Value  = 30
+    w.Orient = "v"
+    w.W      = 1
+    w.H      = 8
+    IF strings.ToLower(w.Orient) = "h" THEN
+        w.W = 12
+        w.H = 1
+    END IF
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: a vertical caret (visibleLines fills the rest).
+FUNCTION scrollBarVisibleText(w AS DesignWidget) AS STRING
+    RETURN "▲"
+END FUNCTION
+
+' C — vertical multi-row design render: ▲ top, █ thumb, ▼ bottom.
+FUNCTION scrollBarVisibleLines(w AS DesignWidget) AS []STRING
+    DIM lines AS []STRING
+    DIM sh AS INTEGER = w.H
+    IF sh < 3 THEN sh = 3
+    DIM thumbPos AS INTEGER = 1
+    DIM rng2 AS INTEGER = w.Max - w.Min
+    IF rng2 > 0 THEN
+        thumbPos = 1 + ((w.Value - w.Min) * (sh - 3)) / rng2
+    END IF
+    IF thumbPos < 1 THEN thumbPos = 1
+    IF thumbPos > sh - 2 THEN thumbPos = sh - 2
+    lines = APPEND(lines, "▲")
+    DIM sj AS INTEGER
+    FOR sj = 1 TO sh - 2
+        IF sj = thumbPos THEN
+            lines = APPEND(lines, "█")
+        ELSE
+            lines = APPEND(lines, "│")
+        END IF
+    NEXT sj
+    lines = APPEND(lines, "▼")
+    RETURN lines
+END FUNCTION
+
+' F — keyboard: dec/inc keys depend on orientation (Up/Down vs Left/Right).
+FUNCTION scrollBarEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
+    DIM minStr AS STRING = strconv.Itoa(ww.Min)
+    DIM maxStr AS STRING = strconv.Itoa(ww.Max)
+    DIM decKey AS STRING = "up"
+    DIM incKey AS STRING = "down"
+    IF strings.ToLower(ww.Orient) = "h" THEN
+        decKey = "left"
+        incKey = "right"
+    END IF
+    DIM s AS STRING = ""
+    s = s + "            IF key = " + qt + decKey + qt + " THEN\n"
+    s = s + "                IF m." + ww.Name + "_Val > " + minStr + " THEN\n"
+    s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val - 1\n"
+    s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            IF key = " + qt + incKey + qt + " THEN\n"
+    s = s + "                IF m." + ww.Name + "_Val < " + maxStr + " THEN\n"
+    s = s + "                    m." + ww.Name + "_Val = m." + ww.Name + "_Val + 1\n"
+    s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    RETURN s
+END FUNCTION
+
+' G — mouse: click the top/bottom arrow (vertical) or left/right end
+' (horizontal) to step the value. Needs the index + x/y/w/h origins.
+FUNCTION scrollBarEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcXs AS STRING, mcYs AS STRING, mcWs AS STRING, mcHs AS STRING, qt AS STRING) AS STRING
+    DIM mcSbMin AS STRING = strconv.Itoa(mcw.Min)
+    DIM mcSbMax AS STRING = strconv.Itoa(mcw.Max)
+    DIM s AS STRING = ""
+    IF strings.ToLower(mcw.Orient) = "v" THEN
+        s = s + "            DIM mcRelY" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
+        s = s + "            IF mcRelY" + mcIStr + " = 0 THEN\n"
+        s = s + "                IF m." + mcw.Name + "_Val > " + mcSbMin + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val - 1\n"
+        s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
+        s = s + "            ELSEIF mcRelY" + mcIStr + " = " + mcHs + " - 1 THEN\n"
+        s = s + "                IF m." + mcw.Name + "_Val < " + mcSbMax + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val + 1\n"
+        s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
+        s = s + "            END IF\n"
+    ELSE
+        s = s + "            DIM mcRelX" + mcIStr + " AS INTEGER = mc.X - " + mcXs + "\n"
+        s = s + "            IF mcRelX" + mcIStr + " = 0 THEN\n"
+        s = s + "                IF m." + mcw.Name + "_Val > " + mcSbMin + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val - 1\n"
+        s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
+        s = s + "            ELSEIF mcRelX" + mcIStr + " = " + mcWs + " - 1 THEN\n"
+        s = s + "                IF m." + mcw.Name + "_Val < " + mcSbMax + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val + 1\n"
+        s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
+        s = s + "            END IF\n"
+    END IF
+    RETURN s
+END FUNCTION
+
+' H (vertical) — multi-row View paint: ▲ / █ thumb / ▼ with focus caret.
+FUNCTION scrollBarEmitViewVert(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+    DIM svH AS STRING = strconv.Itoa(wv.H)
+    DIM svMin AS STRING = strconv.Itoa(wv.Min)
+    DIM svRng AS STRING = strconv.Itoa(wv.Max - wv.Min)
+    IF wv.Max - wv.Min <= 0 THEN svRng = "1"
+    DIM s AS STRING = ""
+    s = s + "    DIM svi" + sfx + " AS INTEGER\n"
+    s = s + "    DIM svThumb" + sfx + " AS INTEGER = 1 + ((m." + wv.Name + "_Val - " + svMin + ") * (" + svH + " - 3)) / " + svRng + "\n"
+    s = s + "    IF svThumb" + sfx + " < 1 THEN svThumb" + sfx + " = 1\n"
+    s = s + "    IF svThumb" + sfx + " > " + svH + " - 2 THEN svThumb" + sfx + " = " + svH + " - 2\n"
+    s = s + "    FOR svi" + sfx + " = 0 TO " + svH + " - 1\n"
+    s = s + "        DIM svGlyph" + sfx + " AS STRING = " + qt + "│" + qt + "\n"
+    s = s + "        IF svi" + sfx + " = 0 THEN svGlyph" + sfx + " = " + qt + "▲" + qt + "\n"
+    s = s + "        IF svi" + sfx + " = " + svH + " - 1 THEN svGlyph" + sfx + " = " + qt + "▼" + qt + "\n"
+    s = s + "        IF svi" + sfx + " = svThumb" + sfx + " THEN svGlyph" + sfx + " = " + qt + "█" + qt + "\n"
+    s = s + "        IF svi" + sfx + " = 0 THEN\n"
+    s = s + "            IF m.Focus = " + sfx + " THEN\n"
+    s = s + "                svGlyph" + sfx + " = " + qt + ">" + qt + " + svGlyph" + sfx + "\n"
+    s = s + "            ELSE\n"
+    s = s + "                svGlyph" + sfx + " = " + qt + " " + qt + " + svGlyph" + sfx + "\n"
+    s = s + "            END IF\n"
+    s = s + "        ELSE\n"
+    s = s + "            svGlyph" + sfx + " = " + qt + " " + qt + " + svGlyph" + sfx + "\n"
+    s = s + "        END IF\n"
+    s = s + "        DIM svY" + sfx + " AS INTEGER = " + ys + " + svi" + sfx + "\n"
+    s = s + "        IF svY" + sfx + " >= 0 AND svY" + sfx + " < LEN(rows) THEN rows[svY" + sfx + "] = overlayRow(rows[svY" + sfx + "], " + xs + ", svGlyph" + sfx + ")\n"
+    s = s + "    NEXT svi" + sfx + "\n"
+    RETURN s
+END FUNCTION
+
+' H (horizontal) — single-row View body: "◄──█──►".
+FUNCTION scrollBarEmitViewHoriz(wv AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
+    DIM hwStr AS STRING = strconv.Itoa(wv.W - 2)
+    IF wv.W - 2 < 1 THEN hwStr = "1"
+    DIM hMinStr AS STRING = strconv.Itoa(wv.Min)
+    DIM hRngStr AS STRING = strconv.Itoa(wv.Max - wv.Min)
+    IF wv.Max - wv.Min <= 0 THEN hRngStr = "1"
+    DIM s AS STRING = ""
+    s = s + "    DIM hThumb" + sfx + " AS INTEGER = (m." + wv.Name + "_Val - " + hMinStr + ") * (" + hwStr + " - 1) / " + hRngStr + "\n"
+    s = s + "    IF hThumb" + sfx + " < 0 THEN hThumb" + sfx + " = 0\n"
+    s = s + "    IF hThumb" + sfx + " > " + hwStr + " - 1 THEN hThumb" + sfx + " = " + hwStr + " - 1\n"
+    s = s + "    body" + sfx + " = " + qt + "◄" + qt + " + strings.Repeat(" + qt + "─" + qt + ", hThumb" + sfx + ") + " + qt + "█" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + hwStr + " - 1 - hThumb" + sfx + ") + " + qt + "►" + qt + "\n"
+    RETURN s
+END FUNCTION
