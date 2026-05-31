@@ -4,21 +4,116 @@
 ' Code extracted verbatim from internal/form.dbas during the per-widget
 ' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
 '
-' PARTIAL extraction: only the two dispatch points below are wired into the
-' router in form.dbas. The remaining Tree sites (default, multi-row design
-' lines, keyboard, mouse, and the generated helper block) are still inline
-' in form.dbas and have NOT been moved here yet — finishing them is future
-' work. Both functions here use the shared treeDepth/treeLabel/overlayRow/
-' escapeForDBString helpers that live in form.dbas.
+' Depth is encoded by leading dashes in each Items entry ("-" = one level)
+' so it survives the comma-split round-trip through the .dbproj. Runtime:
+' <Name>_Val is the selected node index; <Name>_Collapsed[] tracks per-node
+' collapse. The generated program gets three helper functions per tree
+' (_depths/_labels/_isParent) plus one shared treeVisibleRows().
 '
-'   B  treeVisibleText  — single-line preview (root node label proxy)
-'   H  treeEmitView     — View() paint fragment (one row per visible node)
+' Owns: A default, B visibleText, C visibleLines, F keyboard, G mouse,
+' H View, and treeEmitHelpers (the generated helper-function block).
+' Uses shared treeDepth/treeLabel/escapeForDBString/overlayRow (form.dbas).
+' Stays inline: Model _Collapsed decl, property rows, dispatchChange, stub.
 ' =========================================================================
+
+' A — defaults: a small Project/src/docs sample tree.
+FUNCTION treeDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "Tree"
+    w.W    = 26
+    w.H    = 7
+    DIM tnodes AS []STRING
+    tnodes = APPEND(tnodes, "Project")
+    tnodes = APPEND(tnodes, "-src")
+    tnodes = APPEND(tnodes, "--main.dbas")
+    tnodes = APPEND(tnodes, "--util.dbas")
+    tnodes = APPEND(tnodes, "-docs")
+    tnodes = APPEND(tnodes, "--README.md")
+    w.Items    = tnodes
+    w.Selected = 0
+    RETURN w
+END FUNCTION
 
 ' B — single-line preview: the root node label as a width proxy.
 FUNCTION treeVisibleText(w AS DesignWidget) AS STRING
     IF LEN(w.Items) > 0 THEN RETURN "▾ " + treeLabel(w.Items[0])
     RETURN "(empty tree)"
+END FUNCTION
+
+' C — multi-row design render: fully-expanded tree, ▾ parent / • leaf,
+' cursor row marked ▶, each row padded to width W.
+FUNCTION treeVisibleLines(w AS DesignWidget) AS []STRING
+    DIM lines AS []STRING
+    DIM nh AS INTEGER = w.H
+    IF nh < 1 THEN nh = 1
+    DIM nri AS INTEGER
+    FOR nri = 0 TO nh - 1
+        DIM nline AS STRING = ""
+        IF nri < LEN(w.Items) THEN
+            DIM nd AS INTEGER = treeDepth(w.Items[nri])
+            DIM nIsP AS BOOLEAN = (nri + 1 < LEN(w.Items)) AND (treeDepth(w.Items[nri + 1]) > nd)
+            DIM ng AS STRING = "•"
+            IF nIsP THEN ng = "▾"
+            DIM nmk AS STRING = "  "
+            IF nri = w.Selected THEN nmk = "▶ "
+            nline = nmk + strings.Repeat("  ", nd) + ng + " " + treeLabel(w.Items[nri])
+        END IF
+        IF lipgloss.Width(nline) < w.W THEN nline = nline + strings.Repeat(" ", w.W - lipgloss.Width(nline))
+        lines = APPEND(lines, nline)
+    NEXT nri
+    RETURN lines
+END FUNCTION
+
+' G — mouse: click maps the relative row to a VISIBLE node. Clicking a
+' parent toggles its collapse; clicking a leaf moves the cursor and fires
+' _Change. Needs the index string + y origin.
+FUNCTION treeEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcYs AS STRING, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "            DIM tmRel" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
+    s = s + "            DIM tmVis" + mcIStr + " AS []INTEGER = treeVisibleRows(" + mcw.Name + "_depths(), m." + mcw.Name + "_Collapsed)\n"
+    s = s + "            IF tmRel" + mcIStr + " >= 0 AND tmRel" + mcIStr + " < LEN(tmVis" + mcIStr + ") THEN\n"
+    s = s + "                DIM tmIdx" + mcIStr + " AS INTEGER = tmVis" + mcIStr + "[tmRel" + mcIStr + "]\n"
+    s = s + "                m." + mcw.Name + "_Val = tmIdx" + mcIStr + "\n"
+    s = s + "                IF " + mcw.Name + "_isParent(tmIdx" + mcIStr + ") THEN\n"
+    s = s + "                    IF tmIdx" + mcIStr + " < LEN(m." + mcw.Name + "_Collapsed) THEN m." + mcw.Name + "_Collapsed[tmIdx" + mcIStr + "] = NOT m." + mcw.Name + "_Collapsed[tmIdx" + mcIStr + "]\n"
+    s = s + "                ELSE\n"
+    s = s + "                    dispatchChange(" + qt + mcw.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    RETURN s
+END FUNCTION
+
+' F — keyboard: Up/Down move the cursor among VISIBLE nodes (skipping
+' anything under a collapsed parent), firing _Change. Enter/Space toggles
+' collapse on a parent node, or fires _Change on a leaf (activate). The
+' per-tree local names are suffixed by the widget Name (ww.Name).
+FUNCTION treeEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "            DIM tkVis" + ww.Name + " AS []INTEGER = treeVisibleRows(" + ww.Name + "_depths(), m." + ww.Name + "_Collapsed)\n"
+    s = s + "            DIM tkPos" + ww.Name + " AS INTEGER = 0\n"
+    s = s + "            DIM tkI" + ww.Name + " AS INTEGER\n"
+    s = s + "            FOR tkI" + ww.Name + " = 0 TO LEN(tkVis" + ww.Name + ") - 1\n"
+    s = s + "                IF tkVis" + ww.Name + "[tkI" + ww.Name + "] = m." + ww.Name + "_Val THEN tkPos" + ww.Name + " = tkI" + ww.Name + "\n"
+    s = s + "            NEXT tkI" + ww.Name + "\n"
+    s = s + "            IF key = " + qt + "up" + qt + " THEN\n"
+    s = s + "                IF tkPos" + ww.Name + " > 0 THEN\n"
+    s = s + "                    m." + ww.Name + "_Val = tkVis" + ww.Name + "[tkPos" + ww.Name + " - 1]\n"
+    s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            IF key = " + qt + "down" + qt + " THEN\n"
+    s = s + "                IF tkPos" + ww.Name + " < LEN(tkVis" + ww.Name + ") - 1 THEN\n"
+    s = s + "                    m." + ww.Name + "_Val = tkVis" + ww.Name + "[tkPos" + ww.Name + " + 1]\n"
+    s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "            IF key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN\n"
+    s = s + "                IF " + ww.Name + "_isParent(m." + ww.Name + "_Val) THEN\n"
+    s = s + "                    IF m." + ww.Name + "_Val < LEN(m." + ww.Name + "_Collapsed) THEN m." + ww.Name + "_Collapsed[m." + ww.Name + "_Val] = NOT m." + ww.Name + "_Collapsed[m." + ww.Name + "_Val]\n"
+    s = s + "                ELSE\n"
+    s = s + "                    dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    RETURN s
 END FUNCTION
 
 ' H — View paint: one grid row per VISIBLE node (collapsed subtrees hidden),
@@ -49,5 +144,63 @@ FUNCTION treeEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STR
     s = s + "            IF tnY" + sfx + " >= 0 AND tnY" + sfx + " < LEN(rows) THEN rows[tnY" + sfx + "] = overlayRow(rows[tnY" + sfx + "], " + xs + ", tnLine" + sfx + ")\n"
     s = s + "        END IF\n"
     s = s + "    NEXT tnR" + sfx + "\n"
+    RETURN s
+END FUNCTION
+
+' Helper-function emitter: the shared treeVisibleRows plus per-tree
+' _depths/_labels/_isParent. Called from the prelude's `IF hasTree` block.
+FUNCTION treeEmitHelpers(f AS DesignForm, n AS INTEGER, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "\n"
+    s = s + "FUNCTION treeVisibleRows(depths AS []INTEGER, collapsed AS []BOOLEAN) AS []INTEGER\n"
+    s = s + "    DIM out AS []INTEGER\n"
+    s = s + "    DIM i AS INTEGER = 0\n"
+    s = s + "    DO WHILE i < LEN(depths)\n"
+    s = s + "        out = APPEND(out, i)\n"
+    s = s + "        IF i < LEN(collapsed) AND collapsed[i] THEN\n"
+    s = s + "            DIM d AS INTEGER = depths[i]\n"
+    s = s + "            DIM j AS INTEGER = i + 1\n"
+    s = s + "            DO WHILE j < LEN(depths) AND depths[j] > d\n"
+    s = s + "                j = j + 1\n"
+    s = s + "            LOOP\n"
+    s = s + "            i = j\n"
+    s = s + "        ELSE\n"
+    s = s + "            i = i + 1\n"
+    s = s + "        END IF\n"
+    s = s + "    LOOP\n"
+    s = s + "    RETURN out\n"
+    s = s + "END FUNCTION\n"
+    DIM trI AS INTEGER
+    FOR trI = 0 TO n - 1
+        DIM trW AS DesignWidget = f.Widgets[trI]
+        IF trW.Kind = "Tree" THEN
+            ' _depths()
+            s = s + "\n"
+            s = s + "FUNCTION " + trW.Name + "_depths() AS []INTEGER\n"
+            s = s + "    DIM d AS []INTEGER\n"
+            DIM trN AS INTEGER
+            FOR trN = 0 TO LEN(trW.Items) - 1
+                s = s + "    d = APPEND(d, " + strconv.Itoa(treeDepth(trW.Items[trN])) + ")\n"
+            NEXT trN
+            s = s + "    RETURN d\n"
+            s = s + "END FUNCTION\n"
+            ' _labels()
+            s = s + "\n"
+            s = s + "FUNCTION " + trW.Name + "_labels() AS []STRING\n"
+            s = s + "    DIM l AS []STRING\n"
+            FOR trN = 0 TO LEN(trW.Items) - 1
+                s = s + "    l = APPEND(l, " + qt + escapeForDBString(treeLabel(trW.Items[trN])) + qt + ")\n"
+            NEXT trN
+            s = s + "    RETURN l\n"
+            s = s + "END FUNCTION\n"
+            ' _isParent(i)
+            s = s + "\n"
+            s = s + "FUNCTION " + trW.Name + "_isParent(i AS INTEGER) AS BOOLEAN\n"
+            s = s + "    DIM d AS []INTEGER = " + trW.Name + "_depths()\n"
+            s = s + "    IF i < 0 OR i + 1 >= LEN(d) THEN RETURN FALSE\n"
+            s = s + "    RETURN d[i + 1] > d[i]\n"
+            s = s + "END FUNCTION\n"
+        END IF
+    NEXT trI
     RETURN s
 END FUNCTION
