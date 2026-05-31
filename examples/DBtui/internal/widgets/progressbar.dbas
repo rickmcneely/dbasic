@@ -1,0 +1,53 @@
+' =========================================================================
+' widgets/progressbar.dbas — ProgressBar widget (per-kind module).
+'
+' A passive bar: shows Value within [Min,Max] as a filled portion. No
+' keyboard/mouse/_Change of its own. Runtime value lives in <Name>_Val
+' (INTEGER — declared by the shared multi-kind Model group in form.dbas).
+'
+' Dispatch points this module owns:
+'   A  progressBarDefault      — defaultWidget() defaults
+'   B  progressBarVisibleText  — single-line preview (design-time)
+'   H  progressBarEmitView     — View() paint fragment (sets body<sfx>)
+'
+' Stays inline in form.dbas (shared with other kinds): the _Val Model decl
+' and the Min/Max/Value property rows.
+' =========================================================================
+
+' A — defaults: a 0..100 bar at 40%.
+FUNCTION progressBarDefault(w AS DesignWidget) AS DesignWidget
+    w.Text  = ""
+    w.W     = 20
+    w.Min   = 0
+    w.Max   = 100
+    w.Value = 40
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: "[████░░░░]" sized to W-2, filled by Value.
+FUNCTION progressBarVisibleText(w AS DesignWidget) AS STRING
+    DIM pwid AS INTEGER = w.W - 2
+    IF pwid < 1 THEN pwid = 1
+    DIM rng AS INTEGER = w.Max - w.Min
+    IF rng < 1 THEN rng = 1
+    DIM filled AS INTEGER = (w.Value - w.Min) * pwid / rng
+    IF filled < 0 THEN filled = 0
+    IF filled > pwid THEN filled = pwid
+    RETURN "[" + strings.Repeat("█", filled) + strings.Repeat("░", pwid - filled) + "]"
+END FUNCTION
+
+' H — View paint: emits code that fills body<sfx> from the live _Val. The
+' shared single-row painter overlays body<sfx> onto the canvas afterward.
+FUNCTION progressBarEmitView(wv AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
+    DIM pwStr AS STRING = strconv.Itoa(wv.W - 2)
+    IF wv.W - 2 < 1 THEN pwStr = "1"
+    DIM pMinStr AS STRING = strconv.Itoa(wv.Min)
+    DIM pRngStr AS STRING = strconv.Itoa(wv.Max - wv.Min)
+    IF wv.Max - wv.Min <= 0 THEN pRngStr = "1"
+    DIM s AS STRING = ""
+    s = s + "    DIM pbFilled" + sfx + " AS INTEGER = (m." + wv.Name + "_Val - " + pMinStr + ") * " + pwStr + " / " + pRngStr + "\n"
+    s = s + "    IF pbFilled" + sfx + " < 0 THEN pbFilled" + sfx + " = 0\n"
+    s = s + "    IF pbFilled" + sfx + " > " + pwStr + " THEN pbFilled" + sfx + " = " + pwStr + "\n"
+    s = s + "    body" + sfx + " = " + qt + "[" + qt + " + strings.Repeat(" + qt + "█" + qt + ", pbFilled" + sfx + ") + strings.Repeat(" + qt + "░" + qt + ", " + pwStr + " - pbFilled" + sfx + ") + " + qt + "]" + qt + "\n"
+    RETURN s
+END FUNCTION

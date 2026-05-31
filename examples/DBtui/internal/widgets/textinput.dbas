@@ -1,0 +1,53 @@
+' =========================================================================
+' widgets/textinput.dbas — TextInput widget (per-kind module).
+'
+' A single-line text field. Runtime value lives in <Name>_Val (STRING).
+' Typing appends; backspace trims. No mouse handler beyond focus.
+'
+' Dispatch points this module owns:
+'   A  textInputDefault      — defaultWidget() defaults
+'   B  textInputVisibleText  — single-line preview
+'   E  textInputEmitModel    — Model field decl (_Val AS STRING)
+'   F  textInputEmitKey      — Update() keyboard fragment
+'   H  textInputEmitView     — View() paint fragment (sets body<sfx>)
+'
+' Stays inline in form.dbas: nothing kind-specific beyond the above (E's
+' branch is the head of the Model IF/ELSEIF chain; the router keeps the IF
+' and delegates the body).
+' =========================================================================
+
+' A — defaults: empty 16-wide field.
+FUNCTION textInputDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = ""
+    w.W = 16
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: the text padded to W-2 inside brackets.
+FUNCTION textInputVisibleText(w AS DesignWidget) AS STRING
+    DIM inner AS STRING = w.Text
+    IF LEN(inner) < w.W - 2 THEN inner = inner + strings.Repeat(" ", w.W - 2 - LEN(inner))
+    RETURN "[" + inner + "]"
+END FUNCTION
+
+' E — Model field: a single STRING holding the live text.
+FUNCTION textInputEmitModel(w AS DesignWidget) AS STRING
+    RETURN "    DIM " + w.Name + "_Val AS STRING\n"
+END FUNCTION
+
+' F — keyboard: printable chars + space append; backspace trims one char.
+FUNCTION textInputEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "            IF LEN(key) = 1 THEN m." + ww.Name + "_Val = m." + ww.Name + "_Val + key\n"
+    s = s + "            IF key = " + qt + "space" + qt + " THEN m." + ww.Name + "_Val = m." + ww.Name + "_Val + " + qt + " " + qt + "\n"
+    s = s + "            IF key = " + qt + "backspace" + qt + " AND LEN(m." + ww.Name + "_Val) > 0 THEN\n"
+    s = s + "                m." + ww.Name + "_Val = Mid(m." + ww.Name + "_Val, 1, LEN(m." + ww.Name + "_Val) - 1)\n"
+    s = s + "            END IF\n"
+    RETURN s
+END FUNCTION
+
+' H — View paint: body<sfx> is the bracketed value padded to W-2.
+FUNCTION textInputEmitView(wv AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
+    DIM widStr AS STRING = strconv.Itoa(wv.W)
+    RETURN "    body" + sfx + " = " + qt + "[" + qt + " + m." + wv.Name + "_Val + strings.Repeat(" + qt + " " + qt + ", " + widStr + " - 2 - LEN(m." + wv.Name + "_Val)) + " + qt + "]" + qt + "\n"
+END FUNCTION

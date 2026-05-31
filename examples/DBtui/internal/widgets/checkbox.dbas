@@ -1,0 +1,60 @@
+' =========================================================================
+' widgets/checkbox.dbas — Checkbox widget (per-kind module).
+'
+' A labelled on/off toggle. Runtime state in <Name>_Val (BOOLEAN — declared
+' by the shared Checkbox/RadioButton Model group in form.dbas). Space/Enter
+' or a click toggles it and fires _Change.
+'
+' Dispatch points this module owns:
+'   A  checkboxDefault      — defaultWidget() defaults
+'   B  checkboxVisibleText  — single-line preview (always shows "[ ]")
+'   F  checkboxEmitKey      — Update() keyboard fragment
+'   G  checkboxEmitMouse    — Update() mouse-click fragment
+'   H  checkboxEmitView     — View() paint fragment (sets body<sfx>)
+'
+' Stays inline in form.dbas (shared with RadioButton / other kinds): the
+' _Val Model decl, the Checked property row, dispatchChange membership, the
+' seed-default group, and the _Change user-stub.
+' =========================================================================
+
+' A — defaults: an "option" checkbox.
+FUNCTION checkboxDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "option"
+    w.W = 14
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: unchecked box + label (design-time view).
+FUNCTION checkboxVisibleText(w AS DesignWidget) AS STRING
+    RETURN "[ ] " + w.Text
+END FUNCTION
+
+' F — keyboard: Space / Enter toggles; fires _Change.
+FUNCTION checkboxEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "            IF key = " + qt + "space" + qt + " OR key = " + qt + "enter" + qt + " THEN\n"
+    s = s + "                m." + ww.Name + "_Val = NOT m." + ww.Name + "_Val\n"
+    s = s + "                dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "            END IF\n"
+    RETURN s
+END FUNCTION
+
+' G — mouse: a click toggles the value and fires _Change.
+FUNCTION checkboxEmitMouse(mcw AS DesignWidget, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "            m." + mcw.Name + "_Val = NOT m." + mcw.Name + "_Val\n"
+    s = s + "            dispatchChange(" + qt + mcw.Name + qt + ")\n"
+    RETURN s
+END FUNCTION
+
+' H — View paint: "[x] label" when checked, "[ ] label" otherwise.
+FUNCTION checkboxEmitView(wv AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
+    DIM lbl AS STRING = escapeForDBString(wv.Text)
+    DIM s AS STRING = ""
+    s = s + "    IF m." + wv.Name + "_Val THEN\n"
+    s = s + "        body" + sfx + " = " + qt + "[x] " + lbl + qt + "\n"
+    s = s + "    ELSE\n"
+    s = s + "        body" + sfx + " = " + qt + "[ ] " + lbl + qt + "\n"
+    s = s + "    END IF\n"
+    RETURN s
+END FUNCTION

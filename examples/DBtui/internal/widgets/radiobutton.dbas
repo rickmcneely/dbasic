@@ -1,0 +1,88 @@
+' =========================================================================
+' widgets/radiobutton.dbas — RadioButton widget (per-kind module).
+'
+' A mutually-exclusive selector within a Group. Runtime state in <Name>_Val
+' (BOOLEAN). Selecting one radio (Space/Enter or click) sets it TRUE and
+' clears every sibling sharing its Group, then fires _Change. The sibling
+' scan happens at CODEGEN time, so the mouse/key emitters need the whole
+' widget list, its length, and the current index.
+'
+' Dispatch points this module owns:
+'   A  radioButtonDefault      — defaultWidget() defaults
+'   B  radioButtonVisibleText  — single-line preview
+'   F  radioButtonEmitKey      — Update() keyboard fragment (+ sibling clear)
+'   G  radioButtonEmitMouse    — Update() mouse-click fragment (+ sibling clear)
+'   H  radioButtonEmitView     — View() paint fragment (sets body<sfx>)
+'      radioButtonEmitSeed     — initial-state line in NewModel seeding
+'
+' Stays inline in form.dbas (shared): _Val Model decl, the Checked property
+' row (shared with Checkbox), Group property row, dispatchChange membership,
+' and the _Change user-stub.
+' =========================================================================
+
+' A — defaults: an "option" radio in "group1".
+FUNCTION radioButtonDefault(w AS DesignWidget) AS DesignWidget
+    w.Text  = "option"
+    w.W     = 14
+    w.Group = "group1"
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: (o)/( ) marker + label, reflecting Checked.
+FUNCTION radioButtonVisibleText(w AS DesignWidget) AS STRING
+    DIM rmark AS STRING = "( )"
+    IF w.Checked THEN rmark = "(o)"
+    RETURN rmark + " " + w.Text
+END FUNCTION
+
+' F — keyboard: Space / Enter selects this radio and clears same-Group
+' siblings, then fires _Change. `i` is this widget's index; widgets/n give
+' the sibling set to scan.
+FUNCTION radioButtonEmitKey(ww AS DesignWidget, i AS INTEGER, widgets AS []DesignWidget, n AS INTEGER, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "            IF key = " + qt + "space" + qt + " OR key = " + qt + "enter" + qt + " THEN\n"
+    s = s + "                m." + ww.Name + "_Val = TRUE\n"
+    DIM si AS INTEGER
+    FOR si = 0 TO n - 1
+        DIM sw AS DesignWidget = widgets[si]
+        IF si <> i AND sw.Kind = "RadioButton" AND sw.Group = ww.Group THEN
+            s = s + "                m." + sw.Name + "_Val = FALSE\n"
+        END IF
+    NEXT si
+    s = s + "                dispatchChange(" + qt + ww.Name + qt + ")\n"
+    s = s + "            END IF\n"
+    RETURN s
+END FUNCTION
+
+' G — mouse: a click selects this radio and clears same-Group siblings,
+' then fires _Change. `mci` is this widget's index.
+FUNCTION radioButtonEmitMouse(mcw AS DesignWidget, mci AS INTEGER, widgets AS []DesignWidget, n AS INTEGER, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "            m." + mcw.Name + "_Val = TRUE\n"
+    DIM mcri AS INTEGER
+    FOR mcri = 0 TO n - 1
+        DIM mcs AS DesignWidget = widgets[mcri]
+        IF mcri <> mci AND mcs.Kind = "RadioButton" AND mcs.Group = mcw.Group THEN
+            s = s + "            m." + mcs.Name + "_Val = FALSE\n"
+        END IF
+    NEXT mcri
+    s = s + "            dispatchChange(" + qt + mcw.Name + qt + ")\n"
+    RETURN s
+END FUNCTION
+
+' H — View paint: "(o) label" when selected, "( ) label" otherwise.
+FUNCTION radioButtonEmitView(wv AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
+    DIM rlbl AS STRING = escapeForDBString(wv.Text)
+    DIM s AS STRING = ""
+    s = s + "    IF m." + wv.Name + "_Val THEN\n"
+    s = s + "        body" + sfx + " = " + qt + "(o) " + rlbl + qt + "\n"
+    s = s + "    ELSE\n"
+    s = s + "        body" + sfx + " = " + qt + "( ) " + rlbl + qt + "\n"
+    s = s + "    END IF\n"
+    RETURN s
+END FUNCTION
+
+' Seed line in NewModel: a radio that starts Checked sets its _Val TRUE.
+FUNCTION radioButtonEmitSeed(mw AS DesignWidget) AS STRING
+    RETURN "    m." + mw.Name + "_Val = TRUE\n"
+END FUNCTION
