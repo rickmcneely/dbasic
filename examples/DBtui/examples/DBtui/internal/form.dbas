@@ -12,10 +12,11 @@
 ' Persistence + codegen come in a follow-up.
 ' =========================================================================
 
-CONST formPaletteKinds AS INTEGER = 14  ' Button, Label, TextInput, Checkbox,
+CONST formPaletteKinds AS INTEGER = 15  ' Button, Label, TextInput, Checkbox,
                                         ' RadioButton, ComboBox, ListBox,
                                         ' ProgressBar, ScrollBar, Dialog,
-                                        ' TabStrip, Tree, TextArea, PropGrid
+                                        ' TabStrip, Tree, TextArea, PropGrid,
+                                        ' ScrollPanel
 
 ' formKindByIdx — fixed list of widget kinds in palette display order.
 ' The order is the order entries appear in the right-pane Widgets
@@ -35,6 +36,7 @@ FUNCTION formKindByIdx(i AS INTEGER) AS STRING
     IF i = 11 THEN RETURN "Tree"
     IF i = 12 THEN RETURN "TextArea"
     IF i = 13 THEN RETURN "PropGrid"
+    IF i = 14 THEN RETURN "ScrollPanel"
     RETURN ""
 END FUNCTION
 
@@ -152,6 +154,19 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
         gprops = APPEND(gprops, "Visible=true")
         w.Items    = gprops
         w.Selected = 0
+    ELSEIF kind = "ScrollPanel" THEN
+        ' Scrollable content viewport with an embedded vertical
+        ' scrollbar. Items are the content lines; runtime tracks the
+        ' top visible line in <Name>_Scroll. Passive (no _Change).
+        w.Text = "ScrollPanel"
+        w.W    = 28
+        w.H    = 8
+        DIM splines AS []STRING
+        DIM spk AS INTEGER
+        FOR spk = 1 TO 12
+            splines = APPEND(splines, "Content line " + strconv.Itoa(spk))
+        NEXT spk
+        w.Items = splines
     END IF
     RETURN w
 END FUNCTION
@@ -310,6 +325,10 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
         IF LEN(w.Items) > 0 THEN RETURN propKey(w.Items[0]) + " │ " + propVal(w.Items[0])
         RETURN "(empty grid)"
     END IF
+    IF w.Kind = "ScrollPanel" THEN
+        ' Width proxy; widgetVisibleLines paints the framed scroll box.
+        RETURN "┌" + strings.Repeat("─", w.W - 2) + "┐"
+    END IF
     IF w.Kind = "Dialog" THEN
         ' Non-visual marker: shows the dialog kind so the designer can
         ' tell at a glance what will pop at runtime. Stamps render as
@@ -445,6 +464,37 @@ FUNCTION widgetVisibleLines(w AS DesignWidget) AS []STRING
             IF lipgloss.Width(gline) < w.W THEN gline = gline + strings.Repeat(" ", w.W - lipgloss.Width(gline))
             lines = APPEND(lines, gline)
         NEXT gri
+    ELSEIF w.Kind = "ScrollPanel" THEN
+        ' Framed box: top border, H-2 content rows (each = content text
+        ' + a scrollbar cell), bottom border. Design-time shows the top
+        ' of the content (scroll = 0) with the thumb parked at the top.
+        DIM spw AS INTEGER = w.W
+        IF spw < 4 THEN spw = 4
+        DIM sph AS INTEGER = w.H
+        IF sph < 3 THEN sph = 3
+        DIM spVisible AS INTEGER = sph - 2
+        DIM spContentW AS INTEGER = spw - 3
+        IF spContentW < 1 THEN spContentW = 1
+        DIM spTotal AS INTEGER = LEN(w.Items)
+        DIM spMaxS AS INTEGER = spTotal - spVisible
+        IF spMaxS < 0 THEN spMaxS = 0
+        DIM spTrack AS INTEGER = spVisible - 2
+        DIM spThumb AS INTEGER = 0 - 1
+        IF spMaxS > 0 AND spTrack > 0 THEN spThumb = 0
+        lines = APPEND(lines, "┌" + strings.Repeat("─", spw - 2) + "┐")
+        DIM spi AS INTEGER
+        FOR spi = 0 TO spVisible - 1
+            DIM spcl AS STRING = ""
+            IF spi < spTotal THEN spcl = w.Items[spi]
+            IF lipgloss.Width(spcl) > spContentW THEN spcl = Mid(spcl, 1, spContentW)
+            IF lipgloss.Width(spcl) < spContentW THEN spcl = spcl + strings.Repeat(" ", spContentW - lipgloss.Width(spcl))
+            DIM spsb AS STRING = "░"
+            IF spi = 0 THEN spsb = "▲"
+            IF spi = spVisible - 1 THEN spsb = "▼"
+            IF spi >= 1 AND spi <= spVisible - 2 AND (spi - 1) = spThumb THEN spsb = "█"
+            lines = APPEND(lines, "│" + spcl + spsb + "│")
+        NEXT spi
+        lines = APPEND(lines, "└" + strings.Repeat("─", spw - 2) + "┘")
     ELSE
         lines = APPEND(lines, widgetVisibleText(w))
     END IF
@@ -950,6 +1000,10 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         IF rowIdx = cursor THEN RETURN "Edit Cursor", "index (0-based):", strconv.Itoa(w.Selected), "wprop:selected"
         cursor = cursor + 1
     END IF
+    IF w.Kind = "ScrollPanel" THEN
+        IF rowIdx = cursor THEN RETURN "Edit Content", "comma-separated lines:", strings.Join(w.Items, ", "), "wprop:items"
+        cursor = cursor + 1
+    END IF
     IF w.Kind = "Button" THEN
         IF rowIdx = cursor THEN RETURN "OnClick Dialog", "Dialog widget name (blank = none):", w.OnClickDialog, "wprop:onclickdialog"
         cursor = cursor + 1
@@ -1062,12 +1116,14 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     DIM hasTree AS BOOLEAN = FALSE
     DIM hasTextArea AS BOOLEAN = FALSE
     DIM hasPropGrid AS BOOLEAN = FALSE
+    DIM hasScrollPanel AS BOOLEAN = FALSE
     DIM scanI AS INTEGER
     FOR scanI = 0 TO n - 1
         IF f.Widgets[scanI].Kind = "Dialog" THEN hasDialog = TRUE
         IF f.Widgets[scanI].Kind = "Tree" THEN hasTree = TRUE
         IF f.Widgets[scanI].Kind = "TextArea" THEN hasTextArea = TRUE
         IF f.Widgets[scanI].Kind = "PropGrid" THEN hasPropGrid = TRUE
+        IF f.Widgets[scanI].Kind = "ScrollPanel" THEN hasScrollPanel = TRUE
     NEXT scanI
     s = s + "' === GENERATED BY DBtui — rewritten on every F5 (do not edit above the marker) ===\n"
     s = s + "\n"
@@ -1075,7 +1131,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "IMPORT " + qt + "fmt" + qt + "\n"
     s = s + "IMPORT " + qt + "os" + qt + "\n"
     s = s + "IMPORT " + qt + "strings" + qt + "\n"
-    IF hasDialog OR hasTextArea OR hasPropGrid THEN
+    IF hasDialog OR hasTextArea OR hasPropGrid OR hasScrollPanel THEN
         s = s + "IMPORT " + qt + "charm.land/lipgloss/v2" + qt + " AS lipgloss\n"
     END IF
     s = s + "\n"
@@ -1110,6 +1166,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             ' Cursor index into the node list + a per-node collapse flag.
             s = s + "    DIM " + w.Name + "_Val AS INTEGER\n"
             s = s + "    DIM " + w.Name + "_Collapsed AS []BOOLEAN\n"
+        ELSEIF w.Kind = "ScrollPanel" THEN
+            ' Top visible content line.
+            s = s + "    DIM " + w.Name + "_Scroll AS INTEGER\n"
         ELSEIF w.Kind = "Dialog" THEN
             s = s + "    DIM " + w.Name + "_Active AS BOOLEAN\n"
             s = s + "    DIM " + w.Name + "_Idx    AS INTEGER\n"
@@ -1469,6 +1528,16 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
                 s = s + "            END IF\n"
             END IF
+        ELSEIF mcw.Kind = "ScrollPanel" THEN
+            ' Click the ▲ row (relative Y = 1) scrolls up; the ▼ row
+            ' (relative Y = H-2) scrolls down.
+            DIM spcVis AS INTEGER = mcw.H - 2
+            IF spcVis < 1 THEN spcVis = 1
+            DIM spcMax AS INTEGER = LEN(mcw.Items) - spcVis
+            IF spcMax < 0 THEN spcMax = 0
+            s = s + "            DIM spRel" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
+            s = s + "            IF spRel" + mcIStr + " = 1 AND m." + mcw.Name + "_Scroll > 0 THEN m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll - 1\n"
+            s = s + "            IF spRel" + mcIStr + " = " + strconv.Itoa(mcw.H - 2) + " AND m." + mcw.Name + "_Scroll < " + strconv.Itoa(spcMax) + " THEN m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll + 1\n"
         ELSEIF mcw.Kind = "Tree" THEN
             ' Click maps the relative row to a VISIBLE node. Clicking a
             ' parent toggles its collapse; clicking a leaf moves the
@@ -1668,6 +1737,27 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "                END IF\n"
                 s = s + "            END IF\n"
                 s = s + "            IF key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN dispatchChange(" + qt + ww.Name + qt + ")\n"
+            ELSEIF ww.Kind = "ScrollPanel" THEN
+                ' Scroll the viewport. maxScroll is fixed at codegen time
+                ' from the line count and visible height.
+                DIM spVis AS INTEGER = ww.H - 2
+                IF spVis < 1 THEN spVis = 1
+                DIM spMax AS INTEGER = LEN(ww.Items) - spVis
+                IF spMax < 0 THEN spMax = 0
+                DIM spMaxStr AS STRING = strconv.Itoa(spMax)
+                DIM spVisStr AS STRING = strconv.Itoa(spVis)
+                s = s + "            IF key = " + qt + "up" + qt + " AND m." + ww.Name + "_Scroll > 0 THEN m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll - 1\n"
+                s = s + "            IF key = " + qt + "down" + qt + " AND m." + ww.Name + "_Scroll < " + spMaxStr + " THEN m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll + 1\n"
+                s = s + "            IF key = " + qt + "pgup" + qt + " THEN\n"
+                s = s + "                m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll - " + spVisStr + "\n"
+                s = s + "                IF m." + ww.Name + "_Scroll < 0 THEN m." + ww.Name + "_Scroll = 0\n"
+                s = s + "            END IF\n"
+                s = s + "            IF key = " + qt + "pgdown" + qt + " THEN\n"
+                s = s + "                m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll + " + spVisStr + "\n"
+                s = s + "                IF m." + ww.Name + "_Scroll > " + spMaxStr + " THEN m." + ww.Name + "_Scroll = " + spMaxStr + "\n"
+                s = s + "            END IF\n"
+                s = s + "            IF key = " + qt + "home" + qt + " THEN m." + ww.Name + "_Scroll = 0\n"
+                s = s + "            IF key = " + qt + "end" + qt + " THEN m." + ww.Name + "_Scroll = " + spMaxStr + "\n"
             ELSEIF ww.Kind = "Tree" THEN
                 ' Up/Down move the cursor among VISIBLE nodes (skipping
                 ' anything under a collapsed parent), firing _Change.
@@ -1926,6 +2016,51 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "            IF gY" + sfx + " >= 0 AND gY" + sfx + " < LEN(rows) THEN rows[gY" + sfx + "] = overlayRow(rows[gY" + sfx + "], " + xs + ", gLine" + sfx + ")\n"
             s = s + "        END IF\n"
             s = s + "    NEXT gRow" + sfx + "\n"
+        ELSEIF wv.Kind = "ScrollPanel" THEN
+            ' Framed box: top border, H-2 content rows (each = a content
+            ' line + a scrollbar cell reading <name>_Scroll), bottom
+            ' border. The thumb position is derived from the scroll
+            ' offset over the fixed line count.
+            DIM spBordStr AS STRING = strconv.Itoa(wv.W - 2)
+            DIM spVisStr2 AS STRING = strconv.Itoa(wv.H - 2)
+            DIM spCWStr AS STRING = strconv.Itoa(wv.W - 3)
+            IF wv.W - 3 < 1 THEN spCWStr = "1"
+            DIM spTrackV AS INTEGER = (wv.H - 2) - 2
+            DIM spMaxV AS INTEGER = LEN(wv.Items) - (wv.H - 2)
+            IF spMaxV < 0 THEN spMaxV = 0
+            DIM spMaxStr2 AS STRING = strconv.Itoa(spMaxV)
+            DIM spTrackStr AS STRING = strconv.Itoa(spTrackV)
+            s = s + "    DIM spItems" + sfx + " AS []STRING\n"
+            DIM spvI AS INTEGER
+            FOR spvI = 0 TO LEN(wv.Items) - 1
+                s = s + "    spItems" + sfx + " = APPEND(spItems" + sfx + ", " + qt + escapeForDBString(wv.Items[spvI]) + qt + ")\n"
+            NEXT spvI
+            s = s + "    DIM spTop" + sfx + " AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + spBordStr + ") + " + qt + "┐" + qt + "\n"
+            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", spTop" + sfx + ")\n"
+            s = s + "    DIM spThumb" + sfx + " AS INTEGER = 0 - 1\n"
+            s = s + "    IF " + spMaxStr2 + " > 0 AND " + spTrackStr + " > 0 THEN\n"
+            s = s + "        spThumb" + sfx + " = (m." + wv.Name + "_Scroll * (" + spTrackStr + " - 1)) / " + spMaxStr2 + "\n"
+            s = s + "        IF spThumb" + sfx + " < 0 THEN spThumb" + sfx + " = 0\n"
+            s = s + "        IF spThumb" + sfx + " > " + spTrackStr + " - 1 THEN spThumb" + sfx + " = " + spTrackStr + " - 1\n"
+            s = s + "    END IF\n"
+            s = s + "    DIM spRow" + sfx + " AS INTEGER\n"
+            s = s + "    FOR spRow" + sfx + " = 0 TO " + spVisStr2 + " - 1\n"
+            s = s + "        DIM spSrc" + sfx + " AS INTEGER = m." + wv.Name + "_Scroll + spRow" + sfx + "\n"
+            s = s + "        DIM spcl" + sfx + " AS STRING = " + qt + qt + "\n"
+            s = s + "        IF spSrc" + sfx + " < LEN(spItems" + sfx + ") THEN spcl" + sfx + " = spItems" + sfx + "[spSrc" + sfx + "]\n"
+            s = s + "        IF lipgloss.Width(spcl" + sfx + ") > " + spCWStr + " THEN spcl" + sfx + " = Mid(spcl" + sfx + ", 1, " + spCWStr + ")\n"
+            s = s + "        IF lipgloss.Width(spcl" + sfx + ") < " + spCWStr + " THEN spcl" + sfx + " = spcl" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + spCWStr + " - lipgloss.Width(spcl" + sfx + "))\n"
+            s = s + "        DIM spsb" + sfx + " AS STRING = " + qt + "░" + qt + "\n"
+            s = s + "        IF spRow" + sfx + " = 0 THEN spsb" + sfx + " = " + qt + "▲" + qt + "\n"
+            s = s + "        IF spRow" + sfx + " = " + spVisStr2 + " - 1 THEN spsb" + sfx + " = " + qt + "▼" + qt + "\n"
+            s = s + "        IF spRow" + sfx + " >= 1 AND spRow" + sfx + " <= " + spVisStr2 + " - 2 AND (spRow" + sfx + " - 1) = spThumb" + sfx + " THEN spsb" + sfx + " = " + qt + "█" + qt + "\n"
+            s = s + "        DIM spLine" + sfx + " AS STRING = " + qt + "│" + qt + " + spcl" + sfx + " + spsb" + sfx + " + " + qt + "│" + qt + "\n"
+            s = s + "        DIM spY" + sfx + " AS INTEGER = " + ys + " + 1 + spRow" + sfx + "\n"
+            s = s + "        IF spY" + sfx + " >= 0 AND spY" + sfx + " < LEN(rows) THEN rows[spY" + sfx + "] = overlayRow(rows[spY" + sfx + "], " + xs + ", spLine" + sfx + ")\n"
+            s = s + "    NEXT spRow" + sfx + "\n"
+            s = s + "    DIM spBot" + sfx + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + spBordStr + ") + " + qt + "┘" + qt + "\n"
+            s = s + "    DIM spBotY" + sfx + " AS INTEGER = " + ys + " + " + strconv.Itoa(wv.H - 1) + "\n"
+            s = s + "    IF spBotY" + sfx + " >= 0 AND spBotY" + sfx + " < LEN(rows) THEN rows[spBotY" + sfx + "] = overlayRow(rows[spBotY" + sfx + "], " + xs + ", spBot" + sfx + ")\n"
         ELSE
         ' --- Single-row kinds: build body string, prefix focus
         '     marker, overlay onto the target row in `rows`.
