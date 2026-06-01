@@ -328,6 +328,70 @@ FUNCTION renderDropdown(m AS Model) AS STRING
     RETURN frame.Render(body)
 END FUNCTION
 
+' ctxEventMaxW — shared width basis for the widget event popup so the
+' renderer and the hit-tester agree on geometry. Returns the longest
+' event-name length for the popup's widget, floored at 10.
+FUNCTION ctxEventMaxW(m AS Model) AS INTEGER
+    IF m.CtxWidget < 0 THEN RETURN 10
+    IF NOT hasActiveTab(m) THEN RETURN 10
+    IF m.CtxWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN 10
+    DIM kind AS STRING = m.Tabs[m.TabIdx].Form.Widgets[m.CtxWidget].Kind
+    DIM evs AS []STRING = widgetEvents(kind)
+    DIM maxW AS INTEGER = 0
+    DIM ix AS INTEGER
+    FOR ix = 0 TO LEN(evs) - 1
+        IF LEN(evs[ix]) > maxW THEN maxW = LEN(evs[ix])
+    NEXT ix
+    IF maxW < 10 THEN maxW = 10
+    RETURN maxW
+END FUNCTION
+
+' renderContextMenu — the right-click widget "events" popup: a framed
+' list of the selected widget's event names, highlighting CtxItem.
+' Mirrors renderDropdown's styling; empty string when closed.
+FUNCTION renderContextMenu(m AS Model) AS STRING
+    IF m.CtxWidget < 0 THEN RETURN ""
+    IF NOT hasActiveTab(m) THEN RETURN ""
+    IF m.CtxWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN ""
+    DIM kind AS STRING = m.Tabs[m.TabIdx].Form.Widgets[m.CtxWidget].Kind
+    DIM evs AS []STRING = widgetEvents(kind)
+    DIM inner AS INTEGER = ctxEventMaxW(m) + 2
+
+    DIM rowBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg))
+    DIM selBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+
+    DIM lines AS []STRING
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(evs) - 1
+        DIM bs AS lipgloss.Style = rowBase
+        IF j = m.CtxItem THEN bs = selBase
+        DIM lbl AS STRING = evs[j]
+        DIM padR AS INTEGER = inner - 1 - LEN(lbl)
+        IF padR < 0 THEN padR = 0
+        lines = APPEND(lines, bs.Render(" " + lbl + strings.Repeat(" ", padR)))
+    NEXT j
+    DIM body AS STRING = strings.Join(lines, "\n")
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cMenuBg))
+    RETURN frame.Render(body)
+END FUNCTION
+
+' ctxMenuItemAt — translate a screen (mx,my) inside the open event popup
+' to an event index, or -1 if outside. The popup is composited at
+' (CtxX, CtxY): top border at CtxY, item rows from CtxY+1; width matches
+' renderContextMenu (inner = maxW+2, outer = maxW+4).
+FUNCTION ctxMenuItemAt(m AS Model, mx AS INTEGER, my AS INTEGER) AS INTEGER
+    IF m.CtxWidget < 0 THEN RETURN 0 - 1
+    IF NOT hasActiveTab(m) THEN RETURN 0 - 1
+    IF m.CtxWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN 0 - 1
+    DIM kind AS STRING = m.Tabs[m.TabIdx].Form.Widgets[m.CtxWidget].Kind
+    DIM evs AS []STRING = widgetEvents(kind)
+    DIM outerW AS INTEGER = ctxEventMaxW(m) + 2 + 2
+    IF mx < m.CtxX OR mx >= m.CtxX + outerW THEN RETURN 0 - 1
+    DIM row AS INTEGER = my - (m.CtxY + 1)
+    IF row < 0 OR row >= LEN(evs) THEN RETURN 0 - 1
+    RETURN row
+END FUNCTION
+
 ' hintCell — render one " KEY=label" cell with the key in the hotkey
 ' colour and the label in dim menubar text. Used by renderStatusBar
 ' to build the right-aligned VBDOS-style strip.

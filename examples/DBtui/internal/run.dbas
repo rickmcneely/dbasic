@@ -129,9 +129,43 @@ FUNCTION runFinishedHandler(err AS ERROR) AS tea.Msg
     RETURN msg
 END FUNCTION
 
-' runActiveNow — actually launch `dbasic run <path>` on the active
-' tab. Pulled out of doRun so the "run-confirm" modal handler can
-' invoke the same logic after the user picks Save & Run / Run As Is.
+' preflightBuild — compile `path` to a temp binary, CAPTURING all
+' compiler output, BEFORE the terminal is handed to an interactive
+' run. This is the fix for compile errors "flashing by": tea.ExecProcess
+' gives the child the raw screen, so anything dbasic prints on a failed
+' `dbasic run` scrolls past and is lost on resume (only "exit status 1"
+' reaches RunFinishedMsg). By building synchronously first we keep the
+' errors and route them to the Output pane + the editor diagnostics,
+' exactly like doCheck does. Returns (binPath, TRUE) on success, or
+' ("", FALSE) on failure (output already shown to the user).
+FUNCTION preflightBuild(m AS POINTER TO Model, path AS STRING) AS (STRING, BOOLEAN)
+    DIM stem AS STRING = strings.TrimSuffix(baseName(path), ".dbas")
+    IF stem = "" THEN stem = "prog"
+    DIM binPath AS STRING = joinPath(os.TempDir(), "dbtui_run_" + stem)
+    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command("dbasic", "build", path, "-o", binPath)
+    DIM outBytes AS BYTES
+    DIM berr AS ERROR
+    outBytes, berr = cmd.CombinedOutput()
+    DIM out AS STRING = strings.TrimSpace(string(outBytes))
+    IF berr = NIL THEN
+        ' Clear stale diagnostics so old error markers disappear.
+        DIM emptyD AS []DiagLine
+        m.Diagnostics[path] = emptyD
+        invalidateEditorCache(m)
+        RETURN binPath, TRUE
+    END IF
+    IF out = "" THEN out = berr.Error()
+    m.Diagnostics[path] = parseCheckOutput(out)
+    invalidateEditorCache(m)
+    appendBottomOutput(m, "Output", "[build FAIL] " + path + "\n" + out)
+    m.Status = "build failed — see Output pane (F12)"
+    RETURN "", FALSE
+END FUNCTION
+
+' runActiveNow — compile the active tab (capturing errors), then launch
+' the built binary interactively. Pulled out of doRun so the
+' "run-confirm" modal handler can invoke the same logic after the user
+' picks Save & Run / Run As Is.
 FUNCTION runActiveNow(m AS POINTER TO Model) AS tea.Cmd
     IF NOT hasActiveTab(^m) THEN
         m.Status = "nothing to run"
@@ -142,8 +176,13 @@ FUNCTION runActiveNow(m AS POINTER TO Model) AS tea.Cmd
         m.Status = "save the buffer first (no on-disk path)"
         RETURN NIL
     END IF
-    m.Status = "running: dbasic run " + path
-    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command("dbasic", "run", path)
+    m.Status = "compiling " + path + "..."
+    DIM binPath AS STRING
+    DIM okb AS BOOLEAN
+    binPath, okb = preflightBuild(m, path)
+    IF NOT okb THEN RETURN NIL
+    m.Status = "running: " + path
+    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command(binPath)
     RETURN tea.ExecProcess(cmd, runFinishedHandler)
 END FUNCTION
 

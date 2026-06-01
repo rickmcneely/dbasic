@@ -276,6 +276,16 @@ TYPE Model
     DIM MenuActive  AS INTEGER           ' -1 = closed; else top-menu index
     DIM MenuItemIdx AS INTEGER           ' cursor inside the open dropdown
 
+    ' Widget event context-menu state — the right-click "events" popup
+    ' on the form-designer canvas. CtxWidget is the index (into the
+    ' active form's Widgets) the popup is open for; -1 = closed. CtxX/Y
+    ' are the screen-cell anchor (popup top-left); CtxItem is the
+    ' highlighted event row.
+    DIM CtxWidget AS INTEGER             ' -1 = closed; else widget index
+    DIM CtxX      AS INTEGER
+    DIM CtxY      AS INTEGER
+    DIM CtxItem   AS INTEGER
+
     ' Focused pane — which panel "owns" the keyboard right now. Valid
     ' values: "tree" or "editor". Tab/Shift+Tab cycles between them;
     ' clicks on a pane re-focus it. The focused pane gets a sharper
@@ -1324,6 +1334,9 @@ FUNCTION newModel() AS Model
     m.Menus = buildMenus(m)
     m.MenuActive = 0 - 1
     m.MenuItemIdx = 0
+    ' Widget event context-menu starts closed.
+    m.CtxWidget = 0 - 1
+    m.CtxItem = 0
     RETURN m
 END FUNCTION
 
@@ -1543,6 +1556,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM hoverItem AS INTEGER = dropdownItemAt(m, mmMsg.X, mmMsg.Y)
             IF hoverItem >= 0 THEN m.MenuItemIdx = hoverItem
         END IF
+        ' Likewise for the widget event context-menu.
+        IF m.CtxWidget >= 0 THEN
+            DIM ctxHover AS INTEGER = ctxMenuItemAt(m, mmMsg.X, mmMsg.Y)
+            IF ctxHover >= 0 THEN m.CtxItem = ctxHover
+        END IF
         RETURN m, NIL
     END IF
 
@@ -1600,6 +1618,19 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mcMsg, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mcMsg.Button = tea.MouseLeft THEN
+        ' (C) Widget event context-menu — when open it owns the next
+        ' left-click: inside the popup picks an event, anywhere else
+        ' dismisses it. Checked before everything so a stray click can't
+        ' fall through to the canvas underneath.
+        IF m.CtxWidget >= 0 THEN
+            DIM cmiHit AS INTEGER = ctxMenuItemAt(m, mcMsg.X, mcMsg.Y)
+            IF cmiHit >= 0 THEN
+                pickWidgetEvent(@m, m.CtxWidget, cmiHit)
+                RETURN m, NIL
+            END IF
+            m.CtxWidget = 0 - 1
+            RETURN m, NIL
+        END IF
         ' (M) Modal click — takes priority over EVERY other hit target.
         ' Convert the screen click into modal-local coords. The top
         ' border (ly = 0) hosts the ✕ close glyph (two cells in from
@@ -1979,6 +2010,38 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     '     which os.Removes the file (or RemoveAll for an empty dir) and
     '     rebuilds the tree. Same hit-test as the left-click tree path.
     IF mcOk AND mcMsg.Button = tea.MouseRight THEN
+        ' Right-click on a placed widget (form-designer canvas) opens the
+        ' VB-style event context-menu for that widget. Checked before the
+        ' project-tree hit-test below since the canvas occupies the
+        ' middle pane, not the left tree pane.
+        IF m.ViewMode = "form" AND mcMsg.Y >= 2 AND mcMsg.Y < m.Height - 1 AND mcMsg.X >= m.LeftW AND mcMsg.X < m.Width - m.RightW AND hasActiveTab(m) THEN
+            DIM rcx AS INTEGER
+            DIM rcy AS INTEGER
+            rcx, rcy = formScreenToCanvas(m, mcMsg.X, mcMsg.Y)
+            DIM rcW AS INTEGER = formWidgetAt(m, rcx, rcy)
+            IF rcW >= 0 THEN
+                m.Tabs[m.TabIdx].SelWidget = rcW
+                m.CtxWidget = rcW
+                m.CtxItem = 0
+                ' Anchor the popup at the cursor, clamped so it stays
+                ' on-screen. Width = longest event name + 4 (padding +
+                ' border); height = event count + 2 (top/bottom border).
+                DIM rcKind AS STRING = m.Tabs[m.TabIdx].Form.Widgets[rcW].Kind
+                DIM rcEvs AS []STRING = widgetEvents(rcKind)
+                DIM rcOuterW AS INTEGER = ctxEventMaxW(m) + 2 + 2
+                DIM rcOuterH AS INTEGER = LEN(rcEvs) + 2
+                DIM rcAx AS INTEGER = mcMsg.X
+                DIM rcAy AS INTEGER = mcMsg.Y
+                IF rcAx + rcOuterW > m.Width THEN rcAx = m.Width - rcOuterW
+                IF rcAy + rcOuterH > m.Height - 1 THEN rcAy = m.Height - 1 - rcOuterH
+                IF rcAx < 0 THEN rcAx = 0
+                IF rcAy < 1 THEN rcAy = 1
+                m.CtxX = rcAx
+                m.CtxY = rcAy
+                invalidateEditorCache(@m)
+                RETURN m, NIL
+            END IF
+        END IF
         DIM rcTreeBodyH AS INTEGER = m.Height - 2
         IF rcTreeBodyH < 4 THEN rcTreeBodyH = 4
         DIM rcHit AS INTEGER = treeNodeAt(m, mcMsg.X, mcMsg.Y, m.LeftW, rcTreeBodyH)
@@ -2003,6 +2066,34 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     k, kOk = msg.(tea.KeyPressMsg)
     IF kOk THEN
         DIM key AS STRING = k.String()
+
+        ' --- Widget event context-menu: when open it owns the keyboard.
+        '     Up/Down move the highlight, Enter picks the event, Esc
+        '     closes. Checked first so it pre-empts all other bindings.
+        IF m.CtxWidget >= 0 THEN
+            DIM ctxKindK AS STRING = m.Tabs[m.TabIdx].Form.Widgets[m.CtxWidget].Kind
+            DIM ctxN AS INTEGER = LEN(widgetEvents(ctxKindK))
+            IF key = "esc" THEN
+                m.CtxWidget = 0 - 1
+                RETURN m, NIL
+            END IF
+            IF key = "up" THEN
+                m.CtxItem = m.CtxItem - 1
+                IF m.CtxItem < 0 THEN m.CtxItem = ctxN - 1
+                RETURN m, NIL
+            END IF
+            IF key = "down" THEN
+                m.CtxItem = m.CtxItem + 1
+                IF m.CtxItem >= ctxN THEN m.CtxItem = 0
+                RETURN m, NIL
+            END IF
+            IF key = "enter" THEN
+                pickWidgetEvent(@m, m.CtxWidget, m.CtxItem)
+                RETURN m, NIL
+            END IF
+            ' Swallow any other key while the popup is up.
+            RETURN m, NIL
+        END IF
 
         ' --- Quick switcher: type to filter, ↑/↓ to navigate ---------
         IF m.QuickOpenActive THEN
@@ -2704,6 +2795,7 @@ INCLUDE "internal/widgets/scrollpanel.dbas"
 INCLUDE "internal/widgets/menubar.dbas"
 INCLUDE "internal/widgets/panel.dbas"
 INCLUDE "internal/widgets/dialog.dbas"
+INCLUDE "internal/events.dbas"
 INCLUDE "internal/browse.dbas"
 INCLUDE "internal/render.dbas"
 
@@ -2726,7 +2818,7 @@ FUNCTION (m AS Model) View() AS tea.View
     ' open dropdown's body from being seen as a hover by the tree /
     ' tabs / editor underneath. The menubar's own hover (Y=0) is
     ' handled by the dropdown renderer directly.
-    DIM overlayUp AS BOOLEAN = m.FileDlg.Active OR m.ModalActive OR m.QuickOpenActive OR m.CmdPaletteActive
+    DIM overlayUp AS BOOLEAN = m.FileDlg.Active OR m.ModalActive OR m.QuickOpenActive OR m.CmdPaletteActive OR m.CtxWidget >= 0
     IF NOT overlayUp AND m.MenuActive >= 0 AND m.HoverY > 0 THEN
         overlayUp = TRUE
     END IF
@@ -2785,6 +2877,20 @@ FUNCTION (m AS Model) View() AS tea.View
             DIM ddLayer AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dd).X(menuOffsetX(m, m.MenuActive)).Y(1).Z(1)
             DIM comp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bgLayer, ddLayer)
             full = comp.Render()
+        END IF
+    END IF
+
+    ' --- Widget event context-menu overlay (Z=2 — above the menubar
+    '     dropdown, below the modal/loading/dialog overlays). Anchored
+    '     at the right-click cell (CtxX, CtxY), clamped on-screen by the
+    '     mouse handler that opened it.
+    IF m.CtxWidget >= 0 THEN
+        DIM cm AS STRING = renderContextMenu(m)
+        IF cm <> "" THEN
+            DIM cmBg AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM cmL  AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(cm).X(m.CtxX).Y(m.CtxY).Z(2)
+            DIM cmCmp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(cmBg, cmL)
+            full = cmCmp.Render()
         END IF
     END IF
 

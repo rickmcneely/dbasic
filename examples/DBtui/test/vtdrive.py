@@ -11,7 +11,9 @@
 # Used by smoke_widgets.sh. Standalone usage:
 #   python3 vtdrive.py <prog> <keys> [--want STR | --not STR] ...
 #     <keys>  comma-separated; tokens: tab,up,down,left,right,enter,space,
-#             esc, hold:<seconds>, or a literal single char.
+#             esc, hold:<seconds>, rclick:COL.ROW / lclick:COL.ROW (SGR
+#             mouse press+release; coords 1-based, '.' separates so the
+#             comma token split is preserved), or a literal single char.
 #   --want STR   assertion: STR must appear in the final screen
 #   --not  STR   assertion: STR must NOT appear
 # Exit 0 = all assertions pass; 1 = a failure; 2 = launch error.
@@ -58,6 +60,13 @@ def run(prog, keyspec):
             continue
         if tok.startswith("hold:"):
             pump(float(tok[5:]))
+            continue
+        if tok.startswith("rclick:") or tok.startswith("lclick:"):
+            btn = 2 if tok[0] == "r" else 0
+            col, row = (int(v) for v in tok.split(":", 1)[1].split("."))
+            os.write(fd, f"\x1b[<{btn};{col};{row}M".encode())  # press
+            os.write(fd, f"\x1b[<{btn};{col};{row}m".encode())  # release
+            pump(0.35)
             continue
         os.write(fd, KEYMAP.get(tok, tok).encode())
         pump(0.35)

@@ -1,0 +1,113 @@
+' =========================================================================
+' events.dbas — VB6-style per-widget event model + on-demand handler-stub
+' plumbing for the right-click "events" context menu.
+'
+' This is the single source of truth for WHICH events a control kind
+' exposes (widgetEvents), what each handler's SIGNATURE looks like
+' (eventSig), how to build a fresh handler stub (buildEventStub), and how
+' to splice that stub into the user's code section so a widget's handlers
+' stay ADJACENT (insertHandlerStub).
+'
+' Scope note: the popup lists the FULL VB-style event set per control
+' today. Only a few events actually FIRE at runtime so far (Button Click;
+' the input widgets' Change; Dialog Close; Menubar Select). Picking any
+' other event simply creates its empty stub — the runtime wiring for the
+' rest lands in later passes. eventSig therefore returns "()" for the
+' not-yet-wired events; their concrete signatures get defined (and any
+' existing stub repaired via ensureSubSig) when each is wired.
+' =========================================================================
+
+' widgetEvents — the event names a control kind exposes, PRIMARY (the
+' one DBtui wires today) first so it's the default-highlighted popup
+' item and matches what generateUserStubs already seeds. Lists are
+' curated VB6-style sets, not exhaustive.
+FUNCTION widgetEvents(kind AS STRING) AS []STRING
+    IF kind = "Button" THEN RETURN strings.Split("Click,GotFocus,LostFocus,KeyDown,KeyPress,KeyUp,MouseDown,MouseMove,MouseUp", ",")
+    IF kind = "Checkbox" OR kind = "RadioButton" OR kind = "ComboBox" OR kind = "ListBox" OR kind = "ScrollBar" OR kind = "TabStrip" OR kind = "Tree" OR kind = "PropGrid" THEN RETURN strings.Split("Change,Click,GotFocus,LostFocus,KeyDown,KeyPress,KeyUp,MouseDown,MouseMove,MouseUp", ",")
+    IF kind = "Dialog" THEN RETURN strings.Split("Close,GotFocus,LostFocus", ",")
+    IF kind = "Menubar" THEN RETURN strings.Split("Select,Click", ",")
+    IF kind = "Label" THEN RETURN strings.Split("Click,DblClick,Change,MouseDown,MouseMove,MouseUp", ",")
+    IF kind = "TextInput" THEN RETURN strings.Split("Change,Click,DblClick,GotFocus,LostFocus,KeyDown,KeyPress,KeyUp,MouseDown,MouseMove,MouseUp", ",")
+    ' TextArea / ProgressBar / Panel / ScrollPanel / StatusBar and any
+    ' other passive kinds: still offer the common mouse/click set.
+    RETURN strings.Split("Click,MouseDown,MouseMove,MouseUp", ",")
+END FUNCTION
+
+' eventSig — the parameter list for a given widget+event handler. Wired
+' events keep the real signatures DBtui's dispatch already calls with;
+' everything else is "()" until its runtime is wired.
+FUNCTION eventSig(w AS DesignWidget, ev AS STRING) AS STRING
+    IF w.Kind = "Dialog" AND ev = "Close" THEN
+        DIM dk AS STRING = w.DialogKind
+        IF dk = "" THEN dk = "confirm"
+        IF dk = "input" THEN RETURN "(button AS STRING, text AS STRING)"
+        RETURN "(button AS STRING)"
+    END IF
+    IF w.Kind = "Menubar" AND ev = "Select" THEN RETURN "(item AS STRING)"
+    RETURN "()"
+END FUNCTION
+
+' buildEventStub — a complete handler stub (comment + SUB + body +
+' END SUB) for w's `ev` event. Adds `_ = param` lines for any signature
+' parameters so the empty stub is build-safe (Go flags unused params...
+' actually it doesn't, but unused locals it does; the discards keep the
+' stub clean either way and mirror the seeded-stub style).
+FUNCTION buildEventStub(w AS DesignWidget, ev AS STRING) AS STRING
+    DIM nm AS STRING = w.Name + "_" + ev
+    DIM sig AS STRING = eventSig(w, ev)
+    DIM s AS STRING = ""
+    s = s + "' " + ev + " handler for " + w.Name + " — edit freely.\n"
+    s = s + "SUB " + nm + sig + "\n"
+    s = s + "    ' TODO: your code here.\n"
+    IF strings.Contains(sig, "button") THEN s = s + "    _ = button\n"
+    IF strings.Contains(sig, "text") THEN s = s + "    _ = text\n"
+    IF strings.Contains(sig, "item") THEN s = s + "    _ = item\n"
+    s = s + "END SUB\n"
+    RETURN s
+END FUNCTION
+
+' insertHandlerStub — splice `stub` into `src` so that all handlers for
+' `widgetName` stay together. If the widget already has at least one
+' `SUB <widgetName>_…` block, insert right after the LAST one's END SUB;
+' otherwise append at the end. Returns the new source.
+FUNCTION insertHandlerStub(src AS STRING, widgetName AS STRING, stub AS STRING) AS STRING
+    DIM marker AS STRING = "SUB " + widgetName + "_"
+    ' Locate the last occurrence of the marker by scanning forward.
+    DIM lastAt AS INTEGER = 0 - 1
+    DIM scanAt AS INTEGER = 0
+    DIM rel AS INTEGER = 0
+    DO
+        rel = strings.Index(Mid(src, scanAt + 1, LEN(src) - scanAt), marker)
+        IF rel < 0 THEN EXIT DO
+        lastAt = scanAt + rel
+        scanAt = lastAt + LEN(marker)
+    LOOP
+    IF lastAt < 0 THEN
+        ' No handler for this widget yet — append, separated by a blank line.
+        DIM outA AS STRING = src
+        IF NOT strings.HasSuffix(outA, "\n") THEN outA = outA + "\n"
+        IF NOT strings.HasSuffix(outA, "\n\n") THEN outA = outA + "\n"
+        RETURN outA + stub
+    END IF
+    ' Find the END SUB that closes the last handler (handlers are flat —
+    ' no nested SUBs — so the first END SUB after the marker is it).
+    DIM tail AS STRING = Mid(src, lastAt + 1, LEN(src) - lastAt)
+    DIM endRel AS INTEGER = strings.Index(tail, "END SUB")
+    IF endRel < 0 THEN
+        ' Malformed (no END SUB) — fall back to appending.
+        DIM outB AS STRING = src
+        IF NOT strings.HasSuffix(outB, "\n") THEN outB = outB + "\n"
+        RETURN outB + "\n" + stub
+    END IF
+    ' 0-based offset just past the "END SUB" text.
+    DIM endAbs AS INTEGER = lastAt + endRel + LEN("END SUB")
+    ' Advance to (and past) the newline ending that line.
+    DIM afterTail AS STRING = Mid(src, endAbs + 1, LEN(src) - endAbs)
+    DIM nlRel AS INTEGER = strings.Index(afterTail, "\n")
+    DIM insAt AS INTEGER = LEN(src)
+    IF nlRel >= 0 THEN insAt = endAbs + nlRel + 1
+    DIM prefix AS STRING = Mid(src, 1, insAt)
+    DIM suffix AS STRING = Mid(src, insAt + 1, LEN(src) - insAt)
+    IF NOT strings.HasSuffix(prefix, "\n") THEN prefix = prefix + "\n"
+    RETURN prefix + "\n" + stub + suffix
+END FUNCTION

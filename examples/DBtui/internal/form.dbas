@@ -2107,7 +2107,102 @@ FUNCTION doFormRun(m AS POINTER TO Model) AS tea.Cmd
         m.Status = "write " + outPath + ": " + werr.Error()
         RETURN NIL
     END IF
-    m.Status = "running dbasic run " + outPath
-    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command("dbasic", "run", outPath)
+    ' Pre-flight compile so codegen / Go errors land in the Output pane
+    ' instead of flashing past once the terminal is handed to the program.
+    m.Status = "compiling " + outPath + "..."
+    DIM fbBin AS STRING
+    DIM fbOk AS BOOLEAN
+    fbBin, fbOk = preflightBuild(m, outPath)
+    IF NOT fbOk THEN RETURN NIL
+    m.Status = "running " + outPath
+    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command(fbBin)
     RETURN tea.ExecProcess(cmd, runFinishedHandler)
 END FUNCTION
+
+' pickWidgetEvent — the action behind the right-click event popup. Given
+' the widget index and the chosen event ROW (index into widgetEvents),
+' it: (1) closes the popup, (2) auto-saves the form (assigning a default
+' .dbproj path for an untitled form — no dialog), (3) regenerates the
+' partner .dbas, (4) ensures the handler SUB exists exactly once, placed
+' ADJACENT to the widget's other handlers, (5) opens/refreshes that .dbas
+' as a code tab, and (6) jumps the cursor to the handler.
+SUB pickWidgetEvent(m AS POINTER TO Model, widgetIdx AS INTEGER, itemIdx AS INTEGER)
+    IF NOT hasActiveTab(^m) THEN RETURN
+    IF widgetIdx < 0 OR widgetIdx >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    ' Close the popup first.
+    m.CtxWidget = 0 - 1
+    DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[widgetIdx]
+    DIM evs AS []STRING = widgetEvents(w.Kind)
+    IF itemIdx < 0 OR itemIdx >= LEN(evs) THEN RETURN
+    DIM ev AS STRING = evs[itemIdx]
+    DIM handler AS STRING = w.Name + "_" + ev
+
+    ' (2) Auto-save. Untitled forms get a silent default path so the
+    ' partner .dbas has somewhere to live; saveForm then writes both.
+    IF m.Tabs[m.TabIdx].Path = "" THEN
+        DIM pwDir AS STRING
+        DIM pwErr AS ERROR
+        pwDir, pwErr = os.Getwd()
+        IF pwErr <> NIL THEN pwDir = "."
+        DIM pwBase AS STRING = m.Tabs[m.TabIdx].Form.Name
+        IF pwBase = "" THEN pwBase = "untitled"
+        m.Tabs[m.TabIdx].Path = joinPath(pwDir, pwBase + ".dbproj")
+    END IF
+    saveForm(m)
+
+    ' (3) Regenerate the partner .dbas for the active form.
+    DIM proj AS Project
+    DIM pok AS BOOLEAN
+    DIM preason AS STRING
+    proj, pok, preason = readProjectFromDisk(m.Tabs[m.TabIdx].Path)
+    _ = preason
+    DIM nForms AS INTEGER = 1
+    IF pok THEN nForms = LEN(proj.Forms)
+    DIM outPath AS STRING = formOutputPath(m.Tabs[m.TabIdx].Path, m.Tabs[m.TabIdx].FormName, nForms)
+    DIM text AS STRING = mergeFormDbas(m.Tabs[m.TabIdx].Form, outPath)
+
+    ' (4) Ensure the handler exists — exactly once, adjacent to the
+    ' widget's other handlers. mergeFormDbas already seeds the primary
+    ' event; non-primary events are inserted here.
+    IF NOT subDefined(text, handler) THEN
+        text = insertHandlerStub(text, w.Name, buildEventStub(w, ev))
+    END IF
+    DIM pwWErr AS ERROR = os.WriteFile(outPath, Encode(text), 0644)
+    IF pwWErr <> NIL THEN
+        m.Status = "write " + outPath + ": " + pwWErr.Error()
+        RETURN
+    END IF
+
+    ' (5) Open or refresh the partner .dbas as a code tab.
+    DIM existing AS INTEGER = findTabIdx(^m, outPath)
+    IF existing >= 0 THEN
+        switchToTab(m, existing)
+        IF NOT m.Tabs[m.TabIdx].Dirty THEN
+            m.Tabs[m.TabIdx].Editor.SetValue(text)
+            m.Tabs[m.TabIdx].Editor.MoveToBegin()
+        END IF
+    ELSE
+        newEmptyTab(m, outPath)
+        m.Tabs[m.TabIdx].Editor.SetValue(text)
+        m.Tabs[m.TabIdx].Editor.MoveToBegin()
+    END IF
+    m.Tabs[m.TabIdx].Dirty = FALSE
+    m.ViewMode = "code"
+    setFocus(m, "editor")
+    ' We just wrote outPath; sync the tab's mtime so the watcher doesn't
+    ' flag our own write as an external edit.
+    refreshActiveMtime(m)
+
+    ' (6) Jump to the handler line.
+    DIM olines AS []STRING = strings.Split(text, "\n")
+    DIM entries AS []OutlineEntry = scanOutline(olines)
+    DIM oi AS INTEGER
+    FOR oi = 0 TO LEN(entries) - 1
+        IF entries[oi].Name = handler THEN
+            gotoLine(m, entries[oi].Row + 1)
+            m.Status = ev + " handler for " + w.Name
+            RETURN
+        END IF
+    NEXT oi
+    m.Status = "opened " + outPath + " (couldn't locate " + handler + ")"
+END SUB
