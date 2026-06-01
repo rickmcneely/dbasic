@@ -14,6 +14,13 @@ type Analyzer struct {
 	errors   []string
 	program  *parser.Program
 	lines    []string // source lines for error context
+
+	// Enclosing-function return signature, for RETURN checking. Set on
+	// entry to each SUB/FUNCTION/METHOD/lambda body and restored on exit
+	// (so nested function literals work). inFunctionBody distinguishes a
+	// SUB (zero return types) from top-level code (no enclosing function).
+	currentReturnTypes []*Type
+	inFunctionBody     bool
 }
 
 // New creates a new Analyzer
@@ -828,7 +835,10 @@ func (a *Analyzer) analyzeSubStatement(stmt *parser.SubStatement) {
 		a.symbols.Define(sym)
 	}
 
-	a.analyzeBlockStatement(stmt.Body)
+	// A SUB has no return values: empty signature (so `RETURN x` errors).
+	a.withReturnTypes(nil, func() {
+		a.analyzeBlockStatement(stmt.Body)
+	})
 }
 
 // analyzeFunctionLiteral handles anonymous FUNCTION/SUB expressions.
@@ -850,17 +860,19 @@ func (a *Analyzer) analyzeFunctionLiteral(lit *parser.FunctionLiteral) *Type {
 		})
 	}
 
-	a.analyzeBlockStatement(lit.Body)
+	litRets := make([]*Type, 0, len(lit.ReturnTypes))
+	for _, rt := range lit.ReturnTypes {
+		litRets = append(litRets, a.resolveTypeSpec(rt))
+	}
+	// A SUB literal returns nothing; a FUNCTION literal returns litRets.
+	a.withReturnTypes(litRets, func() {
+		a.analyzeBlockStatement(lit.Body)
+	})
 
 	if lit.IsSub {
 		return NewSubType(paramTypes)
 	}
-
-	returnTypes := make([]*Type, 0, len(lit.ReturnTypes))
-	for _, rt := range lit.ReturnTypes {
-		returnTypes = append(returnTypes, a.resolveTypeSpec(rt))
-	}
-	return NewFunctionType(paramTypes, returnTypes)
+	return NewFunctionType(paramTypes, litRets)
 }
 
 func (a *Analyzer) analyzeFunctionStatement(stmt *parser.FunctionStatement) {
@@ -879,7 +891,13 @@ func (a *Analyzer) analyzeFunctionStatement(stmt *parser.FunctionStatement) {
 		a.symbols.Define(sym)
 	}
 
-	a.analyzeBlockStatement(stmt.Body)
+	rets := make([]*Type, 0, len(stmt.ReturnTypes))
+	for _, rt := range stmt.ReturnTypes {
+		rets = append(rets, a.resolveTypeSpec(rt))
+	}
+	a.withReturnTypes(rets, func() {
+		a.analyzeBlockStatement(stmt.Body)
+	})
 }
 
 func (a *Analyzer) analyzeMethodStatement(stmt *parser.MethodStatement) {
@@ -916,14 +934,75 @@ func (a *Analyzer) analyzeMethodStatement(stmt *parser.MethodStatement) {
 		a.symbols.Define(sym)
 	}
 
-	a.analyzeBlockStatement(stmt.Body)
+	rets := make([]*Type, 0, len(stmt.ReturnTypes))
+	for _, rt := range stmt.ReturnTypes {
+		rets = append(rets, a.resolveTypeSpec(rt))
+	}
+	a.withReturnTypes(rets, func() {
+		a.analyzeBlockStatement(stmt.Body)
+	})
 }
 
 func (a *Analyzer) analyzeReturnStatement(stmt *parser.ReturnStatement) {
-	for _, val := range stmt.Values {
-		a.analyzeExpression(val)
+	valTypes := make([]*Type, len(stmt.Values))
+	for i, val := range stmt.Values {
+		valTypes[i] = a.analyzeExpression(val)
 	}
-	// TODO: Check return types match function signature
+
+	// Check the returned values against the enclosing function's signature.
+	// Only checked inside a function body — a RETURN at top level is a
+	// separate (already-reported) concern. A bare `RETURN` (no values) is
+	// always allowed: it's the idiomatic early-exit, and ONERR GOFUNC emits
+	// bare returns even from value-returning functions.
+	if !a.inFunctionBody || len(stmt.Values) == 0 {
+		return
+	}
+
+	want := len(a.currentReturnTypes)
+	if want == 0 {
+		a.error(stmt.Token.Line, "RETURN with a value inside a SUB (a SUB returns nothing)")
+		return
+	}
+	// Tuple forwarding: `RETURN f(...)` where f returns multiple values is
+	// valid even when `want > 1` — the single call expands to the full
+	// tuple. So a lone call expression is exempt from the count/type check;
+	// the call's own arity was validated at its definition, and any real
+	// mismatch still surfaces at `go build` (reported at the .dbas line via
+	// //line). Without this, multi-return wrapper functions false-positive.
+	if len(stmt.Values) == 1 {
+		if _, isCall := stmt.Values[0].(*parser.CallExpression); isCall {
+			return
+		}
+	}
+	if len(stmt.Values) != want {
+		a.error(stmt.Token.Line, "wrong number of return values: expected %d, got %d",
+			want, len(stmt.Values))
+		return
+	}
+	// Per-value type check. Skip un-inferable values (nil/Unknown) and any
+	// External/Any pairing — IsCompatibleWith already trusts those, and the
+	// real check lands at `go build` via //line. This keeps false positives
+	// near zero: we only flag a definite DBasic-level mismatch.
+	for i, vt := range valTypes {
+		exp := a.currentReturnTypes[i]
+		if vt == nil || exp == nil || vt.Kind == TypeUnknown || exp.Kind == TypeUnknown {
+			continue
+		}
+		if !vt.IsCompatibleWith(exp) {
+			a.error(stmt.Token.Line, "return type mismatch at position %d: cannot return %s as %s",
+				i+1, vt.Name, exp.Name)
+		}
+	}
+}
+
+// withReturnTypes runs body with the given enclosing-function return
+// signature active, restoring the previous one afterward (so nested
+// function literals don't clobber the outer function's signature).
+func (a *Analyzer) withReturnTypes(rets []*Type, body func()) {
+	prevRets, prevIn := a.currentReturnTypes, a.inFunctionBody
+	a.currentReturnTypes, a.inFunctionBody = rets, true
+	body()
+	a.currentReturnTypes, a.inFunctionBody = prevRets, prevIn
 }
 
 func (a *Analyzer) analyzeLabelStatement(stmt *parser.LabelStatement) {

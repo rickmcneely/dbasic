@@ -675,3 +675,70 @@ END SUB`
 		t.Errorf("unexpected errors for mutually recursive TYPEs: %v", errors)
 	}
 }
+
+// --- RETURN-statement signature checking (analyzeReturnStatement) ---------
+
+func returnCheckErrors(t *testing.T, src string) []string {
+	t.Helper()
+	_, errs := New().Analyze(parse(src))
+	return errs
+}
+
+func hasReturnError(errs []string) bool {
+	for _, e := range errs {
+		if strings.Contains(e, "return type mismatch") ||
+			strings.Contains(e, "wrong number of return values") ||
+			strings.Contains(e, "RETURN with a value inside a SUB") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestReturnTypeMismatch(t *testing.T) {
+	errs := returnCheckErrors(t, `FUNCTION F() AS INTEGER
+RETURN "hello"
+END FUNCTION`)
+	if !hasReturnError(errs) {
+		t.Errorf("expected a return type mismatch error, got: %v", errs)
+	}
+}
+
+func TestReturnWrongCount(t *testing.T) {
+	errs := returnCheckErrors(t, `FUNCTION F() AS (INTEGER, STRING)
+RETURN 5
+END FUNCTION`)
+	if !hasReturnError(errs) {
+		t.Errorf("expected a wrong-count return error, got: %v", errs)
+	}
+}
+
+func TestReturnValueFromSub(t *testing.T) {
+	errs := returnCheckErrors(t, `SUB S()
+RETURN 5
+END SUB`)
+	if !hasReturnError(errs) {
+		t.Errorf("expected a 'value from SUB' error, got: %v", errs)
+	}
+}
+
+func TestReturnValidDoesNotError(t *testing.T) {
+	// Correct return, bare early-exit return, and tuple forwarding
+	// (RETURN of a single multi-value call) must all pass clean.
+	errs := returnCheckErrors(t, `FUNCTION Pair() AS (INTEGER, INTEGER)
+RETURN 1, 2
+END FUNCTION
+FUNCTION Wrap() AS (INTEGER, INTEGER)
+RETURN Pair()
+END FUNCTION
+FUNCTION Clamp(n AS INTEGER) AS INTEGER
+IF n < 0 THEN RETURN 0
+RETURN n
+END FUNCTION
+SUB Early(x AS INTEGER)
+IF x = 0 THEN RETURN
+END SUB`)
+	if hasReturnError(errs) {
+		t.Errorf("valid returns flagged a return error: %v", errs)
+	}
+}
