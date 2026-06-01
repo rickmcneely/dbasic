@@ -1,0 +1,271 @@
+' =========================================================================
+' widgets/dialog.dbas — Dialog (modal overlay) widget.
+'
+' Code extracted verbatim from internal/form.dbas during the per-widget
+' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]). The
+' HEAVIEST kind: a modal overlay with two sub-kinds, confirm (button row)
+' and input (text field + OK/Cancel). Non-visual on the canvas (just a ◇
+' marker); at runtime a Show<Name>() pops it and <Name>_Close fires on
+' commit/cancel.
+'
+' Runtime Model fields: _Active, _Idx (focused button); input adds _Text +
+' _OnField. Keyboard + mouse are FUNCTION-scope PRIORITY blocks (they run
+' before the normal per-widget dispatch and swallow input while the dialog
+' is up). View builds the dialog string via the shared fdRenderConfirm /
+' fdRenderInput helpers; the outer overlay-onto-rows pass + the _dlg* global
+' setup + Show<Name>()/fdRender* emitters + ensureSubSig + the D property
+' rows + the _Close stub all STAY in form.dbas (shared / not per-kind-body).
+'
+' Owns: A default, B visibleText, E Model, plus three FUNCTION-scope
+' emitters the router invokes inside their own FOR loops:
+'   dialogEmitKeyPriority   — modal key handling (dlgUW loop)
+'   dialogEmitClickPriority — modal click handling (dcW loop)
+'   dialogEmitViewBuild     — per-dialog dlgStr builder (dlgVW loop)
+' =========================================================================
+
+' A — defaults: a confirm dialog with OK/Cancel.
+FUNCTION dialogDefault(w AS DesignWidget) AS DesignWidget
+    w.Text       = "Dialog Title"
+    w.DialogKind = "confirm"
+    w.DialogMsg  = "Are you sure?"
+    DIM dbtns AS []STRING
+    dbtns = APPEND(dbtns, "OK")
+    dbtns = APPEND(dbtns, "Cancel")
+    w.Items      = dbtns
+    w.W          = 22
+    w.H          = 1
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: a non-visual marker showing the dialog kind.
+FUNCTION dialogVisibleText(w AS DesignWidget) AS STRING
+    DIM dk AS STRING = w.DialogKind
+    IF dk = "" THEN dk = "confirm"
+    RETURN "◇ Dialog(" + dk + "): " + w.Text
+END FUNCTION
+
+' E — Model fields: _Active + _Idx always; input adds _Text + _OnField.
+FUNCTION dialogEmitModel(w AS DesignWidget) AS STRING
+    DIM s AS STRING = ""
+    s = s + "    DIM " + w.Name + "_Active AS BOOLEAN\n"
+    s = s + "    DIM " + w.Name + "_Idx    AS INTEGER\n"
+    IF w.DialogKind = "input" THEN
+        s = s + "    DIM " + w.Name + "_Text    AS STRING\n"
+        s = s + "    DIM " + w.Name + "_OnField AS BOOLEAN\n"
+    END IF
+    RETURN s
+END FUNCTION
+
+' Priority key handling while this dialog is active (modal). Emitted inside
+' the Update key block's per-dialog FOR loop. `kpdK` is the key string.
+FUNCTION dialogEmitKeyPriority(dlgUW AS DesignWidget, qt AS STRING) AS STRING
+    DIM dlgUK AS STRING = dlgUW.DialogKind
+    IF dlgUK = "" THEN dlgUK = "confirm"
+    DIM s AS STRING = ""
+    IF dlgUK = "input" THEN
+        ' Input-kind dialog. Two focus states:
+        ' OnField = TRUE  → typing / backspace edits Text;
+        '                    Tab moves focus to first button.
+        ' OnField = FALSE → Left/Right/Tab cycle OK/Cancel;
+        '                    Enter/Space commits with the focused button
+        '                    label; Shift+Tab from button #0 returns to field.
+        s = s + "        IF m." + dlgUW.Name + "_Active THEN\n"
+        s = s + "            IF kpdK = " + qt + "esc" + qt + " THEN\n"
+        s = s + "                m." + dlgUW.Name + "_Active = FALSE\n"
+        s = s + "                " + dlgUW.Name + "_Close(" + qt + qt + ", m." + dlgUW.Name + "_Text)\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        ' --- field-focused branch ---
+        s = s + "            IF m." + dlgUW.Name + "_OnField THEN\n"
+        s = s + "                IF kpdK = " + qt + "enter" + qt + " THEN\n"
+        s = s + "                    m." + dlgUW.Name + "_Active = FALSE\n"
+        s = s + "                    " + dlgUW.Name + "_Close(" + qt + "OK" + qt + ", m." + dlgUW.Name + "_Text)\n"
+        s = s + "                    RETURN m, NIL\n"
+        s = s + "                END IF\n"
+        s = s + "                IF kpdK = " + qt + "tab" + qt + " OR kpdK = " + qt + "down" + qt + " THEN\n"
+        s = s + "                    m." + dlgUW.Name + "_OnField = FALSE\n"
+        s = s + "                    m." + dlgUW.Name + "_Idx = 0\n"
+        s = s + "                    RETURN m, NIL\n"
+        s = s + "                END IF\n"
+        s = s + "                IF kpdK = " + qt + "backspace" + qt + " AND LEN(m." + dlgUW.Name + "_Text) > 0 THEN\n"
+        s = s + "                    m." + dlgUW.Name + "_Text = Mid(m." + dlgUW.Name + "_Text, 1, LEN(m." + dlgUW.Name + "_Text) - 1)\n"
+        s = s + "                    RETURN m, NIL\n"
+        s = s + "                END IF\n"
+        s = s + "                IF kpdK = " + qt + "space" + qt + " THEN\n"
+        s = s + "                    m." + dlgUW.Name + "_Text = m." + dlgUW.Name + "_Text + " + qt + " " + qt + "\n"
+        s = s + "                    RETURN m, NIL\n"
+        s = s + "                END IF\n"
+        s = s + "                IF LEN(kpdK) = 1 THEN\n"
+        s = s + "                    m." + dlgUW.Name + "_Text = m." + dlgUW.Name + "_Text + kpdK\n"
+        s = s + "                    RETURN m, NIL\n"
+        s = s + "                END IF\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        ' --- button-focused branch ---
+        s = s + "            IF kpdK = " + qt + "shift+tab" + qt + " OR kpdK = " + qt + "up" + qt + " THEN\n"
+        s = s + "                IF m." + dlgUW.Name + "_Idx = 0 THEN\n"
+        s = s + "                    m." + dlgUW.Name + "_OnField = TRUE\n"
+        s = s + "                ELSE\n"
+        s = s + "                    m." + dlgUW.Name + "_Idx = m." + dlgUW.Name + "_Idx - 1\n"
+        s = s + "                END IF\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        s = s + "            IF kpdK = " + qt + "left" + qt + " THEN\n"
+        s = s + "                IF m." + dlgUW.Name + "_Idx > 0 THEN m." + dlgUW.Name + "_Idx = m." + dlgUW.Name + "_Idx - 1\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        s = s + "            IF kpdK = " + qt + "right" + qt + " OR kpdK = " + qt + "tab" + qt + " THEN\n"
+        s = s + "                IF m." + dlgUW.Name + "_Idx < 1 THEN\n"
+        s = s + "                    m." + dlgUW.Name + "_Idx = m." + dlgUW.Name + "_Idx + 1\n"
+        s = s + "                ELSE\n"
+        s = s + "                    m." + dlgUW.Name + "_OnField = TRUE\n"
+        s = s + "                    m." + dlgUW.Name + "_Idx = 0\n"
+        s = s + "                END IF\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        s = s + "            IF kpdK = " + qt + "enter" + qt + " OR kpdK = " + qt + "space" + qt + " THEN\n"
+        s = s + "                DIM picked" + dlgUW.Name + " AS STRING = " + qt + "OK" + qt + "\n"
+        s = s + "                IF m." + dlgUW.Name + "_Idx = 1 THEN picked" + dlgUW.Name + " = " + qt + "Cancel" + qt + "\n"
+        s = s + "                m." + dlgUW.Name + "_Active = FALSE\n"
+        s = s + "                " + dlgUW.Name + "_Close(picked" + dlgUW.Name + ", m." + dlgUW.Name + "_Text)\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        s = s + "            RETURN m, NIL\n"
+        s = s + "        END IF\n"
+    ELSE
+        ' Confirm-kind dialog (existing behavior).
+        DIM nB AS INTEGER = LEN(dlgUW.Items)
+        IF nB = 0 THEN nB = 1
+        DIM nBStr AS STRING = strconv.Itoa(nB)
+        DIM nBm1 AS STRING = strconv.Itoa(nB - 1)
+        s = s + "        IF m." + dlgUW.Name + "_Active THEN\n"
+        s = s + "            IF kpdK = " + qt + "esc" + qt + " THEN\n"
+        s = s + "                m." + dlgUW.Name + "_Active = FALSE\n"
+        s = s + "                " + dlgUW.Name + "_Close(" + qt + qt + ")\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        s = s + "            IF kpdK = " + qt + "left" + qt + " OR kpdK = " + qt + "shift+tab" + qt + " THEN\n"
+        s = s + "                m." + dlgUW.Name + "_Idx = m." + dlgUW.Name + "_Idx - 1\n"
+        s = s + "                IF m." + dlgUW.Name + "_Idx < 0 THEN m." + dlgUW.Name + "_Idx = " + nBm1 + "\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        s = s + "            IF kpdK = " + qt + "right" + qt + " OR kpdK = " + qt + "tab" + qt + " THEN\n"
+        s = s + "                m." + dlgUW.Name + "_Idx = (m." + dlgUW.Name + "_Idx + 1) MOD " + nBStr + "\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        s = s + "            IF kpdK = " + qt + "enter" + qt + " OR kpdK = " + qt + "space" + qt + " THEN\n"
+        s = s + "                DIM picked" + dlgUW.Name + " AS STRING = " + qt + qt + "\n"
+        DIM bIdx AS INTEGER
+        FOR bIdx = 0 TO LEN(dlgUW.Items) - 1
+            s = s + "                IF m." + dlgUW.Name + "_Idx = " + strconv.Itoa(bIdx) + " THEN picked" + dlgUW.Name + " = " + qt + escapeForDBString(dlgUW.Items[bIdx]) + qt + "\n"
+        NEXT bIdx
+        s = s + "                m." + dlgUW.Name + "_Active = FALSE\n"
+        s = s + "                " + dlgUW.Name + "_Close(picked" + dlgUW.Name + ")\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        ' Swallow other keys while this dialog is up.
+        s = s + "            RETURN m, NIL\n"
+        s = s + "        END IF\n"
+    END IF
+    RETURN s
+END FUNCTION
+
+' Priority click handling while this dialog is active (modal). Emitted
+' inside the mouse handler's per-dialog FOR loop, hit-testing the on-screen
+' dialog rect (_dlg*) stashed by View.
+FUNCTION dialogEmitClickPriority(dcW AS DesignWidget, qt AS STRING) AS STRING
+    DIM dcK AS STRING = dcW.DialogKind
+    IF dcK = "" THEN dcK = "confirm"
+    ' Per-kind button-row layout: confirm buttons at ly=4, input at ly=6.
+    DIM dcBtnLy AS INTEGER = 4
+    IF dcK = "input" THEN dcBtnLy = 6
+    ' Effective button list — confirm uses w.Items, input is OK/Cancel.
+    DIM dcItems AS []STRING = dcW.Items
+    IF dcK = "input" THEN
+        DIM dcReset AS []STRING
+        dcItems = dcReset
+        dcItems = APPEND(dcItems, "OK")
+        dcItems = APPEND(dcItems, "Cancel")
+    END IF
+    DIM dcN AS INTEGER = LEN(dcItems)
+    IF dcN = 0 THEN dcN = 1
+    DIM s AS STRING = ""
+    s = s + "        IF m." + dcW.Name + "_Active AND _dlgW > 0 THEN\n"
+    s = s + "            DIM lx" + dcW.Name + " AS INTEGER = mc.X - _dlgX\n"
+    s = s + "            DIM ly" + dcW.Name + " AS INTEGER = mc.Y - _dlgY\n"
+    s = s + "            IF lx" + dcW.Name + " >= 0 AND ly" + dcW.Name + " >= 0 AND lx" + dcW.Name + " < _dlgW AND ly" + dcW.Name + " < _dlgH THEN\n"
+    s = s + "                IF ly" + dcW.Name + " = 0 AND (lx" + dcW.Name + " = _dlgW - 3 OR lx" + dcW.Name + " = _dlgW - 4) THEN\n"
+    s = s + "                    m." + dcW.Name + "_Active = FALSE\n"
+    IF dcK = "input" THEN
+        s = s + "                    " + dcW.Name + "_Close(" + qt + qt + ", m." + dcW.Name + "_Text)\n"
+    ELSE
+        s = s + "                    " + dcW.Name + "_Close(" + qt + qt + ")\n"
+    END IF
+    s = s + "                    RETURN m, NIL\n"
+    s = s + "                END IF\n"
+    s = s + "                IF ly" + dcW.Name + " = " + strconv.Itoa(dcBtnLy) + " THEN\n"
+    s = s + "                    DIM btnW" + dcW.Name + " AS []INTEGER\n"
+    s = s + "                    DIM btnT" + dcW.Name + " AS INTEGER = 0\n"
+    DIM dcBi AS INTEGER
+    FOR dcBi = 0 TO LEN(dcItems) - 1
+        DIM bWid AS INTEGER = lipgloss.Width("[ " + dcItems[dcBi] + " ]")
+        s = s + "                    btnW" + dcW.Name + " = APPEND(btnW" + dcW.Name + ", " + strconv.Itoa(bWid) + ")\n"
+        s = s + "                    btnT" + dcW.Name + " = btnT" + dcW.Name + " + " + strconv.Itoa(bWid) + "\n"
+        IF dcBi < LEN(dcItems) - 1 THEN
+            s = s + "                    btnT" + dcW.Name + " = btnT" + dcW.Name + " + 2\n"
+        END IF
+    NEXT dcBi
+    s = s + "                    DIM innerDW" + dcW.Name + " AS INTEGER = _dlgW - 6\n"
+    s = s + "                    DIM padD" + dcW.Name + " AS INTEGER = innerDW" + dcW.Name + " - btnT" + dcW.Name + "\n"
+    s = s + "                    IF padD" + dcW.Name + " < 0 THEN padD" + dcW.Name + " = 0\n"
+    s = s + "                    DIM bxD" + dcW.Name + " AS INTEGER = 3 + padD" + dcW.Name + "\n"
+    s = s + "                    DIM bkD" + dcW.Name + " AS INTEGER\n"
+    s = s + "                    FOR bkD" + dcW.Name + " = 0 TO LEN(btnW" + dcW.Name + ") - 1\n"
+    s = s + "                        IF lx" + dcW.Name + " >= bxD" + dcW.Name + " AND lx" + dcW.Name + " < bxD" + dcW.Name + " + btnW" + dcW.Name + "[bkD" + dcW.Name + "] THEN\n"
+    s = s + "                            DIM clickedLbl" + dcW.Name + " AS STRING = " + qt + qt + "\n"
+    FOR dcBi = 0 TO LEN(dcItems) - 1
+        s = s + "                            IF bkD" + dcW.Name + " = " + strconv.Itoa(dcBi) + " THEN clickedLbl" + dcW.Name + " = " + qt + escapeForDBString(dcItems[dcBi]) + qt + "\n"
+    NEXT dcBi
+    s = s + "                            m." + dcW.Name + "_Active = FALSE\n"
+    IF dcK = "input" THEN
+        s = s + "                            " + dcW.Name + "_Close(clickedLbl" + dcW.Name + ", m." + dcW.Name + "_Text)\n"
+    ELSE
+        s = s + "                            " + dcW.Name + "_Close(clickedLbl" + dcW.Name + ")\n"
+    END IF
+    s = s + "                            RETURN m, NIL\n"
+    s = s + "                        END IF\n"
+    s = s + "                        bxD" + dcW.Name + " = bxD" + dcW.Name + " + btnW" + dcW.Name + "[bkD" + dcW.Name + "] + 2\n"
+    s = s + "                    NEXT bkD" + dcW.Name + "\n"
+    s = s + "                END IF\n"
+    IF dcK = "input" THEN
+        s = s + "                IF ly" + dcW.Name + " = 4 THEN m." + dcW.Name + "_OnField = TRUE\n"
+    END IF
+    s = s + "                RETURN m, NIL\n"
+    s = s + "            END IF\n"
+    s = s + "        END IF\n"
+    RETURN s
+END FUNCTION
+
+' Per-dialog View builder: if this dialog is active and dlgStr is still
+' empty, build it via fdRenderInput/fdRenderConfirm. The outer overlay pass
+' (positioning + _dlg* stash) stays in form.dbas.
+FUNCTION dialogEmitViewBuild(dlgVW AS DesignWidget, qt AS STRING) AS STRING
+    DIM dlgVK AS STRING = dlgVW.DialogKind
+    IF dlgVK = "" THEN dlgVK = "confirm"
+    DIM s AS STRING = ""
+    s = s + "    IF dlgStr = " + qt + qt + " AND m." + dlgVW.Name + "_Active THEN\n"
+    IF dlgVK = "input" THEN
+        s = s + "        DIM actIdx" + dlgVW.Name + " AS INTEGER = m." + dlgVW.Name + "_Idx\n"
+        s = s + "        IF m." + dlgVW.Name + "_OnField THEN actIdx" + dlgVW.Name + " = 0 - 1\n"
+        s = s + "        dlgStr = fdRenderInput(" + qt + escapeForDBString(dlgVW.Text) + qt + ", " + qt + escapeForDBString(dlgVW.DialogMsg) + qt + ", m." + dlgVW.Name + "_Text, m." + dlgVW.Name + "_OnField, actIdx" + dlgVW.Name + ")\n"
+    ELSE
+        s = s + "        DIM btns" + dlgVW.Name + " AS []STRING\n"
+        DIM bvIdx AS INTEGER
+        FOR bvIdx = 0 TO LEN(dlgVW.Items) - 1
+            s = s + "        btns" + dlgVW.Name + " = APPEND(btns" + dlgVW.Name + ", " + qt + escapeForDBString(dlgVW.Items[bvIdx]) + qt + ")\n"
+        NEXT bvIdx
+        s = s + "        dlgStr = fdRenderConfirm(" + qt + escapeForDBString(dlgVW.Text) + qt + ", " + qt + escapeForDBString(dlgVW.DialogMsg) + qt + ", btns" + dlgVW.Name + ", m." + dlgVW.Name + "_Idx)\n"
+    END IF
+    s = s + "    END IF\n"
+    RETURN s
+END FUNCTION

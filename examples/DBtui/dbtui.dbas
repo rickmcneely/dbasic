@@ -2703,6 +2703,7 @@ INCLUDE "internal/widgets/statusbar.dbas"
 INCLUDE "internal/widgets/scrollpanel.dbas"
 INCLUDE "internal/widgets/menubar.dbas"
 INCLUDE "internal/widgets/panel.dbas"
+INCLUDE "internal/widgets/dialog.dbas"
 INCLUDE "internal/browse.dbas"
 INCLUDE "internal/render.dbas"
 
