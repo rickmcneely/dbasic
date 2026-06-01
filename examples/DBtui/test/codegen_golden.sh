@@ -46,6 +46,7 @@ PROJECTS=(
   "examples/Widgets/Widgets.dbproj"
   "examples/dialog_demo.dbproj"
   "examples/quit_demo.dbproj"
+  "examples/chrome_demo.dbproj"
 )
 
 fail=0

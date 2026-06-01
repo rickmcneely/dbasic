@@ -109,6 +109,12 @@ FUNCTION panelEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS ST
     DIM pnMaxV AS INTEGER = pnCB - (wv.Y + 1) - pnVisN
     IF pnMaxV < 0 THEN pnMaxV = 0
     DIM pnMaxStr AS STRING = strconv.Itoa(pnMaxV)
+    ' Divisor clamped to >=1: the division below is dead when pnMaxV = 0
+    ' (the guard requires pnMaxStr > 0), but Go rejects a literal "/ 0" as
+    ' a constant division-by-zero even on an unreachable branch — so the
+    ' emitted divisor must never be 0.
+    DIM pnDivStr AS STRING = strconv.Itoa(pnMaxV)
+    IF pnMaxV < 1 THEN pnDivStr = "1"
     DIM pnTrackStr AS STRING = strconv.Itoa(pnTrack)
     DIM pnContentTop AS INTEGER = wv.Y + 1
     DIM pnContentBot AS INTEGER = wv.Y + wv.H - 2
@@ -119,7 +125,7 @@ FUNCTION panelEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS ST
     ' Thumb position from scroll offset.
     s = s + "    DIM pnThumb" + sfx + " AS INTEGER = 0 - 1\n"
     s = s + "    IF " + pnMaxStr + " > 0 AND " + pnTrackStr + " > 0 THEN\n"
-    s = s + "        pnThumb" + sfx + " = (m." + wv.Name + "_Scroll * (" + pnTrackStr + " - 1)) / " + pnMaxStr + "\n"
+    s = s + "        pnThumb" + sfx + " = (m." + wv.Name + "_Scroll * (" + pnTrackStr + " - 1)) / " + pnDivStr + "\n"
     s = s + "        IF pnThumb" + sfx + " < 0 THEN pnThumb" + sfx + " = 0\n"
     s = s + "        IF pnThumb" + sfx + " > " + pnTrackStr + " - 1 THEN pnThumb" + sfx + " = " + pnTrackStr + " - 1\n"
     s = s + "    END IF\n"

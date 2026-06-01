@@ -1,0 +1,40 @@
+{
+  "Name": "chrome_demo",
+  "StartForm": "frmStart",
+  "Forms": [
+    {
+      "Name": "frmStart",
+      "Title": "Menubar + Panel smoke fixture",
+      "Widgets": [
+        {
+          "Kind": "Menubar",
+          "Name": "menubar1",
+          "X": 0,
+          "Y": 0,
+          "W": 44,
+          "H": 1,
+          "Items": ["File", "-New", "-Open", "-Quit", "Edit", "-Cut", "-Copy"]
+        },
+        {
+          "Kind": "Panel",
+          "Name": "panel1",
+          "Text": "Panel",
+          "X": 2,
+          "Y": 2,
+          "W": 30,
+          "H": 8
+        },
+        {
+          "Kind": "Label",
+          "Name": "lblChild",
+          "Text": "child-in-panel",
+          "X": 4,
+          "Y": 3,
+          "W": 14,
+          "H": 1,
+          "Parent": "panel1"
+        }
+      ]
+    }
+  ]
+}

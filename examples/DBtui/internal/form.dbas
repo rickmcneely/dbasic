@@ -1033,7 +1033,11 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "IMPORT " + qt + "fmt" + qt + "\n"
     s = s + "IMPORT " + qt + "os" + qt + "\n"
     s = s + "IMPORT " + qt + "strings" + qt + "\n"
-    IF hasDialog OR hasTextArea OR hasPropGrid OR hasScrollPanel OR hasMenubar OR hasStatusBar THEN
+    ' Runtime lipgloss is only needed by kinds whose generated View calls
+    ' lipgloss.* at run time. Menubar/Panel use lipgloss.Width only at
+    ' codegen time (it bakes into literals), so a Menubar/Panel-only form
+    ' must NOT import lipgloss or Go fails with "imported and not used".
+    IF hasDialog OR hasTextArea OR hasPropGrid OR hasScrollPanel OR hasStatusBar THEN
         s = s + "IMPORT " + qt + "charm.land/lipgloss/v2" + qt + " AS lipgloss\n"
     END IF
     s = s + "\n"

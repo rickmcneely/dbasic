@@ -97,6 +97,11 @@ FUNCTION scrollPanelEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys
     DIM spVisStr2 AS STRING = strconv.Itoa(wv.H - 2)
     DIM spMaxStr2 AS STRING = strconv.Itoa(LEN(wv.Items) - (wv.H - 2))
     IF LEN(wv.Items) - (wv.H - 2) < 0 THEN spMaxStr2 = "0"
+    ' Divisor clamped to >=1: the thumb division is dead when max = 0 (the
+    ' guard requires spMaxStr2 > 0), but Go rejects a literal "/ 0" as a
+    ' constant division-by-zero even on the unreachable branch.
+    DIM spDivStr2 AS STRING = strconv.Itoa(LEN(wv.Items) - (wv.H - 2))
+    IF LEN(wv.Items) - (wv.H - 2) < 1 THEN spDivStr2 = "1"
     DIM spTrackStr AS STRING = strconv.Itoa((wv.H - 2) - 2)
     IF (wv.H - 2) - 2 < 1 THEN spTrackStr = "1"
     DIM s AS STRING = ""
@@ -109,7 +114,7 @@ FUNCTION scrollPanelEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys
     s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", spTop" + sfx + ")\n"
     s = s + "    DIM spThumb" + sfx + " AS INTEGER = 0 - 1\n"
     s = s + "    IF " + spMaxStr2 + " > 0 AND " + spTrackStr + " > 0 THEN\n"
-    s = s + "        spThumb" + sfx + " = (m." + wv.Name + "_Scroll * (" + spTrackStr + " - 1)) / " + spMaxStr2 + "\n"
+    s = s + "        spThumb" + sfx + " = (m." + wv.Name + "_Scroll * (" + spTrackStr + " - 1)) / " + spDivStr2 + "\n"
     s = s + "        IF spThumb" + sfx + " < 0 THEN spThumb" + sfx + " = 0\n"
     s = s + "        IF spThumb" + sfx + " > " + spTrackStr + " - 1 THEN spThumb" + sfx + " = " + spTrackStr + " - 1\n"
     s = s + "    END IF\n"
