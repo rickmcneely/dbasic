@@ -1,0 +1,49 @@
+' =========================================================================
+' widgets/statusbar.dbas — StatusBar (bottom status strip) widget.
+'
+' Code extracted verbatim from internal/form.dbas during the per-widget
+' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
+'
+' A passive bottom strip: Items are segments shown left to right, joined by
+' │ via the shared statusBarText helper. Runtime keeps an override string in
+' <Name>_Text; when non-empty it replaces the static segments. No keyboard/
+' mouse/_Change.
+'
+' Owns: A default, B visibleText, E Model (_Text), H View. Uses shared
+' statusBarText + overlayRow/escapeForDBString.
+' =========================================================================
+
+' A — defaults: a 3-segment status bar.
+FUNCTION statusBarDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "StatusBar"
+    w.W    = 44
+    w.H    = 1
+    DIM sbsegs AS []STRING
+    sbsegs = APPEND(sbsegs, "Ready")
+    sbsegs = APPEND(sbsegs, "Ln 1, Col 1")
+    sbsegs = APPEND(sbsegs, "UTF-8")
+    w.Items = sbsegs
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: the joined segment text.
+FUNCTION statusBarVisibleText(w AS DesignWidget) AS STRING
+    RETURN statusBarText(w.Items)
+END FUNCTION
+
+' E — Model field: an override string (empty = show the static segments).
+FUNCTION statusBarEmitModel(w AS DesignWidget) AS STRING
+    RETURN "    DIM " + w.Name + "_Text AS STRING\n"
+END FUNCTION
+
+' H — View paint: single row — <name>_Text if set, else the static segments,
+' clipped to W.
+FUNCTION statusBarEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+    DIM sbWStr AS STRING = strconv.Itoa(wv.W)
+    DIM s AS STRING = ""
+    s = s + "    DIM sbTxt" + sfx + " AS STRING = m." + wv.Name + "_Text\n"
+    s = s + "    IF sbTxt" + sfx + " = " + qt + qt + " THEN sbTxt" + sfx + " = " + qt + escapeForDBString(statusBarText(wv.Items)) + qt + "\n"
+    s = s + "    IF lipgloss.Width(sbTxt" + sfx + ") > " + sbWStr + " THEN sbTxt" + sfx + " = Mid(sbTxt" + sfx + ", 1, " + sbWStr + ")\n"
+    s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", sbTxt" + sfx + ")\n"
+    RETURN s
+END FUNCTION

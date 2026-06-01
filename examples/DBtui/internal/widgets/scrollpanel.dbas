@@ -1,0 +1,135 @@
+' =========================================================================
+' widgets/scrollpanel.dbas — ScrollPanel (scrollable content viewport).
+'
+' Code extracted verbatim from internal/form.dbas during the per-widget
+' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
+'
+' A framed viewport over Items (content lines) with an embedded vertical
+' scrollbar column. Top visible line tracked in <Name>_Scroll (INTEGER).
+' Passive (no _Change). Up/Down keys or ▲/▼ end-cell clicks scroll. Uses
+' shared overlayRow/escapeForDBString.
+'
+' Owns: A default, B visibleText, C visibleLines, E Model (_Scroll),
+' G mouse, F keyboard, H View. NOTE: the emitter bodies below are copied
+' byte-for-byte from the inline originals — including a couple of dead/odd
+' codegen-time locals — so generated output stays identical.
+' =========================================================================
+
+' A — defaults: a 28x8 box with 12 content lines.
+FUNCTION scrollPanelDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "ScrollPanel"
+    w.W    = 28
+    w.H    = 8
+    DIM splines AS []STRING
+    DIM spk AS INTEGER
+    FOR spk = 1 TO 12
+        splines = APPEND(splines, "Content line " + strconv.Itoa(spk))
+    NEXT spk
+    w.Items = splines
+    RETURN w
+END FUNCTION
+
+' B — single-line preview: a top-border proxy.
+FUNCTION scrollPanelVisibleText(w AS DesignWidget) AS STRING
+    RETURN "┌" + strings.Repeat("─", w.W - 2) + "┐"
+END FUNCTION
+
+' C — multi-row design render: framed box, H-2 content rows + scrollbar
+' column, thumb parked at the top (scroll = 0).
+FUNCTION scrollPanelVisibleLines(w AS DesignWidget) AS []STRING
+    DIM lines AS []STRING
+    DIM spw AS INTEGER = w.W
+    IF spw < 4 THEN spw = 4
+    DIM sph AS INTEGER = w.H
+    IF sph < 3 THEN sph = 3
+    DIM spVisible AS INTEGER = sph - 2
+    DIM spContentW AS INTEGER = spw - 3
+    IF spContentW < 1 THEN spContentW = 1
+    DIM spi AS INTEGER
+    FOR spi = 0 TO spVisible - 1
+        DIM spLine AS STRING = ""
+        IF spi < LEN(w.Items) THEN spLine = w.Items[spi]
+        IF lipgloss.Width(spLine) > spContentW THEN spLine = Mid(spLine, 1, spContentW)
+        IF lipgloss.Width(spLine) < spContentW THEN spLine = spLine + strings.Repeat(" ", spContentW - lipgloss.Width(spLine))
+        DIM spbar AS STRING = "░"
+        IF spi = 0 THEN spbar = "▲"
+        IF spi = spVisible - 1 THEN spbar = "▼"
+        lines = APPEND(lines, "│" + spLine + spbar + "│")
+    NEXT spi
+    RETURN lines
+END FUNCTION
+
+' E — Model field: top visible content line.
+FUNCTION scrollPanelEmitModel(w AS DesignWidget) AS STRING
+    RETURN "    DIM " + w.Name + "_Scroll AS INTEGER\n"
+END FUNCTION
+
+' G — mouse: click the top cell (rel Y = 1) scrolls up, the bottom cell
+' (rel Y = H-2) scrolls down (the ▲ / ▼ scrollbar ends).
+FUNCTION scrollPanelEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcYs AS STRING, qt AS STRING) AS STRING
+    DIM spMaxStr AS STRING = strconv.Itoa(LEN(mcw.Items))
+    DIM spVisStr AS STRING = strconv.Itoa(mcw.H - 2)
+    DIM s AS STRING = ""
+    s = s + "            DIM spRel" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
+    s = s + "            IF spRel" + mcIStr + " = 1 AND m." + mcw.Name + "_Scroll > 0 THEN m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll - 1\n"
+    s = s + "            IF spRel" + mcIStr + " = " + strconv.Itoa(mcw.H - 2) + " AND m." + mcw.Name + "_Scroll < " + spMaxStr + " - " + spVisStr + " THEN m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll + 1\n"
+    RETURN s
+END FUNCTION
+
+' F — keyboard: Up/Down scroll the viewport by a line; clamp to the content
+' height minus the visible rows.
+FUNCTION scrollPanelEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
+    DIM spVis AS INTEGER = ww.H - 2
+    DIM spMaxScroll AS INTEGER = LEN(ww.Items) - spVis
+    IF spMaxScroll < 0 THEN spMaxScroll = 0
+    DIM s AS STRING = ""
+    s = s + "            IF key = " + qt + "up" + qt + " AND m." + ww.Name + "_Scroll > 0 THEN m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll - 1\n"
+    s = s + "            IF key = " + qt + "down" + qt + " AND m." + ww.Name + "_Scroll < " + strconv.Itoa(spMaxScroll) + " THEN m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll + 1\n"
+    _ = spVis
+    RETURN s
+END FUNCTION
+
+' H — View paint: framed scroll viewport; top border, H-2 content rows (each
+' a content line + scrollbar cell), bottom border; thumb tracks _Scroll.
+FUNCTION scrollPanelEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+    DIM spCWStr AS STRING = strconv.Itoa(wv.W - 3)
+    IF wv.W - 3 < 1 THEN spCWStr = "1"
+    DIM spVisStr2 AS STRING = strconv.Itoa(wv.H - 2)
+    DIM spMaxStr2 AS STRING = strconv.Itoa(LEN(wv.Items) - (wv.H - 2))
+    IF LEN(wv.Items) - (wv.H - 2) < 0 THEN spMaxStr2 = "0"
+    DIM spTrackStr AS STRING = strconv.Itoa((wv.H - 2) - 2)
+    IF (wv.H - 2) - 2 < 1 THEN spTrackStr = "1"
+    DIM s AS STRING = ""
+    s = s + "    DIM spItems" + sfx + " AS []STRING\n"
+    DIM spvI AS INTEGER
+    FOR spvI = 0 TO LEN(wv.Items) - 1
+        s = s + "    spItems" + sfx + " = APPEND(spItems" + sfx + ", " + qt + escapeForDBString(wv.Items[spvI]) + qt + ")\n"
+    NEXT spvI
+    s = s + "    DIM spTop" + sfx + " AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + spCWStr + " + 1) + " + qt + "┐" + qt + "\n"
+    s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", spTop" + sfx + ")\n"
+    s = s + "    DIM spThumb" + sfx + " AS INTEGER = 0 - 1\n"
+    s = s + "    IF " + spMaxStr2 + " > 0 AND " + spTrackStr + " > 0 THEN\n"
+    s = s + "        spThumb" + sfx + " = (m." + wv.Name + "_Scroll * (" + spTrackStr + " - 1)) / " + spMaxStr2 + "\n"
+    s = s + "        IF spThumb" + sfx + " < 0 THEN spThumb" + sfx + " = 0\n"
+    s = s + "        IF spThumb" + sfx + " > " + spTrackStr + " - 1 THEN spThumb" + sfx + " = " + spTrackStr + " - 1\n"
+    s = s + "    END IF\n"
+    s = s + "    DIM spRow" + sfx + " AS INTEGER\n"
+    s = s + "    FOR spRow" + sfx + " = 0 TO " + spVisStr2 + " - 1\n"
+    s = s + "        DIM spSrc" + sfx + " AS INTEGER = m." + wv.Name + "_Scroll + spRow" + sfx + "\n"
+    s = s + "        DIM spcl" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "        IF spSrc" + sfx + " < LEN(spItems" + sfx + ") THEN spcl" + sfx + " = spItems" + sfx + "[spSrc" + sfx + "]\n"
+    s = s + "        IF lipgloss.Width(spcl" + sfx + ") > " + spCWStr + " THEN spcl" + sfx + " = Mid(spcl" + sfx + ", 1, " + spCWStr + ")\n"
+    s = s + "        IF lipgloss.Width(spcl" + sfx + ") < " + spCWStr + " THEN spcl" + sfx + " = spcl" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + spCWStr + " - lipgloss.Width(spcl" + sfx + "))\n"
+    s = s + "        DIM spsb" + sfx + " AS STRING = " + qt + "░" + qt + "\n"
+    s = s + "        IF spRow" + sfx + " = 0 THEN spsb" + sfx + " = " + qt + "▲" + qt + "\n"
+    s = s + "        IF spRow" + sfx + " = " + spVisStr2 + " - 1 THEN spsb" + sfx + " = " + qt + "▼" + qt + "\n"
+    s = s + "        IF spRow" + sfx + " >= 1 AND spRow" + sfx + " <= " + spVisStr2 + " - 2 AND (spRow" + sfx + " - 1) = spThumb" + sfx + " THEN spsb" + sfx + " = " + qt + "█" + qt + "\n"
+    s = s + "        DIM spLine" + sfx + " AS STRING = " + qt + "│" + qt + " + spcl" + sfx + " + spsb" + sfx + " + " + qt + "│" + qt + "\n"
+    s = s + "        DIM spY" + sfx + " AS INTEGER = " + ys + " + 1 + spRow" + sfx + "\n"
+    s = s + "        IF spY" + sfx + " >= 0 AND spY" + sfx + " < LEN(rows) THEN rows[spY" + sfx + "] = overlayRow(rows[spY" + sfx + "], " + xs + ", spLine" + sfx + ")\n"
+    s = s + "    NEXT spRow" + sfx + "\n"
+    s = s + "    DIM spBot" + sfx + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + spCWStr + " + 1) + " + qt + "┘" + qt + "\n"
+    s = s + "    DIM spBotY" + sfx + " AS INTEGER = " + ys + " + " + strconv.Itoa(wv.H - 1) + "\n"
+    s = s + "    IF spBotY" + sfx + " >= 0 AND spBotY" + sfx + " < LEN(rows) THEN rows[spBotY" + sfx + "] = overlayRow(rows[spBotY" + sfx + "], " + xs + ", spBot" + sfx + ")\n"
+    RETURN s
+END FUNCTION

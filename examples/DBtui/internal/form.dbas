@@ -97,18 +97,7 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
     ELSEIF kind = "PropGrid" THEN
         RETURN propGridDefault(w)
     ELSEIF kind = "ScrollPanel" THEN
-        ' Scrollable content viewport with an embedded vertical
-        ' scrollbar. Items are the content lines; runtime tracks the
-        ' top visible line in <Name>_Scroll. Passive (no _Change).
-        w.Text = "ScrollPanel"
-        w.W    = 28
-        w.H    = 8
-        DIM splines AS []STRING
-        DIM spk AS INTEGER
-        FOR spk = 1 TO 12
-            splines = APPEND(splines, "Content line " + strconv.Itoa(spk))
-        NEXT spk
-        w.Items = splines
+        RETURN scrollPanelDefault(w)
     ELSEIF kind = "Menubar" THEN
         ' Top menu strip. Items are dash-depth encoded (like Tree): a
         ' depth-0 entry is a menu title, each following depth-1 ("-")
@@ -130,17 +119,7 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
         mbentries = APPEND(mbentries, "-About")
         w.Items = mbentries
     ELSEIF kind = "StatusBar" THEN
-        ' Bottom status strip. Items are segments shown across the bar
-        ' (joined by │). Runtime <Name>_Text, when non-empty, overrides
-        ' the segments. Passive (no events).
-        w.Text = "StatusBar"
-        w.W    = 44
-        w.H    = 1
-        DIM sbsegs AS []STRING
-        sbsegs = APPEND(sbsegs, "Ready")
-        sbsegs = APPEND(sbsegs, "Ln 1, Col 1")
-        sbsegs = APPEND(sbsegs, "UTF-8")
-        w.Items = sbsegs
+        RETURN statusBarDefault(w)
     ELSEIF kind = "Panel" THEN
         ' Scrollable container. Holds child widgets (those whose Parent
         ' names this Panel); runtime scrolls them in <Name>_Scroll.
@@ -342,11 +321,8 @@ FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
     IF w.Kind = "Tree" THEN RETURN treeVisibleText(w)
     IF w.Kind = "TextArea" THEN RETURN textAreaVisibleText(w)
     IF w.Kind = "PropGrid" THEN RETURN propGridVisibleText(w)
-    IF w.Kind = "ScrollPanel" THEN
-        ' Width proxy; widgetVisibleLines paints the framed scroll box.
-        RETURN "┌" + strings.Repeat("─", w.W - 2) + "┐"
-    END IF
-    IF w.Kind = "StatusBar" THEN RETURN statusBarText(w.Items)
+    IF w.Kind = "ScrollPanel" THEN RETURN scrollPanelVisibleText(w)
+    IF w.Kind = "StatusBar" THEN RETURN statusBarVisibleText(w)
     IF w.Kind = "Menubar"   THEN RETURN menubarTitles(w.Items)
     IF w.Kind = "Panel"     THEN RETURN "┌" + strings.Repeat("─", w.W - 2) + "┐"
     IF w.Kind = "Dialog" THEN
@@ -1150,16 +1126,14 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "    DIM " + w.Name + "_Val AS INTEGER\n"
             s = s + "    DIM " + w.Name + "_Collapsed AS []BOOLEAN\n"
         ELSEIF w.Kind = "ScrollPanel" THEN
-            ' Top visible content line.
-            s = s + "    DIM " + w.Name + "_Scroll AS INTEGER\n"
+            s = s + scrollPanelEmitModel(w)
         ELSEIF w.Kind = "Menubar" THEN
             ' Active (highlighted) menu, open state, highlighted item.
             s = s + "    DIM " + w.Name + "_Active AS INTEGER\n"
             s = s + "    DIM " + w.Name + "_Open   AS BOOLEAN\n"
             s = s + "    DIM " + w.Name + "_Item   AS INTEGER\n"
         ELSEIF w.Kind = "StatusBar" THEN
-            ' Runtime override text; empty = show the static segments.
-            s = s + "    DIM " + w.Name + "_Text AS STRING\n"
+            s = s + statusBarEmitModel(w)
         ELSEIF w.Kind = "Panel" THEN
             ' Scroll offset of the container's child viewport.
             s = s + "    DIM " + w.Name + "_Scroll AS INTEGER\n"
@@ -1856,13 +1830,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "    DIM spBotY" + sfx + " AS INTEGER = " + ys + " + " + strconv.Itoa(wv.H - 1) + "\n"
             s = s + "    IF spBotY" + sfx + " >= 0 AND spBotY" + sfx + " < LEN(rows) THEN rows[spBotY" + sfx + "] = overlayRow(rows[spBotY" + sfx + "], " + xs + ", spBot" + sfx + ")\n"
         ELSEIF wv.Kind = "StatusBar" THEN
-            ' Single row: <name>_Text if set, else the static segments,
-            ' clipped to W.
-            DIM sbWStr AS STRING = strconv.Itoa(wv.W)
-            s = s + "    DIM sbTxt" + sfx + " AS STRING = m." + wv.Name + "_Text\n"
-            s = s + "    IF sbTxt" + sfx + " = " + qt + qt + " THEN sbTxt" + sfx + " = " + qt + escapeForDBString(statusBarText(wv.Items)) + qt + "\n"
-            s = s + "    IF lipgloss.Width(sbTxt" + sfx + ") > " + sbWStr + " THEN sbTxt" + sfx + " = Mid(sbTxt" + sfx + ", 1, " + sbWStr + ")\n"
-            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", sbTxt" + sfx + ")\n"
+            s = s + statusBarEmitView(wv, sfx, xs, ys, qt)
         ELSEIF wv.Kind = "Menubar" THEN
             ' Title bar; the active title is bracketed when the bar is
             ' focused or open. The dropdown (when open) is drawn in a

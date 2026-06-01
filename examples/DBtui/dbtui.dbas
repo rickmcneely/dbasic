@@ -2699,6 +2699,8 @@ INCLUDE "internal/widgets/scrollbar.dbas"
 INCLUDE "internal/widgets/tree.dbas"
 INCLUDE "internal/widgets/textarea.dbas"
 INCLUDE "internal/widgets/propgrid.dbas"
+INCLUDE "internal/widgets/statusbar.dbas"
+INCLUDE "internal/widgets/scrollpanel.dbas"
 INCLUDE "internal/browse.dbas"
 INCLUDE "internal/render.dbas"
 
