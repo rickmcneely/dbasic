@@ -103,11 +103,7 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
     ELSEIF kind = "StatusBar" THEN
         RETURN statusBarDefault(w)
     ELSEIF kind = "Panel" THEN
-        ' Scrollable container. Holds child widgets (those whose Parent
-        ' names this Panel); runtime scrolls them in <Name>_Scroll.
-        w.Text = "Panel"
-        w.W    = 30
-        w.H    = 10
+        RETURN panelDefault(w)
     END IF
     RETURN w
 END FUNCTION
@@ -359,24 +355,7 @@ FUNCTION widgetVisibleLines(w AS DesignWidget) AS []STRING
             lines = APPEND(lines, gline)
         NEXT gri
     ELSEIF w.Kind = "Panel" THEN
-        ' Empty bordered container with a right-edge scrollbar. Child
-        ' widgets render over the interior (design-time shows them all;
-        ' runtime clips + scrolls them).
-        DIM pnH AS INTEGER = w.H
-        IF pnH < 3 THEN pnH = 3
-        DIM pnInner AS INTEGER = w.W - 2
-        IF pnInner < 1 THEN pnInner = 1
-        DIM pnVis AS INTEGER = pnH - 2
-        lines = APPEND(lines, "┌" + strings.Repeat("─", pnInner) + "┐")
-        DIM pni AS INTEGER
-        FOR pni = 0 TO pnVis - 1
-            DIM pnsb AS STRING = "░"
-            IF pni = 0 THEN pnsb = "▲"
-            IF pni = pnVis - 1 THEN pnsb = "▼"
-            IF pni = 1 THEN pnsb = "█"
-            lines = APPEND(lines, "│" + strings.Repeat(" ", pnInner - 1) + pnsb + "│")
-        NEXT pni
-        lines = APPEND(lines, "└" + strings.Repeat("─", pnInner) + "┘")
+        lines = panelVisibleLines(w)
     ELSEIF w.Kind = "ScrollPanel" THEN
         ' Framed box: top border, H-2 content rows (each = content text
         ' + a scrollbar cell), bottom border. Design-time shows the top
@@ -1114,8 +1093,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         ELSEIF w.Kind = "StatusBar" THEN
             s = s + statusBarEmitModel(w)
         ELSEIF w.Kind = "Panel" THEN
-            ' Scroll offset of the container's child viewport.
-            s = s + "    DIM " + w.Name + "_Scroll AS INTEGER\n"
+            s = s + panelEmitModel(w)
         ELSEIF w.Kind = "Dialog" THEN
             s = s + "    DIM " + w.Name + "_Active AS BOOLEAN\n"
             s = s + "    DIM " + w.Name + "_Idx    AS INTEGER\n"
@@ -1487,15 +1465,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         ELSEIF mcw.Kind = "TabStrip" THEN
             s = s + tabStripEmitMouse(mcw, mcIStr, mcXs, mcYs, qt)
         ELSEIF mcw.Kind = "Panel" THEN
-            ' Click the ▲ row (rel Y = 1) scrolls up; the ▼ row
-            ' (rel Y = H-2) scrolls down.
-            DIM pncVis AS INTEGER = mcw.H - 2
-            IF pncVis < 1 THEN pncVis = 1
-            DIM pncMax AS INTEGER = panelContentBottom(f.Widgets, mcw.Name) - (mcw.Y + 1) - pncVis
-            IF pncMax < 0 THEN pncMax = 0
-            s = s + "            DIM pnRel" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
-            s = s + "            IF pnRel" + mcIStr + " = 1 AND m." + mcw.Name + "_Scroll > 0 THEN m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll - 1\n"
-            s = s + "            IF pnRel" + mcIStr + " = " + strconv.Itoa(mcw.H - 2) + " AND m." + mcw.Name + "_Scroll < " + strconv.Itoa(pncMax) + " THEN m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll + 1\n"
+            s = s + panelEmitMouse(mcw, mcIStr, mcYs, f.Widgets, qt)
         ELSE
             ' Label / TextInput / ProgressBar: focus follows the
             ' click but no state change. (TextInput Tier 2.)
@@ -1572,26 +1542,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             ELSEIF ww.Kind = "Button" THEN
                 s = s + buttonEmitKey(ww, qt)
             ELSEIF ww.Kind = "Panel" THEN
-                ' Scroll the child viewport. maxScroll comes from the
-                ' lowest child extent vs the visible height.
-                DIM pnVisK AS INTEGER = ww.H - 2
-                IF pnVisK < 1 THEN pnVisK = 1
-                DIM pnMaxK AS INTEGER = panelContentBottom(f.Widgets, ww.Name) - (ww.Y + 1) - pnVisK
-                IF pnMaxK < 0 THEN pnMaxK = 0
-                DIM pnMaxKStr AS STRING = strconv.Itoa(pnMaxK)
-                DIM pnVisKStr AS STRING = strconv.Itoa(pnVisK)
-                s = s + "            IF key = " + qt + "up" + qt + " AND m." + ww.Name + "_Scroll > 0 THEN m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll - 1\n"
-                s = s + "            IF key = " + qt + "down" + qt + " AND m." + ww.Name + "_Scroll < " + pnMaxKStr + " THEN m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll + 1\n"
-                s = s + "            IF key = " + qt + "pgup" + qt + " THEN\n"
-                s = s + "                m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll - " + pnVisKStr + "\n"
-                s = s + "                IF m." + ww.Name + "_Scroll < 0 THEN m." + ww.Name + "_Scroll = 0\n"
-                s = s + "            END IF\n"
-                s = s + "            IF key = " + qt + "pgdown" + qt + " THEN\n"
-                s = s + "                m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll + " + pnVisKStr + "\n"
-                s = s + "                IF m." + ww.Name + "_Scroll > " + pnMaxKStr + " THEN m." + ww.Name + "_Scroll = " + pnMaxKStr + "\n"
-                s = s + "            END IF\n"
-                s = s + "            IF key = " + qt + "home" + qt + " THEN m." + ww.Name + "_Scroll = 0\n"
-                s = s + "            IF key = " + qt + "end" + qt + " THEN m." + ww.Name + "_Scroll = " + pnMaxKStr + "\n"
+                s = s + panelEmitKey(ww, f.Widgets, qt)
             ELSE
                 ' Label / ProgressBar / others: no state changes.
                 s = s + "            _ = key\n"
@@ -1716,69 +1667,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         ELSEIF wv.Kind = "Menubar" THEN
             s = s + menubarEmitView(wv, sfx, xs, ys, qt)
         ELSEIF wv.Kind = "Panel" THEN
-            ' Container frame + scrollbar, then its children clipped to
-            ' the inner viewport and shifted up by <name>_Scroll. Child
-            ' appearance is the static design render (display-only v1).
-            DIM pnInnerStr AS STRING = strconv.Itoa(wv.W - 2)
-            DIM pnVisN AS INTEGER = wv.H - 2
-            IF pnVisN < 1 THEN pnVisN = 1
-            DIM pnVisStr AS STRING = strconv.Itoa(pnVisN)
-            DIM pnContentW AS INTEGER = wv.W - 3
-            IF pnContentW < 1 THEN pnContentW = 1
-            DIM pnTrack AS INTEGER = pnVisN - 2
-            DIM pnCB AS INTEGER = panelContentBottom(f.Widgets, wv.Name)
-            DIM pnMaxV AS INTEGER = pnCB - (wv.Y + 1) - pnVisN
-            IF pnMaxV < 0 THEN pnMaxV = 0
-            DIM pnMaxStr AS STRING = strconv.Itoa(pnMaxV)
-            DIM pnTrackStr AS STRING = strconv.Itoa(pnTrack)
-            DIM pnContentTop AS INTEGER = wv.Y + 1
-            DIM pnContentBot AS INTEGER = wv.Y + wv.H - 2
-            ' Top border.
-            s = s + "    DIM pnTop" + sfx + " AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + pnInnerStr + ") + " + qt + "┐" + qt + "\n"
-            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", pnTop" + sfx + ")\n"
-            ' Thumb position from scroll offset.
-            s = s + "    DIM pnThumb" + sfx + " AS INTEGER = 0 - 1\n"
-            s = s + "    IF " + pnMaxStr + " > 0 AND " + pnTrackStr + " > 0 THEN\n"
-            s = s + "        pnThumb" + sfx + " = (m." + wv.Name + "_Scroll * (" + pnTrackStr + " - 1)) / " + pnMaxStr + "\n"
-            s = s + "        IF pnThumb" + sfx + " < 0 THEN pnThumb" + sfx + " = 0\n"
-            s = s + "        IF pnThumb" + sfx + " > " + pnTrackStr + " - 1 THEN pnThumb" + sfx + " = " + pnTrackStr + " - 1\n"
-            s = s + "    END IF\n"
-            ' Side borders + scrollbar (empty interior).
-            s = s + "    DIM pnRw" + sfx + " AS INTEGER\n"
-            s = s + "    FOR pnRw" + sfx + " = 0 TO " + pnVisStr + " - 1\n"
-            s = s + "        DIM pnSb" + sfx + " AS STRING = " + qt + "░" + qt + "\n"
-            s = s + "        IF pnRw" + sfx + " = 0 THEN pnSb" + sfx + " = " + qt + "▲" + qt + "\n"
-            s = s + "        IF pnRw" + sfx + " = " + pnVisStr + " - 1 THEN pnSb" + sfx + " = " + qt + "▼" + qt + "\n"
-            s = s + "        IF pnRw" + sfx + " >= 1 AND pnRw" + sfx + " <= " + pnVisStr + " - 2 AND (pnRw" + sfx + " - 1) = pnThumb" + sfx + " THEN pnSb" + sfx + " = " + qt + "█" + qt + "\n"
-            s = s + "        DIM pnLn" + sfx + " AS STRING = " + qt + "│" + qt + " + strings.Repeat(" + qt + " " + qt + ", " + strconv.Itoa(pnContentW) + ") + pnSb" + sfx + " + " + qt + "│" + qt + "\n"
-            s = s + "        DIM pnLy" + sfx + " AS INTEGER = " + ys + " + 1 + pnRw" + sfx + "\n"
-            s = s + "        IF pnLy" + sfx + " >= 0 AND pnLy" + sfx + " < LEN(rows) THEN rows[pnLy" + sfx + "] = overlayRow(rows[pnLy" + sfx + "], " + xs + ", pnLn" + sfx + ")\n"
-            s = s + "    NEXT pnRw" + sfx + "\n"
-            ' Bottom border.
-            s = s + "    DIM pnBot" + sfx + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + pnInnerStr + ") + " + qt + "┘" + qt + "\n"
-            s = s + "    DIM pnBy" + sfx + " AS INTEGER = " + ys + " + " + strconv.Itoa(wv.H - 1) + "\n"
-            s = s + "    IF pnBy" + sfx + " >= 0 AND pnBy" + sfx + " < LEN(rows) THEN rows[pnBy" + sfx + "] = overlayRow(rows[pnBy" + sfx + "], " + xs + ", pnBot" + sfx + ")\n"
-            ' Children — overlay their (clipped) design rows, shifted by
-            ' the scroll offset, clipped to the content row band.
-            DIM pnCi AS INTEGER
-            FOR pnCi = 0 TO n - 1
-                DIM pnChild AS DesignWidget = f.Widgets[pnCi]
-                IF pnChild.Parent = wv.Name THEN
-                    DIM pnAvail AS INTEGER = (wv.X + wv.W - 2) - pnChild.X
-                    IF pnAvail > 0 THEN
-                        DIM pnCrows AS []STRING = widgetVisibleLines(pnChild)
-                        DIM pnCj AS INTEGER
-                        FOR pnCj = 0 TO LEN(pnCrows) - 1
-                            DIM pnCrow AS STRING = pnCrows[pnCj]
-                            IF lipgloss.Width(pnCrow) > pnAvail THEN pnCrow = Mid(pnCrow, 1, pnAvail)
-                            DIM pnAbsY AS INTEGER = pnChild.Y + pnCj
-                            DIM pnTag AS STRING = sfx + "c" + strconv.Itoa(pnCi) + "r" + strconv.Itoa(pnCj)
-                            s = s + "    DIM pcY" + pnTag + " AS INTEGER = " + strconv.Itoa(pnAbsY) + " - m." + wv.Name + "_Scroll\n"
-                            s = s + "    IF pcY" + pnTag + " >= " + strconv.Itoa(pnContentTop) + " AND pcY" + pnTag + " <= " + strconv.Itoa(pnContentBot) + " AND pcY" + pnTag + " >= 0 AND pcY" + pnTag + " < LEN(rows) THEN rows[pcY" + pnTag + "] = overlayCells(rows[pcY" + pnTag + "], " + strconv.Itoa(pnChild.X) + ", " + qt + escapeForDBString(pnCrow) + qt + ")\n"
-                        NEXT pnCj
-                    END IF
-                END IF
-            NEXT pnCi
+            s = s + panelEmitView(wv, sfx, xs, ys, f, n, qt)
         ELSE
         ' --- Single-row kinds: build body string, prefix focus
         '     marker, overlay onto the target row in `rows`.
