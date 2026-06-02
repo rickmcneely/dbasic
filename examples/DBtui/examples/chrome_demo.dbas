@@ -287,14 +287,6 @@ SUB Main()
     _ = final
 END SUB
 
-FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
-    DIM lf AS STRING = ""
-    IF col > 0 AND col <= LEN(row) THEN lf = Mid(row, 1, col)
-    DIM rt AS STRING = ""
-    IF col + LEN(txt) < LEN(row) THEN rt = Mid(row, col + LEN(txt) + 1, LEN(row) - col - LEN(txt))
-    RETURN lf + txt + rt
-END FUNCTION
-
 FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER
     DIM b AS INTEGER = 0
     DIM c AS INTEGER = 0
@@ -314,7 +306,7 @@ FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER
     RETURN b
 END FUNCTION
 
-FUNCTION overlayCells(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
+FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
     DIM txtCells AS INTEGER = 0
     DIM tb AS INTEGER = 0
     DO WHILE tb < LEN(txt)
@@ -337,6 +329,10 @@ FUNCTION overlayCells(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
     DIM rt AS STRING = ""
     IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
     RETURN lf + txt + rt
+END FUNCTION
+
+FUNCTION overlayCells(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
+    RETURN overlayRow(row, col, txt)
 END FUNCTION
 
 ' Generated dispatcher — routes a Button click to its user handler.

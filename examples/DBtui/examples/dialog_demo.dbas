@@ -382,11 +382,47 @@ SUB Main()
     _ = final
 END SUB
 
+FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER
+    DIM b AS INTEGER = 0
+    DIM c AS INTEGER = 0
+    DO WHILE b < LEN(sIn) AND c < cell
+        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))
+        DIM nb AS INTEGER = 1
+        IF lead >= 240 THEN
+            nb = 4
+        ELSEIF lead >= 224 THEN
+            nb = 3
+        ELSEIF lead >= 192 THEN
+            nb = 2
+        END IF
+        b = b + nb
+        c = c + 1
+    LOOP
+    RETURN b
+END FUNCTION
+
 FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
+    DIM txtCells AS INTEGER = 0
+    DIM tb AS INTEGER = 0
+    DO WHILE tb < LEN(txt)
+        DIM tl AS INTEGER = Asc(Mid(txt, tb + 1, 1))
+        DIM tn AS INTEGER = 1
+        IF tl >= 240 THEN
+            tn = 4
+        ELSEIF tl >= 224 THEN
+            tn = 3
+        ELSEIF tl >= 192 THEN
+            tn = 2
+        END IF
+        tb = tb + tn
+        txtCells = txtCells + 1
+    LOOP
+    DIM startB AS INTEGER = cellByteIdx(row, col)
+    DIM endB AS INTEGER = cellByteIdx(row, col + txtCells)
     DIM lf AS STRING = ""
-    IF col > 0 AND col <= LEN(row) THEN lf = Mid(row, 1, col)
+    IF startB > 0 THEN lf = Mid(row, 1, startB)
     DIM rt AS STRING = ""
-    IF col + LEN(txt) < LEN(row) THEN rt = Mid(row, col + LEN(txt) + 1, LEN(row) - col - LEN(txt))
+    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
     RETURN lf + txt + rt
 END FUNCTION
 

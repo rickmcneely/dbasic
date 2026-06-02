@@ -1615,66 +1615,66 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    _ = final\n"
     s = s + "END SUB\n"
     s = s + "\n"
+    ' --- cellByteIdx — byte offset of the Nth display cell (each UTF-8
+    '     codepoint = 1 cell). Emitted unconditionally because overlayRow
+    '     now relies on it to splice by visible column, not by byte.
+    s = s + "FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER\n"
+    s = s + "    DIM b AS INTEGER = 0\n"
+    s = s + "    DIM c AS INTEGER = 0\n"
+    s = s + "    DO WHILE b < LEN(sIn) AND c < cell\n"
+    s = s + "        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))\n"
+    s = s + "        DIM nb AS INTEGER = 1\n"
+    s = s + "        IF lead >= 240 THEN\n"
+    s = s + "            nb = 4\n"
+    s = s + "        ELSEIF lead >= 224 THEN\n"
+    s = s + "            nb = 3\n"
+    s = s + "        ELSEIF lead >= 192 THEN\n"
+    s = s + "            nb = 2\n"
+    s = s + "        END IF\n"
+    s = s + "        b = b + nb\n"
+    s = s + "        c = c + 1\n"
+    s = s + "    LOOP\n"
+    s = s + "    RETURN b\n"
+    s = s + "END FUNCTION\n"
+    s = s + "\n"
     ' --- overlayRow — shared helper for painting a body string onto
-    '     a target row at column X, preserving cells either side.
-    '     Returns the new row contents. Used by every per-widget
-    '     paint site in View, single-row or multi-row.
+    '     a target row at visible column `col`, preserving cells either
+    '     side. CELL-aware: it counts `txt`'s width in display cells (so
+    '     a 3-byte glyph like ▲ replaces exactly ONE cell, not 3 bytes)
+    '     and splices via cellByteIdx, so overlapping widgets and rows
+    '     containing multi-byte box glyphs line up correctly. Used by
+    '     every per-widget paint site in View, single-row or multi-row.
     s = s + "FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING\n"
+    s = s + "    DIM txtCells AS INTEGER = 0\n"
+    s = s + "    DIM tb AS INTEGER = 0\n"
+    s = s + "    DO WHILE tb < LEN(txt)\n"
+    s = s + "        DIM tl AS INTEGER = Asc(Mid(txt, tb + 1, 1))\n"
+    s = s + "        DIM tn AS INTEGER = 1\n"
+    s = s + "        IF tl >= 240 THEN\n"
+    s = s + "            tn = 4\n"
+    s = s + "        ELSEIF tl >= 224 THEN\n"
+    s = s + "            tn = 3\n"
+    s = s + "        ELSEIF tl >= 192 THEN\n"
+    s = s + "            tn = 2\n"
+    s = s + "        END IF\n"
+    s = s + "        tb = tb + tn\n"
+    s = s + "        txtCells = txtCells + 1\n"
+    s = s + "    LOOP\n"
+    s = s + "    DIM startB AS INTEGER = cellByteIdx(row, col)\n"
+    s = s + "    DIM endB AS INTEGER = cellByteIdx(row, col + txtCells)\n"
     s = s + "    DIM lf AS STRING = " + qt + qt + "\n"
-    s = s + "    IF col > 0 AND col <= LEN(row) THEN lf = Mid(row, 1, col)\n"
+    s = s + "    IF startB > 0 THEN lf = Mid(row, 1, startB)\n"
     s = s + "    DIM rt AS STRING = " + qt + qt + "\n"
-    s = s + "    IF col + LEN(txt) < LEN(row) THEN rt = Mid(row, col + LEN(txt) + 1, LEN(row) - col - LEN(txt))\n"
+    s = s + "    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)\n"
     s = s + "    RETURN lf + txt + rt\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
-    ' --- overlayCells — like overlayRow but CELL-aware: places `txt` at
-    '     visible column `col`, walking UTF-8 codepoints (each = 1 cell)
-    '     so it splices cleanly into a row that already contains
-    '     multi-byte box-drawing glyphs (a Panel's │ borders). Used for
-    '     child overlays inside a Panel.
+    ' --- overlayCells — Panel child overlays call this by name; now that
+    '     overlayRow is itself cell-aware it is a thin alias. Kept so the
+    '     Panel emitter doesn't need to change.
     IF hasPanel THEN
-        s = s + "FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER\n"
-        s = s + "    DIM b AS INTEGER = 0\n"
-        s = s + "    DIM c AS INTEGER = 0\n"
-        s = s + "    DO WHILE b < LEN(sIn) AND c < cell\n"
-        s = s + "        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))\n"
-        s = s + "        DIM nb AS INTEGER = 1\n"
-        s = s + "        IF lead >= 240 THEN\n"
-        s = s + "            nb = 4\n"
-        s = s + "        ELSEIF lead >= 224 THEN\n"
-        s = s + "            nb = 3\n"
-        s = s + "        ELSEIF lead >= 192 THEN\n"
-        s = s + "            nb = 2\n"
-        s = s + "        END IF\n"
-        s = s + "        b = b + nb\n"
-        s = s + "        c = c + 1\n"
-        s = s + "    LOOP\n"
-        s = s + "    RETURN b\n"
-        s = s + "END FUNCTION\n"
-        s = s + "\n"
         s = s + "FUNCTION overlayCells(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING\n"
-        s = s + "    DIM txtCells AS INTEGER = 0\n"
-        s = s + "    DIM tb AS INTEGER = 0\n"
-        s = s + "    DO WHILE tb < LEN(txt)\n"
-        s = s + "        DIM tl AS INTEGER = Asc(Mid(txt, tb + 1, 1))\n"
-        s = s + "        DIM tn AS INTEGER = 1\n"
-        s = s + "        IF tl >= 240 THEN\n"
-        s = s + "            tn = 4\n"
-        s = s + "        ELSEIF tl >= 224 THEN\n"
-        s = s + "            tn = 3\n"
-        s = s + "        ELSEIF tl >= 192 THEN\n"
-        s = s + "            tn = 2\n"
-        s = s + "        END IF\n"
-        s = s + "        tb = tb + tn\n"
-        s = s + "        txtCells = txtCells + 1\n"
-        s = s + "    LOOP\n"
-        s = s + "    DIM startB AS INTEGER = cellByteIdx(row, col)\n"
-        s = s + "    DIM endB AS INTEGER = cellByteIdx(row, col + txtCells)\n"
-        s = s + "    DIM lf AS STRING = " + qt + qt + "\n"
-        s = s + "    IF startB > 0 THEN lf = Mid(row, 1, startB)\n"
-        s = s + "    DIM rt AS STRING = " + qt + qt + "\n"
-        s = s + "    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)\n"
-        s = s + "    RETURN lf + txt + rt\n"
+        s = s + "    RETURN overlayRow(row, col, txt)\n"
         s = s + "END FUNCTION\n"
         s = s + "\n"
     END IF
