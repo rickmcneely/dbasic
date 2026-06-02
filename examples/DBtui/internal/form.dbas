@@ -1695,7 +1695,12 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    IF startB > 0 THEN lf = Mid(row, 1, startB)\n"
     s = s + "    DIM rt AS STRING = " + qt + qt + "\n"
     s = s + "    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)\n"
-    s = s + "    RETURN lf + txt + rt\n"
+    ' If lf carries an open SGR (a focus-highlighted widget whose styled
+    ' span this PLAIN overlay cuts into), terminate it with a reset before
+    ' txt so reverse-video can't bleed across the overlay and rightward.
+    s = s + "    DIM pre AS STRING = " + qt + qt + "\n"
+    s = s + "    IF strings.Contains(lf, Chr(27)) THEN pre = Chr(27) + " + qt + "[0m" + qt + "\n"
+    s = s + "    RETURN lf + pre + txt + rt\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
     ' --- overlayCells — Panel child overlays call this by name; now that

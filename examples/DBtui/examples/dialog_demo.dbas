@@ -430,7 +430,9 @@ FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
     IF startB > 0 THEN lf = Mid(row, 1, startB)
     DIM rt AS STRING = ""
     IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
-    RETURN lf + txt + rt
+    DIM pre AS STRING = ""
+    IF strings.Contains(lf, Chr(27)) THEN pre = Chr(27) + "[0m"
+    RETURN lf + pre + txt + rt
 END FUNCTION
 
 FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
