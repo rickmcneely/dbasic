@@ -629,18 +629,31 @@ END SUB
 FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER
     DIM b AS INTEGER = 0
     DIM c AS INTEGER = 0
+    DIM lead AS INTEGER = 0
+    DIM nb AS INTEGER = 0
+    DIM fb AS INTEGER = 0
     DO WHILE b < LEN(sIn) AND c < cell
-        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))
-        DIM nb AS INTEGER = 1
-        IF lead >= 240 THEN
-            nb = 4
-        ELSEIF lead >= 224 THEN
-            nb = 3
-        ELSEIF lead >= 192 THEN
-            nb = 2
+        lead = Asc(Mid(sIn, b + 1, 1))
+        IF lead = 27 THEN
+            b = b + 1
+            IF b < LEN(sIn) AND Asc(Mid(sIn, b + 1, 1)) = 91 THEN b = b + 1
+            DO WHILE b < LEN(sIn)
+                fb = Asc(Mid(sIn, b + 1, 1))
+                b = b + 1
+                IF fb >= 64 AND fb <= 126 THEN EXIT DO
+            LOOP
+        ELSE
+            nb = 1
+            IF lead >= 240 THEN
+                nb = 4
+            ELSEIF lead >= 224 THEN
+                nb = 3
+            ELSEIF lead >= 192 THEN
+                nb = 2
+            END IF
+            b = b + nb
+            c = c + 1
         END IF
-        b = b + nb
-        c = c + 1
     LOOP
     RETURN b
 END FUNCTION
