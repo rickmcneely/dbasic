@@ -135,13 +135,10 @@ FUNCTION treeEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STR
     s = s + "                IF tnIdx" + sfx + " < LEN(m." + wv.Name + "_Collapsed) AND m." + wv.Name + "_Collapsed[tnIdx" + sfx + "] THEN tnG" + sfx + " = " + qt + "▸" + qt + "\n"
     s = s + "            END IF\n"
     s = s + "            DIM tnLine" + sfx + " AS STRING = strings.Repeat(" + qt + "  " + qt + ", tnD" + sfx + ") + tnG" + sfx + " + " + qt + " " + qt + " + tnLab" + sfx + "[tnIdx" + sfx + "]\n"
-    s = s + "            IF tnIdx" + sfx + " = m." + wv.Name + "_Val THEN\n"
-    s = s + "                tnLine" + sfx + " = " + qt + ">" + qt + " + tnLine" + sfx + "\n"
-    s = s + "            ELSE\n"
-    s = s + "                tnLine" + sfx + " = " + qt + " " + qt + " + tnLine" + sfx + "\n"
-    s = s + "            END IF\n"
+    ' Focus arrow dropped: node rows render at X (matches treeVisibleLines);
+    ' the ▾/▸/• structure glyphs stay, but no leading >/space.
     s = s + "            DIM tnY" + sfx + " AS INTEGER = " + ys + " + tnR" + sfx + "\n"
-    s = s + "            IF tnY" + sfx + " >= 0 AND tnY" + sfx + " < LEN(rows) THEN rows[tnY" + sfx + "] = overlayRow(rows[tnY" + sfx + "], " + xs + ", tnLine" + sfx + ")\n"
+    s = s + "            IF tnY" + sfx + " >= 0 AND tnY" + sfx + " < LEN(rows) THEN rows[tnY" + sfx + "] = overlayFocus(rows[tnY" + sfx + "], " + xs + ", tnLine" + sfx + ", m.Focus = " + sfx + ")\n"
     s = s + "        END IF\n"
     s = s + "    NEXT tnR" + sfx + "\n"
     RETURN s

@@ -290,44 +290,19 @@ FUNCTION (m AS Model) View() AS tea.View
     NEXT r
     DIM body0 AS STRING
     body0 = "[ Open Confirm ]"
-    IF m.Focus = 0 THEN
-        body0 = ">" + body0
-    ELSE
-        body0 = " " + body0
-    END IF
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayRow(rows[4], 4, body0)
+    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 4, body0, m.Focus = 0)
     DIM body1 AS STRING
     body1 = "[ Ask Name ]"
-    IF m.Focus = 1 THEN
-        body1 = ">" + body1
-    ELSE
-        body1 = " " + body1
-    END IF
-    IF 6 >= 0 AND 6 < LEN(rows) THEN rows[6] = overlayRow(rows[6], 4, body1)
+    IF 6 >= 0 AND 6 < LEN(rows) THEN rows[6] = overlayFocus(rows[6], 4, body1, m.Focus = 1)
     DIM body2 AS STRING
     body2 = "[ Plain ]"
-    IF m.Focus = 2 THEN
-        body2 = ">" + body2
-    ELSE
-        body2 = " " + body2
-    END IF
-    IF 8 >= 0 AND 8 < LEN(rows) THEN rows[8] = overlayRow(rows[8], 4, body2)
+    IF 8 >= 0 AND 8 < LEN(rows) THEN rows[8] = overlayFocus(rows[8], 4, body2, m.Focus = 2)
     DIM body3 AS STRING
     body3 = "◇ Dialog(confirm): Confirm"
-    IF m.Focus = 3 THEN
-        body3 = ">" + body3
-    ELSE
-        body3 = " " + body3
-    END IF
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayRow(rows[4], 30, body3)
+    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 30, body3, m.Focus = 3)
     DIM body4 AS STRING
     body4 = "◇ Dialog(input): Your Name"
-    IF m.Focus = 4 THEN
-        body4 = ">" + body4
-    ELSE
-        body4 = " " + body4
-    END IF
-    IF 10 >= 0 AND 10 < LEN(rows) THEN rows[10] = overlayRow(rows[10], 30, body4)
+    IF 10 >= 0 AND 10 < LEN(rows) THEN rows[10] = overlayFocus(rows[10], 30, body4, m.Focus = 4)
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
     DIM fullView AS STRING = strings.Join(rows, "\n")
     DIM dlgStr AS STRING = ""
@@ -446,12 +421,21 @@ FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
 END FUNCTION
 
 FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
-    DIM lf AS STRING = ""
-    IF col > 0 AND col <= LEN(row) THEN lf = Mid(row, 1, col)
     DIM cells AS INTEGER = lipgloss.Width(txt)
+    DIM startB AS INTEGER = cellByteIdx(row, col)
+    DIM endB AS INTEGER = cellByteIdx(row, col + cells)
+    DIM lf AS STRING = ""
+    IF startB > 0 THEN lf = Mid(row, 1, startB)
     DIM rt AS STRING = ""
-    IF col + cells < LEN(row) THEN rt = Mid(row, col + cells + 1, LEN(row) - col - cells)
+    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
     RETURN lf + txt + rt
+END FUNCTION
+
+DIM focusStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
+
+FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN) AS STRING
+    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))
+    RETURN overlayRow(row, col, txt)
 END FUNCTION
 
 ' Generated dispatcher — routes a Button click to its user handler.

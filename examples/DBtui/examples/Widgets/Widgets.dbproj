@@ -378,6 +378,30 @@
           "DialogMask": "",
           "OnClickDialog": "",
           "Parent": ""
+        },
+        {
+          "Kind": "Label",
+          "Name": "ruler",
+          "Text": "01234567890123456789012345678901234567890123456789012345678901234567890123456789",
+          "X": 0,
+          "Y": 0,
+          "W": 80,
+          "H": 1,
+          "Items": null,
+          "Selected": 0,
+          "Checked": false,
+          "Group": "",
+          "Min": 0,
+          "Max": 0,
+          "Value": 0,
+          "Orient": "",
+          "DialogKind": "",
+          "DialogMsg": "",
+          "DialogDef": "",
+          "DialogMode": "",
+          "DialogMask": "",
+          "OnClickDialog": "",
+          "Parent": ""
         }
       ]
     }

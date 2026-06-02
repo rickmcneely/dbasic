@@ -4,6 +4,7 @@ IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
 
 SUB _dbtuiKeepFmtAlive()
     _ = fmt.Sprintf("")
@@ -351,6 +352,24 @@ FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
 END FUNCTION
 
 FUNCTION overlayCells(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
+    RETURN overlayRow(row, col, txt)
+END FUNCTION
+
+FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
+    DIM cells AS INTEGER = lipgloss.Width(txt)
+    DIM startB AS INTEGER = cellByteIdx(row, col)
+    DIM endB AS INTEGER = cellByteIdx(row, col + cells)
+    DIM lf AS STRING = ""
+    IF startB > 0 THEN lf = Mid(row, 1, startB)
+    DIM rt AS STRING = ""
+    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
+    RETURN lf + txt + rt
+END FUNCTION
+
+DIM focusStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
+
+FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN) AS STRING
+    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))
     RETURN overlayRow(row, col, txt)
 END FUNCTION
 

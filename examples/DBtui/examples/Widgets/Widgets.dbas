@@ -47,6 +47,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mc, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mc.Button = tea.MouseLeft THEN
+        IF mc.X >= 0 AND mc.X < 0 + 80 AND mc.Y >= 0 AND mc.Y < 0 + 1 THEN
+            m.Focus = 14
+            _ = mc
+            RETURN m, NIL
+        END IF
         IF mc.X >= 30 AND mc.X < 30 + 26 AND mc.Y >= 14 AND mc.Y < 14 + 7 THEN
             m.Focus = 13
             DIM spRel13 AS INTEGER = mc.Y - 14
@@ -176,12 +181,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM key AS STRING = k.String()
         IF key = "ctrl+c" OR key = "esc" THEN RETURN m, tea.Quit
         IF key = "tab" THEN
-            m.Focus = (m.Focus + 1) MOD 14
+            m.Focus = (m.Focus + 1) MOD 15
             RETURN m, NIL
         END IF
         IF key = "shift+tab" THEN
             m.Focus = m.Focus - 1
-            IF m.Focus < 0 THEN m.Focus = 13
+            IF m.Focus < 0 THEN m.Focus = 14
             RETURN m, NIL
         END IF
         IF m.Focus = 0 THEN
@@ -365,6 +370,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             IF key = "end" THEN m.scrollpanel1_Scroll = 7
             RETURN m, NIL
         END IF
+        IF m.Focus = 14 THEN
+            _ = key
+            RETURN m, NIL
+        END IF
     END IF
     RETURN m, NIL
 END FUNCTION
@@ -381,54 +390,29 @@ FUNCTION (m AS Model) View() AS tea.View
     NEXT r
     DIM body0 AS STRING
     body0 = "[ Button ]"
-    IF m.Focus = 0 THEN
-        body0 = ">" + body0
-    ELSE
-        body0 = " " + body0
-    END IF
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayRow(rows[1], 2, body0)
+    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 2, body0, m.Focus = 0)
     DIM body1 AS STRING
     body1 = "Label"
-    IF m.Focus = 1 THEN
-        body1 = ">" + body1
-    ELSE
-        body1 = " " + body1
-    END IF
-    IF 2 >= 0 AND 2 < LEN(rows) THEN rows[2] = overlayRow(rows[2], 2, body1)
+    IF 2 >= 0 AND 2 < LEN(rows) THEN rows[2] = overlayFocus(rows[2], 2, body1, m.Focus = 1)
     DIM body2 AS STRING
     DIM tiPad2 AS INTEGER = 16 - 2 - cellLen(m.textinput1_Val)
     IF tiPad2 < 0 THEN tiPad2 = 0
     body2 = "[" + m.textinput1_Val + strings.Repeat(" ", tiPad2) + "]"
-    IF m.Focus = 2 THEN
-        body2 = ">" + body2
-    ELSE
-        body2 = " " + body2
-    END IF
-    IF 3 >= 0 AND 3 < LEN(rows) THEN rows[3] = overlayRow(rows[3], 2, body2)
+    IF 3 >= 0 AND 3 < LEN(rows) THEN rows[3] = overlayFocus(rows[3], 2, body2, m.Focus = 2)
     DIM body3 AS STRING
     IF m.checkbox1_Val THEN
         body3 = "[x] option"
     ELSE
         body3 = "[ ] option"
     END IF
-    IF m.Focus = 3 THEN
-        body3 = ">" + body3
-    ELSE
-        body3 = " " + body3
-    END IF
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayRow(rows[4], 2, body3)
+    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 2, body3, m.Focus = 3)
     DIM body4 AS STRING
     IF m.radiobutton1_Val THEN
         body4 = "(o) option"
     ELSE
         body4 = "( ) option"
     END IF
-    IF m.Focus = 4 THEN
-        body4 = ">" + body4
-    ELSE
-        body4 = " " + body4
-    END IF
-    IF 5 >= 0 AND 5 < LEN(rows) THEN rows[5] = overlayRow(rows[5], 2, body4)
+    IF 5 >= 0 AND 5 < LEN(rows) THEN rows[5] = overlayFocus(rows[5], 2, body4, m.Focus = 4)
     DIM body5 AS STRING
     DIM cbItems5 AS []STRING
     cbItems5 = APPEND(cbItems5, "red")
@@ -439,12 +423,7 @@ FUNCTION (m AS Model) View() AS tea.View
     IF LEN(cbCur5) > 12 THEN cbCur5 = Mid(cbCur5, 1, 12)
     IF LEN(cbCur5) < 12 THEN cbCur5 = cbCur5 + strings.Repeat(" ", 12 - LEN(cbCur5))
     body5 = "[" + cbCur5 + " v]"
-    IF m.Focus = 5 THEN
-        body5 = ">" + body5
-    ELSE
-        body5 = " " + body5
-    END IF
-    IF 6 >= 0 AND 6 < LEN(rows) THEN rows[6] = overlayRow(rows[6], 2, body5)
+    IF 6 >= 0 AND 6 < LEN(rows) THEN rows[6] = overlayFocus(rows[6], 2, body5, m.Focus = 5)
     DIM items6 AS []STRING
     items6 = APPEND(items6, "item one")
     items6 = APPEND(items6, "item two")
@@ -458,29 +437,15 @@ FUNCTION (m AS Model) View() AS tea.View
         DIM lbMark6 AS STRING = "  "
         IF lbi6 = m.listbox1_Val THEN lbMark6 = "▶ "
         DIM lbRow6 AS STRING = lbMark6 + lbItem6
-        IF lbi6 = 0 THEN
-            IF m.Focus = 6 THEN
-                lbRow6 = ">" + lbRow6
-            ELSE
-                lbRow6 = " " + lbRow6
-            END IF
-        ELSE
-            lbRow6 = " " + lbRow6
-        END IF
         DIM yPos6 AS INTEGER = 7 + lbi6
-        IF yPos6 >= 0 AND yPos6 < LEN(rows) THEN rows[yPos6] = overlayRow(rows[yPos6], 2, lbRow6)
+        IF yPos6 >= 0 AND yPos6 < LEN(rows) THEN rows[yPos6] = overlayFocus(rows[yPos6], 2, lbRow6, m.Focus = 6)
     NEXT lbi6
     DIM body7 AS STRING
     DIM pbFilled7 AS INTEGER = (m.progressbar1_Val - 0) * 18 / 100
     IF pbFilled7 < 0 THEN pbFilled7 = 0
     IF pbFilled7 > 18 THEN pbFilled7 = 18
     body7 = "[" + strings.Repeat("█", pbFilled7) + strings.Repeat("░", 18 - pbFilled7) + "]"
-    IF m.Focus = 7 THEN
-        body7 = ">" + body7
-    ELSE
-        body7 = " " + body7
-    END IF
-    IF 17 >= 0 AND 17 < LEN(rows) THEN rows[17] = overlayRow(rows[17], 2, body7)
+    IF 17 >= 0 AND 17 < LEN(rows) THEN rows[17] = overlayFocus(rows[17], 2, body7, m.Focus = 7)
     DIM svi8 AS INTEGER
     DIM svThumb8 AS INTEGER = 1 + ((m.scrollbar1_Val - 0) * (8 - 3)) / 100
     IF svThumb8 < 1 THEN svThumb8 = 1
@@ -490,17 +455,8 @@ FUNCTION (m AS Model) View() AS tea.View
         IF svi8 = 0 THEN svGlyph8 = "▲"
         IF svi8 = 8 - 1 THEN svGlyph8 = "▼"
         IF svi8 = svThumb8 THEN svGlyph8 = "█"
-        IF svi8 = 0 THEN
-            IF m.Focus = 8 THEN
-                svGlyph8 = ">" + svGlyph8
-            ELSE
-                svGlyph8 = " " + svGlyph8
-            END IF
-        ELSE
-            svGlyph8 = " " + svGlyph8
-        END IF
         DIM svY8 AS INTEGER = 9 + svi8
-        IF svY8 >= 0 AND svY8 < LEN(rows) THEN rows[svY8] = overlayRow(rows[svY8], 2, svGlyph8)
+        IF svY8 >= 0 AND svY8 < LEN(rows) THEN rows[svY8] = overlayFocus(rows[svY8], 2, svGlyph8, m.Focus = 8)
     NEXT svi8
     DIM tsItems9 AS []STRING
     tsItems9 = APPEND(tsItems9, "General")
@@ -516,20 +472,15 @@ FUNCTION (m AS Model) View() AS tea.View
             tsBar9 = tsBar9 + " " + tsItems9[tsk9] + " "
         END IF
     NEXT tsk9
-    IF m.Focus = 9 THEN
-        tsBar9 = ">" + tsBar9
-    ELSE
-        tsBar9 = " " + tsBar9
-    END IF
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayRow(rows[1], 30, tsBar9)
-    DIM tsRule9 AS STRING = " " + strings.Repeat("─", 28)
+    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 30, tsBar9, m.Focus = 9)
+    DIM tsRule9 AS STRING = strings.Repeat("─", 28)
     DIM tsRuleY9 AS INTEGER = 1 + 1
-    IF tsRuleY9 >= 0 AND tsRuleY9 < LEN(rows) THEN rows[tsRuleY9] = overlayRow(rows[tsRuleY9], 30, tsRule9)
+    IF tsRuleY9 >= 0 AND tsRuleY9 < LEN(rows) THEN rows[tsRuleY9] = overlayFocus(rows[tsRuleY9], 30, tsRule9, m.Focus = 9)
     DIM tsAct9 AS STRING = ""
     IF m.tabstrip1_Val >= 0 AND m.tabstrip1_Val < LEN(tsItems9) THEN tsAct9 = tsItems9[m.tabstrip1_Val]
     DIM tsContent9 AS STRING = " " + tsAct9 + " tab"
     DIM tsContentY9 AS INTEGER = 1 + 2
-    IF tsContentY9 >= 0 AND tsContentY9 < LEN(rows) THEN rows[tsContentY9] = overlayRow(rows[tsContentY9], 30, tsContent9)
+    IF tsContentY9 >= 0 AND tsContentY9 < LEN(rows) THEN rows[tsContentY9] = overlayFocus(rows[tsContentY9], 30, tsContent9, m.Focus = 9)
     DIM tnVis10 AS []INTEGER = treeVisibleRows(tree1_depths(), m.tree1_Collapsed)
     DIM tnDep10 AS []INTEGER = tree1_depths()
     DIM tnLab10 AS []STRING = tree1_labels()
@@ -544,13 +495,8 @@ FUNCTION (m AS Model) View() AS tea.View
                 IF tnIdx10 < LEN(m.tree1_Collapsed) AND m.tree1_Collapsed[tnIdx10] THEN tnG10 = "▸"
             END IF
             DIM tnLine10 AS STRING = strings.Repeat("  ", tnD10) + tnG10 + " " + tnLab10[tnIdx10]
-            IF tnIdx10 = m.tree1_Val THEN
-                tnLine10 = ">" + tnLine10
-            ELSE
-                tnLine10 = " " + tnLine10
-            END IF
             DIM tnY10 AS INTEGER = 7 + tnR10
-            IF tnY10 >= 0 AND tnY10 < LEN(rows) THEN rows[tnY10] = overlayRow(rows[tnY10], 30, tnLine10)
+            IF tnY10 >= 0 AND tnY10 < LEN(rows) THEN rows[tnY10] = overlayFocus(rows[tnY10], 30, tnLine10, m.Focus = 10)
         END IF
     NEXT tnR10
     DIM taTop11 AS STRING = "┌" + strings.Repeat("─", 20) + "┐"
@@ -646,6 +592,9 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM spBot13 AS STRING = "└" + strings.Repeat("─", 24) + "┘"
     DIM spBotY13 AS INTEGER = 14 + 6
     IF spBotY13 >= 0 AND spBotY13 < LEN(rows) THEN rows[spBotY13] = overlayRow(rows[spBotY13], 30, spBot13)
+    DIM body14 AS STRING
+    body14 = "01234567890123456789012345678901234567890123456789012345678901234567890123456789"
+    IF 0 >= 0 AND 0 < LEN(rows) THEN rows[0] = overlayFocus(rows[0], 0, body14, m.Focus = 14)
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
     DIM fullView AS STRING = strings.Join(rows, "\n")
     DIM vw AS tea.View = tea.NewView(fullView)
@@ -738,6 +687,24 @@ FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
     DIM rt AS STRING = ""
     IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
     RETURN lf + txt + rt
+END FUNCTION
+
+FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
+    DIM cells AS INTEGER = lipgloss.Width(txt)
+    DIM startB AS INTEGER = cellByteIdx(row, col)
+    DIM endB AS INTEGER = cellByteIdx(row, col + cells)
+    DIM lf AS STRING = ""
+    IF startB > 0 THEN lf = Mid(row, 1, startB)
+    DIM rt AS STRING = ""
+    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
+    RETURN lf + txt + rt
+END FUNCTION
+
+DIM focusStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
+
+FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN) AS STRING
+    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))
+    RETURN overlayRow(row, col, txt)
 END FUNCTION
 
 ' Generated dispatcher — routes a Button click to its user handler.

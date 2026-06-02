@@ -4,6 +4,7 @@ IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
+IMPORT "charm.land/lipgloss/v2" AS lipgloss
 
 SUB _dbtuiKeepFmtAlive()
     _ = fmt.Sprintf("")
@@ -91,28 +92,13 @@ FUNCTION (m AS Model) View() AS tea.View
     NEXT r
     DIM body0 AS STRING
     body0 = "Unsaved changes will be lost. Discard?"
-    IF m.Focus = 0 THEN
-        body0 = ">" + body0
-    ELSE
-        body0 = " " + body0
-    END IF
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayRow(rows[1], 2, body0)
+    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 2, body0, m.Focus = 0)
     DIM body1 AS STRING
     body1 = "[ Discard ]"
-    IF m.Focus = 1 THEN
-        body1 = ">" + body1
-    ELSE
-        body1 = " " + body1
-    END IF
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayRow(rows[4], 2, body1)
+    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 2, body1, m.Focus = 1)
     DIM body2 AS STRING
     body2 = "[ Cancel ]"
-    IF m.Focus = 2 THEN
-        body2 = ">" + body2
-    ELSE
-        body2 = " " + body2
-    END IF
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayRow(rows[4], 18, body2)
+    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 18, body2, m.Focus = 2)
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
     DIM fullView AS STRING = strings.Join(rows, "\n")
     DIM vw AS tea.View = tea.NewView(fullView)
@@ -192,6 +178,24 @@ FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
     DIM rt AS STRING = ""
     IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
     RETURN lf + txt + rt
+END FUNCTION
+
+FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
+    DIM cells AS INTEGER = lipgloss.Width(txt)
+    DIM startB AS INTEGER = cellByteIdx(row, col)
+    DIM endB AS INTEGER = cellByteIdx(row, col + cells)
+    DIM lf AS STRING = ""
+    IF startB > 0 THEN lf = Mid(row, 1, startB)
+    DIM rt AS STRING = ""
+    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
+    RETURN lf + txt + rt
+END FUNCTION
+
+DIM focusStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
+
+FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN) AS STRING
+    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))
+    RETURN overlayRow(row, col, txt)
 END FUNCTION
 
 ' Generated dispatcher — routes a Button click to its user handler.

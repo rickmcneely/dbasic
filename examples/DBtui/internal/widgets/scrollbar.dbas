@@ -133,17 +133,10 @@ FUNCTION scrollBarEmitViewVert(wv AS DesignWidget, sfx AS STRING, xs AS STRING, 
     s = s + "        IF svi" + sfx + " = 0 THEN svGlyph" + sfx + " = " + qt + "▲" + qt + "\n"
     s = s + "        IF svi" + sfx + " = " + svH + " - 1 THEN svGlyph" + sfx + " = " + qt + "▼" + qt + "\n"
     s = s + "        IF svi" + sfx + " = svThumb" + sfx + " THEN svGlyph" + sfx + " = " + qt + "█" + qt + "\n"
-    s = s + "        IF svi" + sfx + " = 0 THEN\n"
-    s = s + "            IF m.Focus = " + sfx + " THEN\n"
-    s = s + "                svGlyph" + sfx + " = " + qt + ">" + qt + " + svGlyph" + sfx + "\n"
-    s = s + "            ELSE\n"
-    s = s + "                svGlyph" + sfx + " = " + qt + " " + qt + " + svGlyph" + sfx + "\n"
-    s = s + "            END IF\n"
-    s = s + "        ELSE\n"
-    s = s + "            svGlyph" + sfx + " = " + qt + " " + qt + " + svGlyph" + sfx + "\n"
-    s = s + "        END IF\n"
+    ' Focus arrow dropped: the glyph column renders at X (matches the
+    ' designer's scrollBarVisibleLines); no leading >/space on any row.
     s = s + "        DIM svY" + sfx + " AS INTEGER = " + ys + " + svi" + sfx + "\n"
-    s = s + "        IF svY" + sfx + " >= 0 AND svY" + sfx + " < LEN(rows) THEN rows[svY" + sfx + "] = overlayRow(rows[svY" + sfx + "], " + xs + ", svGlyph" + sfx + ")\n"
+    s = s + "        IF svY" + sfx + " >= 0 AND svY" + sfx + " < LEN(rows) THEN rows[svY" + sfx + "] = overlayFocus(rows[svY" + sfx + "], " + xs + ", svGlyph" + sfx + ", m.Focus = " + sfx + ")\n"
     s = s + "    NEXT svi" + sfx + "\n"
     RETURN s
 END FUNCTION

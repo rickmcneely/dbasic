@@ -518,7 +518,8 @@ FUNCTION renderTreeBody(m AS Model, innerW AS INTEGER, innerH AS INTEGER) AS STR
     FOR i = startI TO endI - 1
         DIM n AS TreeNode = m.TreeNodes[i]
         DIM indent AS STRING = strings.Repeat("  ", n.Depth)
-        DIM line   AS STRING = indent + nodeGlyph(m, n) + " " + n.Name
+        ' One-cell left inset so the tree text doesn't hug the border │.
+        DIM line   AS STRING = " " + indent + nodeGlyph(m, n) + " " + n.Name
         IF i = m.TreeSelected THEN
             lines = APPEND(lines, cursorStyle.Render(line))
         ELSEIF i = hoverRow THEN
