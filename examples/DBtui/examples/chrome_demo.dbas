@@ -306,6 +306,25 @@ FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER
     RETURN b
 END FUNCTION
 
+FUNCTION cellLen(sIn AS STRING) AS INTEGER
+    DIM b AS INTEGER = 0
+    DIM c AS INTEGER = 0
+    DO WHILE b < LEN(sIn)
+        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))
+        DIM nb AS INTEGER = 1
+        IF lead >= 240 THEN
+            nb = 4
+        ELSEIF lead >= 224 THEN
+            nb = 3
+        ELSEIF lead >= 192 THEN
+            nb = 2
+        END IF
+        b = b + nb
+        c = c + 1
+    LOOP
+    RETURN c
+END FUNCTION
+
 FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
     DIM txtCells AS INTEGER = 0
     DIM tb AS INTEGER = 0

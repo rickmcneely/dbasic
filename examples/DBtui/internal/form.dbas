@@ -1637,6 +1637,29 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    RETURN b\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
+    ' --- cellLen — display width of a string in cells (each UTF-8
+    '     codepoint = 1 cell). Companion to cellByteIdx; used for
+    '     cell-aware truncate/pad in ListBox / ComboBox / TextInput so
+    '     non-ASCII content (accents, emoji) doesn't break alignment.
+    s = s + "FUNCTION cellLen(sIn AS STRING) AS INTEGER\n"
+    s = s + "    DIM b AS INTEGER = 0\n"
+    s = s + "    DIM c AS INTEGER = 0\n"
+    s = s + "    DO WHILE b < LEN(sIn)\n"
+    s = s + "        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))\n"
+    s = s + "        DIM nb AS INTEGER = 1\n"
+    s = s + "        IF lead >= 240 THEN\n"
+    s = s + "            nb = 4\n"
+    s = s + "        ELSEIF lead >= 224 THEN\n"
+    s = s + "            nb = 3\n"
+    s = s + "        ELSEIF lead >= 192 THEN\n"
+    s = s + "            nb = 2\n"
+    s = s + "        END IF\n"
+    s = s + "        b = b + nb\n"
+    s = s + "        c = c + 1\n"
+    s = s + "    LOOP\n"
+    s = s + "    RETURN c\n"
+    s = s + "END FUNCTION\n"
+    s = s + "\n"
     ' --- overlayRow — shared helper for painting a body string onto
     '     a target row at visible column `col`, preserving cells either
     '     side. CELL-aware: it counts `txt`'s width in display cells (so

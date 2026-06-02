@@ -193,10 +193,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF m.Focus = 2 THEN
-            IF LEN(key) = 1 THEN m.textinput1_Val = m.textinput1_Val + key
+            IF cellLen(key) = 1 THEN m.textinput1_Val = m.textinput1_Val + key
             IF key = "space" THEN m.textinput1_Val = m.textinput1_Val + " "
             IF key = "backspace" AND LEN(m.textinput1_Val) > 0 THEN
-                m.textinput1_Val = Mid(m.textinput1_Val, 1, LEN(m.textinput1_Val) - 1)
+                m.textinput1_Val = Mid(m.textinput1_Val, 1, cellByteIdx(m.textinput1_Val, cellLen(m.textinput1_Val) - 1))
             END IF
             RETURN m, NIL
         END IF
@@ -396,7 +396,9 @@ FUNCTION (m AS Model) View() AS tea.View
     END IF
     IF 2 >= 0 AND 2 < LEN(rows) THEN rows[2] = overlayRow(rows[2], 2, body1)
     DIM body2 AS STRING
-    body2 = "[" + m.textinput1_Val + strings.Repeat(" ", 16 - 2 - LEN(m.textinput1_Val)) + "]"
+    DIM tiPad2 AS INTEGER = 16 - 2 - cellLen(m.textinput1_Val)
+    IF tiPad2 < 0 THEN tiPad2 = 0
+    body2 = "[" + m.textinput1_Val + strings.Repeat(" ", tiPad2) + "]"
     IF m.Focus = 2 THEN
         body2 = ">" + body2
     ELSE
@@ -451,8 +453,8 @@ FUNCTION (m AS Model) View() AS tea.View
     FOR lbi6 = 0 TO 5 - 1
         DIM lbItem6 AS STRING = ""
         IF lbi6 < LEN(items6) THEN lbItem6 = items6[lbi6]
-        IF LEN(lbItem6) > 16 THEN lbItem6 = Mid(lbItem6, 1, 16)
-        IF LEN(lbItem6) < 16 THEN lbItem6 = lbItem6 + strings.Repeat(" ", 16 - LEN(lbItem6))
+        IF cellLen(lbItem6) > 16 THEN lbItem6 = Mid(lbItem6, 1, cellByteIdx(lbItem6, 16))
+        IF cellLen(lbItem6) < 16 THEN lbItem6 = lbItem6 + strings.Repeat(" ", 16 - cellLen(lbItem6))
         DIM lbMark6 AS STRING = "  "
         IF lbi6 = m.listbox1_Val THEN lbMark6 = "▶ "
         DIM lbRow6 AS STRING = lbMark6 + lbItem6
@@ -692,6 +694,25 @@ FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER
         c = c + 1
     LOOP
     RETURN b
+END FUNCTION
+
+FUNCTION cellLen(sIn AS STRING) AS INTEGER
+    DIM b AS INTEGER = 0
+    DIM c AS INTEGER = 0
+    DO WHILE b < LEN(sIn)
+        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))
+        DIM nb AS INTEGER = 1
+        IF lead >= 240 THEN
+            nb = 4
+        ELSEIF lead >= 224 THEN
+            nb = 3
+        ELSEIF lead >= 192 THEN
+            nb = 2
+        END IF
+        b = b + nb
+        c = c + 1
+    LOOP
+    RETURN c
 END FUNCTION
 
 FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING

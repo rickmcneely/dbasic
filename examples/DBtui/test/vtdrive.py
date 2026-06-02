@@ -28,7 +28,8 @@ except ImportError:
 
 COLS, ROWS = 100, 40
 KEYMAP = {"tab": "\t", "up": "\x1b[A", "down": "\x1b[B", "left": "\x1b[D",
-          "right": "\x1b[C", "enter": "\r", "space": " ", "esc": "\x1b"}
+          "right": "\x1b[C", "enter": "\r", "space": " ", "esc": "\x1b",
+          "backspace": "\x7f", "bs": "\x7f"}
 
 
 def run(prog, keyspec):

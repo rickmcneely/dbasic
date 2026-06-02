@@ -38,16 +38,28 @@ END FUNCTION
 ' F — keyboard: printable chars + space append; backspace trims one char.
 FUNCTION textInputEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
     DIM s AS STRING = ""
-    s = s + "            IF LEN(key) = 1 THEN m." + ww.Name + "_Val = m." + ww.Name + "_Val + key\n"
+    ' One codepoint (not one byte) = a printable char, so multi-byte
+    ' input (é, ü, emoji) is accepted; named keys (backspace, enter…)
+    ' have cellLen > 1 and fall through.
+    s = s + "            IF cellLen(key) = 1 THEN m." + ww.Name + "_Val = m." + ww.Name + "_Val + key\n"
     s = s + "            IF key = " + qt + "space" + qt + " THEN m." + ww.Name + "_Val = m." + ww.Name + "_Val + " + qt + " " + qt + "\n"
     s = s + "            IF key = " + qt + "backspace" + qt + " AND LEN(m." + ww.Name + "_Val) > 0 THEN\n"
-    s = s + "                m." + ww.Name + "_Val = Mid(m." + ww.Name + "_Val, 1, LEN(m." + ww.Name + "_Val) - 1)\n"
+    ' Drop the last CHARACTER (codepoint), not the last byte, so
+    ' backspacing a multi-byte char doesn't leave a broken UTF-8 tail.
+    s = s + "                m." + ww.Name + "_Val = Mid(m." + ww.Name + "_Val, 1, cellByteIdx(m." + ww.Name + "_Val, cellLen(m." + ww.Name + "_Val) - 1))\n"
     s = s + "            END IF\n"
     RETURN s
 END FUNCTION
 
 ' H — View paint: body<sfx> is the bracketed value padded to W-2.
+' Pad amount uses cellLen (cells, not bytes) so multi-byte values align,
+' and is floored at 0 so an over-long value can't pass a negative count
+' to strings.Repeat (which would panic at runtime).
 FUNCTION textInputEmitView(wv AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
     DIM widStr AS STRING = strconv.Itoa(wv.W)
-    RETURN "    body" + sfx + " = " + qt + "[" + qt + " + m." + wv.Name + "_Val + strings.Repeat(" + qt + " " + qt + ", " + widStr + " - 2 - LEN(m." + wv.Name + "_Val)) + " + qt + "]" + qt + "\n"
+    DIM s AS STRING = ""
+    s = s + "    DIM tiPad" + sfx + " AS INTEGER = " + widStr + " - 2 - cellLen(m." + wv.Name + "_Val)\n"
+    s = s + "    IF tiPad" + sfx + " < 0 THEN tiPad" + sfx + " = 0\n"
+    s = s + "    body" + sfx + " = " + qt + "[" + qt + " + m." + wv.Name + "_Val + strings.Repeat(" + qt + " " + qt + ", tiPad" + sfx + ") + " + qt + "]" + qt + "\n"
+    RETURN s
 END FUNCTION

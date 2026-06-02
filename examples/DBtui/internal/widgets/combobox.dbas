@@ -79,8 +79,8 @@ FUNCTION comboBoxEmitView(wv AS DesignWidget, sfx AS STRING, qt AS STRING) AS ST
     s = s + "    DIM cbCur" + sfx + " AS STRING = " + qt + qt + "\n"
     s = s + "    IF m." + wv.Name + "_Val >= 0 AND m." + wv.Name + "_Val < LEN(cbItems" + sfx + ") THEN cbCur" + sfx + " = cbItems" + sfx + "[m." + wv.Name + "_Val]\n"
     s = s + "    DIM cbPad" + sfx + " AS STRING = cbCur" + sfx + "\n"
-    s = s + "    IF LEN(cbPad" + sfx + ") > " + cwidStr + " THEN cbPad" + sfx + " = Mid(cbPad" + sfx + ", 1, " + cwidStr + ")\n"
-    s = s + "    IF LEN(cbPad" + sfx + ") < " + cwidStr + " THEN cbPad" + sfx + " = cbPad" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + cwidStr + " - LEN(cbPad" + sfx + "))\n"
+    s = s + "    IF cellLen(cbPad" + sfx + ") > " + cwidStr + " THEN cbPad" + sfx + " = Mid(cbPad" + sfx + ", 1, cellByteIdx(cbPad" + sfx + ", " + cwidStr + "))\n"
+    s = s + "    IF cellLen(cbPad" + sfx + ") < " + cwidStr + " THEN cbPad" + sfx + " = cbPad" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + cwidStr + " - cellLen(cbPad" + sfx + "))\n"
     s = s + "    body" + sfx + " = " + qt + "[" + qt + " + cbPad" + sfx + " + " + qt + " v]" + qt + "\n"
     RETURN s
 END FUNCTION
