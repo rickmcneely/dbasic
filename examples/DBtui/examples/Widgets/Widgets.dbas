@@ -174,6 +174,121 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
     END IF
+    DIM mm AS tea.MouseMotionMsg
+    DIM mmOk AS BOOLEAN
+    mm, mmOk = msg.(tea.MouseMotionMsg)
+    IF mmOk THEN
+        DIM mmHit AS INTEGER = 0 - 1
+        IF mmHit < 0 AND mm.X >= 0 AND mm.X < 0 + 80 AND mm.Y >= 0 AND mm.Y < 0 + 1 THEN mmHit = 14
+        IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 26 AND mm.Y >= 14 AND mm.Y < 14 + 7 THEN mmHit = 13
+        IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 24 AND mm.Y >= 7 AND mm.Y < 7 + 5 THEN mmHit = 12
+        IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 22 AND mm.Y >= 1 AND mm.Y < 1 + 5 THEN mmHit = 11
+        IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 24 AND mm.Y >= 7 AND mm.Y < 7 + 6 THEN mmHit = 10
+        IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 28 AND mm.Y >= 1 AND mm.Y < 1 + 5 THEN mmHit = 9
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 1 AND mm.Y >= 9 AND mm.Y < 9 + 8 THEN mmHit = 8
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 20 AND mm.Y >= 17 AND mm.Y < 17 + 1 THEN mmHit = 7
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 18 AND mm.Y >= 7 AND mm.Y < 7 + 5 THEN mmHit = 6
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 16 AND mm.Y >= 6 AND mm.Y < 6 + 1 THEN mmHit = 5
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 14 AND mm.Y >= 5 AND mm.Y < 5 + 1 THEN mmHit = 4
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 14 AND mm.Y >= 4 AND mm.Y < 4 + 1 THEN mmHit = 3
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 16 AND mm.Y >= 3 AND mm.Y < 3 + 1 THEN mmHit = 2
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 10 AND mm.Y >= 2 AND mm.Y < 2 + 1 THEN mmHit = 1
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 12 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 0
+        _ = mm
+        m.Focus = mmHit
+        RETURN m, NIL
+    END IF
+    DIM mw AS tea.MouseWheelMsg
+    DIM mwOk AS BOOLEAN
+    mw, mwOk = msg.(tea.MouseWheelMsg)
+    IF mwOk THEN
+        IF mw.X >= 30 AND mw.X < 30 + 26 AND mw.Y >= 14 AND mw.Y < 14 + 7 THEN
+            IF mw.Button = tea.MouseWheelUp THEN
+                IF m.scrollpanel1_Scroll > 0 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 1
+            ELSE
+                IF m.scrollpanel1_Scroll < 7 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 1
+            END IF
+            RETURN m, NIL
+        END IF
+        IF mw.X >= 56 AND mw.X < 56 + 24 AND mw.Y >= 7 AND mw.Y < 7 + 5 THEN
+            IF mw.Button = tea.MouseWheelUp THEN
+                IF m.propgrid1_Val > 0 THEN
+                    m.propgrid1_Val = m.propgrid1_Val - 1
+                    dispatchChange("propgrid1")
+                END IF
+            ELSE
+                IF m.propgrid1_Val < 3 THEN
+                    m.propgrid1_Val = m.propgrid1_Val + 1
+                    dispatchChange("propgrid1")
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
+        IF mw.X >= 30 AND mw.X < 30 + 24 AND mw.Y >= 7 AND mw.Y < 7 + 6 THEN
+            DIM twVistree1 AS []INTEGER = treeVisibleRows(tree1_depths(), m.tree1_Collapsed)
+            DIM twPostree1 AS INTEGER = 0
+            DIM twJtree1 AS INTEGER
+            FOR twJtree1 = 0 TO LEN(twVistree1) - 1
+                IF twVistree1[twJtree1] = m.tree1_Val THEN twPostree1 = twJtree1
+            NEXT twJtree1
+            IF mw.Button = tea.MouseWheelUp THEN
+                IF twPostree1 > 0 THEN
+                    m.tree1_Val = twVistree1[twPostree1 - 1]
+                    dispatchChange("tree1")
+                END IF
+            ELSE
+                IF twPostree1 < LEN(twVistree1) - 1 THEN
+                    m.tree1_Val = twVistree1[twPostree1 + 1]
+                    dispatchChange("tree1")
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
+        IF mw.X >= 2 AND mw.X < 2 + 1 AND mw.Y >= 9 AND mw.Y < 9 + 8 THEN
+            IF mw.Button = tea.MouseWheelUp THEN
+                IF m.scrollbar1_Val > 0 THEN
+                    m.scrollbar1_Val = m.scrollbar1_Val - 1
+                    dispatchChange("scrollbar1")
+                END IF
+            ELSE
+                IF m.scrollbar1_Val < 100 THEN
+                    m.scrollbar1_Val = m.scrollbar1_Val + 1
+                    dispatchChange("scrollbar1")
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
+        IF mw.X >= 2 AND mw.X < 2 + 18 AND mw.Y >= 7 AND mw.Y < 7 + 5 THEN
+            IF mw.Button = tea.MouseWheelUp THEN
+                IF m.listbox1_Val > 0 THEN
+                    m.listbox1_Val = m.listbox1_Val - 1
+                    dispatchChange("listbox1")
+                END IF
+            ELSE
+                IF m.listbox1_Val < 2 THEN
+                    m.listbox1_Val = m.listbox1_Val + 1
+                    dispatchChange("listbox1")
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
+        IF mw.X >= 2 AND mw.X < 2 + 16 AND mw.Y >= 6 AND mw.Y < 6 + 1 THEN
+            IF mw.Button = tea.MouseWheelUp THEN
+                IF m.combobox1_Val > 0 THEN
+                    m.combobox1_Val = m.combobox1_Val - 1
+                    dispatchChange("combobox1")
+                END IF
+            ELSE
+                IF m.combobox1_Val < 2 THEN
+                    m.combobox1_Val = m.combobox1_Val + 1
+                    dispatchChange("combobox1")
+                END IF
+            END IF
+            RETURN m, NIL
+        END IF
+        _ = mw
+        RETURN m, NIL
+    END IF
     DIM k AS tea.KeyPressMsg
     DIM kOk AS BOOLEAN
     k, kOk = msg.(tea.KeyPressMsg)
@@ -598,7 +713,7 @@ FUNCTION (m AS Model) View() AS tea.View
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
     DIM fullView AS STRING = strings.Join(rows, "\n")
     DIM vw AS tea.View = tea.NewView(fullView)
-    vw.MouseMode = tea.MouseModeCellMotion
+    vw.MouseMode = tea.MouseModeAllMotion
     vw.AltScreen = TRUE
     RETURN vw
 END FUNCTION

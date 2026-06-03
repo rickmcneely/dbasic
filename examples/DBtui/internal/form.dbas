@@ -1257,6 +1257,107 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
       END IF
     NEXT mci
     s = s + "    END IF\n"
+    ' --- Mouse hover -> focus the widget under the cursor (same as Tab);
+    '     moving off all widgets deselects (m.Focus = -1). Needs AllMotion.
+    s = s + "    DIM mm AS tea.MouseMotionMsg\n"
+    s = s + "    DIM mmOk AS BOOLEAN\n"
+    s = s + "    mm, mmOk = msg.(tea.MouseMotionMsg)\n"
+    s = s + "    IF mmOk THEN\n"
+    s = s + "        DIM mmHit AS INTEGER = 0 - 1\n"
+    DIM mmi AS INTEGER
+    FOR mmi = n - 1 TO 0 STEP 0 - 1
+        DIM mmw AS DesignWidget = f.Widgets[mmi]
+        IF mmw.Parent = "" THEN
+            DIM mmXs AS STRING = strconv.Itoa(mmw.X)
+            DIM mmYs AS STRING = strconv.Itoa(mmw.Y)
+            DIM mmWs AS STRING = strconv.Itoa(mmw.W)
+            DIM mmHs AS STRING = strconv.Itoa(mmw.H)
+            s = s + "        IF mmHit < 0 AND mm.X >= " + mmXs + " AND mm.X < " + mmXs + " + " + mmWs + " AND mm.Y >= " + mmYs + " AND mm.Y < " + mmYs + " + " + mmHs + " THEN mmHit = " + strconv.Itoa(mmi) + "\n"
+        END IF
+    NEXT mmi
+    s = s + "        _ = mm\n"
+    s = s + "        m.Focus = mmHit\n"
+    s = s + "        RETURN m, NIL\n"
+    s = s + "    END IF\n"
+    ' --- Mouse wheel -> scroll/move the scrollable widget under the
+    '     cursor (listbox/combobox/propgrid/tree selection, scrollbar
+    '     value, scrollpanel offset). Mirrors the up/down key handlers.
+    s = s + "    DIM mw AS tea.MouseWheelMsg\n"
+    s = s + "    DIM mwOk AS BOOLEAN\n"
+    s = s + "    mw, mwOk = msg.(tea.MouseWheelMsg)\n"
+    s = s + "    IF mwOk THEN\n"
+    DIM mwi AS INTEGER
+    FOR mwi = n - 1 TO 0 STEP 0 - 1
+        DIM mww AS DesignWidget = f.Widgets[mwi]
+        DIM mwScroll AS BOOLEAN = (mww.Kind = "ListBox" OR mww.Kind = "ComboBox" OR mww.Kind = "PropGrid" OR mww.Kind = "ScrollBar" OR mww.Kind = "ScrollPanel" OR mww.Kind = "Tree")
+        IF mww.Parent = "" AND mwScroll THEN
+            DIM mwXs AS STRING = strconv.Itoa(mww.X)
+            DIM mwYs AS STRING = strconv.Itoa(mww.Y)
+            DIM mwWs AS STRING = strconv.Itoa(mww.W)
+            DIM mwHs AS STRING = strconv.Itoa(mww.H)
+            DIM mwNm AS STRING = mww.Name
+            DIM mwMax AS STRING = strconv.Itoa(LEN(mww.Items) - 1)
+            DIM mwVis AS INTEGER = mww.H - 2
+            IF mwVis < 1 THEN mwVis = 1
+            DIM mwSpMax AS INTEGER = LEN(mww.Items) - mwVis
+            IF mwSpMax < 0 THEN mwSpMax = 0
+            s = s + "        IF mw.X >= " + mwXs + " AND mw.X < " + mwXs + " + " + mwWs + " AND mw.Y >= " + mwYs + " AND mw.Y < " + mwYs + " + " + mwHs + " THEN\n"
+            IF mww.Kind = "ListBox" OR mww.Kind = "ComboBox" OR mww.Kind = "PropGrid" THEN
+                s = s + "            IF mw.Button = tea.MouseWheelUp THEN\n"
+                s = s + "                IF m." + mwNm + "_Val > 0 THEN\n"
+                s = s + "                    m." + mwNm + "_Val = m." + mwNm + "_Val - 1\n"
+                s = s + "                    dispatchChange(" + qt + mwNm + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            ELSE\n"
+                s = s + "                IF m." + mwNm + "_Val < " + mwMax + " THEN\n"
+                s = s + "                    m." + mwNm + "_Val = m." + mwNm + "_Val + 1\n"
+                s = s + "                    dispatchChange(" + qt + mwNm + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+            ELSEIF mww.Kind = "ScrollBar" THEN
+                s = s + "            IF mw.Button = tea.MouseWheelUp THEN\n"
+                s = s + "                IF m." + mwNm + "_Val > " + strconv.Itoa(mww.Min) + " THEN\n"
+                s = s + "                    m." + mwNm + "_Val = m." + mwNm + "_Val - 1\n"
+                s = s + "                    dispatchChange(" + qt + mwNm + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            ELSE\n"
+                s = s + "                IF m." + mwNm + "_Val < " + strconv.Itoa(mww.Max) + " THEN\n"
+                s = s + "                    m." + mwNm + "_Val = m." + mwNm + "_Val + 1\n"
+                s = s + "                    dispatchChange(" + qt + mwNm + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+            ELSEIF mww.Kind = "ScrollPanel" THEN
+                s = s + "            IF mw.Button = tea.MouseWheelUp THEN\n"
+                s = s + "                IF m." + mwNm + "_Scroll > 0 THEN m." + mwNm + "_Scroll = m." + mwNm + "_Scroll - 1\n"
+                s = s + "            ELSE\n"
+                s = s + "                IF m." + mwNm + "_Scroll < " + strconv.Itoa(mwSpMax) + " THEN m." + mwNm + "_Scroll = m." + mwNm + "_Scroll + 1\n"
+                s = s + "            END IF\n"
+            ELSEIF mww.Kind = "Tree" THEN
+                s = s + "            DIM twVis" + mwNm + " AS []INTEGER = treeVisibleRows(" + mwNm + "_depths(), m." + mwNm + "_Collapsed)\n"
+                s = s + "            DIM twPos" + mwNm + " AS INTEGER = 0\n"
+                s = s + "            DIM twJ" + mwNm + " AS INTEGER\n"
+                s = s + "            FOR twJ" + mwNm + " = 0 TO LEN(twVis" + mwNm + ") - 1\n"
+                s = s + "                IF twVis" + mwNm + "[twJ" + mwNm + "] = m." + mwNm + "_Val THEN twPos" + mwNm + " = twJ" + mwNm + "\n"
+                s = s + "            NEXT twJ" + mwNm + "\n"
+                s = s + "            IF mw.Button = tea.MouseWheelUp THEN\n"
+                s = s + "                IF twPos" + mwNm + " > 0 THEN\n"
+                s = s + "                    m." + mwNm + "_Val = twVis" + mwNm + "[twPos" + mwNm + " - 1]\n"
+                s = s + "                    dispatchChange(" + qt + mwNm + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            ELSE\n"
+                s = s + "                IF twPos" + mwNm + " < LEN(twVis" + mwNm + ") - 1 THEN\n"
+                s = s + "                    m." + mwNm + "_Val = twVis" + mwNm + "[twPos" + mwNm + " + 1]\n"
+                s = s + "                    dispatchChange(" + qt + mwNm + qt + ")\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+            END IF
+            s = s + "            RETURN m, NIL\n"
+            s = s + "        END IF\n"
+        END IF
+    NEXT mwi
+    s = s + "        _ = mw\n"
+    s = s + "        RETURN m, NIL\n"
+    s = s + "    END IF\n"
     s = s + "    DIM k AS tea.KeyPressMsg\n"
     s = s + "    DIM kOk AS BOOLEAN\n"
     s = s + "    k, kOk = msg.(tea.KeyPressMsg)\n"
@@ -1560,7 +1661,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "    END IF\n"
     END IF
     s = s + "    DIM vw AS tea.View = tea.NewView(fullView)\n"
-    s = s + "    vw.MouseMode = tea.MouseModeCellMotion\n"
+    ' AllMotion (not CellMotion) so the Update handler receives hover
+    ' motion events with no button held — used for hover-to-focus.
+    s = s + "    vw.MouseMode = tea.MouseModeAllMotion\n"
     ' Alt-screen mode so bubbletea owns the whole terminal and clears
     ' it cleanly between frames. Without this, content that shrinks
     ' (e.g. a dialog closing) can leave residue from the previous

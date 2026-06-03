@@ -139,6 +139,24 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
     END IF
+    DIM mm AS tea.MouseMotionMsg
+    DIM mmOk AS BOOLEAN
+    mm, mmOk = msg.(tea.MouseMotionMsg)
+    IF mmOk THEN
+        DIM mmHit AS INTEGER = 0 - 1
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 30 AND mm.Y >= 2 AND mm.Y < 2 + 8 THEN mmHit = 1
+        IF mmHit < 0 AND mm.X >= 0 AND mm.X < 0 + 44 AND mm.Y >= 0 AND mm.Y < 0 + 1 THEN mmHit = 0
+        _ = mm
+        m.Focus = mmHit
+        RETURN m, NIL
+    END IF
+    DIM mw AS tea.MouseWheelMsg
+    DIM mwOk AS BOOLEAN
+    mw, mwOk = msg.(tea.MouseWheelMsg)
+    IF mwOk THEN
+        _ = mw
+        RETURN m, NIL
+    END IF
     DIM k AS tea.KeyPressMsg
     DIM kOk AS BOOLEAN
     k, kOk = msg.(tea.KeyPressMsg)
@@ -273,7 +291,7 @@ FUNCTION (m AS Model) View() AS tea.View
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
     DIM fullView AS STRING = strings.Join(rows, "\n")
     DIM vw AS tea.View = tea.NewView(fullView)
-    vw.MouseMode = tea.MouseModeCellMotion
+    vw.MouseMode = tea.MouseModeAllMotion
     vw.AltScreen = TRUE
     RETURN vw
 END FUNCTION

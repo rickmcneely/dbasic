@@ -69,6 +69,13 @@ def run(prog, keyspec):
             os.write(fd, f"\x1b[<{btn};{col};{row}m".encode())  # release
             pump(0.35)
             continue
+        if tok.startswith(("wheelup:", "wheeldown:", "move:")):
+            name, rest = tok.split(":", 1)
+            col, row = (int(v) for v in rest.split("."))
+            btn = {"wheelup": 64, "wheeldown": 65, "move": 35}[name]
+            os.write(fd, f"\x1b[<{btn};{col};{row}M".encode())  # SGR mouse report
+            pump(0.35)
+            continue
         os.write(fd, KEYMAP.get(tok, tok).encode())
         pump(0.35)
     text = "\n".join(line.rstrip() for line in screen.display)

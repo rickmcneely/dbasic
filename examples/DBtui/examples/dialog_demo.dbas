@@ -239,6 +239,27 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
     END IF
+    DIM mm AS tea.MouseMotionMsg
+    DIM mmOk AS BOOLEAN
+    mm, mmOk = msg.(tea.MouseMotionMsg)
+    IF mmOk THEN
+        DIM mmHit AS INTEGER = 0 - 1
+        IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 12 AND mm.Y >= 10 AND mm.Y < 10 + 5 THEN mmHit = 4
+        IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 12 AND mm.Y >= 4 AND mm.Y < 4 + 5 THEN mmHit = 3
+        IF mmHit < 0 AND mm.X >= 4 AND mm.X < 4 + 12 AND mm.Y >= 8 AND mm.Y < 8 + 1 THEN mmHit = 2
+        IF mmHit < 0 AND mm.X >= 4 AND mm.X < 4 + 12 AND mm.Y >= 6 AND mm.Y < 6 + 1 THEN mmHit = 1
+        IF mmHit < 0 AND mm.X >= 4 AND mm.X < 4 + 16 AND mm.Y >= 4 AND mm.Y < 4 + 1 THEN mmHit = 0
+        _ = mm
+        m.Focus = mmHit
+        RETURN m, NIL
+    END IF
+    DIM mw AS tea.MouseWheelMsg
+    DIM mwOk AS BOOLEAN
+    mw, mwOk = msg.(tea.MouseWheelMsg)
+    IF mwOk THEN
+        _ = mw
+        RETURN m, NIL
+    END IF
     DIM k AS tea.KeyPressMsg
     DIM kOk AS BOOLEAN
     k, kOk = msg.(tea.KeyPressMsg)
@@ -342,7 +363,7 @@ FUNCTION (m AS Model) View() AS tea.View
         _dlgH = 0
     END IF
     DIM vw AS tea.View = tea.NewView(fullView)
-    vw.MouseMode = tea.MouseModeCellMotion
+    vw.MouseMode = tea.MouseModeAllMotion
     vw.AltScreen = TRUE
     RETURN vw
 END FUNCTION
