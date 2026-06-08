@@ -59,6 +59,24 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM spRel13 AS INTEGER = mc.Y - 14
             IF spRel13 = 1 AND m.scrollpanel1_Scroll > 0 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 1
             IF spRel13 = 5 AND m.scrollpanel1_Scroll < 7 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 1
+            DIM spRelX13 AS INTEGER = mc.X - 30
+            IF spRelX13 = 24 AND spRel13 >= 2 AND spRel13 <= 4 THEN
+                DIM spThm13 AS INTEGER = 0
+                IF 7 > 0 THEN
+                    spThm13 = (m.scrollpanel1_Scroll * 2) / 7
+                    IF spThm13 < 0 THEN spThm13 = 0
+                    IF spThm13 > 2 THEN spThm13 = 2
+                END IF
+                DIM spClk13 AS INTEGER = spRel13 - 2
+                IF spClk13 < spThm13 THEN
+                    m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 5
+                    IF m.scrollpanel1_Scroll < 0 THEN m.scrollpanel1_Scroll = 0
+                END IF
+                IF spClk13 > spThm13 THEN
+                    m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 5
+                    IF m.scrollpanel1_Scroll > 7 THEN m.scrollpanel1_Scroll = 7
+                END IF
+            END IF
             RETURN m, NIL
         END IF
         IF mc.X >= 56 AND mc.X < 56 + 24 AND mc.Y >= 7 AND mc.Y < 7 + 5 THEN

@@ -1284,6 +1284,31 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "            DIM spRel" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
             s = s + "            IF spRel" + mcIStr + " = 1 AND m." + mcw.Name + "_Scroll > 0 THEN m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll - 1\n"
             s = s + "            IF spRel" + mcIStr + " = " + strconv.Itoa(mcw.H - 2) + " AND m." + mcw.Name + "_Scroll < " + strconv.Itoa(spcMax) + " THEN m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll + 1\n"
+            ' Track paging: a click on the scrollbar column (relative X =
+            ' W-2) between the ▲/▼ arrows (relative Y 2..H-3) pages up if
+            ' above the thumb, down if below. Page = one visible window.
+            ' Recompute the thumb's track index exactly as the View does.
+            DIM spcTrack AS INTEGER = mcw.H - 4
+            IF spcTrack > 0 THEN
+                s = s + "            DIM spRelX" + mcIStr + " AS INTEGER = mc.X - " + mcXs + "\n"
+                s = s + "            IF spRelX" + mcIStr + " = " + strconv.Itoa(mcw.W - 2) + " AND spRel" + mcIStr + " >= 2 AND spRel" + mcIStr + " <= " + strconv.Itoa(mcw.H - 3) + " THEN\n"
+                s = s + "                DIM spThm" + mcIStr + " AS INTEGER = 0\n"
+                s = s + "                IF " + strconv.Itoa(spcMax) + " > 0 THEN\n"
+                s = s + "                    spThm" + mcIStr + " = (m." + mcw.Name + "_Scroll * " + strconv.Itoa(spcTrack - 1) + ") / " + strconv.Itoa(spcMax) + "\n"
+                s = s + "                    IF spThm" + mcIStr + " < 0 THEN spThm" + mcIStr + " = 0\n"
+                s = s + "                    IF spThm" + mcIStr + " > " + strconv.Itoa(spcTrack - 1) + " THEN spThm" + mcIStr + " = " + strconv.Itoa(spcTrack - 1) + "\n"
+                s = s + "                END IF\n"
+                s = s + "                DIM spClk" + mcIStr + " AS INTEGER = spRel" + mcIStr + " - 2\n"
+                s = s + "                IF spClk" + mcIStr + " < spThm" + mcIStr + " THEN\n"
+                s = s + "                    m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll - " + strconv.Itoa(spcVis) + "\n"
+                s = s + "                    IF m." + mcw.Name + "_Scroll < 0 THEN m." + mcw.Name + "_Scroll = 0\n"
+                s = s + "                END IF\n"
+                s = s + "                IF spClk" + mcIStr + " > spThm" + mcIStr + " THEN\n"
+                s = s + "                    m." + mcw.Name + "_Scroll = m." + mcw.Name + "_Scroll + " + strconv.Itoa(spcVis) + "\n"
+                s = s + "                    IF m." + mcw.Name + "_Scroll > " + strconv.Itoa(spcMax) + " THEN m." + mcw.Name + "_Scroll = " + strconv.Itoa(spcMax) + "\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
+            END IF
         ELSEIF mcw.Kind = "Tree" THEN
             s = s + treeEmitMouse(mcw, mcIStr, mcYs, qt)
         ELSEIF mcw.Kind = "TabStrip" THEN
