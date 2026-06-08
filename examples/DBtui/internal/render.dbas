@@ -31,6 +31,23 @@ DIM modalLastH      AS INTEGER  ' rendered height of last modal (incl. border)
 DIM cpLastOrigX AS INTEGER
 DIM cpLastOrigY AS INTEGER
 
+' Enum-dropdown origin + size — written by View() each frame it composites
+' the multiselect list, so the click handler can map a click to an option.
+DIM epLastOrigX AS INTEGER
+DIM epLastOrigY AS INTEGER
+DIM epLastW     AS INTEGER
+DIM epLastN     AS INTEGER
+
+' enumOptionAt — map a screen (mx,my) onto an option index inside the open
+' enum dropdown, or -1 if outside. Geometry: rounded border (1) on each
+' side; option j sits on the row at origin+1+j, columns origin+1..+W-2.
+FUNCTION enumOptionAt(mx AS INTEGER, my AS INTEGER) AS INTEGER
+    DIM rel AS INTEGER = my - (epLastOrigY + 1)
+    IF rel < 0 OR rel >= epLastN THEN RETURN 0 - 1
+    IF mx <= epLastOrigX OR mx >= epLastOrigX + epLastW - 1 THEN RETURN 0 - 1
+    RETURN rel
+END FUNCTION
+
 ' colorSwatchAt — map a screen (mx,my) onto a 0..255 palette index inside
 ' the open color picker, or -1 if the click is outside the 16x16 grid.
 ' Geometry: frame border (1) + horizontal padding (1) on the left, and
@@ -430,6 +447,34 @@ FUNCTION renderColorPicker(m AS Model) AS STRING
     DIM hint AS STRING = "↑↓←→ move · Enter pick · x clear · Esc cancel"
     DIM body AS STRING = head + "\n" + grid + "\n" + hint
     DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg)).Padding(0, 1)
+    RETURN frame.Render(body)
+END FUNCTION
+
+' renderEnumPicker — the multiselect dropdown: a bordered vertical list of
+' options with the current one highlighted. Mirrors renderContextMenu.
+' Returns "" when closed. Composited at (EnumX, EnumY) by View().
+FUNCTION renderEnumPicker(m AS Model) AS STRING
+    IF NOT m.EnumActive THEN RETURN ""
+    DIM inner AS INTEGER = 0
+    DIM j AS INTEGER
+    FOR j = 0 TO LEN(m.EnumOpts) - 1
+        IF LEN(m.EnumOpts[j]) > inner THEN inner = LEN(m.EnumOpts[j])
+    NEXT j
+    inner = inner + 2
+    DIM rowBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg))
+    DIM selBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM lines AS []STRING
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(m.EnumOpts) - 1
+        DIM bs AS lipgloss.Style = rowBase
+        IF k = m.EnumIdx THEN bs = selBase
+        DIM lbl AS STRING = m.EnumOpts[k]
+        DIM padR AS INTEGER = inner - 1 - LEN(lbl)
+        IF padR < 0 THEN padR = 0
+        lines = APPEND(lines, bs.Render(" " + lbl + strings.Repeat(" ", padR)))
+    NEXT k
+    DIM body AS STRING = strings.Join(lines, "\n")
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cMenuBg))
     RETURN frame.Render(body)
 END FUNCTION
 
@@ -1006,13 +1051,19 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     DIM propsVisible AS INTEGER = propsH - 2
     DIM propRowStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Width(propsInnerW)
     DIM propHoverStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBorder)).Foreground(lipgloss.Color(cAccent)).Width(propsInnerW)
+    ' Selected property row (PropSel) — the target of spacebar/double-click.
+    ' Inverse accent so it reads as "active", distinct from the hover tint.
+    DIM propSelStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE).Width(propsInnerW)
+    DIM propSelOn AS BOOLEAN = (m.ViewMode = "form" AND hasActiveTab(m) AND m.Tabs[m.TabIdx].SelWidget >= 0)
     DIM propLines AS []STRING
     DIM pi AS INTEGER
     FOR pi = 0 TO propsVisible - 1
         DIM ptxt AS STRING = ""
         IF pi < LEN(propRows) THEN ptxt = " " + propRows[pi]
         DIM propY AS INTEGER = propsFirstY + pi
-        IF m.HoverY = propY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND pi < LEN(propRows) THEN
+        IF propSelOn AND pi = m.PropSel AND pi < LEN(propRows) THEN
+            propLines = APPEND(propLines, propSelStyle.Render(ptxt))
+        ELSEIF m.HoverY = propY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND pi < LEN(propRows) THEN
             propLines = APPEND(propLines, propHoverStyle.Render(ptxt))
         ELSE
             propLines = APPEND(propLines, propRowStyle.Render(ptxt))

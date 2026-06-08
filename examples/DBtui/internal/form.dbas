@@ -947,9 +947,47 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
     RETURN "", "", "", ""
 END FUNCTION
 
-' formClickPropAt — dispatch a click on Properties row `rowIdx`
-' (0-based) into the right input modal. Row 0 (Kind) is read-only;
-' any rowIdx that propRowEditContext returns "" for is also a no-op.
+' propRowKind — classify Properties row `rowIdx` on widget `w` into an
+' editor kind: "bool" | "enum" | "color" | "text" | "" (not editable).
+' For "enum" the second return is a comma-separated option list. Derived
+' from propRowEditContext's field key so the row layout lives in one place.
+FUNCTION propRowKind(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, STRING)
+    DIM t AS STRING
+    DIM p AS STRING
+    DIM d AS STRING
+    DIM k AS STRING
+    t, p, d, k = propRowEditContext(w, rowIdx)
+    _ = t
+    _ = p
+    _ = d
+    IF k = "" THEN RETURN "", ""
+    IF k = "wprop:checked" THEN RETURN "bool", ""
+    IF k = "wprop:orient" THEN RETURN "enum", "h,v"
+    IF k = "wprop:dialogkind" THEN RETURN "enum", "confirm,input,file"
+    IF k = "wprop:dialogmode" THEN RETURN "enum", "open,save"
+    IF k = "wprop:fgcolor" OR k = "wprop:bgcolor" THEN RETURN "color", ""
+    RETURN "text", ""
+END FUNCTION
+
+' formTogglePropBool — flip the boolean property at row `rowIdx` on the
+' selected widget (only Checked is a bool today). Marks the tab dirty.
+SUB formTogglePropBool(m AS POINTER TO Model, rowIdx AS INTEGER)
+    DIM sel AS INTEGER = m.Tabs[m.TabIdx].SelWidget
+    IF sel < 0 OR sel >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    DIM kind AS STRING
+    DIM opts AS STRING
+    kind, opts = propRowKind(m.Tabs[m.TabIdx].Form.Widgets[sel], rowIdx)
+    _ = opts
+    IF kind <> "bool" THEN RETURN
+    m.Tabs[m.TabIdx].Form.Widgets[sel].Checked = NOT m.Tabs[m.TabIdx].Form.Widgets[sel].Checked
+    m.Tabs[m.TabIdx].Dirty = TRUE
+END SUB
+
+' formClickPropAt — left-click on Properties row `rowIdx` (0-based). The
+' row becomes the selected property (PropSel). Then by kind: text/number
+' rows open the input modal, color rows open the swatch picker, a re-click
+' on a bool toggles it (double-click), and enum rows only select (the
+' multiselect list opens on right-click). Row 0 (Kind) is read-only.
 SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
     ' No widget selected → the pane shows form-level properties. Rows:
     ' 0 = Form name (read-only), 1 = Fg, 2 = Bg. Fg/Bg open the picker.
@@ -965,6 +1003,21 @@ SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
     DIM ctxKey AS STRING
     ctxTitle, ctxPrompt, ctxDef, ctxKey = propRowEditContext(w, rowIdx)
     IF ctxKey = "" THEN RETURN
+    DIM kind AS STRING
+    DIM opts AS STRING
+    kind, opts = propRowKind(w, rowIdx)
+    _ = opts
+    DIM wasSel AS BOOLEAN = (m.PropSel = rowIdx)
+    m.PropSel = rowIdx
+    IF kind = "bool" THEN
+        ' Second click on an already-selected bool toggles it (double-click).
+        IF wasSel THEN formTogglePropBool(m, rowIdx)
+        RETURN
+    END IF
+    IF kind = "enum" THEN
+        ' Left-click selects only; the list opens on right-click.
+        RETURN
+    END IF
     ' Color rows open the swatch picker rather than a text input.
     IF ctxKey = "wprop:fgcolor" THEN
         showColorPicker(m, "fg")

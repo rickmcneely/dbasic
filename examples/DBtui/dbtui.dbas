@@ -459,6 +459,22 @@ TYPE Model
     DIM CPActive AS BOOLEAN
     DIM CPTarget AS STRING
     DIM CPIdx    AS INTEGER
+
+    ' Property-grid editing. PropSel is the selected property row (-1 =
+    ' none) — the target for spacebar (toggle a bool) and the second-click
+    ' that toggles a bool (our stand-in for double-click). Reset when the
+    ' selected widget changes so a stale row never edits the wrong widget.
+    DIM PropSel AS INTEGER
+    ' Multiselect (enum) dropdown, opened by right-clicking an enum row.
+    ' EnumKey is the wprop:* field it writes; EnumOpts the choices; EnumIdx
+    ' the highlighted option; EnumX/Y the on-screen anchor.
+    DIM EnumActive AS BOOLEAN
+    DIM EnumRow    AS INTEGER
+    DIM EnumKey    AS STRING
+    DIM EnumOpts   AS []STRING
+    DIM EnumIdx    AS INTEGER
+    DIM EnumX      AS INTEGER
+    DIM EnumY      AS INTEGER
 END TYPE
 
 ' setExpanded — toggle whether `path` is in the TreeExpanded "set".
@@ -1326,6 +1342,8 @@ FUNCTION newModel() AS Model
     ' it via switchToTab.
     m.ViewMode = "code"
     m.TabIdx = 0 - 1
+    ' No property row selected until one is clicked.
+    m.PropSel = 0 - 1
     ' Right-pane sub-tab starts on the list (Widgets/Outline) panel.
     m.RightTab = "list"
     ' Tree starts focused — the tree is always available and the
@@ -1656,6 +1674,18 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.CPActive = FALSE
             RETURN m, NIL
         END IF
+        ' (EP) Enum dropdown — when open it owns the next left-click: a
+        ' click on an option commits it; anywhere else cancels.
+        IF m.EnumActive THEN
+            DIM epHit AS INTEGER = enumOptionAt(mcMsg.X, mcMsg.Y)
+            IF epHit >= 0 THEN
+                m.EnumIdx = epHit
+                enumPickerCommit(@m)
+                RETURN m, NIL
+            END IF
+            m.EnumActive = FALSE
+            RETURN m, NIL
+        END IF
         ' (C) Widget event context-menu — when open it owns the next
         ' left-click: inside the popup picks an event, anywhere else
         ' dismisses it. Checked before everything so a stray click can't
@@ -1972,6 +2002,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM fcy AS INTEGER
             fcx, fcy = formScreenToCanvas(m, mcMsg.X, mcMsg.Y)
             DIM hit AS INTEGER = formWidgetAt(m, fcx, fcy)
+            IF hit <> m.Tabs[m.TabIdx].SelWidget THEN m.PropSel = 0 - 1
             m.Tabs[m.TabIdx].SelWidget = hit
             IF hit >= 0 THEN
                 ' Arm a move-drag — record the cursor's offset within
@@ -2048,6 +2079,35 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     '     which os.Removes the file (or RemoveAll for an empty dir) and
     '     rebuilds the tree. Same hit-test as the left-click tree path.
     IF mcOk AND mcMsg.Button = tea.MouseRight THEN
+        ' Right-click a multiselect (enum) property row opens its dropdown.
+        ' Same row geometry as the left-click handler above.
+        IF m.ViewMode = "form" AND m.Tabs[m.TabIdx].SelWidget >= 0 AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width AND hasActiveTab(m) THEN
+            DIM reBodyH AS INTEGER = m.Height - 2
+            IF m.BottomVisible THEN
+                DIM reBot AS INTEGER = 10
+                IF reBot > reBodyH - 4 THEN reBot = reBodyH - 4
+                IF reBot < 3 THEN reBot = 3
+                reBodyH = reBodyH - reBot
+            END IF
+            DIM reRemain AS INTEGER = reBodyH - 1
+            DIM reListH  AS INTEGER = reRemain / 2
+            DIM rePropTop AS INTEGER = 2 + reListH + 1
+            DIM reRel AS INTEGER = mcMsg.Y - rePropTop
+            IF reRel >= 1 AND reRel < reBodyH THEN
+                DIM reW AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
+                DIM reKind AS STRING
+                DIM reOpts AS STRING
+                reKind, reOpts = propRowKind(reW, reRel)
+                _ = reOpts
+                IF reKind = "enum" THEN
+                    m.PropSel = reRel
+                    DIM reAx AS INTEGER = mcMsg.X
+                    DIM reAy AS INTEGER = mcMsg.Y
+                    showEnumPicker(@m, reRel, reAx, reAy)
+                    RETURN m, NIL
+                END IF
+            END IF
+        END IF
         ' Right-click on a placed widget (form-designer canvas) opens the
         ' VB-style event context-menu for that widget. Checked before the
         ' project-tree hit-test below since the canvas occupies the
@@ -2058,6 +2118,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             rcx, rcy = formScreenToCanvas(m, mcMsg.X, mcMsg.Y)
             DIM rcW AS INTEGER = formWidgetAt(m, rcx, rcy)
             IF rcW >= 0 THEN
+                IF rcW <> m.Tabs[m.TabIdx].SelWidget THEN m.PropSel = 0 - 1
                 m.Tabs[m.TabIdx].SelWidget = rcW
                 m.CtxWidget = rcW
                 m.CtxItem = 0
@@ -2138,6 +2199,30 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 RETURN m, NIL
             END IF
             ' Swallow any other key while the picker is up.
+            RETURN m, NIL
+        END IF
+
+        ' --- Enum dropdown: when open it owns the keyboard. Up/Down move
+        '     the highlight, Enter commits, Esc cancels.
+        IF m.EnumActive THEN
+            IF key = "esc" THEN
+                m.EnumActive = FALSE
+                RETURN m, NIL
+            END IF
+            IF key = "enter" THEN
+                enumPickerCommit(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "up" THEN
+                m.EnumIdx = m.EnumIdx - 1
+                IF m.EnumIdx < 0 THEN m.EnumIdx = LEN(m.EnumOpts) - 1
+                RETURN m, NIL
+            END IF
+            IF key = "down" THEN
+                m.EnumIdx = m.EnumIdx + 1
+                IF m.EnumIdx >= LEN(m.EnumOpts) THEN m.EnumIdx = 0
+                RETURN m, NIL
+            END IF
             RETURN m, NIL
         END IF
 
@@ -2293,6 +2378,20 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             END IF
             ' Swallow other keys while the modal is up.
             RETURN m, NIL
+        END IF
+
+        ' --- Spacebar toggles the selected boolean property row (the other
+        '     way besides double-click). Only in form view with a bool row
+        '     selected, so it never steals space from the editor.
+        IF key = "space" AND m.ViewMode = "form" AND m.PropSel >= 0 AND hasActiveTab(m) AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            DIM spbKind AS STRING
+            DIM spbOpts AS STRING
+            spbKind, spbOpts = propRowKind(m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget], m.PropSel)
+            _ = spbOpts
+            IF spbKind = "bool" THEN
+                formTogglePropBool(@m, m.PropSel)
+                RETURN m, NIL
+            END IF
         END IF
 
         ' Global shortcuts first — apply regardless of which pane is
@@ -3093,6 +3192,30 @@ FUNCTION (m AS Model) View() AS tea.View
             full = cpkComp.Render()
             cpLastOrigX = cpkX
             cpLastOrigY = cpkY
+        END IF
+    END IF
+
+    ' --- Enum dropdown overlay. Anchored at (EnumX, EnumY), clamped to
+    '     stay on-screen. Origin + size stashed for enumOptionAt().
+    IF m.EnumActive THEN
+        DIM epStr AS STRING = renderEnumPicker(m)
+        IF epStr <> "" THEN
+            DIM epW AS INTEGER = lipgloss.Width(epStr)
+            DIM epH AS INTEGER = lipgloss.Height(epStr)
+            DIM epX AS INTEGER = m.EnumX
+            DIM epY AS INTEGER = m.EnumY
+            IF epX + epW > w THEN epX = w - epW
+            IF epY + epH > h THEN epY = h - epH
+            IF epX < 0 THEN epX = 0
+            IF epY < 0 THEN epY = 0
+            DIM epBgL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM epL   AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(epStr).X(epX).Y(epY).Z(7)
+            DIM epComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(epBgL, epL)
+            full = epComp.Render()
+            epLastOrigX = epX
+            epLastOrigY = epY
+            epLastW = epW
+            epLastN = LEN(m.EnumOpts)
         END IF
     END IF
 
