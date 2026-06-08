@@ -126,21 +126,27 @@ FUNCTION tabStripEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS
     FOR tsvI = 0 TO LEN(wv.Items) - 1
         s = s + "    tsItems" + sfx + " = APPEND(tsItems" + sfx + ", " + qt + escapeForDBString(wv.Items[tsvI]) + qt + ")\n"
     NEXT tsvI
+    ' Build the bar segment-by-segment so the hovered tab can highlight on
+    ' its own. Each segment is "[label]" (active) or " label " (inactive);
+    ' when this strip is hovered (and not focused) the segment matching
+    ' m.HoverTab is wrapped in hoverStyle. overlayRow's ANSI-aware splice
+    ' carries the embedded escapes onto the row safely.
     s = s + "    DIM tsBar" + sfx + " AS STRING = " + qt + qt + "\n"
     s = s + "    DIM tsk" + sfx + " AS INTEGER\n"
     s = s + "    FOR tsk" + sfx + " = 0 TO LEN(tsItems" + sfx + ") - 1\n"
     s = s + "        IF tsk" + sfx + " > 0 THEN tsBar" + sfx + " = tsBar" + sfx + " + " + qt + "│" + qt + "\n"
+    s = s + "        DIM tsSeg" + sfx + " AS STRING\n"
     s = s + "        IF tsk" + sfx + " = m." + wv.Name + "_Val THEN\n"
-    s = s + "            tsBar" + sfx + " = tsBar" + sfx + " + " + qt + "[" + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + "]" + qt + "\n"
+    s = s + "            tsSeg" + sfx + " = " + qt + "[" + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + "]" + qt + "\n"
     s = s + "        ELSE\n"
-    s = s + "            tsBar" + sfx + " = tsBar" + sfx + " + " + qt + " " + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + " " + qt + "\n"
+    s = s + "            tsSeg" + sfx + " = " + qt + " " + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + " " + qt + "\n"
     s = s + "        END IF\n"
+    s = s + "        IF m.Hover = " + sfx + " AND m.HoverTab = tsk" + sfx + " AND m.Focus <> " + sfx + " THEN tsSeg" + sfx + " = hoverStyle.Render(tsSeg" + sfx + ")\n"
+    s = s + "        tsBar" + sfx + " = tsBar" + sfx + " + tsSeg" + sfx + "\n"
     s = s + "    NEXT tsk" + sfx + "\n"
-    ' Focus arrow dropped: bar renders at X (matches the designer's
-    ' tabStripBar). Rule loses its leading space too so it also starts at
-    ' X like the designer (strings.Repeat from X). Content keeps its one
-    ' leading space (the designer indents row 2 the same way).
-    s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocus(rows[" + ys + "], " + xs + ", tsBar" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
+    ' Focus highlights the whole bar (reverse); per-tab hover is embedded
+    ' above, so the bar overlay passes FALSE for the hovered flag.
+    s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocus(rows[" + ys + "], " + xs + ", tsBar" + sfx + ", m.Focus = " + sfx + ", FALSE)\n"
     s = s + "    DIM tsRule" + sfx + " AS STRING = strings.Repeat(" + qt + "─" + qt + ", " + tsWStr + ")\n"
     s = s + "    DIM tsRuleY" + sfx + " AS INTEGER = " + ys + " + 1\n"
     ' Rule + content highlight on focus only — hover is scoped to the

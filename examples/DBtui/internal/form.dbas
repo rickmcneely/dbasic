@@ -1085,6 +1085,11 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' from Focus: hovering only highlights (hoverStyle), it never steals
     ' keyboard focus. Seeded to -1 in Main so nothing is hovered at startup.
     s = s + "    DIM Hover  AS INTEGER\n"
+    ' HoverTab = index of the hovered tab WITHIN the hovered TabStrip
+    ' (-1 = none / not over a tab). Lets tab captions highlight one at a
+    ' time instead of the whole bar. Only meaningful while Hover names a
+    ' TabStrip; one field suffices since one widget is hovered at a time.
+    s = s + "    DIM HoverTab AS INTEGER\n"
     DIM i AS INTEGER
     FOR i = 0 TO n - 1
         DIM w AS DesignWidget = f.Widgets[i]
@@ -1321,6 +1326,29 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     NEXT mmi
     s = s + "        _ = mm\n"
     s = s + "        m.Hover = mmHit\n"
+    ' Which tab caption is under the cursor? For each TabStrip, walk the
+    ' caption segments (each tab = label width + 2 for its [ ]/padding,
+    ' plus 1 for the │ separator) and record the matching index. -1 when
+    ' the cursor is between tabs or over a non-TabStrip.
+    s = s + "        m.HoverTab = 0 - 1\n"
+    DIM mmtI AS INTEGER
+    FOR mmtI = 0 TO n - 1
+        DIM mmtw AS DesignWidget = f.Widgets[mmtI]
+        IF mmtw.Kind = "TabStrip" AND mmtw.Parent = "" AND LEN(mmtw.Items) > 0 THEN
+            DIM mmtSfx AS STRING = strconv.Itoa(mmtI)
+            s = s + "        IF mmHit = " + mmtSfx + " THEN\n"
+            s = s + "            DIM thCol" + mmtSfx + " AS INTEGER = mm.X - " + strconv.Itoa(mmtw.X) + "\n"
+            s = s + "            DIM thAcc" + mmtSfx + " AS INTEGER = 0\n"
+            s = s + "            DIM thW" + mmtSfx + " AS INTEGER = 0\n"
+            DIM mmtK AS INTEGER
+            FOR mmtK = 0 TO LEN(mmtw.Items) - 1
+                s = s + "            thW" + mmtSfx + " = lipgloss.Width(" + qt + escapeForDBString(mmtw.Items[mmtK]) + qt + ") + 2\n"
+                s = s + "            IF thCol" + mmtSfx + " >= thAcc" + mmtSfx + " AND thCol" + mmtSfx + " < thAcc" + mmtSfx + " + thW" + mmtSfx + " THEN m.HoverTab = " + strconv.Itoa(mmtK) + "\n"
+                s = s + "            thAcc" + mmtSfx + " = thAcc" + mmtSfx + " + thW" + mmtSfx + " + 1\n"
+            NEXT mmtK
+            s = s + "        END IF\n"
+        END IF
+    NEXT mmtI
     s = s + "        RETURN m, NIL\n"
     s = s + "    END IF\n"
     ' --- Mouse wheel -> scroll/move the scrollable widget under the
@@ -1733,6 +1761,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    DIM m AS Model\n"
     ' Nothing is hovered until the mouse moves over a widget.
     s = s + "    m.Hover = 0 - 1\n"
+    s = s + "    m.HoverTab = 0 - 1\n"
     ' Seed per-widget initial state from the design — bubbletea
     ' takes the Model by value at NewProgram time, so anything set
     ' here is what the user sees on the first frame.

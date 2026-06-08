@@ -15,6 +15,7 @@ TYPE Model
     DIM Height AS INTEGER
     DIM Focus  AS INTEGER
     DIM Hover  AS INTEGER
+    DIM HoverTab AS INTEGER
     DIM textinput1_Val AS STRING
     DIM checkbox1_Val AS BOOLEAN
     DIM radiobutton1_Val AS BOOLEAN
@@ -197,6 +198,21 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 12 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 0
         _ = mm
         m.Hover = mmHit
+        m.HoverTab = 0 - 1
+        IF mmHit = 9 THEN
+            DIM thCol9 AS INTEGER = mm.X - 30
+            DIM thAcc9 AS INTEGER = 0
+            DIM thW9 AS INTEGER = 0
+            thW9 = lipgloss.Width("General") + 2
+            IF thCol9 >= thAcc9 AND thCol9 < thAcc9 + thW9 THEN m.HoverTab = 0
+            thAcc9 = thAcc9 + thW9 + 1
+            thW9 = lipgloss.Width("Advanced") + 2
+            IF thCol9 >= thAcc9 AND thCol9 < thAcc9 + thW9 THEN m.HoverTab = 1
+            thAcc9 = thAcc9 + thW9 + 1
+            thW9 = lipgloss.Width("About") + 2
+            IF thCol9 >= thAcc9 AND thCol9 < thAcc9 + thW9 THEN m.HoverTab = 2
+            thAcc9 = thAcc9 + thW9 + 1
+        END IF
         RETURN m, NIL
     END IF
     DIM mw AS tea.MouseWheelMsg
@@ -582,13 +598,16 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM tsk9 AS INTEGER
     FOR tsk9 = 0 TO LEN(tsItems9) - 1
         IF tsk9 > 0 THEN tsBar9 = tsBar9 + "│"
+        DIM tsSeg9 AS STRING
         IF tsk9 = m.tabstrip1_Val THEN
-            tsBar9 = tsBar9 + "[" + tsItems9[tsk9] + "]"
+            tsSeg9 = "[" + tsItems9[tsk9] + "]"
         ELSE
-            tsBar9 = tsBar9 + " " + tsItems9[tsk9] + " "
+            tsSeg9 = " " + tsItems9[tsk9] + " "
         END IF
+        IF m.Hover = 9 AND m.HoverTab = tsk9 AND m.Focus <> 9 THEN tsSeg9 = hoverStyle.Render(tsSeg9)
+        tsBar9 = tsBar9 + tsSeg9
     NEXT tsk9
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 30, tsBar9, m.Focus = 9, m.Hover = 9)
+    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 30, tsBar9, m.Focus = 9, FALSE)
     DIM tsRule9 AS STRING = strings.Repeat("─", 28)
     DIM tsRuleY9 AS INTEGER = 1 + 1
     IF tsRuleY9 >= 0 AND tsRuleY9 < LEN(rows) THEN rows[tsRuleY9] = overlayFocus(rows[tsRuleY9], 30, tsRule9, m.Focus = 9, FALSE)
@@ -722,6 +741,7 @@ END FUNCTION
 SUB Main()
     DIM m AS Model
     m.Hover = 0 - 1
+    m.HoverTab = 0 - 1
     m.combobox1_Val = 0
     m.listbox1_Val = 0
     m.progressbar1_Val = 40

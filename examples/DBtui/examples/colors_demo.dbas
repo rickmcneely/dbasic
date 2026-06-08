@@ -15,6 +15,7 @@ TYPE Model
     DIM Height AS INTEGER
     DIM Focus  AS INTEGER
     DIM Hover  AS INTEGER
+    DIM HoverTab AS INTEGER
 END TYPE
 
 FUNCTION (m AS Model) Init() AS tea.Cmd
@@ -60,6 +61,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 20 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 0
         _ = mm
         m.Hover = mmHit
+        m.HoverTab = 0 - 1
         RETURN m, NIL
     END IF
     DIM mw AS tea.MouseWheelMsg
@@ -130,6 +132,7 @@ END FUNCTION
 SUB Main()
     DIM m AS Model
     m.Hover = 0 - 1
+    m.HoverTab = 0 - 1
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)
     DIM final AS tea.Model
     DIM rerr AS ERROR
