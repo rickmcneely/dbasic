@@ -143,6 +143,20 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             ELSEIF mcRelY8 = 8 - 1 THEN
                 IF m.scrollbar1_Val < 100 THEN m.scrollbar1_Val = m.scrollbar1_Val + 1
                 dispatchChange("scrollbar1")
+            ELSEIF mcRelY8 >= 1 AND mcRelY8 <= 8 - 2 THEN
+                DIM sbThm8 AS INTEGER = 1 + ((m.scrollbar1_Val - 0) * (8 - 3)) / 100
+                IF sbThm8 < 1 THEN sbThm8 = 1
+                IF sbThm8 > 8 - 2 THEN sbThm8 = 8 - 2
+                IF mcRelY8 < sbThm8 THEN
+                    m.scrollbar1_Val = m.scrollbar1_Val - 20
+                    IF m.scrollbar1_Val < 0 THEN m.scrollbar1_Val = 0
+                    dispatchChange("scrollbar1")
+                END IF
+                IF mcRelY8 > sbThm8 THEN
+                    m.scrollbar1_Val = m.scrollbar1_Val + 20
+                    IF m.scrollbar1_Val > 100 THEN m.scrollbar1_Val = 100
+                    dispatchChange("scrollbar1")
+                END IF
             END IF
             RETURN m, NIL
         END IF

@@ -94,8 +94,18 @@ END FUNCTION
 FUNCTION scrollBarEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcXs AS STRING, mcYs AS STRING, mcWs AS STRING, mcHs AS STRING, qt AS STRING) AS STRING
     DIM mcSbMin AS STRING = strconv.Itoa(mcw.Min)
     DIM mcSbMax AS STRING = strconv.Itoa(mcw.Max)
+    ' Page size for a track click: the value-distance the thumb covers per
+    ' track row, so one click moves the thumb ~1 row (visibly). The thumb
+    ' travels (extent-3) rows over the whole Min..Max range. min 1 so the
+    ' bar always moves even on tiny ranges.
+    DIM sbRange AS INTEGER = mcw.Max - mcw.Min
+    IF sbRange < 1 THEN sbRange = 1
     DIM s AS STRING = ""
     IF strings.ToLower(mcw.Orient) = "v" THEN
+        DIM vTrackDen AS INTEGER = mcw.H - 3
+        DIM vPage AS INTEGER = 1
+        IF vTrackDen > 0 THEN vPage = sbRange / vTrackDen
+        IF vPage < 1 THEN vPage = 1
         s = s + "            DIM mcRelY" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
         s = s + "            IF mcRelY" + mcIStr + " = 0 THEN\n"
         s = s + "                IF m." + mcw.Name + "_Val > " + mcSbMin + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val - 1\n"
@@ -103,8 +113,30 @@ FUNCTION scrollBarEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcXs AS STRIN
         s = s + "            ELSEIF mcRelY" + mcIStr + " = " + mcHs + " - 1 THEN\n"
         s = s + "                IF m." + mcw.Name + "_Val < " + mcSbMax + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val + 1\n"
         s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
+        IF vTrackDen > 0 THEN
+            ' Track click between the arrows: page toward the click. Recompute
+            ' the thumb row exactly as the View does, then compare.
+            s = s + "            ELSEIF mcRelY" + mcIStr + " >= 1 AND mcRelY" + mcIStr + " <= " + mcHs + " - 2 THEN\n"
+            s = s + "                DIM sbThm" + mcIStr + " AS INTEGER = 1 + ((m." + mcw.Name + "_Val - " + mcSbMin + ") * (" + mcHs + " - 3)) / " + strconv.Itoa(sbRange) + "\n"
+            s = s + "                IF sbThm" + mcIStr + " < 1 THEN sbThm" + mcIStr + " = 1\n"
+            s = s + "                IF sbThm" + mcIStr + " > " + mcHs + " - 2 THEN sbThm" + mcIStr + " = " + mcHs + " - 2\n"
+            s = s + "                IF mcRelY" + mcIStr + " < sbThm" + mcIStr + " THEN\n"
+            s = s + "                    m." + mcw.Name + "_Val = m." + mcw.Name + "_Val - " + strconv.Itoa(vPage) + "\n"
+            s = s + "                    IF m." + mcw.Name + "_Val < " + mcSbMin + " THEN m." + mcw.Name + "_Val = " + mcSbMin + "\n"
+            s = s + "                    dispatchChange(" + qt + mcw.Name + qt + ")\n"
+            s = s + "                END IF\n"
+            s = s + "                IF mcRelY" + mcIStr + " > sbThm" + mcIStr + " THEN\n"
+            s = s + "                    m." + mcw.Name + "_Val = m." + mcw.Name + "_Val + " + strconv.Itoa(vPage) + "\n"
+            s = s + "                    IF m." + mcw.Name + "_Val > " + mcSbMax + " THEN m." + mcw.Name + "_Val = " + mcSbMax + "\n"
+            s = s + "                    dispatchChange(" + qt + mcw.Name + qt + ")\n"
+            s = s + "                END IF\n"
+        END IF
         s = s + "            END IF\n"
     ELSE
+        DIM hTrackDen AS INTEGER = mcw.W - 3
+        DIM hPage AS INTEGER = 1
+        IF hTrackDen > 0 THEN hPage = sbRange / hTrackDen
+        IF hPage < 1 THEN hPage = 1
         s = s + "            DIM mcRelX" + mcIStr + " AS INTEGER = mc.X - " + mcXs + "\n"
         s = s + "            IF mcRelX" + mcIStr + " = 0 THEN\n"
         s = s + "                IF m." + mcw.Name + "_Val > " + mcSbMin + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val - 1\n"
@@ -112,6 +144,24 @@ FUNCTION scrollBarEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcXs AS STRIN
         s = s + "            ELSEIF mcRelX" + mcIStr + " = " + mcWs + " - 1 THEN\n"
         s = s + "                IF m." + mcw.Name + "_Val < " + mcSbMax + " THEN m." + mcw.Name + "_Val = m." + mcw.Name + "_Val + 1\n"
         s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
+        IF hTrackDen > 0 THEN
+            ' Track click between the ◄ / ► arrows: page toward the click. The
+            ' thumb cell sits at relative column 1 + hThumb (View geometry).
+            s = s + "            ELSEIF mcRelX" + mcIStr + " >= 1 AND mcRelX" + mcIStr + " <= " + mcWs + " - 2 THEN\n"
+            s = s + "                DIM sbThm" + mcIStr + " AS INTEGER = 1 + ((m." + mcw.Name + "_Val - " + mcSbMin + ") * (" + mcWs + " - 3)) / " + strconv.Itoa(sbRange) + "\n"
+            s = s + "                IF sbThm" + mcIStr + " < 1 THEN sbThm" + mcIStr + " = 1\n"
+            s = s + "                IF sbThm" + mcIStr + " > " + mcWs + " - 2 THEN sbThm" + mcIStr + " = " + mcWs + " - 2\n"
+            s = s + "                IF mcRelX" + mcIStr + " < sbThm" + mcIStr + " THEN\n"
+            s = s + "                    m." + mcw.Name + "_Val = m." + mcw.Name + "_Val - " + strconv.Itoa(hPage) + "\n"
+            s = s + "                    IF m." + mcw.Name + "_Val < " + mcSbMin + " THEN m." + mcw.Name + "_Val = " + mcSbMin + "\n"
+            s = s + "                    dispatchChange(" + qt + mcw.Name + qt + ")\n"
+            s = s + "                END IF\n"
+            s = s + "                IF mcRelX" + mcIStr + " > sbThm" + mcIStr + " THEN\n"
+            s = s + "                    m." + mcw.Name + "_Val = m." + mcw.Name + "_Val + " + strconv.Itoa(hPage) + "\n"
+            s = s + "                    IF m." + mcw.Name + "_Val > " + mcSbMax + " THEN m." + mcw.Name + "_Val = " + mcSbMax + "\n"
+            s = s + "                    dispatchChange(" + qt + mcw.Name + qt + ")\n"
+            s = s + "                END IF\n"
+        END IF
         s = s + "            END IF\n"
     END IF
     RETURN s
