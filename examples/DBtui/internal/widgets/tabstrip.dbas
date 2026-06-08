@@ -143,11 +143,13 @@ FUNCTION tabStripEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS
     s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocus(rows[" + ys + "], " + xs + ", tsBar" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
     s = s + "    DIM tsRule" + sfx + " AS STRING = strings.Repeat(" + qt + "─" + qt + ", " + tsWStr + ")\n"
     s = s + "    DIM tsRuleY" + sfx + " AS INTEGER = " + ys + " + 1\n"
-    s = s + "    IF tsRuleY" + sfx + " >= 0 AND tsRuleY" + sfx + " < LEN(rows) THEN rows[tsRuleY" + sfx + "] = overlayFocus(rows[tsRuleY" + sfx + "], " + xs + ", tsRule" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
+    ' Rule + content highlight on focus only — hover is scoped to the
+    ' caption bar (tsBar) so mousing the tab body doesn't light the strip.
+    s = s + "    IF tsRuleY" + sfx + " >= 0 AND tsRuleY" + sfx + " < LEN(rows) THEN rows[tsRuleY" + sfx + "] = overlayFocus(rows[tsRuleY" + sfx + "], " + xs + ", tsRule" + sfx + ", m.Focus = " + sfx + ", FALSE)\n"
     s = s + "    DIM tsAct" + sfx + " AS STRING = " + qt + qt + "\n"
     s = s + "    IF m." + wv.Name + "_Val >= 0 AND m." + wv.Name + "_Val < LEN(tsItems" + sfx + ") THEN tsAct" + sfx + " = tsItems" + sfx + "[m." + wv.Name + "_Val]\n"
     s = s + "    DIM tsContent" + sfx + " AS STRING = " + qt + " " + qt + " + tsAct" + sfx + " + " + qt + " tab" + qt + "\n"
     s = s + "    DIM tsContentY" + sfx + " AS INTEGER = " + ys + " + 2\n"
-    s = s + "    IF tsContentY" + sfx + " >= 0 AND tsContentY" + sfx + " < LEN(rows) THEN rows[tsContentY" + sfx + "] = overlayFocus(rows[tsContentY" + sfx + "], " + xs + ", tsContent" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
+    s = s + "    IF tsContentY" + sfx + " >= 0 AND tsContentY" + sfx + " < LEN(rows) THEN rows[tsContentY" + sfx + "] = overlayFocus(rows[tsContentY" + sfx + "], " + xs + ", tsContent" + sfx + ", m.Focus = " + sfx + ", FALSE)\n"
     RETURN s
 END FUNCTION

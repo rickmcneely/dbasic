@@ -1311,7 +1311,11 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             DIM mmXs AS STRING = strconv.Itoa(mmw.X)
             DIM mmYs AS STRING = strconv.Itoa(mmw.Y)
             DIM mmWs AS STRING = strconv.Itoa(mmw.W)
+            ' Hover hit-height. TabStrip only hovers on its caption row (the
+            ' rest of the strip is the tab body), so its hover rect is 1 row
+            ' tall; every other widget uses its full height.
             DIM mmHs AS STRING = strconv.Itoa(mmw.H)
+            IF mmw.Kind = "TabStrip" THEN mmHs = "1"
             s = s + "        IF mmHit < 0 AND mm.X >= " + mmXs + " AND mm.X < " + mmXs + " + " + mmWs + " AND mm.Y >= " + mmYs + " AND mm.Y < " + mmYs + " + " + mmHs + " THEN mmHit = " + strconv.Itoa(mmi) + "\n"
         END IF
     NEXT mmi
@@ -1536,7 +1540,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "            IF gRow" + sfx + " = m." + wv.Name + "_Val THEN gmk" + sfx + " = " + qt + "▶ " + qt + "\n"
             s = s + "            DIM gLine" + sfx + " AS STRING = gmk" + sfx + " + gk" + sfx + " + " + qt + "│ " + qt + " + gv" + sfx + "\n"
             s = s + "            DIM gY" + sfx + " AS INTEGER = " + ys + " + gRow" + sfx + "\n"
-            s = s + "            IF gY" + sfx + " >= 0 AND gY" + sfx + " < LEN(rows) THEN rows[gY" + sfx + "] = overlayRow(rows[gY" + sfx + "], " + xs + ", gLine" + sfx + ")\n"
+            ' Hover-highlight the whole grid when moused over (but not while
+            ' focused — the ▶ cursor already marks the active row).
+            s = s + "            IF gY" + sfx + " >= 0 AND gY" + sfx + " < LEN(rows) THEN rows[gY" + sfx + "] = overlayFocus(rows[gY" + sfx + "], " + xs + ", gLine" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
             s = s + "        END IF\n"
             s = s + "    NEXT gRow" + sfx + "\n"
         ELSEIF wv.Kind = "ScrollPanel" THEN
@@ -1559,7 +1565,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 s = s + "    spItems" + sfx + " = APPEND(spItems" + sfx + ", " + qt + escapeForDBString(wv.Items[spvI]) + qt + ")\n"
             NEXT spvI
             s = s + "    DIM spTop" + sfx + " AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + spBordStr + ") + " + qt + "┐" + qt + "\n"
-            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", spTop" + sfx + ")\n"
+            ' Hover-highlight the whole panel (top border, content, bottom
+            ' border) when moused over, but not while focused.
+            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocus(rows[" + ys + "], " + xs + ", spTop" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
             s = s + "    DIM spThumb" + sfx + " AS INTEGER = 0 - 1\n"
             s = s + "    IF " + spMaxStr2 + " > 0 AND " + spTrackStr + " > 0 THEN\n"
             s = s + "        spThumb" + sfx + " = (m." + wv.Name + "_Scroll * (" + spTrackStr + " - 1)) / " + spMaxStr2 + "\n"
@@ -1579,11 +1587,11 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "        IF spRow" + sfx + " >= 1 AND spRow" + sfx + " <= " + spVisStr2 + " - 2 AND (spRow" + sfx + " - 1) = spThumb" + sfx + " THEN spsb" + sfx + " = " + qt + "█" + qt + "\n"
             s = s + "        DIM spLine" + sfx + " AS STRING = " + qt + "│" + qt + " + spcl" + sfx + " + spsb" + sfx + " + " + qt + "│" + qt + "\n"
             s = s + "        DIM spY" + sfx + " AS INTEGER = " + ys + " + 1 + spRow" + sfx + "\n"
-            s = s + "        IF spY" + sfx + " >= 0 AND spY" + sfx + " < LEN(rows) THEN rows[spY" + sfx + "] = overlayRow(rows[spY" + sfx + "], " + xs + ", spLine" + sfx + ")\n"
+            s = s + "        IF spY" + sfx + " >= 0 AND spY" + sfx + " < LEN(rows) THEN rows[spY" + sfx + "] = overlayFocus(rows[spY" + sfx + "], " + xs + ", spLine" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
             s = s + "    NEXT spRow" + sfx + "\n"
             s = s + "    DIM spBot" + sfx + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + spBordStr + ") + " + qt + "┘" + qt + "\n"
             s = s + "    DIM spBotY" + sfx + " AS INTEGER = " + ys + " + " + strconv.Itoa(wv.H - 1) + "\n"
-            s = s + "    IF spBotY" + sfx + " >= 0 AND spBotY" + sfx + " < LEN(rows) THEN rows[spBotY" + sfx + "] = overlayRow(rows[spBotY" + sfx + "], " + xs + ", spBot" + sfx + ")\n"
+            s = s + "    IF spBotY" + sfx + " >= 0 AND spBotY" + sfx + " < LEN(rows) THEN rows[spBotY" + sfx + "] = overlayFocus(rows[spBotY" + sfx + "], " + xs + ", spBot" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
         ELSEIF wv.Kind = "StatusBar" THEN
             s = s + statusBarEmitView(wv, sfx, xs, ys, qt)
         ELSEIF wv.Kind = "Menubar" THEN

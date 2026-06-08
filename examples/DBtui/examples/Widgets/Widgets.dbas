@@ -185,7 +185,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 24 AND mm.Y >= 7 AND mm.Y < 7 + 5 THEN mmHit = 12
         IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 22 AND mm.Y >= 1 AND mm.Y < 1 + 5 THEN mmHit = 11
         IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 24 AND mm.Y >= 7 AND mm.Y < 7 + 6 THEN mmHit = 10
-        IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 28 AND mm.Y >= 1 AND mm.Y < 1 + 5 THEN mmHit = 9
+        IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 28 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 9
         IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 1 AND mm.Y >= 10 AND mm.Y < 10 + 8 THEN mmHit = 8
         IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 20 AND mm.Y >= 18 AND mm.Y < 18 + 1 THEN mmHit = 7
         IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 18 AND mm.Y >= 7 AND mm.Y < 7 + 5 THEN mmHit = 6
@@ -591,12 +591,12 @@ FUNCTION (m AS Model) View() AS tea.View
     IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 30, tsBar9, m.Focus = 9, m.Hover = 9)
     DIM tsRule9 AS STRING = strings.Repeat("─", 28)
     DIM tsRuleY9 AS INTEGER = 1 + 1
-    IF tsRuleY9 >= 0 AND tsRuleY9 < LEN(rows) THEN rows[tsRuleY9] = overlayFocus(rows[tsRuleY9], 30, tsRule9, m.Focus = 9, m.Hover = 9)
+    IF tsRuleY9 >= 0 AND tsRuleY9 < LEN(rows) THEN rows[tsRuleY9] = overlayFocus(rows[tsRuleY9], 30, tsRule9, m.Focus = 9, FALSE)
     DIM tsAct9 AS STRING = ""
     IF m.tabstrip1_Val >= 0 AND m.tabstrip1_Val < LEN(tsItems9) THEN tsAct9 = tsItems9[m.tabstrip1_Val]
     DIM tsContent9 AS STRING = " " + tsAct9 + " tab"
     DIM tsContentY9 AS INTEGER = 1 + 2
-    IF tsContentY9 >= 0 AND tsContentY9 < LEN(rows) THEN rows[tsContentY9] = overlayFocus(rows[tsContentY9], 30, tsContent9, m.Focus = 9, m.Hover = 9)
+    IF tsContentY9 >= 0 AND tsContentY9 < LEN(rows) THEN rows[tsContentY9] = overlayFocus(rows[tsContentY9], 30, tsContent9, m.Focus = 9, FALSE)
     DIM tnVis10 AS []INTEGER = treeVisibleRows(tree1_depths(), m.tree1_Collapsed)
     DIM tnDep10 AS []INTEGER = tree1_depths()
     DIM tnLab10 AS []STRING = tree1_labels()
@@ -616,7 +616,7 @@ FUNCTION (m AS Model) View() AS tea.View
         END IF
     NEXT tnR10
     DIM taTop11 AS STRING = "┌" + strings.Repeat("─", 20) + "┐"
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayRow(rows[1], 56, taTop11)
+    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 56, taTop11, FALSE, m.Hover = 11 AND m.Focus <> 11)
     DIM taLines11 AS []STRING = strings.Split(m.textarea1_Val, "\n")
     DIM taCRow11 AS INTEGER
     DIM taCCol11 AS INTEGER
@@ -640,11 +640,11 @@ FUNCTION (m AS Model) View() AS tea.View
         IF lipgloss.Width(taLn11) < 20 THEN taLn11 = taLn11 + strings.Repeat(" ", 20 - lipgloss.Width(taLn11))
         DIM taLine11 AS STRING = "│" + taLn11 + "│"
         DIM taY11 AS INTEGER = 1 + 1 + taRow11
-        IF taY11 >= 0 AND taY11 < LEN(rows) THEN rows[taY11] = overlayRow(rows[taY11], 56, taLine11)
+        IF taY11 >= 0 AND taY11 < LEN(rows) THEN rows[taY11] = overlayFocus(rows[taY11], 56, taLine11, FALSE, m.Hover = 11 AND m.Focus <> 11)
     NEXT taRow11
     DIM taBot11 AS STRING = "└" + strings.Repeat("─", 20) + "┘"
     DIM taBotY11 AS INTEGER = 1 + 5 - 1
-    IF taBotY11 >= 0 AND taBotY11 < LEN(rows) THEN rows[taBotY11] = overlayRow(rows[taBotY11], 56, taBot11)
+    IF taBotY11 >= 0 AND taBotY11 < LEN(rows) THEN rows[taBotY11] = overlayFocus(rows[taBotY11], 56, taBot11, FALSE, m.Hover = 11 AND m.Focus <> 11)
     DIM gKeys12 AS []STRING
     DIM gVals12 AS []STRING
     gKeys12 = APPEND(gKeys12, "Name")
@@ -666,7 +666,7 @@ FUNCTION (m AS Model) View() AS tea.View
             IF gRow12 = m.propgrid1_Val THEN gmk12 = "▶ "
             DIM gLine12 AS STRING = gmk12 + gk12 + "│ " + gv12
             DIM gY12 AS INTEGER = 7 + gRow12
-            IF gY12 >= 0 AND gY12 < LEN(rows) THEN rows[gY12] = overlayRow(rows[gY12], 56, gLine12)
+            IF gY12 >= 0 AND gY12 < LEN(rows) THEN rows[gY12] = overlayFocus(rows[gY12], 56, gLine12, FALSE, m.Hover = 12 AND m.Focus <> 12)
         END IF
     NEXT gRow12
     DIM spItems13 AS []STRING
@@ -683,7 +683,7 @@ FUNCTION (m AS Model) View() AS tea.View
     spItems13 = APPEND(spItems13, "Content line 11")
     spItems13 = APPEND(spItems13, "Content line 12")
     DIM spTop13 AS STRING = "┌" + strings.Repeat("─", 24) + "┐"
-    IF 14 >= 0 AND 14 < LEN(rows) THEN rows[14] = overlayRow(rows[14], 30, spTop13)
+    IF 14 >= 0 AND 14 < LEN(rows) THEN rows[14] = overlayFocus(rows[14], 30, spTop13, FALSE, m.Hover = 13 AND m.Focus <> 13)
     DIM spThumb13 AS INTEGER = 0 - 1
     IF 7 > 0 AND 3 > 0 THEN
         spThumb13 = (m.scrollpanel1_Scroll * (3 - 1)) / 7
@@ -703,11 +703,11 @@ FUNCTION (m AS Model) View() AS tea.View
         IF spRow13 >= 1 AND spRow13 <= 5 - 2 AND (spRow13 - 1) = spThumb13 THEN spsb13 = "█"
         DIM spLine13 AS STRING = "│" + spcl13 + spsb13 + "│"
         DIM spY13 AS INTEGER = 14 + 1 + spRow13
-        IF spY13 >= 0 AND spY13 < LEN(rows) THEN rows[spY13] = overlayRow(rows[spY13], 30, spLine13)
+        IF spY13 >= 0 AND spY13 < LEN(rows) THEN rows[spY13] = overlayFocus(rows[spY13], 30, spLine13, FALSE, m.Hover = 13 AND m.Focus <> 13)
     NEXT spRow13
     DIM spBot13 AS STRING = "└" + strings.Repeat("─", 24) + "┘"
     DIM spBotY13 AS INTEGER = 14 + 6
-    IF spBotY13 >= 0 AND spBotY13 < LEN(rows) THEN rows[spBotY13] = overlayRow(rows[spBotY13], 30, spBot13)
+    IF spBotY13 >= 0 AND spBotY13 < LEN(rows) THEN rows[spBotY13] = overlayFocus(rows[spBotY13], 30, spBot13, FALSE, m.Hover = 13 AND m.Focus <> 13)
     DIM body14 AS STRING
     body14 = "01234567890123456789012345678901234567890123456789012345678901234567890123456789"
     IF 0 >= 0 AND 0 < LEN(rows) THEN rows[0] = overlayFocus(rows[0], 0, body14, m.Focus = 14, m.Hover = 14)

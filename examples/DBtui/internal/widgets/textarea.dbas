@@ -115,7 +115,9 @@ FUNCTION textAreaEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS
     DIM taVisStr AS STRING = strconv.Itoa(wv.H - 2)
     DIM s AS STRING = ""
     s = s + "    DIM taTop" + sfx + " AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + taInWStr + ") + " + qt + "┐" + qt + "\n"
-    s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", taTop" + sfx + ")\n"
+    ' Hover-highlight the whole box, but only while NOT focused — focused
+    ' shows the █ edit cursor, and reverse-video would invert it mid-edit.
+    s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocus(rows[" + ys + "], " + xs + ", taTop" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
     s = s + "    DIM taLines" + sfx + " AS []STRING = strings.Split(m." + wv.Name + "_Val, " + qt + "\\n" + qt + ")\n"
     s = s + "    DIM taCRow" + sfx + " AS INTEGER\n"
     s = s + "    DIM taCCol" + sfx + " AS INTEGER\n"
@@ -139,11 +141,11 @@ FUNCTION textAreaEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS
     s = s + "        IF lipgloss.Width(taLn" + sfx + ") < " + taInWStr + " THEN taLn" + sfx + " = taLn" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + taInWStr + " - lipgloss.Width(taLn" + sfx + "))\n"
     s = s + "        DIM taLine" + sfx + " AS STRING = " + qt + "│" + qt + " + taLn" + sfx + " + " + qt + "│" + qt + "\n"
     s = s + "        DIM taY" + sfx + " AS INTEGER = " + ys + " + 1 + taRow" + sfx + "\n"
-    s = s + "        IF taY" + sfx + " >= 0 AND taY" + sfx + " < LEN(rows) THEN rows[taY" + sfx + "] = overlayRow(rows[taY" + sfx + "], " + xs + ", taLine" + sfx + ")\n"
+    s = s + "        IF taY" + sfx + " >= 0 AND taY" + sfx + " < LEN(rows) THEN rows[taY" + sfx + "] = overlayFocus(rows[taY" + sfx + "], " + xs + ", taLine" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
     s = s + "    NEXT taRow" + sfx + "\n"
     s = s + "    DIM taBot" + sfx + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + taInWStr + ") + " + qt + "┘" + qt + "\n"
     s = s + "    DIM taBotY" + sfx + " AS INTEGER = " + ys + " + " + taHStr + " - 1\n"
-    s = s + "    IF taBotY" + sfx + " >= 0 AND taBotY" + sfx + " < LEN(rows) THEN rows[taBotY" + sfx + "] = overlayRow(rows[taBotY" + sfx + "], " + xs + ", taBot" + sfx + ")\n"
+    s = s + "    IF taBotY" + sfx + " >= 0 AND taBotY" + sfx + " < LEN(rows) THEN rows[taBotY" + sfx + "] = overlayFocus(rows[taBotY" + sfx + "], " + xs + ", taBot" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
     RETURN s
 END FUNCTION
 
