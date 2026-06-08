@@ -161,12 +161,28 @@ TYPE DesignWidget
     ' clipped viewport at its own (X, Y) minus the panel's scroll
     ' offset; empty Parent means a normal top-level widget.
     DIM Parent AS STRING
+
+    ' --- Per-widget color (normal/unselected state) ------------------
+    ' ANSI-256 palette index as a STRING ("0".."255"); "" = inherit the
+    ' terminal default (no color emitted). STRING (not INTEGER) so legacy
+    ' .dbproj files that predate these fields unmarshal to "" = inherit,
+    ' keeping generated output byte-identical. Set via the color picker.
+    ' Selected/hover colors are a planned follow-up (focus/hover currently
+    ' use the global reverse styles).
+    DIM FgColor AS STRING      ' foreground swatch, "" = inherit
+    DIM BgColor AS STRING      ' background swatch, "" = inherit
 END TYPE
 
 TYPE DesignForm
     DIM Name    AS STRING                ' identifier within the project (e.g. "frmStart")
     DIM Title   AS STRING                ' window caption shown at runtime
     DIM Widgets AS []DesignWidget
+    ' Form-wide default colors (ANSI-256 index as STRING; "" = terminal
+    ' default). A widget whose own FgColor/BgColor is "" inherits these,
+    ' so recoloring the form recolors every un-overridden widget. STRING
+    ' so legacy .dbproj files load as "" = inherit (output unchanged).
+    DIM FgColor AS STRING
+    DIM BgColor AS STRING
 END TYPE
 
 ' -------------------------------------------------------------------------
@@ -433,6 +449,16 @@ TYPE Model
     DIM ModalDragSY     AS INTEGER
     DIM ModalDragOX     AS INTEGER
     DIM ModalDragOY     AS INTEGER
+
+    ' 256-color picker modal state. Opened from a Fg/Bg property row to
+    ' recolor the selected widget. CPActive gates rendering + input
+    ' routing (like ModalActive). CPTarget is "fg" or "bg" — which widget
+    ' color the chosen swatch writes to. CPIdx is the 0..255 palette
+    ' cursor. The picker writes straight to the selected widget's
+    ' FgColor/BgColor on Enter; Esc cancels; Del/'x' clears to inherit.
+    DIM CPActive AS BOOLEAN
+    DIM CPTarget AS STRING
+    DIM CPIdx    AS INTEGER
 END TYPE
 
 ' setExpanded — toggle whether `path` is in the TreeExpanded "set".
@@ -1618,6 +1644,18 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mcMsg, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mcMsg.Button = tea.MouseLeft THEN
+        ' (CP) Color picker — when open it owns the next left-click: a click
+        ' on a swatch selects + commits it; a click anywhere else cancels.
+        IF m.CPActive THEN
+            DIM cpHit AS INTEGER = colorSwatchAt(mcMsg.X, mcMsg.Y)
+            IF cpHit >= 0 THEN
+                m.CPIdx = cpHit
+                colorPickerCommit(@m, FALSE)
+                RETURN m, NIL
+            END IF
+            m.CPActive = FALSE
+            RETURN m, NIL
+        END IF
         ' (C) Widget event context-menu — when open it owns the next
         ' left-click: inside the popup picks an event, anywhere else
         ' dismisses it. Checked before everything so a stray click can't
@@ -2066,6 +2104,42 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     k, kOk = msg.(tea.KeyPressMsg)
     IF kOk THEN
         DIM key AS STRING = k.String()
+
+        ' --- Color picker: when open it owns the keyboard. Arrows move the
+        '     swatch cursor (←→ by 1, ↑↓ by a row of 16), Enter commits the
+        '     swatch, x/Del clear to inherit, Esc cancels. Checked first.
+        IF m.CPActive THEN
+            IF key = "esc" THEN
+                m.CPActive = FALSE
+                RETURN m, NIL
+            END IF
+            IF key = "enter" THEN
+                colorPickerCommit(@m, FALSE)
+                RETURN m, NIL
+            END IF
+            IF key = "x" OR key = "delete" OR key = "backspace" THEN
+                colorPickerCommit(@m, TRUE)
+                RETURN m, NIL
+            END IF
+            IF key = "left" THEN
+                IF m.CPIdx > 0 THEN m.CPIdx = m.CPIdx - 1
+                RETURN m, NIL
+            END IF
+            IF key = "right" THEN
+                IF m.CPIdx < 255 THEN m.CPIdx = m.CPIdx + 1
+                RETURN m, NIL
+            END IF
+            IF key = "up" THEN
+                IF m.CPIdx >= 16 THEN m.CPIdx = m.CPIdx - 16
+                RETURN m, NIL
+            END IF
+            IF key = "down" THEN
+                IF m.CPIdx <= 239 THEN m.CPIdx = m.CPIdx + 16
+                RETURN m, NIL
+            END IF
+            ' Swallow any other key while the picker is up.
+            RETURN m, NIL
+        END IF
 
         ' --- Widget event context-menu: when open it owns the keyboard.
         '     Up/Down move the highlight, Enter picks the event, Esc
@@ -2998,6 +3072,27 @@ FUNCTION (m AS Model) View() AS tea.View
             ' coords and hit-test the button rects renderModal stored.
             modalLastOrigX = xOff
             modalLastOrigY = yOff
+        END IF
+    END IF
+
+    ' --- Color picker overlay (topmost). Auto-centered. Its screen
+    '     origin is stashed so the click handler can map a click to a
+    '     swatch via colorSwatchAt().
+    IF m.CPActive THEN
+        DIM cpkStr AS STRING = renderColorPicker(m)
+        IF cpkStr <> "" THEN
+            DIM cpkW AS INTEGER = lipgloss.Width(cpkStr)
+            DIM cpkH AS INTEGER = lipgloss.Height(cpkStr)
+            DIM cpkX AS INTEGER = (w - cpkW) / 2
+            DIM cpkY AS INTEGER = (h - cpkH) / 2
+            IF cpkX < 0 THEN cpkX = 0
+            IF cpkY < 0 THEN cpkY = 0
+            DIM cpkBgL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM cpkL   AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(cpkStr).X(cpkX).Y(cpkY).Z(7)
+            DIM cpkComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(cpkBgL, cpkL)
+            full = cpkComp.Render()
+            cpLastOrigX = cpkX
+            cpLastOrigY = cpkY
         END IF
     END IF
 

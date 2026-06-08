@@ -1,0 +1,36 @@
+{
+  "Title": "Colors Demo",
+  "FgColor": "250",
+  "Widgets": [
+    {
+      "Kind": "Label",
+      "Name": "lblTitle",
+      "Text": "Per-widget colors",
+      "X": 2,
+      "Y": 1,
+      "W": 20,
+      "H": 1,
+      "FgColor": "226"
+    },
+    {
+      "Kind": "Label",
+      "Name": "lblInherit",
+      "Text": "Inherits form fg",
+      "X": 2,
+      "Y": 3,
+      "W": 20,
+      "H": 1
+    },
+    {
+      "Kind": "Button",
+      "Name": "btnGo",
+      "Text": "Go",
+      "X": 2,
+      "Y": 5,
+      "W": 8,
+      "H": 1,
+      "FgColor": "15",
+      "BgColor": "27"
+    }
+  ]
+}

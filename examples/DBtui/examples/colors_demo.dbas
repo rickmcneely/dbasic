@@ -34,17 +34,17 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mc, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mc.Button = tea.MouseLeft THEN
-        IF mc.X >= 18 AND mc.X < 18 + 10 AND mc.Y >= 4 AND mc.Y < 4 + 1 THEN
+        IF mc.X >= 2 AND mc.X < 2 + 8 AND mc.Y >= 5 AND mc.Y < 5 + 1 THEN
             m.Focus = 2
-            dispatchClick("btnCancel")
+            dispatchClick("btnGo")
             RETURN m, NIL
         END IF
-        IF mc.X >= 2 AND mc.X < 2 + 11 AND mc.Y >= 4 AND mc.Y < 4 + 1 THEN
+        IF mc.X >= 2 AND mc.X < 2 + 20 AND mc.Y >= 3 AND mc.Y < 3 + 1 THEN
             m.Focus = 1
-            dispatchClick("btnDiscard")
+            _ = mc
             RETURN m, NIL
         END IF
-        IF mc.X >= 2 AND mc.X < 2 + 40 AND mc.Y >= 1 AND mc.Y < 1 + 1 THEN
+        IF mc.X >= 2 AND mc.X < 2 + 20 AND mc.Y >= 1 AND mc.Y < 1 + 1 THEN
             m.Focus = 0
             _ = mc
             RETURN m, NIL
@@ -55,9 +55,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     mm, mmOk = msg.(tea.MouseMotionMsg)
     IF mmOk THEN
         DIM mmHit AS INTEGER = 0 - 1
-        IF mmHit < 0 AND mm.X >= 18 AND mm.X < 18 + 10 AND mm.Y >= 4 AND mm.Y < 4 + 1 THEN mmHit = 2
-        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 11 AND mm.Y >= 4 AND mm.Y < 4 + 1 THEN mmHit = 1
-        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 40 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 0
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 8 AND mm.Y >= 5 AND mm.Y < 5 + 1 THEN mmHit = 2
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 20 AND mm.Y >= 3 AND mm.Y < 3 + 1 THEN mmHit = 1
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 20 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 0
         _ = mm
         m.Hover = mmHit
         RETURN m, NIL
@@ -89,11 +89,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF m.Focus = 1 THEN
-            IF key = "enter" OR key = "space" THEN dispatchClick("btnDiscard")
+            _ = key
             RETURN m, NIL
         END IF
         IF m.Focus = 2 THEN
-            IF key = "enter" OR key = "space" THEN dispatchClick("btnCancel")
+            IF key = "enter" OR key = "space" THEN dispatchClick("btnGo")
             RETURN m, NIL
         END IF
     END IF
@@ -111,14 +111,14 @@ FUNCTION (m AS Model) View() AS tea.View
         rows = APPEND(rows, strings.Repeat(" ", w))
     NEXT r
     DIM body0 AS STRING
-    body0 = "Unsaved changes will be lost. Discard?"
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 2, body0, m.Focus = 0, m.Hover = 0)
+    body0 = "Per-widget colors"
+    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocusC(rows[1], 2, body0, m.Focus = 0, m.Hover = 0, "226", "")
     DIM body1 AS STRING
-    body1 = "[ Discard ]"
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 2, body1, m.Focus = 1, m.Hover = 1)
+    body1 = "Inherits form fg"
+    IF 3 >= 0 AND 3 < LEN(rows) THEN rows[3] = overlayFocusC(rows[3], 2, body1, m.Focus = 1, m.Hover = 1, "250", "")
     DIM body2 AS STRING
-    body2 = "[ Cancel ]"
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 18, body2, m.Focus = 2, m.Hover = 2)
+    body2 = "[ Go ]"
+    IF 5 >= 0 AND 5 < LEN(rows) THEN rows[5] = overlayFocusC(rows[5], 2, body2, m.Focus = 2, m.Hover = 2, "15", "27")
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
     DIM fullView AS STRING = strings.Join(rows, "\n")
     DIM vw AS tea.View = tea.NewView(fullView)
@@ -236,12 +236,20 @@ FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS B
     RETURN overlayRow(row, col, txt)
 END FUNCTION
 
+FUNCTION overlayFocusC(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN, fg AS STRING, bg AS STRING) AS STRING
+    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))
+    IF hovered THEN RETURN overlayRowAt(row, col, hoverStyle.Render(txt))
+    DIM st AS lipgloss.Style = lipgloss.NewStyle()
+    IF fg <> "" THEN st = st.Foreground(lipgloss.Color(fg))
+    IF bg <> "" THEN st = st.Background(lipgloss.Color(bg))
+    RETURN overlayRowAt(row, col, st.Render(txt))
+END FUNCTION
+
 ' Generated dispatcher — routes a Button click to its user handler.
 ' When a Button has OnClickDialog set, the dialog's Show<Name>()
 ' fires first so the user doesn't have to wire it from code.
 SUB dispatchClick(id AS STRING)
-    IF id = "btnDiscard" THEN btnDiscard_Click()
-    IF id = "btnCancel" THEN btnCancel_Click()
+    IF id = "btnGo" THEN btnGo_Click()
 END SUB
 
 ' Generated dispatcher — routes a value change to its _Change handler.
@@ -252,14 +260,7 @@ END SUB
 ' ===== DBTUI:USER ===== DO NOT EDIT OR DELETE THIS LINE =====
 ' Your code below — DBtui preserves everything here on F5.
 
-' Click handler for btnDiscard — edit freely.
-SUB btnDiscard_Click()
-    fmt.Fprintln(os.Stderr, "user chose: Discard")
-    os.Exit(0)
-END SUB
-
-' Click handler for btnCancel — edit freely.
-SUB btnCancel_Click()
-    fmt.Fprintln(os.Stderr, "user chose: Cancel")
-    os.Exit(0)
+' Click handler for btnGo — edit freely.
+SUB btnGo_Click()
+    ' TODO: your code here.
 END SUB

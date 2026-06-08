@@ -136,7 +136,7 @@ FUNCTION scrollBarEmitViewVert(wv AS DesignWidget, sfx AS STRING, xs AS STRING, 
     ' Focus arrow dropped: the glyph column renders at X (matches the
     ' designer's scrollBarVisibleLines); no leading >/space on any row.
     s = s + "        DIM svY" + sfx + " AS INTEGER = " + ys + " + svi" + sfx + "\n"
-    s = s + "        IF svY" + sfx + " >= 0 AND svY" + sfx + " < LEN(rows) THEN rows[svY" + sfx + "] = overlayFocus(rows[svY" + sfx + "], " + xs + ", svGlyph" + sfx + ", m.Focus = " + sfx + ")\n"
+    s = s + "        IF svY" + sfx + " >= 0 AND svY" + sfx + " < LEN(rows) THEN rows[svY" + sfx + "] = overlayFocus(rows[svY" + sfx + "], " + xs + ", svGlyph" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
     s = s + "    NEXT svi" + sfx + "\n"
     RETURN s
 END FUNCTION

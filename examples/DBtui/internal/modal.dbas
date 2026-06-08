@@ -49,6 +49,60 @@ SUB showInputModal(m AS POINTER TO Model, title AS STRING, prompt AS STRING, def
     m.ModalActive = TRUE
 END SUB
 
+' showColorPicker — open the 256-color swatch picker for the selected
+' widget. `target` is "fg" or "bg" — which widget color the chosen
+' swatch writes to. The cursor (CPIdx) is seeded from the widget's
+' current color so reopening lands on the existing swatch.
+SUB showColorPicker(m AS POINTER TO Model, target AS STRING)
+    ' Seed the cursor from the current color. Form targets ("formfg"/
+    ' "formbg") read the form's color; widget targets ("fg"/"bg") require
+    ' a selected widget.
+    DIM cur AS STRING = ""
+    IF target = "formfg" THEN
+        cur = m.Tabs[m.TabIdx].Form.FgColor
+    ELSEIF target = "formbg" THEN
+        cur = m.Tabs[m.TabIdx].Form.BgColor
+    ELSE
+        IF m.Tabs[m.TabIdx].SelWidget < 0 OR m.Tabs[m.TabIdx].SelWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+        DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
+        cur = w.FgColor
+        IF target = "bg" THEN cur = w.BgColor
+    END IF
+    DIM idx AS INTEGER = 0
+    IF cur <> "" THEN
+        DIM pv AS INTEGER
+        DIM perr AS ERROR
+        pv, perr = strconv.Atoi(cur)
+        IF perr = NIL AND pv >= 0 AND pv <= 255 THEN idx = pv
+    END IF
+    m.CPTarget = target
+    m.CPIdx = idx
+    m.CPActive = TRUE
+END SUB
+
+' colorPickerCommit — write the picker's chosen swatch (or "" to clear)
+' to the selected widget's Fg/Bg color, then close the picker. Passing
+' clear=TRUE sets the color to inherit regardless of CPIdx.
+SUB colorPickerCommit(m AS POINTER TO Model, clear AS BOOLEAN)
+    DIM val AS STRING = ""
+    IF NOT clear THEN val = strconv.Itoa(m.CPIdx)
+    IF m.CPTarget = "formfg" THEN
+        m.Tabs[m.TabIdx].Form.FgColor = val
+        m.Tabs[m.TabIdx].Dirty = TRUE
+    ELSEIF m.CPTarget = "formbg" THEN
+        m.Tabs[m.TabIdx].Form.BgColor = val
+        m.Tabs[m.TabIdx].Dirty = TRUE
+    ELSEIF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+        IF m.CPTarget = "bg" THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].BgColor = val
+        ELSE
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].FgColor = val
+        END IF
+        m.Tabs[m.TabIdx].Dirty = TRUE
+    END IF
+    m.CPActive = FALSE
+END SUB
+
 ' dispatchModalClose — called by Update when the user commits a modal
 ' choice. Returns TRUE if the program should terminate immediately
 ' after this call (e.g. "Discard" on the quit-confirm modal).

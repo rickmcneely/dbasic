@@ -828,6 +828,18 @@ END SUB
 ' Row order MUST match the renderer in renderRightPane. Standard
 ' rows 0-4 are the same for every kind; rows 5+ are kind-specific
 ' and walked by a cursor so each kind gets a tight, dense layout.
+' formHasColors — TRUE when the form or any of its widgets sets a color,
+' so codegen knows whether to emit the overlayFocusC helper and the
+' colored render path. All-empty forms keep the plain output.
+FUNCTION formHasColors(f AS DesignForm) AS BOOLEAN
+    IF f.FgColor <> "" OR f.BgColor <> "" THEN RETURN TRUE
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(f.Widgets) - 1
+        IF f.Widgets[i].FgColor <> "" OR f.Widgets[i].BgColor <> "" THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
 FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, STRING, STRING, STRING)
     IF rowIdx = 1 THEN RETURN "Edit Name", "Name:", w.Name, "wprop:name"
     IF rowIdx = 2 THEN RETURN "Edit Text", "Text:", w.Text, "wprop:text"
@@ -925,6 +937,13 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         IF rowIdx = cursor THEN RETURN "Edit Parent", "container Panel name (blank = none):", w.Parent, "wprop:parent"
         cursor = cursor + 1
     END IF
+    ' Universal color rows. These don't use the input modal — formClickPropAt
+    ' intercepts the "wprop:fgcolor"/"wprop:bgcolor" keys and opens the
+    ' 256-color picker instead.
+    IF rowIdx = cursor THEN RETURN "Foreground color", "", w.FgColor, "wprop:fgcolor"
+    cursor = cursor + 1
+    IF rowIdx = cursor THEN RETURN "Background color", "", w.BgColor, "wprop:bgcolor"
+    cursor = cursor + 1
     RETURN "", "", "", ""
 END FUNCTION
 
@@ -932,7 +951,13 @@ END FUNCTION
 ' (0-based) into the right input modal. Row 0 (Kind) is read-only;
 ' any rowIdx that propRowEditContext returns "" for is also a no-op.
 SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
-    IF m.Tabs[m.TabIdx].SelWidget < 0 OR m.Tabs[m.TabIdx].SelWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    ' No widget selected → the pane shows form-level properties. Rows:
+    ' 0 = Form name (read-only), 1 = Fg, 2 = Bg. Fg/Bg open the picker.
+    IF m.Tabs[m.TabIdx].SelWidget < 0 OR m.Tabs[m.TabIdx].SelWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+        IF rowIdx = 1 THEN showColorPicker(m, "formfg")
+        IF rowIdx = 2 THEN showColorPicker(m, "formbg")
+        RETURN
+    END IF
     DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
     DIM ctxTitle AS STRING
     DIM ctxPrompt AS STRING
@@ -940,6 +965,15 @@ SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
     DIM ctxKey AS STRING
     ctxTitle, ctxPrompt, ctxDef, ctxKey = propRowEditContext(w, rowIdx)
     IF ctxKey = "" THEN RETURN
+    ' Color rows open the swatch picker rather than a text input.
+    IF ctxKey = "wprop:fgcolor" THEN
+        showColorPicker(m, "fg")
+        RETURN
+    END IF
+    IF ctxKey = "wprop:bgcolor" THEN
+        showColorPicker(m, "bg")
+        RETURN
+    END IF
     showInputModal(m, ctxTitle, ctxPrompt, ctxDef, ctxKey)
 END SUB
 
@@ -1047,6 +1081,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    DIM Width  AS INTEGER\n"
     s = s + "    DIM Height AS INTEGER\n"
     s = s + "    DIM Focus  AS INTEGER\n"
+    ' Hover = the widget index under the mouse cursor (-1 = none). Distinct
+    ' from Focus: hovering only highlights (hoverStyle), it never steals
+    ' keyboard focus. Seeded to -1 in Main so nothing is hovered at startup.
+    s = s + "    DIM Hover  AS INTEGER\n"
     DIM i AS INTEGER
     FOR i = 0 TO n - 1
         DIM w AS DesignWidget = f.Widgets[i]
@@ -1257,8 +1295,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
       END IF
     NEXT mci
     s = s + "    END IF\n"
-    ' --- Mouse hover -> focus the widget under the cursor (same as Tab);
-    '     moving off all widgets deselects (m.Focus = -1). Needs AllMotion.
+    ' --- Mouse hover -> highlight (NOT focus) the widget under the cursor.
+    '     Sets m.Hover only; keyboard focus (m.Focus) stays put. Moving off
+    '     all widgets clears the hover (m.Hover = -1). Needs AllMotion so the
+    '     Update handler receives motion events with no button held.
     s = s + "    DIM mm AS tea.MouseMotionMsg\n"
     s = s + "    DIM mmOk AS BOOLEAN\n"
     s = s + "    mm, mmOk = msg.(tea.MouseMotionMsg)\n"
@@ -1276,7 +1316,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         END IF
     NEXT mmi
     s = s + "        _ = mm\n"
-    s = s + "        m.Focus = mmHit\n"
+    s = s + "        m.Hover = mmHit\n"
     s = s + "        RETURN m, NIL\n"
     s = s + "    END IF\n"
     ' --- Mouse wheel -> scroll/move the scrollable widget under the
@@ -1591,9 +1631,21 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             DIM txt AS STRING = widgetVisibleText(wv)
             s = s + "    body" + sfx + " = " + qt + escapeForDBString(txt) + qt + "\n"
         END IF
-        ' Content renders at the widget's X (WYSIWYG). Focus is shown by
-        ' reverse-video color via overlayFocus, not a column-stealing arrow.
-        s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocus(rows[" + ys + "], " + xs + ", body" + sfx + ", m.Focus = " + sfx + ")\n"
+        ' Content renders at the widget's X (WYSIWYG). Keyboard focus is
+        ' shown via focusStyle; a mouse-hovered (but unfocused) widget gets
+        ' hoverStyle. The normal (unselected) state uses the widget's own
+        ' Fg/Bg, falling back to the form's Fg/Bg, then the terminal default.
+        ' Uncolored widgets keep the plain overlayFocus path so output is
+        ' byte-identical to before this feature.
+        DIM effFg AS STRING = wv.FgColor
+        IF effFg = "" THEN effFg = f.FgColor
+        DIM effBg AS STRING = wv.BgColor
+        IF effBg = "" THEN effBg = f.BgColor
+        IF effFg <> "" OR effBg <> "" THEN
+            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocusC(rows[" + ys + "], " + xs + ", body" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ", " + qt + effFg + qt + ", " + qt + effBg + qt + ")\n"
+        ELSE
+            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocus(rows[" + ys + "], " + xs + ", body" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
+        END IF
         END IF
       END IF
         _ = isMulti
@@ -1612,9 +1664,8 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     END IF
     s = s + "    rows = APPEND(rows, " + qt + " — Tab to cycle focus, Esc to quit" + qt + ")\n"
     ' Enable mouse capture so the Update handler above receives
-    ' MouseClickMsg. MouseModeCellMotion reports clicks + release
-    ' + wheel; lighter than MouseModeAllMotion and we don't need
-    ' continuous motion events in v1 (no drag yet).
+    ' MouseClickMsg. AllMotion (not CellMotion) so we also get button-less
+    ' motion events, which drive hover-to-highlight (m.Hover).
     s = s + "    DIM fullView AS STRING = strings.Join(rows, " + qt + "\\n" + qt + ")\n"
     ' Dialog overlay. When a dialog is active we manually overlay each
     ' of its rows onto the widget grid via overlayRowAt (which counts
@@ -1661,8 +1712,6 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "    END IF\n"
     END IF
     s = s + "    DIM vw AS tea.View = tea.NewView(fullView)\n"
-    ' AllMotion (not CellMotion) so the Update handler receives hover
-    ' motion events with no button held — used for hover-to-focus.
     s = s + "    vw.MouseMode = tea.MouseModeAllMotion\n"
     ' Alt-screen mode so bubbletea owns the whole terminal and clears
     ' it cleanly between frames. Without this, content that shrinks
@@ -1674,6 +1723,8 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "\n"
     s = s + "SUB Main()\n"
     s = s + "    DIM m AS Model\n"
+    ' Nothing is hovered until the mouse moves over a widget.
+    s = s + "    m.Hover = 0 - 1\n"
     ' Seed per-widget initial state from the design — bubbletea
     ' takes the Model by value at NewProgram time, so anything set
     ' here is what the user sees on the first frame.
@@ -1831,18 +1882,40 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    RETURN lf + txt + rt\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
-    ' focusStyle / overlayFocus — the keyboard-focus highlight that
-    ' replaced the > arrow. The focused widget's body is drawn in reverse
-    ' video (bg/fg swapped); unfocused widgets paint plain. Content stays
-    ' at the widget's X either way (WYSIWYG). focusStyle is a package-level
-    ' var (its type reference keeps lipgloss 'used').
+    ' Widget highlight styles — three package-level lipgloss styles forming
+    ' the color scheme the user can reassign:
+    '   focusStyle  — the keyboard-focused (selected) widget. Reverse video.
+    '   hoverStyle  — the widget under the mouse cursor. Defaults to the
+    '                 opposite of unselected (plain), i.e. reverse video too.
+    ' Unselected widgets paint plain. Content stays at the widget's X either
+    ' way (WYSIWYG). overlayFocus picks the style: focus beats hover beats
+    ' plain. These are package-level vars so the generated program (or the
+    ' user's handler code) can restyle the scheme in one place.
     s = s + "DIM focusStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)\n"
+    s = s + "DIM hoverStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)\n"
     s = s + "\n"
-    s = s + "FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN) AS STRING\n"
+    s = s + "FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN) AS STRING\n"
     s = s + "    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))\n"
+    s = s + "    IF hovered THEN RETURN overlayRowAt(row, col, hoverStyle.Render(txt))\n"
     s = s + "    RETURN overlayRow(row, col, txt)\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
+    ' overlayFocusC — colored variant. The normal (unselected) state paints
+    ' the body with the widget's resolved Fg/Bg (ANSI-256 index strings,
+    ' "" = inherit). Focus/hover still win and use the global reverse styles.
+    ' Emitted only when the form actually uses colors, so uncolored forms
+    ' keep byte-identical output.
+    IF formHasColors(f) THEN
+        s = s + "FUNCTION overlayFocusC(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN, fg AS STRING, bg AS STRING) AS STRING\n"
+        s = s + "    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))\n"
+        s = s + "    IF hovered THEN RETURN overlayRowAt(row, col, hoverStyle.Render(txt))\n"
+        s = s + "    DIM st AS lipgloss.Style = lipgloss.NewStyle()\n"
+        s = s + "    IF fg <> " + qt + qt + " THEN st = st.Foreground(lipgloss.Color(fg))\n"
+        s = s + "    IF bg <> " + qt + qt + " THEN st = st.Background(lipgloss.Color(bg))\n"
+        s = s + "    RETURN overlayRowAt(row, col, st.Render(txt))\n"
+        s = s + "END FUNCTION\n"
+        s = s + "\n"
+    END IF
     ' --- dispatchClick — generated jump-table from widget Id to
     '     the user-defined SUB. Must live in the prelude so the
     '     generated Update can call it; the SUB bodies live below

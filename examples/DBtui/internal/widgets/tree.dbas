@@ -138,7 +138,7 @@ FUNCTION treeEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STR
     ' Focus arrow dropped: node rows render at X (matches treeVisibleLines);
     ' the ▾/▸/• structure glyphs stay, but no leading >/space.
     s = s + "            DIM tnY" + sfx + " AS INTEGER = " + ys + " + tnR" + sfx + "\n"
-    s = s + "            IF tnY" + sfx + " >= 0 AND tnY" + sfx + " < LEN(rows) THEN rows[tnY" + sfx + "] = overlayFocus(rows[tnY" + sfx + "], " + xs + ", tnLine" + sfx + ", m.Focus = " + sfx + ")\n"
+    s = s + "            IF tnY" + sfx + " >= 0 AND tnY" + sfx + " < LEN(rows) THEN rows[tnY" + sfx + "] = overlayFocus(rows[tnY" + sfx + "], " + xs + ", tnLine" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
     s = s + "        END IF\n"
     s = s + "    NEXT tnR" + sfx + "\n"
     RETURN s
