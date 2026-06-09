@@ -244,6 +244,165 @@ FUNCTION menubarColAt(items AS []STRING, k AS INTEGER) AS INTEGER
     RETURN col
 END FUNCTION
 
+' =========================================================================
+' Structured menu-tree helpers — operate on a Menubar widget's []MenuNode
+' (see TYPE MenuNode in dbtui.dbas). The tree is a flat list ordered by a
+' pre-order walk; a node's children are the following nodes one level
+' deeper, until a node at the same or shallower depth. Shared by the Menu
+' Editor (Phase 2), the canvas preview, and the runtime codegen (Phase 3).
+' =========================================================================
+
+' menuTopCount — number of top-level (Depth = 0) titles on the bar.
+FUNCTION menuTopCount(nodes AS []MenuNode) AS INTEGER
+    DIM c AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(nodes) - 1
+        IF nodes[i].Depth = 0 THEN c = c + 1
+    NEXT i
+    RETURN c
+END FUNCTION
+
+' menuTopTitles — the title strip " File  Edit  Help " for the design-time
+' canvas preview (no active highlight). Separators at depth 0 are skipped.
+FUNCTION menuTopTitles(nodes AS []MenuNode) AS STRING
+    DIM bar AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(nodes) - 1
+        IF nodes[i].Depth = 0 AND NOT nodes[i].IsSep THEN
+            bar = bar + " " + nodes[i].Caption + " "
+        END IF
+    NEXT i
+    RETURN bar
+END FUNCTION
+
+' menuChildIdxs — indices of the DIRECT children of the node at parentIdx.
+' Pass parentIdx < 0 to get the top-level (Depth = 0) node indices. Direct
+' children are nodes exactly one level deeper in the run that follows,
+' stopping at the first node at parentIdx's depth or shallower.
+FUNCTION menuChildIdxs(nodes AS []MenuNode, parentIdx AS INTEGER) AS []INTEGER
+    DIM out AS []INTEGER
+    IF parentIdx < 0 THEN
+        DIM t AS INTEGER
+        FOR t = 0 TO LEN(nodes) - 1
+            IF nodes[t].Depth = 0 THEN out = APPEND(out, t)
+        NEXT t
+        RETURN out
+    END IF
+    IF parentIdx >= LEN(nodes) THEN RETURN out
+    DIM pd AS INTEGER = nodes[parentIdx].Depth
+    DIM i AS INTEGER
+    FOR i = parentIdx + 1 TO LEN(nodes) - 1
+        IF nodes[i].Depth <= pd THEN RETURN out
+        IF nodes[i].Depth = pd + 1 THEN out = APPEND(out, i)
+    NEXT i
+    RETURN out
+END FUNCTION
+
+' menuIsSubmenu — TRUE if the node at idx has children (the next node is
+' deeper), i.e. it opens a submenu rather than firing a handler.
+FUNCTION menuIsSubmenu(nodes AS []MenuNode, idx AS INTEGER) AS BOOLEAN
+    IF idx < 0 OR idx + 1 >= LEN(nodes) THEN RETURN FALSE
+    RETURN nodes[idx + 1].Depth > nodes[idx].Depth
+END FUNCTION
+
+' menuColAt — column offset of the k-th top-level title within the bar,
+' where each title occupies width(caption)+2 cells (matches menuTopTitles).
+FUNCTION menuColAt(nodes AS []MenuNode, k AS INTEGER) AS INTEGER
+    DIM col AS INTEGER = 0
+    DIM c AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(nodes) - 1
+        IF nodes[i].Depth = 0 AND NOT nodes[i].IsSep THEN
+            IF c = k THEN RETURN col
+            col = col + lipgloss.Width(nodes[i].Caption) + 2
+            c = c + 1
+        END IF
+    NEXT i
+    RETURN col
+END FUNCTION
+
+' menuSanitizeIdent — keep only [A-Za-z0-9] from s, title-casing each word
+' boundary so "Save As…" → "SaveAs". Returns "" if nothing survives.
+FUNCTION menuSanitizeIdent(s AS STRING) AS STRING
+    DIM alnum AS STRING = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    DIM out AS STRING = ""
+    DIM upNext AS BOOLEAN = FALSE
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(s)
+        DIM ch AS STRING = Mid(s, i, 1)
+        IF strings.Contains(alnum, ch) THEN
+            IF upNext THEN
+                out = out + strings.ToUpper(ch)
+                upNext = FALSE
+            ELSE
+                out = out + ch
+            END IF
+        ELSE
+            IF out <> "" THEN upNext = TRUE
+        END IF
+    NEXT i
+    RETURN out
+END FUNCTION
+
+' menuAutoName — a unique handler-stem identifier for a menu node, derived
+' from its caption: "mnu" + sanitized caption, suffixed with a number if it
+' would collide with anything in `existing`. Falls back to "mnuItem".
+FUNCTION menuAutoName(caption AS STRING, existing AS []STRING) AS STRING
+    DIM stem AS STRING = "mnu" + menuSanitizeIdent(caption)
+    IF stem = "mnu" THEN stem = "mnuItem"
+    DIM cand AS STRING = stem
+    DIM n AS INTEGER = 2
+    DO WHILE menuNameTaken(existing, cand)
+        cand = stem + strconv.Itoa(n)
+        n = n + 1
+    LOOP
+    RETURN cand
+END FUNCTION
+
+' menuNameTaken — case-sensitive membership test over a name list.
+FUNCTION menuNameTaken(names AS []STRING, want AS STRING) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(names) - 1
+        IF names[i] = want THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' menuNodeNames — the current Name of every non-separator node, for
+' uniqueness checks when auto-naming a new node.
+FUNCTION menuNodeNames(nodes AS []MenuNode) AS []STRING
+    DIM out AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(nodes) - 1
+        IF NOT nodes[i].IsSep AND nodes[i].Name <> "" THEN out = APPEND(out, nodes[i].Name)
+    NEXT i
+    RETURN out
+END FUNCTION
+
+' menuFromDashItems — migrate a legacy dash-encoded Menubar Items list
+' (depth = leading-dash count, label = remainder) into structured nodes,
+' auto-naming each non-separator node. A label of "-" (after dashes) or ""
+' becomes a separator. Used by readProjectFromDisk for old .dbproj files.
+FUNCTION menuFromDashItems(items AS []STRING) AS []MenuNode
+    DIM out AS []MenuNode
+    DIM names AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(items) - 1
+        DIM nd AS MenuNode
+        nd.Depth = treeDepth(items[i])
+        DIM lbl AS STRING = treeLabel(items[i])
+        IF lbl = "" OR lbl = "-" OR lbl = "─" THEN
+            nd.IsSep = TRUE
+        ELSE
+            nd.Caption = lbl
+            nd.Name = menuAutoName(lbl, names)
+            names = APPEND(names, nd.Name)
+        END IF
+        out = APPEND(out, nd)
+    NEXT i
+    RETURN out
+END FUNCTION
+
 ' panelContentBottom — the lowest (Y + H) among a Panel's children, in
 ' absolute form rows. Used to size the scroll range.
 FUNCTION panelContentBottom(widgets AS []DesignWidget, panelName AS STRING) AS INTEGER
@@ -572,6 +731,25 @@ END SUB
 ' reason). On ok=FALSE, `reason` is a short human-readable string
 ' the caller can show in the status bar so the user can tell whether
 ' the file is missing, empty, or malformed.
+' migrateProjectMenus — upgrade any legacy Menubar widget (dash-encoded
+' Items, empty Menu) in `p` to the structured Menu tree, clearing Items so
+' the old field stops being the source of truth. Idempotent: a widget that
+' already has a Menu is left untouched.
+SUB migrateProjectMenus(p AS POINTER TO Project)
+    DIM fi AS INTEGER
+    FOR fi = 0 TO LEN(p.Forms) - 1
+        DIM wi AS INTEGER
+        FOR wi = 0 TO LEN(p.Forms[fi].Widgets) - 1
+            IF p.Forms[fi].Widgets[wi].Kind = "Menubar" THEN
+                IF LEN(p.Forms[fi].Widgets[wi].Menu) = 0 AND LEN(p.Forms[fi].Widgets[wi].Items) > 0 THEN
+                    p.Forms[fi].Widgets[wi].Menu = menuFromDashItems(p.Forms[fi].Widgets[wi].Items)
+                    p.Forms[fi].Widgets[wi].Items = NIL
+                END IF
+            END IF
+        NEXT wi
+    NEXT fi
+END SUB
+
 FUNCTION readProjectFromDisk(path AS STRING) AS (Project, BOOLEAN, STRING)
     DIM emptyProj AS Project
     DIM data AS BYTES
@@ -592,6 +770,7 @@ FUNCTION readProjectFromDisk(path AS STRING) AS (Project, BOOLEAN, STRING)
             END IF
         NEXT nameI
         IF p.StartForm = "" THEN p.StartForm = p.Forms[0].Name
+        migrateProjectMenus(@p)
         RETURN p, TRUE, ""
     END IF
     ' Fall back to legacy single-DesignForm and wrap in a Project.
@@ -606,6 +785,7 @@ FUNCTION readProjectFromDisk(path AS STRING) AS (Project, BOOLEAN, STRING)
     DIM wrap AS Project
     wrap.Forms     = APPEND(wrap.Forms, legacy)
     wrap.StartForm = legacy.Name
+    migrateProjectMenus(@wrap)
     RETURN wrap, TRUE, ""
 END FUNCTION
 
@@ -899,7 +1079,10 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         cursor = cursor + 1
     END IF
     IF w.Kind = "Menubar" THEN
-        IF rowIdx = cursor THEN RETURN "Edit Menus", "comma list, '-' = item:", strings.Join(w.Items, ", "), "wprop:items"
+        ' Menus open the visual Menu Editor (not an inline text edit); the
+        ' value cell just previews the top-level titles. Key "wprop:menus"
+        ' is intercepted in formClickPropAt to launch the editor.
+        IF rowIdx = cursor THEN RETURN "Edit Menus", "click to open Menu Editor", menuTopTitles(w.Menu), "wprop:menus"
         cursor = cursor + 1
     END IF
     IF w.Kind = "StatusBar" THEN
@@ -1002,6 +1185,9 @@ SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
     DIM ctxDef AS STRING
     DIM ctxKey AS STRING
     ctxTitle, ctxPrompt, ctxDef, ctxKey = propRowEditContext(w, rowIdx)
+    ' ctxDef (the row's current value) is unused here: the inline editor and
+    ' the escalation dialog both seed from the live field / inline buffer.
+    _ = ctxDef
     IF ctxKey = "" THEN RETURN
     DIM kind AS STRING
     DIM opts AS STRING
@@ -1009,25 +1195,46 @@ SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
     _ = opts
     DIM wasSel AS BOOLEAN = (m.PropSel = rowIdx)
     m.PropSel = rowIdx
+    ' Menubar menus row → open the visual Menu Editor instead of a text edit.
+    IF ctxKey = "wprop:menus" THEN
+        IF m.PropEdit THEN cancelInlinePropEdit(m)
+        showMenuEditor(m, m.Tabs[m.TabIdx].SelWidget)
+        RETURN
+    END IF
     IF kind = "bool" THEN
         ' Second click on an already-selected bool toggles it (double-click).
+        IF m.PropEdit THEN cancelInlinePropEdit(m)
         IF wasSel THEN formTogglePropBool(m, rowIdx)
         RETURN
     END IF
     IF kind = "enum" THEN
         ' Left-click selects only; the list opens on right-click.
+        IF m.PropEdit THEN cancelInlinePropEdit(m)
         RETURN
     END IF
     ' Color rows open the swatch picker rather than a text input.
     IF ctxKey = "wprop:fgcolor" THEN
+        IF m.PropEdit THEN cancelInlinePropEdit(m)
         showColorPicker(m, "fg")
         RETURN
     END IF
     IF ctxKey = "wprop:bgcolor" THEN
+        IF m.PropEdit THEN cancelInlinePropEdit(m)
         showColorPicker(m, "bg")
         RETURN
     END IF
-    showInputModal(m, ctxTitle, ctxPrompt, ctxDef, ctxKey)
+    ' Text / number rows: a single click edits the value cell in place; a
+    ' second click on the row already being edited escalates to the roomy
+    ' input dialog (good for long values). Switching from a different row's
+    ' inline edit commits that one first.
+    IF m.PropEdit AND m.PropEditRow = rowIdx THEN
+        DIM cur AS STRING = m.PropEditInput.Value()
+        m.PropEdit = FALSE
+        showInputModal(m, ctxTitle, ctxPrompt, cur, ctxKey)
+        RETURN
+    END IF
+    IF m.PropEdit THEN commitInlinePropEdit(m)
+    startInlinePropEdit(m, rowIdx)
 END SUB
 
 ' parseTwoInts — helper for Pos / Size edits. "X, Y" → (X, Y, ok).
@@ -1201,16 +1408,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "DIM _dlgH AS INTEGER\n"
         s = s + "\n"
     END IF
-    ' _mb* rect of the currently-open Menubar dropdown — written by
-    ' View, read by Update's click hit-test (mirrors _dlg* for dialogs).
-    ' _mbItemY is the screen row of the first dropdown item.
-    IF hasMenubar THEN
-        s = s + "DIM _mbX AS INTEGER\n"
-        s = s + "DIM _mbItemY AS INTEGER\n"
-        s = s + "DIM _mbW AS INTEGER\n"
-        s = s + "DIM _mbN AS INTEGER\n"
-        s = s + "\n"
-    END IF
+    ' (The open-dropdown box rects are stashed in the _mn* package slices
+    ' declared by menubarEmitRuntime — written by View's _mnPaintBoxes,
+    ' read by Update's _mnClickHit. No per-form _mb* vars needed now.)
     s = s + "FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)\n"
     IF hasDialog OR hasMenubar THEN
         s = s + "    _currentModel = @m\n"
@@ -2031,6 +2231,19 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "END FUNCTION\n"
         s = s + "\n"
     END IF
+    ' --- Menubar runtime: the generic _MNode type + _mn* navigation /
+    '     paint / hit-test helpers (once), then one _mnNodes_<Name>()
+    '     data table per Menubar widget. Emitted before dispatchClick so
+    '     Update / View (which reference them) resolve cleanly.
+    IF hasMenubar THEN
+        s = s + menubarEmitRuntime(qt)
+        DIM mnTI AS INTEGER
+        FOR mnTI = 0 TO n - 1
+            IF f.Widgets[mnTI].Kind = "Menubar" THEN
+                s = s + menubarEmitNodeTable(f.Widgets[mnTI], qt)
+            END IF
+        NEXT mnTI
+    END IF
     ' --- dispatchClick — generated jump-table from widget Id to
     '     the user-defined SUB. Must live in the prelude so the
     '     generated Update can call it; the SUB bodies live below
@@ -2341,12 +2554,28 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
                 stubBody  = stubBody + "    _ = button\n"
             END IF
         ELSEIF w.Kind = "Menubar" THEN
-            stubName  = w.Name + "_Select"
-            stubLabel = "Select"
-            stubSig   = "(item AS STRING)"
-            stubBody  = "    ' Called when a menu item is chosen from " + w.Name + ".\n"
-            stubBody  = stubBody + "    ' `item` is the selected item's label.\n"
-            stubBody  = stubBody + "    _ = item\n"
+            ' One Click handler per selectable LEAF item (non-separator,
+            ' non-submenu). Names come from the menu tree; each is emitted
+            ' once and preserved across regens. stubName stays "" so the
+            ' generic single-stub path below is skipped for menubars.
+            IF w.Parent = "" THEN
+                DIM mnLI AS INTEGER
+                FOR mnLI = 0 TO LEN(w.Menu) - 1
+                    DIM mln AS MenuNode = w.Menu[mnLI]
+                    IF NOT mln.IsSep AND NOT menuIsSubmenu(w.Menu, mnLI) AND mln.Name <> "" THEN
+                        DIM mlSub AS STRING = mln.Name + "_Click"
+                        IF NOT subDefined(out, mlSub) THEN
+                            IF NOT trailing THEN out = out + "\n"
+                            IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+                            out = out + "' Click handler for " + w.Name + " ▸ " + mln.Caption + " — edit freely.\n"
+                            out = out + "SUB " + mlSub + "()\n"
+                            out = out + "    ' TODO: your code here.\n"
+                            out = out + "END SUB\n"
+                            trailing = TRUE
+                        END IF
+                    END IF
+                NEXT mnLI
+            END IF
         END IF
         ' A Dialog's _Close arity depends on its kind, and the kind can
         ' change between regens. If the stub already exists, repair its

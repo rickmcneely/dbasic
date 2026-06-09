@@ -1,56 +1,119 @@
 ' =========================================================================
-' widgets/menubar.dbas — Menubar (top menu strip) widget.
+' widgets/menubar.dbas — Menubar (drop-down menu strip) widget.
 '
-' Code extracted verbatim from internal/form.dbas during the per-widget
-' refactor (behaviour-preserving; see [[dbtui_widget_refactor]]).
+' The menu tree is a structured []MenuNode on the widget (TYPE MenuNode in
+' dbtui.dbas), edited via the visual Menu Editor. Each node carries its own
+' Depth (0 = bar title, 1 = item, 2+ = submenu item); a node is a submenu
+' parent when the node after it is deeper. This supports arbitrarily nested
+' cascading submenus, per-item Checked / Disabled flags, separators, and a
+' display-only Shortcut label.
 '
-' Items are dash-depth encoded (like Tree): a depth-0 entry is a menu title,
-' each following "-" entry is an item under it. Runtime tracks _Active (menu),
-' _Open (dropdown showing), _Item (highlighted item). Choosing an item fires
-' <Name>_Select. Uses the shared menubar* helpers (menubarTitles /
-' menubarMenuCount / menubarTitleAt / menubarItemsAt / menubarColAt) which
-' stay in form.dbas, plus overlayRow / escapeForDBString.
+' Runtime model: this generator emits a node TABLE per menubar plus a small
+' set of GENERIC helper subs (emitted once via menubarEmitRuntime) that
+' navigate / paint / hit-test the tree from an open-path slice:
+'   <Name>_Active  active top-level title index
+'   <Name>_Open    is a dropdown showing?
+'   <Name>_Path    []INTEGER — highlighted child index per open level
+' Choosing a leaf fires that node's <ItemName>_Click() handler (one stub
+' per leaf, generated in generateUserStubs). The generic helpers live in
+' the generated program as _MNode / _mn* and the per-widget node table as
+' _mnNodes_<Name>().
 '
 ' Owns: A default, B visibleText, E Model, F closed-state keyboard,
-' G title-row mouse, H View title bar, plus three FUNCTION-scope priority
-' emitters the router invokes inside their own FOR loops:
-'   menubarEmitKeyPriority   — open-dropdown key handling (mbKW loop)
-'   menubarEmitClickPriority — open-dropdown item click (mbMW loop)
-'   menubarEmitDropdownPass  — View post-pass that paints the open dropdown
-' Stays inline: the menus property row, the _Select stub metadata.
+' G title-row mouse, H View title bar, the open-dropdown key/click priority
+' emitters, the View dropdown post-pass, plus menubarEmitRuntime (the shared
+' helper block) and menubarEmitNodeTable (the per-widget data table).
 ' =========================================================================
 
-' A — defaults: File / Edit / Help with sample items.
+' mbNode / mbSep — terse constructors for the structured default below.
+FUNCTION mbNode(caption AS STRING, name AS STRING, depth AS INTEGER, shortcut AS STRING) AS MenuNode
+    DIM n AS MenuNode
+    n.Caption  = caption
+    n.Name     = name
+    n.Depth    = depth
+    n.Shortcut = shortcut
+    RETURN n
+END FUNCTION
+
+FUNCTION mbSep(depth AS INTEGER) AS MenuNode
+    DIM n AS MenuNode
+    n.Depth = depth
+    n.IsSep = TRUE
+    RETURN n
+END FUNCTION
+
+' A — defaults: File / Edit / Help, demonstrating a submenu (File ▸ Recent),
+' a separator, and shortcut-key labels so the widget is self-explanatory.
 FUNCTION menubarDefault(w AS DesignWidget) AS DesignWidget
     w.Text = "Menubar"
     w.W    = 44
     w.H    = 1
-    DIM mbentries AS []STRING
-    mbentries = APPEND(mbentries, "File")
-    mbentries = APPEND(mbentries, "-New")
-    mbentries = APPEND(mbentries, "-Open")
-    mbentries = APPEND(mbentries, "-Quit")
-    mbentries = APPEND(mbentries, "Edit")
-    mbentries = APPEND(mbentries, "-Cut")
-    mbentries = APPEND(mbentries, "-Copy")
-    mbentries = APPEND(mbentries, "-Paste")
-    mbentries = APPEND(mbentries, "Help")
-    mbentries = APPEND(mbentries, "-About")
-    w.Items = mbentries
+    DIM nodes AS []MenuNode
+    nodes = APPEND(nodes, mbNode("File", "mnuFile", 0, ""))
+    nodes = APPEND(nodes, mbNode("New",  "mnuFileNew", 1, "Ctrl+N"))
+    nodes = APPEND(nodes, mbNode("Open", "mnuFileOpen", 1, "Ctrl+O"))
+    nodes = APPEND(nodes, mbNode("Recent", "mnuFileRecent", 1, ""))
+    nodes = APPEND(nodes, mbNode("Project One", "mnuFileRecent1", 2, ""))
+    nodes = APPEND(nodes, mbNode("Project Two", "mnuFileRecent2", 2, ""))
+    nodes = APPEND(nodes, mbSep(1))
+    nodes = APPEND(nodes, mbNode("Exit", "mnuFileExit", 1, "Ctrl+Q"))
+    nodes = APPEND(nodes, mbNode("Edit", "mnuEdit", 0, ""))
+    nodes = APPEND(nodes, mbNode("Cut",   "mnuEditCut", 1, "Ctrl+X"))
+    nodes = APPEND(nodes, mbNode("Copy",  "mnuEditCopy", 1, "Ctrl+C"))
+    nodes = APPEND(nodes, mbNode("Paste", "mnuEditPaste", 1, "Ctrl+V"))
+    nodes = APPEND(nodes, mbNode("Help", "mnuHelp", 0, ""))
+    nodes = APPEND(nodes, mbNode("About", "mnuHelpAbout", 1, ""))
+    w.Menu = nodes
     RETURN w
 END FUNCTION
 
 ' B — single-line preview: the title row.
 FUNCTION menubarVisibleText(w AS DesignWidget) AS STRING
-    RETURN menubarTitles(w.Items)
+    RETURN menuTopTitles(w.Menu)
 END FUNCTION
 
-' E — Model fields: active menu, open state, highlighted item.
+' E — Model fields: active top menu, open state, open-path highlight stack.
 FUNCTION menubarEmitModel(w AS DesignWidget) AS STRING
     DIM s AS STRING = ""
     s = s + "    DIM " + w.Name + "_Active AS INTEGER\n"
     s = s + "    DIM " + w.Name + "_Open   AS BOOLEAN\n"
-    s = s + "    DIM " + w.Name + "_Item   AS INTEGER\n"
+    s = s + "    DIM " + w.Name + "_Path   AS []INTEGER\n"
+    RETURN s
+END FUNCTION
+
+' mbBool — emit a DBasic boolean literal.
+FUNCTION mbBool(b AS BOOLEAN) AS STRING
+    IF b THEN RETURN "TRUE"
+    RETURN "FALSE"
+END FUNCTION
+
+' menubarEmitNodeTable — the per-widget data table: a FUNCTION returning the
+' menu's []_MNode, rebuilt fresh each call (cheap; menus are small).
+FUNCTION menubarEmitNodeTable(w AS DesignWidget, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "FUNCTION _mnNodes_" + w.Name + "() AS []_MNode\n"
+    s = s + "    DIM ns AS []_MNode\n"
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(w.Menu) - 1
+        DIM nd AS MenuNode = w.Menu[i]
+        s = s + "    ns = APPEND(ns, _mkMN(" + qt + escapeForDBString(nd.Caption) + qt + ", " + qt + escapeForDBString(nd.Name) + qt + ", " + strconv.Itoa(nd.Depth) + ", " + qt + escapeForDBString(nd.Shortcut) + qt + ", " + mbBool(nd.Checked) + ", " + mbBool(nd.Disabled) + ", " + mbBool(nd.IsSep) + "))\n"
+    NEXT i
+    s = s + "    RETURN ns\n"
+    s = s + "END FUNCTION\n"
+    s = s + "\n"
+    RETURN s
+END FUNCTION
+
+' menubarEmitDispatch — unrolled "IF chosen = name THEN name_Click()" chain
+' over every selectable LEAF node (non-separator, non-submenu, named).
+FUNCTION menubarEmitDispatch(w AS DesignWidget, chosenVar AS STRING, indent AS STRING, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(w.Menu) - 1
+        IF NOT w.Menu[i].IsSep AND NOT menuIsSubmenu(w.Menu, i) AND w.Menu[i].Name <> "" THEN
+            s = s + indent + "IF " + chosenVar + " = " + qt + escapeForDBString(w.Menu[i].Name) + qt + " THEN " + w.Menu[i].Name + "_Click()\n"
+        END IF
+    NEXT i
     RETURN s
 END FUNCTION
 
@@ -58,196 +121,444 @@ END FUNCTION
 ' Update key block's per-menubar FOR loop, BEFORE the closed-state handler.
 ' `kpdK` is the key string in the generated program.
 FUNCTION menubarEmitKeyPriority(mbKW AS DesignWidget, qt AS STRING) AS STRING
-    DIM mbKn AS STRING = mbKW.Name
-    DIM mbKc AS INTEGER = menubarMenuCount(mbKW.Items)
-    DIM mbKcm1 AS STRING = strconv.Itoa(mbKc - 1)
+    DIM nm AS STRING = mbKW.Name
     DIM s AS STRING = ""
-    s = s + "        IF m." + mbKn + "_Open THEN\n"
-    s = s + "            IF kpdK = " + qt + "esc" + qt + " THEN\n"
-    s = s + "                m." + mbKn + "_Open = FALSE\n"
-    s = s + "                RETURN m, NIL\n"
+    s = s + "        IF m." + nm + "_Open THEN\n"
+    s = s + "            DIM mnA" + nm + " AS INTEGER\n"
+    s = s + "            DIM mnO" + nm + " AS BOOLEAN\n"
+    s = s + "            DIM mnP" + nm + " AS []INTEGER\n"
+    s = s + "            DIM mnC" + nm + " AS STRING\n"
+    s = s + "            mnA" + nm + ", mnO" + nm + ", mnP" + nm + ", mnC" + nm + " = _mnKey(_mnNodes_" + nm + "(), kpdK, m." + nm + "_Active, m." + nm + "_Open, m." + nm + "_Path)\n"
+    s = s + "            m." + nm + "_Active = mnA" + nm + "\n"
+    s = s + "            m." + nm + "_Open = mnO" + nm + "\n"
+    s = s + "            m." + nm + "_Path = mnP" + nm + "\n"
+    s = s + "            IF mnC" + nm + " <> " + qt + qt + " THEN\n"
+    s = s + menubarEmitDispatch(mbKW, "mnC" + nm, "                ", qt)
     s = s + "            END IF\n"
-    s = s + "            IF kpdK = " + qt + "up" + qt + " THEN\n"
-    s = s + "                IF m." + mbKn + "_Item > 0 THEN m." + mbKn + "_Item = m." + mbKn + "_Item - 1\n"
-    s = s + "                RETURN m, NIL\n"
-    s = s + "            END IF\n"
-    s = s + "            IF kpdK = " + qt + "down" + qt + " THEN\n"
-    s = s + "                DIM mbMx" + mbKn + " AS INTEGER = 0\n"
-    DIM mbKk AS INTEGER
-    FOR mbKk = 0 TO mbKc - 1
-        DIM mbKcnt AS INTEGER = LEN(menubarItemsAt(mbKW.Items, mbKk))
-        s = s + "                IF m." + mbKn + "_Active = " + strconv.Itoa(mbKk) + " THEN mbMx" + mbKn + " = " + strconv.Itoa(mbKcnt - 1) + "\n"
-    NEXT mbKk
-    s = s + "                IF m." + mbKn + "_Item < mbMx" + mbKn + " THEN m." + mbKn + "_Item = m." + mbKn + "_Item + 1\n"
-    s = s + "                RETURN m, NIL\n"
-    s = s + "            END IF\n"
-    s = s + "            IF kpdK = " + qt + "left" + qt + " THEN\n"
-    s = s + "                IF m." + mbKn + "_Active > 0 THEN\n"
-    s = s + "                    m." + mbKn + "_Active = m." + mbKn + "_Active - 1\n"
-    s = s + "                    m." + mbKn + "_Item = 0\n"
-    s = s + "                END IF\n"
-    s = s + "                RETURN m, NIL\n"
-    s = s + "            END IF\n"
-    s = s + "            IF kpdK = " + qt + "right" + qt + " THEN\n"
-    s = s + "                IF m." + mbKn + "_Active < " + mbKcm1 + " THEN\n"
-    s = s + "                    m." + mbKn + "_Active = m." + mbKn + "_Active + 1\n"
-    s = s + "                    m." + mbKn + "_Item = 0\n"
-    s = s + "                END IF\n"
-    s = s + "                RETURN m, NIL\n"
-    s = s + "            END IF\n"
-    s = s + "            IF kpdK = " + qt + "enter" + qt + " OR kpdK = " + qt + "space" + qt + " THEN\n"
-    s = s + "                DIM mbPick" + mbKn + " AS STRING = " + qt + qt + "\n"
-    FOR mbKk = 0 TO mbKc - 1
-        DIM mbKits AS []STRING = menubarItemsAt(mbKW.Items, mbKk)
-        DIM mbKj AS INTEGER
-        FOR mbKj = 0 TO LEN(mbKits) - 1
-            s = s + "                IF m." + mbKn + "_Active = " + strconv.Itoa(mbKk) + " AND m." + mbKn + "_Item = " + strconv.Itoa(mbKj) + " THEN mbPick" + mbKn + " = " + qt + escapeForDBString(mbKits[mbKj]) + qt + "\n"
-        NEXT mbKj
-    NEXT mbKk
-    s = s + "                m." + mbKn + "_Open = FALSE\n"
-    s = s + "                " + mbKn + "_Select(mbPick" + mbKn + ")\n"
-    s = s + "                RETURN m, NIL\n"
-    s = s + "            END IF\n"
-    ' Swallow any other key while the menu is open.
     s = s + "            RETURN m, NIL\n"
     s = s + "        END IF\n"
     RETURN s
 END FUNCTION
 
 ' Priority dropdown-item click (modal while open). Emitted inside the mouse
-' handler's per-menubar FOR loop, hit-testing the _mb* rect stashed by View.
+' handler's per-menubar FOR loop. Delegates to _mnClickHit against the box
+' rects stashed by the View paint; only consumes the click when it lands
+' inside an open box.
 FUNCTION menubarEmitClickPriority(mbMW AS DesignWidget, qt AS STRING) AS STRING
-    DIM mbMn AS STRING = mbMW.Name
+    DIM nm AS STRING = mbMW.Name
     DIM s AS STRING = ""
-    s = s + "        IF m." + mbMn + "_Open AND _mbN > 0 THEN\n"
-    s = s + "            DIM mbCY" + mbMn + " AS INTEGER = mc.Y - _mbItemY\n"
-    s = s + "            IF mc.X >= _mbX AND mc.X < _mbX + _mbW AND mbCY" + mbMn + " >= 0 AND mbCY" + mbMn + " < _mbN THEN\n"
-    s = s + "                m." + mbMn + "_Item = mbCY" + mbMn + "\n"
-    s = s + "                DIM mbCPick" + mbMn + " AS STRING = " + qt + qt + "\n"
-    DIM mbMc AS INTEGER = menubarMenuCount(mbMW.Items)
-    DIM mbMk AS INTEGER
-    FOR mbMk = 0 TO mbMc - 1
-        DIM mbMits AS []STRING = menubarItemsAt(mbMW.Items, mbMk)
-        DIM mbMj AS INTEGER
-        FOR mbMj = 0 TO LEN(mbMits) - 1
-            s = s + "                IF m." + mbMn + "_Active = " + strconv.Itoa(mbMk) + " AND m." + mbMn + "_Item = " + strconv.Itoa(mbMj) + " THEN mbCPick" + mbMn + " = " + qt + escapeForDBString(mbMits[mbMj]) + qt + "\n"
-        NEXT mbMj
-    NEXT mbMk
-    s = s + "                m." + mbMn + "_Open = FALSE\n"
-    s = s + "                " + mbMn + "_Select(mbCPick" + mbMn + ")\n"
+    s = s + "        IF m." + nm + "_Open THEN\n"
+    s = s + "            DIM mcA" + nm + " AS INTEGER\n"
+    s = s + "            DIM mcO" + nm + " AS BOOLEAN\n"
+    s = s + "            DIM mcP" + nm + " AS []INTEGER\n"
+    s = s + "            DIM mcC" + nm + " AS STRING\n"
+    s = s + "            DIM mcH" + nm + " AS BOOLEAN\n"
+    s = s + "            mcA" + nm + ", mcO" + nm + ", mcP" + nm + ", mcC" + nm + ", mcH" + nm + " = _mnClickHit(_mnNodes_" + nm + "(), mc.X, mc.Y, m." + nm + "_Active, m." + nm + "_Open, m." + nm + "_Path)\n"
+    s = s + "            IF mcH" + nm + " THEN\n"
+    s = s + "                m." + nm + "_Active = mcA" + nm + "\n"
+    s = s + "                m." + nm + "_Open = mcO" + nm + "\n"
+    s = s + "                m." + nm + "_Path = mcP" + nm + "\n"
+    s = s + "                IF mcC" + nm + " <> " + qt + qt + " THEN\n"
+    s = s + menubarEmitDispatch(mbMW, "mcC" + nm, "                    ", qt)
+    s = s + "                END IF\n"
     s = s + "                RETURN m, NIL\n"
     s = s + "            END IF\n"
     s = s + "        END IF\n"
     RETURN s
 END FUNCTION
 
-' G — title-row mouse: pick a menu by column; clicking the already-open
-' active menu closes it, else opens it.
+' G — title-row mouse: pick a top menu by column. Clicking the already-open
+' active menu closes it; otherwise open it (seeding the highlight path).
+' Columns are unrolled from the design-time titles.
 FUNCTION menubarEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcXs AS STRING, qt AS STRING) AS STRING
+    DIM nm AS STRING = mcw.Name
     DIM s AS STRING = ""
     s = s + "            DIM mbTX" + mcIStr + " AS INTEGER = mc.X - " + mcXs + "\n"
-    DIM mbWi AS INTEGER = menubarMenuCount(mcw.Items)
-    DIM mbWcol AS INTEGER = 0
-    DIM mbWk AS INTEGER
-    FOR mbWk = 0 TO mbWi - 1
-        DIM mbWtitle AS STRING = menubarTitleAt(mcw.Items, mbWk)
-        DIM mbWw AS INTEGER = lipgloss.Width(mbWtitle) + 2
-        s = s + "            IF mbTX" + mcIStr + " >= " + strconv.Itoa(mbWcol) + " AND mbTX" + mcIStr + " < " + strconv.Itoa(mbWcol + mbWw) + " THEN\n"
-        s = s + "                IF m." + mcw.Name + "_Open AND m." + mcw.Name + "_Active = " + strconv.Itoa(mbWk) + " THEN\n"
-        s = s + "                    m." + mcw.Name + "_Open = FALSE\n"
-        s = s + "                ELSE\n"
-        s = s + "                    m." + mcw.Name + "_Active = " + strconv.Itoa(mbWk) + "\n"
-        s = s + "                    m." + mcw.Name + "_Open = TRUE\n"
-        s = s + "                    m." + mcw.Name + "_Item = 0\n"
-        s = s + "                END IF\n"
-        s = s + "            END IF\n"
-        mbWcol = mbWcol + mbWw
-    NEXT mbWk
+    DIM col AS INTEGER = 0
+    DIM k AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(mcw.Menu) - 1
+        IF mcw.Menu[i].Depth = 0 AND NOT mcw.Menu[i].IsSep THEN
+            DIM ww AS INTEGER = lipgloss.Width(mcw.Menu[i].Caption) + 2
+            s = s + "            IF mbTX" + mcIStr + " >= " + strconv.Itoa(col) + " AND mbTX" + mcIStr + " < " + strconv.Itoa(col + ww) + " THEN\n"
+            s = s + "                IF m." + nm + "_Open AND m." + nm + "_Active = " + strconv.Itoa(k) + " THEN\n"
+            s = s + "                    m." + nm + "_Open = FALSE\n"
+            s = s + "                ELSE\n"
+            s = s + "                    m." + nm + "_Active = " + strconv.Itoa(k) + "\n"
+            s = s + "                    m." + nm + "_Open = TRUE\n"
+            s = s + "                    m." + nm + "_Path = _mnOpenPath(_mnNodes_" + nm + "(), " + strconv.Itoa(k) + ")\n"
+            s = s + "                END IF\n"
+            s = s + "            END IF\n"
+            col = col + ww
+            k = k + 1
+        END IF
+    NEXT i
     RETURN s
 END FUNCTION
 
 ' F — closed-state keyboard: Left/Right move the active menu; Down/Enter/
 ' Space open it. (The open dropdown is handled by menubarEmitKeyPriority.)
 FUNCTION menubarEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
-    DIM mbCloseCount AS INTEGER = menubarMenuCount(ww.Items)
-    DIM mbCloseM1 AS STRING = strconv.Itoa(mbCloseCount - 1)
+    DIM nm AS STRING = ww.Name
+    DIM topm1 AS STRING = strconv.Itoa(menuTopCount(ww.Menu) - 1)
     DIM s AS STRING = ""
-    s = s + "            IF key = " + qt + "left" + qt + " AND m." + ww.Name + "_Active > 0 THEN m." + ww.Name + "_Active = m." + ww.Name + "_Active - 1\n"
-    s = s + "            IF key = " + qt + "right" + qt + " AND m." + ww.Name + "_Active < " + mbCloseM1 + " THEN m." + ww.Name + "_Active = m." + ww.Name + "_Active + 1\n"
+    s = s + "            IF key = " + qt + "left" + qt + " AND m." + nm + "_Active > 0 THEN m." + nm + "_Active = m." + nm + "_Active - 1\n"
+    s = s + "            IF key = " + qt + "right" + qt + " AND m." + nm + "_Active < " + topm1 + " THEN m." + nm + "_Active = m." + nm + "_Active + 1\n"
     s = s + "            IF key = " + qt + "down" + qt + " OR key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN\n"
-    s = s + "                m." + ww.Name + "_Open = TRUE\n"
-    s = s + "                m." + ww.Name + "_Item = 0\n"
+    s = s + "                m." + nm + "_Open = TRUE\n"
+    s = s + "                m." + nm + "_Path = _mnOpenPath(_mnNodes_" + nm + "(), m." + nm + "_Active)\n"
     s = s + "            END IF\n"
     RETURN s
 END FUNCTION
 
-' H — View title bar: the active title is bracketed when the bar is focused
-' or open. The dropdown itself is painted by menubarEmitDropdownPass.
+' H — View title bar: painted every frame (active title bracketed when the
+' bar is focused or a menu is open). The dropdown boxes themselves are
+' painted by menubarEmitDropdownPass after the whole widget loop.
 FUNCTION menubarEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+    DIM nm AS STRING = wv.Name
     DIM s AS STRING = ""
-    s = s + "    DIM mbFoc" + sfx + " AS BOOLEAN = (m.Focus = " + sfx + ") OR m." + wv.Name + "_Open\n"
-    s = s + "    DIM mbBar" + sfx + " AS STRING = " + qt + qt + "\n"
-    DIM mbVcount AS INTEGER = menubarMenuCount(wv.Items)
-    DIM mbVk AS INTEGER
-    FOR mbVk = 0 TO mbVcount - 1
-        DIM mbVtitle AS STRING = escapeForDBString(menubarTitleAt(wv.Items, mbVk))
-        s = s + "    IF mbFoc" + sfx + " AND m." + wv.Name + "_Active = " + strconv.Itoa(mbVk) + " THEN\n"
-        s = s + "        mbBar" + sfx + " = mbBar" + sfx + " + " + qt + "[" + qt + " + " + qt + mbVtitle + qt + " + " + qt + "]" + qt + "\n"
-        s = s + "    ELSE\n"
-        s = s + "        mbBar" + sfx + " = mbBar" + sfx + " + " + qt + " " + qt + " + " + qt + mbVtitle + qt + " + " + qt + " " + qt + "\n"
-        s = s + "    END IF\n"
-    NEXT mbVk
-    s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", mbBar" + sfx + ")\n"
+    s = s + "    _mnPaintBar(rows, _mnNodes_" + nm + "(), " + xs + ", " + ys + ", m." + nm + "_Active, m." + nm + "_Open, m.Focus = " + sfx + ")\n"
     RETURN s
 END FUNCTION
 
-' View post-pass: paint the open dropdown over everything + stash its rect
-' into _mb* for the click hit-test. Emitted inside its own per-menubar FOR
-' loop after the main widget paint loop. `mbPI` is the widget index.
+' View post-pass: paint the open cascading dropdown boxes over everything
+' and stash their rects for the click hit-test. Emitted inside its own
+' per-menubar FOR loop after the main widget paint loop.
 FUNCTION menubarEmitDropdownPass(mbPW AS DesignWidget, mbPI AS INTEGER, qt AS STRING) AS STRING
-    DIM mbPsfx AS STRING = strconv.Itoa(mbPI)
-    DIM mbPcount AS INTEGER = menubarMenuCount(mbPW.Items)
+    DIM nm AS STRING = mbPW.Name
     DIM s AS STRING = ""
-    s = s + "    IF m." + mbPW.Name + "_Open THEN\n"
-    DIM mbPk AS INTEGER
-    FOR mbPk = 0 TO mbPcount - 1
-        DIM mbPits AS []STRING = menubarItemsAt(mbPW.Items, mbPk)
-        DIM mbPcnt AS INTEGER = LEN(mbPits)
-        DIM mbPmaxW AS INTEGER = 1
-        DIM mbPjj AS INTEGER
-        FOR mbPjj = 0 TO mbPcnt - 1
-            DIM mbPlw AS INTEGER = lipgloss.Width(mbPits[mbPjj])
-            IF mbPlw > mbPmaxW THEN mbPmaxW = mbPlw
-        NEXT mbPjj
-        DIM mbPinner AS INTEGER = mbPmaxW + 2
-        DIM mbPboxX AS INTEGER = mbPW.X + menubarColAt(mbPW.Items, mbPk)
-        DIM mbPtopY AS INTEGER = mbPW.Y + 1
-        DIM mbPkStr AS STRING = strconv.Itoa(mbPk)
-        DIM mbPtag AS STRING = mbPsfx + "x" + mbPkStr
-        s = s + "        IF m." + mbPW.Name + "_Active = " + mbPkStr + " THEN\n"
-        s = s + "            DIM mbT" + mbPtag + " AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + strconv.Itoa(mbPinner) + ") + " + qt + "┐" + qt + "\n"
-        s = s + "            IF " + strconv.Itoa(mbPtopY) + " >= 0 AND " + strconv.Itoa(mbPtopY) + " < LEN(rows) THEN rows[" + strconv.Itoa(mbPtopY) + "] = overlayRow(rows[" + strconv.Itoa(mbPtopY) + "], " + strconv.Itoa(mbPboxX) + ", mbT" + mbPtag + ")\n"
-        DIM mbPj AS INTEGER
-        FOR mbPj = 0 TO mbPcnt - 1
-            DIM mbPlabel AS STRING = mbPits[mbPj]
-            DIM mbPpad AS INTEGER = mbPmaxW - lipgloss.Width(mbPlabel)
-            DIM mbPtail AS STRING = " " + mbPlabel + strings.Repeat(" ", mbPpad) + "│"
-            DIM mbPitemY AS INTEGER = mbPtopY + 1 + mbPj
-            DIM mbPjTag AS STRING = mbPtag + "y" + strconv.Itoa(mbPj)
-            s = s + "            DIM mbMk" + mbPjTag + " AS STRING = " + qt + " " + qt + "\n"
-            s = s + "            IF m." + mbPW.Name + "_Item = " + strconv.Itoa(mbPj) + " THEN mbMk" + mbPjTag + " = " + qt + ">" + qt + "\n"
-            s = s + "            DIM mbR" + mbPjTag + " AS STRING = " + qt + "│" + qt + " + mbMk" + mbPjTag + " + " + qt + escapeForDBString(mbPtail) + qt + "\n"
-            s = s + "            IF " + strconv.Itoa(mbPitemY) + " >= 0 AND " + strconv.Itoa(mbPitemY) + " < LEN(rows) THEN rows[" + strconv.Itoa(mbPitemY) + "] = overlayRow(rows[" + strconv.Itoa(mbPitemY) + "], " + strconv.Itoa(mbPboxX) + ", mbR" + mbPjTag + ")\n"
-        NEXT mbPj
-        DIM mbPbotY AS INTEGER = mbPtopY + 1 + mbPcnt
-        s = s + "            DIM mbB" + mbPtag + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + strconv.Itoa(mbPinner) + ") + " + qt + "┘" + qt + "\n"
-        s = s + "            IF " + strconv.Itoa(mbPbotY) + " >= 0 AND " + strconv.Itoa(mbPbotY) + " < LEN(rows) THEN rows[" + strconv.Itoa(mbPbotY) + "] = overlayRow(rows[" + strconv.Itoa(mbPbotY) + "], " + strconv.Itoa(mbPboxX) + ", mbB" + mbPtag + ")\n"
-        s = s + "            _mbX = " + strconv.Itoa(mbPboxX) + "\n"
-        s = s + "            _mbItemY = " + strconv.Itoa(mbPtopY + 1) + "\n"
-        s = s + "            _mbW = " + strconv.Itoa(mbPinner + 2) + "\n"
-        s = s + "            _mbN = " + strconv.Itoa(mbPcnt) + "\n"
-        s = s + "        END IF\n"
-    NEXT mbPk
+    s = s + "    IF m." + nm + "_Open THEN\n"
+    s = s + "        _mnPaintBoxes(rows, _mnNodes_" + nm + "(), " + strconv.Itoa(mbPW.X) + ", " + strconv.Itoa(mbPW.Y) + ", m." + nm + "_Active, m." + nm + "_Path)\n"
     s = s + "    END IF\n"
+    RETURN s
+END FUNCTION
+
+' menubarEmitRuntime — the GENERIC menu runtime, emitted once per form when
+' it contains any Menubar. Defines the _MNode type, the package-level box
+' hit-test stash, a faint style for disabled items, and the _mn* helpers
+' shared by every menubar's navigation / painting / click code.
+FUNCTION menubarEmitRuntime(qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+
+    ' --- node type + constructor ---
+    s = s + "TYPE _MNode\n"
+    s = s + "    DIM Cap AS STRING\n"
+    s = s + "    DIM Nm  AS STRING\n"
+    s = s + "    DIM Dp  AS INTEGER\n"
+    s = s + "    DIM Sc  AS STRING\n"
+    s = s + "    DIM Ck  AS BOOLEAN\n"
+    s = s + "    DIM Ds  AS BOOLEAN\n"
+    s = s + "    DIM Sp  AS BOOLEAN\n"
+    s = s + "END TYPE\n\n"
+
+    s = s + "FUNCTION _mkMN(cap AS STRING, nm AS STRING, dp AS INTEGER, sc AS STRING, ck AS BOOLEAN, ds AS BOOLEAN, sp AS BOOLEAN) AS _MNode\n"
+    s = s + "    DIM n AS _MNode\n"
+    s = s + "    n.Cap = cap\n"
+    s = s + "    n.Nm = nm\n"
+    s = s + "    n.Dp = dp\n"
+    s = s + "    n.Sc = sc\n"
+    s = s + "    n.Ck = ck\n"
+    s = s + "    n.Ds = ds\n"
+    s = s + "    n.Sp = sp\n"
+    s = s + "    RETURN n\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- package-level dropdown box stash (one entry per open level) ---
+    s = s + "DIM _mnBX AS []INTEGER\n"
+    s = s + "DIM _mnBY AS []INTEGER\n"
+    s = s + "DIM _mnBW AS []INTEGER\n"
+    s = s + "DIM _mnBP AS []INTEGER\n"
+    s = s + "DIM _mnDim AS lipgloss.Style = lipgloss.NewStyle().Faint(TRUE)\n\n"
+
+    ' --- _mnKids: direct children of parentIdx (<0 → top-level) ---
+    s = s + "FUNCTION _mnKids(nodes AS []_MNode, parentIdx AS INTEGER) AS []INTEGER\n"
+    s = s + "    DIM out AS []INTEGER\n"
+    s = s + "    IF parentIdx < 0 THEN\n"
+    s = s + "        DIM t AS INTEGER\n"
+    s = s + "        FOR t = 0 TO LEN(nodes) - 1\n"
+    s = s + "            IF nodes[t].Dp = 0 THEN out = APPEND(out, t)\n"
+    s = s + "        NEXT t\n"
+    s = s + "        RETURN out\n"
+    s = s + "    END IF\n"
+    s = s + "    IF parentIdx >= LEN(nodes) THEN RETURN out\n"
+    s = s + "    DIM pd AS INTEGER = nodes[parentIdx].Dp\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = parentIdx + 1 TO LEN(nodes) - 1\n"
+    s = s + "        IF nodes[i].Dp <= pd THEN RETURN out\n"
+    s = s + "        IF nodes[i].Dp = pd + 1 THEN out = APPEND(out, i)\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN out\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- _mnIsSub: does the node at idx open a submenu? ---
+    s = s + "FUNCTION _mnIsSub(nodes AS []_MNode, idx AS INTEGER) AS BOOLEAN\n"
+    s = s + "    IF idx < 0 OR idx + 1 >= LEN(nodes) THEN RETURN FALSE\n"
+    s = s + "    RETURN nodes[idx + 1].Dp > nodes[idx].Dp\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- _mnTopCount ---
+    s = s + "FUNCTION _mnTopCount(nodes AS []_MNode) AS INTEGER\n"
+    s = s + "    DIM c AS INTEGER = 0\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(nodes) - 1\n"
+    s = s + "        IF nodes[i].Dp = 0 THEN c = c + 1\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN c\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- _mnColAt: x offset of the k-th top title within the bar ---
+    s = s + "FUNCTION _mnColAt(nodes AS []_MNode, k AS INTEGER) AS INTEGER\n"
+    s = s + "    DIM col AS INTEGER = 0\n"
+    s = s + "    DIM c AS INTEGER = 0\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(nodes) - 1\n"
+    s = s + "        IF nodes[i].Dp = 0 AND NOT nodes[i].Sp THEN\n"
+    s = s + "            IF c = k THEN RETURN col\n"
+    s = s + "            col = col + lipgloss.Width(nodes[i].Cap) + 2\n"
+    s = s + "            c = c + 1\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN col\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- _mnNodeAt: node reached by following path[0..depth-1] from `active` ---
+    s = s + "FUNCTION _mnNodeAt(nodes AS []_MNode, active AS INTEGER, path AS []INTEGER, depth AS INTEGER) AS INTEGER\n"
+    s = s + "    DIM tops AS []INTEGER = _mnKids(nodes, 0 - 1)\n"
+    s = s + "    IF active < 0 OR active >= LEN(tops) THEN RETURN 0 - 1\n"
+    s = s + "    DIM cur AS INTEGER = tops[active]\n"
+    s = s + "    DIM l AS INTEGER\n"
+    s = s + "    FOR l = 0 TO depth - 1\n"
+    s = s + "        DIM kids AS []INTEGER = _mnKids(nodes, cur)\n"
+    s = s + "        IF l >= LEN(path) OR path[l] < 0 OR path[l] >= LEN(kids) THEN RETURN cur\n"
+    s = s + "        cur = kids[path[l]]\n"
+    s = s + "    NEXT l\n"
+    s = s + "    RETURN cur\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- _mnFirst: first non-separator position within kids ---
+    s = s + "FUNCTION _mnFirst(nodes AS []_MNode, kids AS []INTEGER) AS INTEGER\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(kids) - 1\n"
+    s = s + "        IF NOT nodes[kids[i]].Sp THEN RETURN i\n"
+    s = s + "    NEXT i\n"
+    s = s + "    RETURN 0\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- _mnStep: move selection by dir, skipping separators, clamped ---
+    s = s + "FUNCTION _mnStep(nodes AS []_MNode, kids AS []INTEGER, cur AS INTEGER, dir AS INTEGER) AS INTEGER\n"
+    s = s + "    DIM i AS INTEGER = cur + dir\n"
+    s = s + "    DO WHILE i >= 0 AND i < LEN(kids)\n"
+    s = s + "        IF NOT nodes[kids[i]].Sp THEN RETURN i\n"
+    s = s + "        i = i + dir\n"
+    s = s + "    LOOP\n"
+    s = s + "    RETURN cur\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- _mnOpenPath: a fresh open path for top menu `active` ---
+    s = s + "FUNCTION _mnOpenPath(nodes AS []_MNode, active AS INTEGER) AS []INTEGER\n"
+    s = s + "    DIM p AS []INTEGER\n"
+    s = s + "    DIM top AS INTEGER = _mnNodeAt(nodes, active, p, 0)\n"
+    s = s + "    p = APPEND(p, _mnFirst(nodes, _mnKids(nodes, top)))\n"
+    s = s + "    RETURN p\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- _mnKey: keyboard navigation while a dropdown is open ---
+    s = s + "FUNCTION _mnKey(nodes AS []_MNode, key AS STRING, active AS INTEGER, open AS BOOLEAN, path AS []INTEGER) AS (INTEGER, BOOLEAN, []INTEGER, STRING)\n"
+    s = s + "    DIM chosen AS STRING = " + qt + qt + "\n"
+    s = s + "    IF NOT open THEN RETURN active, open, path, chosen\n"
+    s = s + "    DIM topc AS INTEGER = _mnTopCount(nodes)\n"
+    s = s + "    DIM L AS INTEGER = LEN(path)\n"
+    s = s + "    IF L = 0 THEN\n"
+    s = s + "        path = APPEND(path, 0)\n"
+    s = s + "        L = 1\n"
+    s = s + "    END IF\n"
+    s = s + "    DIM parent AS INTEGER = _mnNodeAt(nodes, active, path, L - 1)\n"
+    s = s + "    DIM kids AS []INTEGER = _mnKids(nodes, parent)\n"
+    s = s + "    IF LEN(kids) = 0 THEN RETURN active, open, path, chosen\n"
+    s = s + "    DIM cur AS INTEGER = path[L - 1]\n"
+    s = s + "    IF cur < 0 THEN cur = 0\n"
+    s = s + "    IF cur >= LEN(kids) THEN cur = LEN(kids) - 1\n"
+    s = s + "    IF key = " + qt + "esc" + qt + " THEN RETURN active, FALSE, NIL, chosen\n"
+    s = s + "    IF key = " + qt + "down" + qt + " THEN\n"
+    s = s + "        path[L - 1] = _mnStep(nodes, kids, cur, 1)\n"
+    s = s + "        RETURN active, open, path, chosen\n"
+    s = s + "    END IF\n"
+    s = s + "    IF key = " + qt + "up" + qt + " THEN\n"
+    s = s + "        path[L - 1] = _mnStep(nodes, kids, cur, 0 - 1)\n"
+    s = s + "        RETURN active, open, path, chosen\n"
+    s = s + "    END IF\n"
+    s = s + "    IF key = " + qt + "left" + qt + " THEN\n"
+    s = s + "        IF L > 1 THEN\n"
+    s = s + "            DIM np AS []INTEGER\n"
+    s = s + "            DIM a AS INTEGER\n"
+    s = s + "            FOR a = 0 TO L - 2\n"
+    s = s + "                np = APPEND(np, path[a])\n"
+    s = s + "            NEXT a\n"
+    s = s + "            RETURN active, open, np, chosen\n"
+    s = s + "        END IF\n"
+    s = s + "        IF active > 0 THEN active = active - 1\n"
+    s = s + "        RETURN active, open, _mnOpenPath(nodes, active), chosen\n"
+    s = s + "    END IF\n"
+    s = s + "    IF key = " + qt + "right" + qt + " THEN\n"
+    s = s + "        DIM rnode AS INTEGER = kids[cur]\n"
+    s = s + "        IF _mnIsSub(nodes, rnode) THEN\n"
+    s = s + "            path = APPEND(path, _mnFirst(nodes, _mnKids(nodes, rnode)))\n"
+    s = s + "            RETURN active, open, path, chosen\n"
+    s = s + "        END IF\n"
+    s = s + "        IF L = 1 AND active < topc - 1 THEN\n"
+    s = s + "            active = active + 1\n"
+    s = s + "            RETURN active, open, _mnOpenPath(nodes, active), chosen\n"
+    s = s + "        END IF\n"
+    s = s + "        RETURN active, open, path, chosen\n"
+    s = s + "    END IF\n"
+    s = s + "    IF key = " + qt + "enter" + qt + " OR key = " + qt + "space" + qt + " THEN\n"
+    s = s + "        DIM enode AS INTEGER = kids[cur]\n"
+    s = s + "        IF nodes[enode].Ds THEN RETURN active, open, path, chosen\n"
+    s = s + "        IF _mnIsSub(nodes, enode) THEN\n"
+    s = s + "            path = APPEND(path, _mnFirst(nodes, _mnKids(nodes, enode)))\n"
+    s = s + "            RETURN active, open, path, chosen\n"
+    s = s + "        END IF\n"
+    s = s + "        RETURN active, FALSE, NIL, nodes[enode].Nm\n"
+    s = s + "    END IF\n"
+    s = s + "    RETURN active, open, path, chosen\n"
+    s = s + "END FUNCTION\n\n"
+
+    ' --- _mnPaintBar: the title strip ---
+    s = s + "SUB _mnPaintBar(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY AS INTEGER, active AS INTEGER, open AS BOOLEAN, focused AS BOOLEAN)\n"
+    s = s + "    DIM bar AS STRING = " + qt + qt + "\n"
+    s = s + "    DIM k AS INTEGER = 0\n"
+    s = s + "    DIM i AS INTEGER\n"
+    s = s + "    FOR i = 0 TO LEN(nodes) - 1\n"
+    s = s + "        IF nodes[i].Dp = 0 AND NOT nodes[i].Sp THEN\n"
+    s = s + "            IF (focused OR open) AND active = k THEN\n"
+    s = s + "                bar = bar + " + qt + "[" + qt + " + nodes[i].Cap + " + qt + "]" + qt + "\n"
+    s = s + "            ELSE\n"
+    s = s + "                bar = bar + " + qt + " " + qt + " + nodes[i].Cap + " + qt + " " + qt + "\n"
+    s = s + "            END IF\n"
+    s = s + "            k = k + 1\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT i\n"
+    s = s + "    IF baseY >= 0 AND baseY < LEN(rows) THEN rows[baseY] = overlayRow(rows[baseY], baseX, bar)\n"
+    s = s + "END SUB\n\n"
+
+    ' --- _mnPaintBoxes: the cascading dropdown boxes + hit-test stash ---
+    s = s + "SUB _mnPaintBoxes(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY AS INTEGER, active AS INTEGER, path AS []INTEGER)\n"
+    s = s + "    _mnBX = NIL\n"
+    s = s + "    _mnBY = NIL\n"
+    s = s + "    _mnBW = NIL\n"
+    s = s + "    _mnBP = NIL\n"
+    s = s + "    IF LEN(path) = 0 THEN RETURN\n"
+    s = s + "    DIM prevX AS INTEGER = 0\n"
+    s = s + "    DIM prevW AS INTEGER = 0\n"
+    s = s + "    DIM prevTopY AS INTEGER = 0\n"
+    s = s + "    DIM lev AS INTEGER\n"
+    s = s + "    FOR lev = 0 TO LEN(path) - 1\n"
+    s = s + "        DIM parent AS INTEGER = _mnNodeAt(nodes, active, path, lev)\n"
+    s = s + "        DIM kids AS []INTEGER = _mnKids(nodes, parent)\n"
+    s = s + "        IF LEN(kids) = 0 THEN RETURN\n"
+    s = s + "        DIM boxX AS INTEGER = 0\n"
+    s = s + "        DIM topY AS INTEGER = 0\n"
+    s = s + "        IF lev = 0 THEN\n"
+    s = s + "            boxX = baseX + _mnColAt(nodes, active)\n"
+    s = s + "            topY = baseY + 1\n"
+    s = s + "        ELSE\n"
+    s = s + "            boxX = prevX + prevW\n"
+    s = s + "            topY = prevTopY + path[lev - 1]\n"
+    s = s + "        END IF\n"
+    s = s + "        DIM innerW AS INTEGER = 1\n"
+    s = s + "        DIM j AS INTEGER\n"
+    s = s + "        FOR j = 0 TO LEN(kids) - 1\n"
+    s = s + "            DIM cw AS INTEGER = 4 + lipgloss.Width(nodes[kids[j]].Cap)\n"
+    s = s + "            IF nodes[kids[j]].Sc <> " + qt + qt + " THEN cw = cw + 2 + lipgloss.Width(nodes[kids[j]].Sc)\n"
+    s = s + "            IF _mnIsSub(nodes, kids[j]) THEN cw = cw + 2\n"
+    s = s + "            IF cw > innerW THEN innerW = cw\n"
+    s = s + "        NEXT j\n"
+    s = s + "        DIM topB AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", innerW) + " + qt + "┐" + qt + "\n"
+    s = s + "        IF topY >= 0 AND topY < LEN(rows) THEN rows[topY] = overlayRow(rows[topY], boxX, topB)\n"
+    s = s + "        DIM sel AS INTEGER = path[lev]\n"
+    s = s + "        FOR j = 0 TO LEN(kids) - 1\n"
+    s = s + "            DIM ndx AS INTEGER = kids[j]\n"
+    s = s + "            DIM itemY AS INTEGER = topY + 1 + j\n"
+    s = s + "            IF nodes[ndx].Sp THEN\n"
+    s = s + "                DIM sepln AS STRING = " + qt + "├" + qt + " + strings.Repeat(" + qt + "─" + qt + ", innerW) + " + qt + "┤" + qt + "\n"
+    s = s + "                IF itemY >= 0 AND itemY < LEN(rows) THEN rows[itemY] = overlayRow(rows[itemY], boxX, sepln)\n"
+    s = s + "            ELSE\n"
+    s = s + "                DIM chk AS STRING = " + qt + "  " + qt + "\n"
+    s = s + "                IF nodes[ndx].Ck THEN chk = " + qt + "✓ " + qt + "\n"
+    s = s + "                DIM rgt AS STRING = nodes[ndx].Sc\n"
+    s = s + "                IF _mnIsSub(nodes, ndx) THEN\n"
+    s = s + "                    IF rgt <> " + qt + qt + " THEN\n"
+    s = s + "                        rgt = rgt + " + qt + " ▸" + qt + "\n"
+    s = s + "                    ELSE\n"
+    s = s + "                        rgt = " + qt + "▸" + qt + "\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "                DIM inner AS STRING = " + qt + " " + qt + " + chk + nodes[ndx].Cap\n"
+    s = s + "                DIM pad AS INTEGER = innerW - lipgloss.Width(inner) - lipgloss.Width(rgt) - 1\n"
+    s = s + "                IF pad < 0 THEN pad = 0\n"
+    s = s + "                inner = inner + strings.Repeat(" + qt + " " + qt + ", pad) + rgt + " + qt + " " + qt + "\n"
+    s = s + "                DO WHILE lipgloss.Width(inner) > innerW\n"
+    s = s + "                    inner = Mid(inner, 1, LEN(inner) - 1)\n"
+    s = s + "                LOOP\n"
+    s = s + "                DO WHILE lipgloss.Width(inner) < innerW\n"
+    s = s + "                    inner = inner + " + qt + " " + qt + "\n"
+    s = s + "                LOOP\n"
+    s = s + "                IF itemY >= 0 AND itemY < LEN(rows) THEN\n"
+    s = s + "                    IF j = sel THEN\n"
+    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX, " + qt + "│" + qt + ")\n"
+    s = s + "                        rows[itemY] = overlayRowAt(rows[itemY], boxX + 1, focusStyle.Render(inner))\n"
+    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX + 1 + innerW, " + qt + "│" + qt + ")\n"
+    s = s + "                    ELSEIF nodes[ndx].Ds THEN\n"
+    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX, " + qt + "│" + qt + ")\n"
+    s = s + "                        rows[itemY] = overlayRowAt(rows[itemY], boxX + 1, _mnDim.Render(inner))\n"
+    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX + 1 + innerW, " + qt + "│" + qt + ")\n"
+    s = s + "                    ELSE\n"
+    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX, " + qt + "│" + qt + " + inner + " + qt + "│" + qt + ")\n"
+    s = s + "                    END IF\n"
+    s = s + "                END IF\n"
+    s = s + "            END IF\n"
+    s = s + "        NEXT j\n"
+    s = s + "        DIM botY AS INTEGER = topY + 1 + LEN(kids)\n"
+    s = s + "        DIM botB AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", innerW) + " + qt + "┘" + qt + "\n"
+    s = s + "        IF botY >= 0 AND botY < LEN(rows) THEN rows[botY] = overlayRow(rows[botY], boxX, botB)\n"
+    s = s + "        _mnBX = APPEND(_mnBX, boxX)\n"
+    s = s + "        _mnBY = APPEND(_mnBY, topY + 1)\n"
+    s = s + "        _mnBW = APPEND(_mnBW, innerW + 2)\n"
+    s = s + "        _mnBP = APPEND(_mnBP, parent)\n"
+    s = s + "        prevX = boxX\n"
+    s = s + "        prevW = innerW + 2\n"
+    s = s + "        prevTopY = topY\n"
+    s = s + "    NEXT lev\n"
+    s = s + "END SUB\n\n"
+
+    ' --- _mnClickHit: map a click to a box row (topmost box wins) ---
+    s = s + "FUNCTION _mnClickHit(nodes AS []_MNode, mx AS INTEGER, my AS INTEGER, active AS INTEGER, open AS BOOLEAN, path AS []INTEGER) AS (INTEGER, BOOLEAN, []INTEGER, STRING, BOOLEAN)\n"
+    s = s + "    DIM chosen AS STRING = " + qt + qt + "\n"
+    s = s + "    IF NOT open THEN RETURN active, open, path, chosen, FALSE\n"
+    s = s + "    DIM b AS INTEGER\n"
+    s = s + "    FOR b = LEN(_mnBX) - 1 TO 0 STEP 0 - 1\n"
+    s = s + "        DIM parent AS INTEGER = _mnBP[b]\n"
+    s = s + "        DIM kids AS []INTEGER = _mnKids(nodes, parent)\n"
+    s = s + "        IF mx >= _mnBX[b] AND mx < _mnBX[b] + _mnBW[b] AND my >= _mnBY[b] AND my < _mnBY[b] + LEN(kids) THEN\n"
+    s = s + "            DIM row AS INTEGER = my - _mnBY[b]\n"
+    s = s + "            DIM ndx AS INTEGER = kids[row]\n"
+    s = s + "            DIM np AS []INTEGER\n"
+    s = s + "            DIM a AS INTEGER\n"
+    s = s + "            FOR a = 0 TO b - 1\n"
+    s = s + "                np = APPEND(np, path[a])\n"
+    s = s + "            NEXT a\n"
+    s = s + "            np = APPEND(np, row)\n"
+    s = s + "            IF nodes[ndx].Sp THEN RETURN active, open, path, chosen, TRUE\n"
+    s = s + "            IF nodes[ndx].Ds THEN RETURN active, open, np, chosen, TRUE\n"
+    s = s + "            IF _mnIsSub(nodes, ndx) THEN\n"
+    s = s + "                np = APPEND(np, _mnFirst(nodes, _mnKids(nodes, ndx)))\n"
+    s = s + "                RETURN active, open, np, chosen, TRUE\n"
+    s = s + "            END IF\n"
+    s = s + "            RETURN active, FALSE, NIL, nodes[ndx].Nm, TRUE\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT b\n"
+    s = s + "    RETURN active, open, path, chosen, FALSE\n"
+    s = s + "END FUNCTION\n\n"
+
     RETURN s
 END FUNCTION

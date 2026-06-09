@@ -60,10 +60,11 @@ build_prog() {
 
 # The three smoke programs. Widgets covers the 14 placeable kinds; chrome_demo
 # adds Menubar + Panel (not in the showcase); dialog_demo covers Dialog.
-SHOW="$WORK/show"; CHROME="$WORK/chrome"; DLG="$WORK/dlg"
+SHOW="$WORK/show"; CHROME="$WORK/chrome"; DLG="$WORK/dlg"; MENU="$WORK/menu"
 build_prog examples/Widgets/Widgets.dbas   "$SHOW"
 build_prog examples/chrome_demo.dbas       "$CHROME"
 build_prog examples/dialog_demo.dbas       "$DLG"
+build_prog examples/menu_demo.dbas         "$MENU"
 [ "$fail" -eq 0 ] || { echo "RESULT: FAIL (build)"; exit 1; }
 
 # case <bin> <label> <keys> <assert...>  — assert tokens pass to vtdrive.
@@ -107,10 +108,21 @@ case_run "$SHOW" "tree Enter collapses root" "$T10,enter,hold:0.3" \
 case_run "$CHROME" "panel renders child" "hold:0.3" \
     --want "child-in-panel"
 
-# Menubar (idx 0, focused at startup): Down opens the dropdown; a second
-# Down moves the highlight to the second item (> Open).
-case_run "$CHROME" "menubar opens + navigates" "down,down,hold:0.3" \
-    --want "> Open"
+# Menubar (idx 0, focused at startup): Down opens the dropdown, which paints
+# its framed box of items (the highlighted item is reverse-video, not marked).
+case_run "$CHROME" "menubar opens dropdown" "down,hold:0.3" \
+    --want "New" --want "Open"
+
+# --- menu_demo: multi-level cascading menus + flags (menubar=0, label=1) ----
+# Down opens File: items render with shortcut, checkmark, separator.
+case_run "$MENU" "menu opens with shortcut + checked item" "down,hold:0.3" \
+    --want "New" --want "Ctrl+N" --want "Recent" --want "Save"
+# Move to Recent (down,down) and Right to cascade its submenu (Alpha/Beta).
+case_run "$MENU" "submenu cascades on Right" "down,down,right,hold:0.3" \
+    --want "Alpha" --want "Beta"
+# Enter on a leaf fires its handler and closes the menu (box border gone).
+case_run "$MENU" "selecting a leaf closes the menu" "down,enter,hold:0.3" \
+    --not "┌"
 
 # --- dialog_demo: Dialog (btnOpen focused; OnClickDialog pops confirm) ------
 # Enter on the focused button opens the confirm dialog; Esc closes it.
@@ -123,4 +135,4 @@ if [ "$fail" -ne 0 ]; then
     echo "RESULT: FAIL"
     exit 1
 fi
-echo "RESULT: PASS (9 cases, 3 programs)"
+echo "RESULT: PASS (13 cases, 4 programs)"

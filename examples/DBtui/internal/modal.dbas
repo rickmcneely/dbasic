@@ -159,6 +159,61 @@ SUB enumPickerCommit(m AS POINTER TO Model)
     m.EnumActive = FALSE
 END SUB
 
+' startInlinePropEdit — begin editing Properties row `rowIdx` of the
+' selected widget directly in the grid: a one-line textinput replaces the
+' value cell, seeded with the row's current value. Only meaningful for
+' text/number rows (bool/enum/color have their own affordances); the caller
+' gates on kind. A no-op when the row isn't editable or no widget is selected.
+SUB startInlinePropEdit(m AS POINTER TO Model, rowIdx AS INTEGER)
+    DIM sel AS INTEGER = m.Tabs[m.TabIdx].SelWidget
+    IF sel < 0 OR sel >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[sel]
+    DIM t   AS STRING
+    DIM p   AS STRING
+    DIM d   AS STRING
+    DIM key AS STRING
+    t, p, d, key = propRowEditContext(w, rowIdx)
+    _ = t
+    _ = p
+    IF key = "" THEN RETURN
+    m.PropSel      = rowIdx
+    m.PropEditRow  = rowIdx
+    m.PropEditKey  = key
+    m.PropEditInput = textinput.New()
+    m.PropEditInput.Placeholder = ""
+    m.PropEditInput.SetValue(d)
+    m.PropEditInput.CursorEnd()
+    DIM fcmd AS tea.Cmd = m.PropEditInput.Focus()
+    _ = fcmd
+    m.PropEdit = TRUE
+END SUB
+
+' commitInlinePropEdit — apply the inline editor's text to the widget via
+' the shared wprop dispatch (so each field's parse/clamp rules live in one
+' place), mark the tab dirty, refresh the canvas, and leave edit mode. The
+' ModalContext is borrowed for the dispatch call and restored after. A no-op
+' when inline edit isn't active.
+SUB commitInlinePropEdit(m AS POINTER TO Model)
+    IF NOT m.PropEdit THEN RETURN
+    DIM savedCtx AS STRING = m.ModalContext
+    m.ModalContext = m.PropEditKey
+    DIM val AS STRING = m.PropEditInput.Value()
+    DIM q AS BOOLEAN
+    DIM c AS tea.Cmd
+    q, c = dispatchModalClose(m, "", val)
+    _ = q
+    _ = c
+    m.ModalContext = savedCtx
+    m.Tabs[m.TabIdx].Dirty = TRUE
+    invalidateEditorCache(m)
+    m.PropEdit = FALSE
+END SUB
+
+' cancelInlinePropEdit — drop the inline edit without applying it (Esc).
+SUB cancelInlinePropEdit(m AS POINTER TO Model)
+    m.PropEdit = FALSE
+END SUB
+
 ' dispatchModalClose — called by Update when the user commits a modal
 ' choice. Returns TRUE if the program should terminate immediately
 ' after this call (e.g. "Discard" on the quit-confirm modal).
@@ -594,3 +649,260 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
     m.Status = "modal " + m.ModalContext + " → " + button
     RETURN FALSE, NIL
 END FUNCTION
+
+' =========================================================================
+' Visual Menu Editor — edits a Menubar widget's []MenuNode tree in a modal
+' working copy. Mirrors the enum-picker pattern: module state on Model,
+' open / commit / cancel + structural ops here, render + hit-test in
+' render.dbas, input routing in dbtui.dbas Update, composited by View.
+' The flat list is depth-ordered (pre-order); a node's subtree is itself
+' plus every following deeper node.
+' =========================================================================
+
+' menuSubtreeEnd — index just past the subtree rooted at idx (idx + every
+' following deeper node). For a leaf this is idx + 1.
+FUNCTION menuSubtreeEnd(nodes AS []MenuNode, idx AS INTEGER) AS INTEGER
+    DIM d AS INTEGER = nodes[idx].Depth
+    DIM j AS INTEGER = idx + 1
+    DO WHILE j < LEN(nodes) AND nodes[j].Depth > d
+        j = j + 1
+    LOOP
+    RETURN j
+END FUNCTION
+
+' menuPrevSibling — index of idx's previous sibling (same depth, no
+' shallower node between), or -1 if idx is the first child / top item.
+FUNCTION menuPrevSibling(nodes AS []MenuNode, idx AS INTEGER) AS INTEGER
+    DIM d AS INTEGER = nodes[idx].Depth
+    DIM j AS INTEGER = idx - 1
+    DO WHILE j >= 0
+        IF nodes[j].Depth < d THEN RETURN 0 - 1
+        IF nodes[j].Depth = d THEN RETURN j
+        j = j - 1
+    LOOP
+    RETURN 0 - 1
+END FUNCTION
+
+' menuRangeAppend — append nodes src[a:b) onto dst (struct copies).
+FUNCTION menuRangeAppend(dst AS []MenuNode, src AS []MenuNode, a AS INTEGER, b AS INTEGER) AS []MenuNode
+    DIM i AS INTEGER
+    FOR i = a TO b - 1
+        dst = APPEND(dst, src[i])
+    NEXT i
+    RETURN dst
+END FUNCTION
+
+' menuEdSeedInputs — (re)create the three field editors from the selected
+' node's current values, so they reflect whatever row is highlighted.
+SUB menuEdSeedInputs(m AS POINTER TO Model)
+    DIM cap AS STRING = ""
+    DIM nm  AS STRING = ""
+    DIM sc  AS STRING = ""
+    IF m.MenuEdSel >= 0 AND m.MenuEdSel < LEN(m.MenuEdNodes) THEN
+        cap = m.MenuEdNodes[m.MenuEdSel].Caption
+        nm  = m.MenuEdNodes[m.MenuEdSel].Name
+        sc  = m.MenuEdNodes[m.MenuEdSel].Shortcut
+    END IF
+    m.MenuEdCapIn = textinput.New()
+    m.MenuEdCapIn.SetValue(cap)
+    m.MenuEdCapIn.CursorEnd()
+    m.MenuEdNameIn = textinput.New()
+    m.MenuEdNameIn.SetValue(nm)
+    m.MenuEdNameIn.CursorEnd()
+    m.MenuEdScIn = textinput.New()
+    m.MenuEdScIn.SetValue(sc)
+    m.MenuEdScIn.CursorEnd()
+END SUB
+
+' menuEdSyncInputs — write the three field editors back into the selected
+' node (called before any structural change and on commit so edits stick).
+SUB menuEdSyncInputs(m AS POINTER TO Model)
+    IF m.MenuEdSel < 0 OR m.MenuEdSel >= LEN(m.MenuEdNodes) THEN RETURN
+    m.MenuEdNodes[m.MenuEdSel].Caption  = m.MenuEdCapIn.Value()
+    m.MenuEdNodes[m.MenuEdSel].Name     = m.MenuEdNameIn.Value()
+    m.MenuEdNodes[m.MenuEdSel].Shortcut = m.MenuEdScIn.Value()
+END SUB
+
+' menuEdFocus — focus the textinput for the active field (MenuEdField
+' 0/1/2 = Caption/Name/Shortcut), blurring the others. No-op for list mode.
+SUB menuEdFocus(m AS POINTER TO Model)
+    m.MenuEdCapIn.Blur()
+    m.MenuEdNameIn.Blur()
+    m.MenuEdScIn.Blur()
+    DIM c AS tea.Cmd
+    IF m.MenuEdField = 0 THEN c = m.MenuEdCapIn.Focus()
+    IF m.MenuEdField = 1 THEN c = m.MenuEdNameIn.Focus()
+    IF m.MenuEdField = 2 THEN c = m.MenuEdScIn.Focus()
+    _ = c
+END SUB
+
+' showMenuEditor — open the editor on a Menubar widget, copying its menu
+' tree into the working set. A no-op for any other kind / bad index.
+SUB showMenuEditor(m AS POINTER TO Model, widgetIdx AS INTEGER)
+    IF widgetIdx < 0 OR widgetIdx >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    IF m.Tabs[m.TabIdx].Form.Widgets[widgetIdx].Kind <> "Menubar" THEN RETURN
+    m.MenuEdWidget = widgetIdx
+    DIM work AS []MenuNode
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs[m.TabIdx].Form.Widgets[widgetIdx].Menu) - 1
+        work = APPEND(work, m.Tabs[m.TabIdx].Form.Widgets[widgetIdx].Menu[i])
+    NEXT i
+    m.MenuEdNodes = work
+    m.MenuEdSel   = 0
+    m.MenuEdField = 0 - 1
+    menuEdSeedInputs(m)
+    m.MenuEdActive = TRUE
+END SUB
+
+' cancelMenuEditor — close without applying.
+SUB cancelMenuEditor(m AS POINTER TO Model)
+    m.MenuEdActive = FALSE
+    m.MenuEdField  = 0 - 1
+END SUB
+
+' menuEditorCommit — write the working tree back to the widget, mark the
+' tab dirty, refresh the canvas, and close.
+SUB menuEditorCommit(m AS POINTER TO Model)
+    menuEdSyncInputs(m)
+    IF m.MenuEdWidget >= 0 AND m.MenuEdWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+        m.Tabs[m.TabIdx].Form.Widgets[m.MenuEdWidget].Menu = m.MenuEdNodes
+        m.Tabs[m.TabIdx].Dirty = TRUE
+        invalidateEditorCache(m)
+    END IF
+    m.MenuEdActive = FALSE
+    m.MenuEdField  = 0 - 1
+END SUB
+
+' menuEdSelMove — move the list selection by dir (-1 up / +1 down), clamped.
+SUB menuEdSelMove(m AS POINTER TO Model, dir AS INTEGER)
+    menuEdSyncInputs(m)
+    DIM n AS INTEGER = LEN(m.MenuEdNodes)
+    IF n = 0 THEN RETURN
+    m.MenuEdSel = m.MenuEdSel + dir
+    IF m.MenuEdSel < 0 THEN m.MenuEdSel = 0
+    IF m.MenuEdSel >= n THEN m.MenuEdSel = n - 1
+    menuEdSeedInputs(m)
+END SUB
+
+' menuEdInsert — add a new sibling after the selected node's whole subtree
+' (so it doesn't accidentally adopt the selection's children), at the same
+' depth, auto-named. Empty list → a first top-level item.
+SUB menuEdInsert(m AS POINTER TO Model)
+    menuEdSyncInputs(m)
+    DIM nodes AS []MenuNode = m.MenuEdNodes
+    DIM sel AS INTEGER = m.MenuEdSel
+    DIM depth AS INTEGER = 0
+    DIM insAt AS INTEGER = LEN(nodes)
+    IF LEN(nodes) > 0 AND sel >= 0 AND sel < LEN(nodes) THEN
+        depth = nodes[sel].Depth
+        insAt = menuSubtreeEnd(nodes, sel)
+    END IF
+    DIM nn AS MenuNode
+    nn.Depth   = depth
+    nn.Caption = "Item"
+    nn.Name    = menuAutoName("Item", menuNodeNames(nodes))
+    DIM out AS []MenuNode
+    out = menuRangeAppend(out, nodes, 0, insAt)
+    out = APPEND(out, nn)
+    out = menuRangeAppend(out, nodes, insAt, LEN(nodes))
+    m.MenuEdNodes = out
+    m.MenuEdSel   = insAt
+    menuEdSeedInputs(m)
+END SUB
+
+' menuEdDelete — remove the selected node and its whole subtree.
+SUB menuEdDelete(m AS POINTER TO Model)
+    DIM nodes AS []MenuNode = m.MenuEdNodes
+    DIM sel AS INTEGER = m.MenuEdSel
+    IF sel < 0 OR sel >= LEN(nodes) THEN RETURN
+    DIM endIdx AS INTEGER = menuSubtreeEnd(nodes, sel)
+    DIM out AS []MenuNode
+    out = menuRangeAppend(out, nodes, 0, sel)
+    out = menuRangeAppend(out, nodes, endIdx, LEN(nodes))
+    m.MenuEdNodes = out
+    IF m.MenuEdSel >= LEN(out) THEN m.MenuEdSel = LEN(out) - 1
+    IF m.MenuEdSel < 0 THEN m.MenuEdSel = 0
+    menuEdSeedInputs(m)
+END SUB
+
+' menuEdIndent — deepen the selected subtree by one level, but only when
+' the node above can serve as a parent (its depth >= the selection's).
+SUB menuEdIndent(m AS POINTER TO Model)
+    menuEdSyncInputs(m)
+    DIM sel AS INTEGER = m.MenuEdSel
+    IF sel <= 0 OR sel >= LEN(m.MenuEdNodes) THEN RETURN
+    IF m.MenuEdNodes[sel - 1].Depth < m.MenuEdNodes[sel].Depth THEN RETURN
+    DIM endIdx AS INTEGER = menuSubtreeEnd(m.MenuEdNodes, sel)
+    DIM i AS INTEGER
+    FOR i = sel TO endIdx - 1
+        m.MenuEdNodes[i].Depth = m.MenuEdNodes[i].Depth + 1
+    NEXT i
+END SUB
+
+' menuEdOutdent — shallow the selected subtree by one level (not below 0).
+SUB menuEdOutdent(m AS POINTER TO Model)
+    menuEdSyncInputs(m)
+    DIM sel AS INTEGER = m.MenuEdSel
+    IF sel < 0 OR sel >= LEN(m.MenuEdNodes) THEN RETURN
+    IF m.MenuEdNodes[sel].Depth = 0 THEN RETURN
+    DIM endIdx AS INTEGER = menuSubtreeEnd(m.MenuEdNodes, sel)
+    DIM i AS INTEGER
+    FOR i = sel TO endIdx - 1
+        m.MenuEdNodes[i].Depth = m.MenuEdNodes[i].Depth - 1
+    NEXT i
+END SUB
+
+' menuEdMoveUp — swap the selected subtree with its previous sibling's.
+SUB menuEdMoveUp(m AS POINTER TO Model)
+    menuEdSyncInputs(m)
+    DIM nodes AS []MenuNode = m.MenuEdNodes
+    DIM sel AS INTEGER = m.MenuEdSel
+    IF sel < 0 OR sel >= LEN(nodes) THEN RETURN
+    DIM ps AS INTEGER = menuPrevSibling(nodes, sel)
+    IF ps < 0 THEN RETURN
+    DIM endIdx AS INTEGER = menuSubtreeEnd(nodes, sel)
+    DIM out AS []MenuNode
+    out = menuRangeAppend(out, nodes, 0, ps)
+    out = menuRangeAppend(out, nodes, sel, endIdx)
+    out = menuRangeAppend(out, nodes, ps, sel)
+    out = menuRangeAppend(out, nodes, endIdx, LEN(nodes))
+    m.MenuEdNodes = out
+    m.MenuEdSel   = ps
+    menuEdSeedInputs(m)
+END SUB
+
+' menuEdMoveDown — swap the selected subtree with its next sibling's.
+SUB menuEdMoveDown(m AS POINTER TO Model)
+    menuEdSyncInputs(m)
+    DIM nodes AS []MenuNode = m.MenuEdNodes
+    DIM sel AS INTEGER = m.MenuEdSel
+    IF sel < 0 OR sel >= LEN(nodes) THEN RETURN
+    DIM selEnd AS INTEGER = menuSubtreeEnd(nodes, sel)
+    IF selEnd >= LEN(nodes) THEN RETURN
+    IF nodes[selEnd].Depth <> nodes[sel].Depth THEN RETURN
+    DIM nsEnd AS INTEGER = menuSubtreeEnd(nodes, selEnd)
+    DIM out AS []MenuNode
+    out = menuRangeAppend(out, nodes, 0, sel)
+    out = menuRangeAppend(out, nodes, selEnd, nsEnd)
+    out = menuRangeAppend(out, nodes, sel, selEnd)
+    out = menuRangeAppend(out, nodes, nsEnd, LEN(nodes))
+    m.MenuEdNodes = out
+    m.MenuEdSel   = sel + (nsEnd - selEnd)
+    menuEdSeedInputs(m)
+END SUB
+
+' menuEdToggleSep / Checked / Disabled — flip the selected node's flag.
+SUB menuEdToggleSep(m AS POINTER TO Model)
+    IF m.MenuEdSel < 0 OR m.MenuEdSel >= LEN(m.MenuEdNodes) THEN RETURN
+    m.MenuEdNodes[m.MenuEdSel].IsSep = NOT m.MenuEdNodes[m.MenuEdSel].IsSep
+END SUB
+
+SUB menuEdToggleChecked(m AS POINTER TO Model)
+    IF m.MenuEdSel < 0 OR m.MenuEdSel >= LEN(m.MenuEdNodes) THEN RETURN
+    m.MenuEdNodes[m.MenuEdSel].Checked = NOT m.MenuEdNodes[m.MenuEdSel].Checked
+END SUB
+
+SUB menuEdToggleDisabled(m AS POINTER TO Model)
+    IF m.MenuEdSel < 0 OR m.MenuEdSel >= LEN(m.MenuEdNodes) THEN RETURN
+    m.MenuEdNodes[m.MenuEdSel].Disabled = NOT m.MenuEdNodes[m.MenuEdSel].Disabled
+END SUB

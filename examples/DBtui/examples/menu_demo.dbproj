@@ -1,0 +1,28 @@
+{
+  "Name": "menu_demo",
+  "StartForm": "frmStart",
+  "Forms": [
+    {
+      "Name": "frmStart",
+      "Title": "Menu Demo",
+      "Widgets": [
+        {
+          "Kind": "Menubar", "Name": "mb", "X": 0, "Y": 0, "W": 40, "H": 1,
+          "Menu": [
+            {"Caption": "File", "Name": "mnuFile", "Depth": 0},
+            {"Caption": "New",  "Name": "mnuNew",  "Depth": 1, "Shortcut": "Ctrl+N"},
+            {"Caption": "Recent", "Name": "mnuRecent", "Depth": 1},
+            {"Caption": "Alpha", "Name": "mnuAlpha", "Depth": 2},
+            {"Caption": "Beta",  "Name": "mnuBeta",  "Depth": 2},
+            {"Depth": 1, "IsSep": true},
+            {"Caption": "Save", "Name": "mnuSave", "Depth": 1, "Checked": true},
+            {"Caption": "Exit", "Name": "mnuExit", "Depth": 1, "Disabled": true},
+            {"Caption": "Help", "Name": "mnuHelp", "Depth": 0},
+            {"Caption": "About", "Name": "mnuAbout", "Depth": 1}
+          ]
+        },
+        {"Kind": "Label", "Name": "lbl", "Text": "menu demo", "X": 2, "Y": 12, "W": 20, "H": 1}
+      ]
+    }
+  ]
+}

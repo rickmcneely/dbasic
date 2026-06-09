@@ -48,6 +48,7 @@ PROJECTS=(
   "examples/quit_demo.dbproj"
   "examples/chrome_demo.dbproj"
   "examples/colors_demo.dbproj"
+  "examples/menu_demo.dbproj"
 )
 
 fail=0

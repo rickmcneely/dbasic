@@ -110,6 +110,33 @@ END TYPE
 ' future versions will store one per tab and persist to .dbproj.
 ' -------------------------------------------------------------------------
 
+' -------------------------------------------------------------------------
+' MenuNode — one entry in a Menubar widget's menu tree (the menus the
+' USER designs on their form; distinct from the IDE's own MenuItem/MenuDef
+' above). The tree is stored as a flat []MenuNode list, VB-Menu-Editor
+' style: each node carries its own Depth (0 = top-level title on the bar,
+' 1 = an item in that menu, 2+ = an item in a submenu). A node is a
+' SUBMENU parent when the node that follows it is deeper. This flat+depth
+' shape is trivial to edit (indent / outdent) and to serialize.
+'
+'   Caption  visible text, e.g. "Open…"  ("" with IsSep = a separator rule)
+'   Name     identifier stem for the generated <Name>_Click() handler
+'   Depth    nesting level (0 = bar title)
+'   Shortcut accelerator label shown right-aligned, e.g. "Ctrl+S" (display)
+'   Checked  draws a check mark to the left of the caption
+'   Disabled greyed / not selectable (stored inverted so default = enabled)
+'   IsSep    a horizontal separator line; Caption / Name ignored
+' -------------------------------------------------------------------------
+TYPE MenuNode
+    DIM Caption  AS STRING
+    DIM Name     AS STRING
+    DIM Depth    AS INTEGER
+    DIM Shortcut AS STRING
+    DIM Checked  AS BOOLEAN
+    DIM Disabled AS BOOLEAN
+    DIM IsSep    AS BOOLEAN
+END TYPE
+
 TYPE DesignWidget
     DIM Kind AS STRING       ' Button / Label / TextInput / Checkbox /
                              ' RadioButton / ComboBox / ListBox /
@@ -135,6 +162,14 @@ TYPE DesignWidget
     DIM Max      AS INTEGER    ' ScrollBar / ProgressBar upper bound
     DIM Value    AS INTEGER    ' ScrollBar / ProgressBar current value
     DIM Orient   AS STRING     ' ScrollBar: "h" or "v"
+
+    ' --- Menubar widget menu tree ------------------------------------
+    ' The structured menu definition (titles / items / submenus) edited
+    ' via the visual Menu Editor. Replaces the old dash-encoded Items for
+    ' Menubars; legacy .dbproj files (dash-encoded Items, empty Menu) are
+    ' migrated to Menu on load. Marshals as "Menu": null for every other
+    ' kind, like the rest of the per-kind fields.
+    DIM Menu AS []MenuNode
 
     ' --- Dialog widget fields ----------------------------------------
     ' Non-visual at runtime — the design-time canvas shows a stamp
@@ -475,6 +510,32 @@ TYPE Model
     DIM EnumIdx    AS INTEGER
     DIM EnumX      AS INTEGER
     DIM EnumY      AS INTEGER
+    ' Inline property editor. A single click on a text/number Properties
+    ' row edits its value cell in place (PropEdit = TRUE) via PropEditInput,
+    ' a one-line textinput. Enter commits through the shared wprop dispatch;
+    ' Esc cancels; a second click on the same row escalates to the roomy
+    ' input dialog. PropEditRow is the row being edited; PropEditKey is the
+    ' wprop:* field it writes.
+    DIM PropEdit     AS BOOLEAN
+    DIM PropEditRow  AS INTEGER
+    DIM PropEditKey  AS STRING
+    DIM PropEditInput AS textinput.Model
+
+    ' Visual Menu Editor — opened by clicking a Menubar's Menus row or
+    ' Ctrl+E with a Menubar selected. Edits a WORKING COPY of the widget's
+    ' []MenuNode tree (MenuEdNodes); Enter/OK applies it back, Esc/Cancel
+    ' discards. MenuEdSel is the selected row in the flat node list.
+    ' MenuEdField: -1 = list-navigation mode (keys are structural commands);
+    ' 0/1/2 = editing the selected node's Caption / Name / Shortcut via the
+    ' matching textinput (live-synced into the node on every keystroke).
+    DIM MenuEdActive AS BOOLEAN
+    DIM MenuEdWidget AS INTEGER
+    DIM MenuEdNodes  AS []MenuNode
+    DIM MenuEdSel    AS INTEGER
+    DIM MenuEdField  AS INTEGER
+    DIM MenuEdCapIn  AS textinput.Model
+    DIM MenuEdNameIn AS textinput.Model
+    DIM MenuEdScIn   AS textinput.Model
 END TYPE
 
 ' setExpanded — toggle whether `path` is in the TreeExpanded "set".
@@ -1344,6 +1405,7 @@ FUNCTION newModel() AS Model
     m.TabIdx = 0 - 1
     ' No property row selected until one is clicked.
     m.PropSel = 0 - 1
+    m.PropEdit = FALSE
     ' Right-pane sub-tab starts on the list (Widgets/Outline) panel.
     m.RightTab = "list"
     ' Tree starts focused — the tree is always available and the
@@ -1674,6 +1736,28 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.CPActive = FALSE
             RETURN m, NIL
         END IF
+        ' (ME) Menu Editor — when open it owns the click: OK/Cancel buttons,
+        ' a list row selects that node; everything else inside is swallowed.
+        IF m.MenuEdActive THEN
+            DIM meBtn AS STRING = menuEdButtonAt(mcMsg.X, mcMsg.Y)
+            IF meBtn = "ok" THEN
+                menuEditorCommit(@m)
+                RETURN m, NIL
+            END IF
+            IF meBtn = "cancel" THEN
+                cancelMenuEditor(@m)
+                RETURN m, NIL
+            END IF
+            DIM meRow AS INTEGER = menuEdRowAt(mcMsg.X, mcMsg.Y)
+            IF meRow >= 0 THEN
+                menuEdSyncInputs(@m)
+                m.MenuEdSel = meRow
+                m.MenuEdField = 0 - 1
+                menuEdSeedInputs(@m)
+                RETURN m, NIL
+            END IF
+            RETURN m, NIL
+        END IF
         ' (EP) Enum dropdown — when open it owns the next left-click: a
         ' click on an option commits it; anywhere else cancels.
         IF m.EnumActive THEN
@@ -1769,6 +1853,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             ' Any other click while a modal is up is swallowed —
             ' nothing under the modal should be reachable.
             RETURN m, NIL
+        END IF
+        ' An inline property edit commits when the user clicks anywhere left
+        ' of the Properties pane (canvas, tree, editor, tabs…). Clicks inside
+        ' the right pane fall through to formClickPropAt, which handles row
+        ' switching and the second-click-escalates-to-dialog gesture itself.
+        IF m.PropEdit AND mcMsg.X < m.Width - m.RightW THEN
+            commitInlinePropEdit(@m)
         END IF
         ' (0) Splitter click — start a drag. The drag-handle is the
         '     column right at the left pane's right border (and the
@@ -2118,6 +2209,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             rcx, rcy = formScreenToCanvas(m, mcMsg.X, mcMsg.Y)
             DIM rcW AS INTEGER = formWidgetAt(m, rcx, rcy)
             IF rcW >= 0 THEN
+                ' Commit any in-progress inline edit (to the still-selected
+                ' widget) before the right-click moves selection elsewhere.
+                IF m.PropEdit THEN commitInlinePropEdit(@m)
                 IF rcW <> m.Tabs[m.TabIdx].SelWidget THEN m.PropSel = 0 - 1
                 m.Tabs[m.TabIdx].SelWidget = rcW
                 m.CtxWidget = rcW
@@ -2202,6 +2296,101 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
 
+        ' --- Menu Editor: owns the keyboard while open. In field mode
+        '     (MenuEdField >= 0) keys feed the active Caption/Name/Shortcut
+        '     editor; Tab cycles fields then back to the list; Enter/Esc
+        '     return to list mode. In list mode the keys are structural
+        '     commands (add/delete/indent/reorder/flags); Enter saves, Esc
+        '     cancels. Checked first so it pre-empts every other binding.
+        IF m.MenuEdActive THEN
+            IF m.MenuEdField >= 0 THEN
+                IF key = "esc" OR key = "enter" THEN
+                    menuEdSyncInputs(@m)
+                    m.MenuEdField = 0 - 1
+                    RETURN m, NIL
+                END IF
+                IF key = "tab" THEN
+                    menuEdSyncInputs(@m)
+                    m.MenuEdField = m.MenuEdField + 1
+                    IF m.MenuEdField > 2 THEN m.MenuEdField = 0 - 1
+                    menuEdFocus(@m)
+                    RETURN m, NIL
+                END IF
+                DIM meTi AS textinput.Model
+                DIM meCmd AS tea.Cmd
+                IF m.MenuEdField = 0 THEN
+                    meTi, meCmd = m.MenuEdCapIn.Update(msg)
+                    m.MenuEdCapIn = meTi
+                ELSEIF m.MenuEdField = 1 THEN
+                    meTi, meCmd = m.MenuEdNameIn.Update(msg)
+                    m.MenuEdNameIn = meTi
+                ELSE
+                    meTi, meCmd = m.MenuEdScIn.Update(msg)
+                    m.MenuEdScIn = meTi
+                END IF
+                menuEdSyncInputs(@m)
+                RETURN m, meCmd
+            END IF
+            IF key = "esc" THEN
+                cancelMenuEditor(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "enter" THEN
+                menuEditorCommit(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "up" THEN
+                menuEdSelMove(@m, 0 - 1)
+                RETURN m, NIL
+            END IF
+            IF key = "down" THEN
+                menuEdSelMove(@m, 1)
+                RETURN m, NIL
+            END IF
+            IF key = "tab" THEN
+                m.MenuEdField = 0
+                menuEdFocus(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "a" THEN
+                menuEdInsert(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "x" THEN
+                menuEdDelete(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "." OR key = ">" THEN
+                menuEdIndent(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "," OR key = "<" THEN
+                menuEdOutdent(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "[" THEN
+                menuEdMoveUp(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "]" THEN
+                menuEdMoveDown(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "s" THEN
+                menuEdToggleSep(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "c" THEN
+                menuEdToggleChecked(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "g" THEN
+                menuEdToggleDisabled(@m)
+                RETURN m, NIL
+            END IF
+            RETURN m, NIL
+        END IF
+
         ' --- Enum dropdown: when open it owns the keyboard. Up/Down move
         '     the highlight, Enter commits, Esc cancels.
         IF m.EnumActive THEN
@@ -2224,6 +2413,26 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 RETURN m, NIL
             END IF
             RETURN m, NIL
+        END IF
+
+        ' --- Inline property editor: when a Properties value cell is being
+        '     edited in place, the keyboard belongs to its textinput. Enter
+        '     commits the edit (through the shared wprop dispatch), Esc
+        '     cancels; every other key feeds the field.
+        IF m.PropEdit THEN
+            IF key = "enter" THEN
+                commitInlinePropEdit(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "esc" THEN
+                cancelInlinePropEdit(@m)
+                RETURN m, NIL
+            END IF
+            DIM peNewTi AS textinput.Model
+            DIM peTiCmd AS tea.Cmd
+            peNewTi, peTiCmd = m.PropEditInput.Update(msg)
+            m.PropEditInput = peNewTi
+            RETURN m, peTiCmd
         END IF
 
         ' --- Widget event context-menu: when open it owns the keyboard.
@@ -2585,6 +2794,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF key = "delete" AND m.ViewMode = "form" AND m.Tabs[m.TabIdx].SelWidget >= 0 THEN
             formDeleteSelected(@m)
             RETURN m, NIL
+        END IF
+        ' Ctrl+E opens the visual Menu Editor for a selected Menubar widget.
+        IF key = "ctrl+e" AND m.ViewMode = "form" AND hasActiveTab(m) AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            IF m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Kind = "Menubar" THEN
+                showMenuEditor(@m, m.Tabs[m.TabIdx].SelWidget)
+                RETURN m, NIL
+            END IF
         END IF
         ' Code-mode fold / unfold at cursor.
         IF (key = "ctrl+shift+[" OR key = "ctrl+[") AND m.FocusedPane = "editor" AND hasActiveTab(m) THEN
@@ -3216,6 +3432,26 @@ FUNCTION (m AS Model) View() AS tea.View
             epLastOrigY = epY
             epLastW = epW
             epLastN = LEN(m.EnumOpts)
+        END IF
+    END IF
+
+    ' --- Menu Editor overlay (topmost, auto-centered). Its screen origin is
+    '     stashed so the click handler can map a click to a row / button.
+    IF m.MenuEdActive THEN
+        DIM meStr AS STRING = renderMenuEditor(m)
+        IF meStr <> "" THEN
+            DIM meW AS INTEGER = lipgloss.Width(meStr)
+            DIM meH AS INTEGER = lipgloss.Height(meStr)
+            DIM meX AS INTEGER = (w - meW) / 2
+            DIM meY AS INTEGER = (h - meH) / 2
+            IF meX < 0 THEN meX = 0
+            IF meY < 0 THEN meY = 0
+            DIM meBgL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM meLay AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(meStr).X(meX).Y(meY).Z(9)
+            DIM meComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(meBgL, meLay)
+            full = meComp.Render()
+            meLastOrigX = meX
+            meLastOrigY = meY
         END IF
     END IF
 

@@ -38,6 +38,40 @@ DIM epLastOrigY AS INTEGER
 DIM epLastW     AS INTEGER
 DIM epLastN     AS INTEGER
 
+' Menu Editor geometry — written by View() each frame it composites the
+' editor, so the click handler can map a screen click onto a list row or
+' the OK / Cancel buttons. Coords are RELATIVE to the modal content area
+' (one cell in from the rounded border at the stashed origin).
+DIM meLastOrigX  AS INTEGER
+DIM meLastOrigY  AS INTEGER
+DIM meListRowRel AS INTEGER   ' content row of the first menu node
+DIM meListN      AS INTEGER   ' number of node rows
+DIM meBtnRowRel  AS INTEGER   ' content row of the OK / Cancel buttons
+DIM meOkX0       AS INTEGER
+DIM meOkX1       AS INTEGER
+DIM meCancelX0   AS INTEGER
+DIM meCancelX1   AS INTEGER
+
+' menuEdRowAt — screen (mx,my) → menu-list row index, or -1 if outside the
+' list. Content origin is one cell in from the border.
+FUNCTION menuEdRowAt(mx AS INTEGER, my AS INTEGER) AS INTEGER
+    DIM cy AS INTEGER = my - (meLastOrigY + 1)
+    DIM rel AS INTEGER = cy - meListRowRel
+    IF rel < 0 OR rel >= meListN THEN RETURN 0 - 1
+    RETURN rel
+END FUNCTION
+
+' menuEdButtonAt — screen (mx,my) → "ok" / "cancel" / "" for the editor's
+' button row.
+FUNCTION menuEdButtonAt(mx AS INTEGER, my AS INTEGER) AS STRING
+    DIM cy AS INTEGER = my - (meLastOrigY + 1)
+    IF cy <> meBtnRowRel THEN RETURN ""
+    DIM cx AS INTEGER = mx - (meLastOrigX + 1)
+    IF cx >= meOkX0 AND cx <= meOkX1 THEN RETURN "ok"
+    IF cx >= meCancelX0 AND cx <= meCancelX1 THEN RETURN "cancel"
+    RETURN ""
+END FUNCTION
+
 ' enumOptionAt — map a screen (mx,my) onto an option index inside the open
 ' enum dropdown, or -1 if outside. Geometry: rounded border (1) on each
 ' side; option j sits on the row at origin+1+j, columns origin+1..+W-2.
@@ -478,6 +512,105 @@ FUNCTION renderEnumPicker(m AS Model) AS STRING
     RETURN frame.Render(body)
 END FUNCTION
 
+' -------------------------------------------------------------------------
+' Menu Editor renderer + small layout helpers.
+' -------------------------------------------------------------------------
+
+' mePad — right-pad s with spaces to w display cells (no truncation).
+FUNCTION mePad(s AS STRING, w AS INTEGER) AS STRING
+    DIM cur AS INTEGER = lipgloss.Width(s)
+    IF cur >= w THEN RETURN s
+    RETURN s + strings.Repeat(" ", w - cur)
+END FUNCTION
+
+' meChk — a [x] / [ ] checkbox glyph.
+FUNCTION meChk(b AS BOOLEAN) AS STRING
+    IF b THEN RETURN "[x]"
+    RETURN "[ ]"
+END FUNCTION
+
+' meField — one labelled field row; shows the live input value plus a "_"
+' cursor when that field is the active one (MenuEdField).
+FUNCTION meField(m AS Model, label AS STRING, fieldIdx AS INTEGER, w AS INTEGER) AS STRING
+    DIM val AS STRING = ""
+    IF fieldIdx = 0 THEN val = m.MenuEdCapIn.Value()
+    IF fieldIdx = 1 THEN val = m.MenuEdNameIn.Value()
+    IF fieldIdx = 2 THEN val = m.MenuEdScIn.Value()
+    DIM cur AS STRING = ""
+    IF m.MenuEdField = fieldIdx THEN cur = "_"
+    RETURN mePad(" " + label + " " + val + cur, w)
+END FUNCTION
+
+' meNodeLine — one menu-tree row: depth indent, caption, submenu arrow, and
+' right-aligned tags (✓ checked, (off) disabled, shortcut). Separators show
+' a rule. Always exactly w cells wide so the row background fills.
+FUNCTION meNodeLine(nodes AS []MenuNode, idx AS INTEGER, w AS INTEGER) AS STRING
+    DIM nd AS MenuNode = nodes[idx]
+    DIM indent AS STRING = strings.Repeat("  ", nd.Depth)
+    IF nd.IsSep THEN RETURN mePad(" " + indent + "──────── separator", w)
+    DIM lab AS STRING = nd.Caption
+    IF lab = "" THEN lab = "(unnamed)"
+    DIM left AS STRING = " " + indent + lab
+    IF menuIsSubmenu(nodes, idx) THEN left = left + " ▸"
+    DIM tags AS STRING = ""
+    IF nd.Checked THEN tags = tags + "✓ "
+    IF nd.Disabled THEN tags = tags + "(off) "
+    IF nd.Shortcut <> "" THEN tags = tags + nd.Shortcut
+    IF tags = "" THEN RETURN mePad(left, w)
+    DIM gap AS INTEGER = w - lipgloss.Width(left) - lipgloss.Width(tags) - 1
+    IF gap < 1 THEN gap = 1
+    RETURN left + strings.Repeat(" ", gap) + tags + " "
+END FUNCTION
+
+' renderMenuEditor — the visual Menu Editor modal. Returns "" when closed.
+' Composited centered by View(), which stashes meLastOrigX/Y; this function
+' stashes the content-relative list / button geometry for the hit-tests.
+FUNCTION renderMenuEditor(m AS Model) AS STRING
+    IF NOT m.MenuEdActive THEN RETURN ""
+    DIM innerW AS INTEGER = 56
+    DIM wname AS STRING = ""
+    IF m.MenuEdWidget >= 0 AND m.MenuEdWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN wname = m.Tabs[m.TabIdx].Form.Widgets[m.MenuEdWidget].Name
+    DIM rowBase   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg))
+    DIM selBase   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM dimBase   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cBorder))
+    DIM titleSt   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    DIM lines AS []STRING
+    lines = APPEND(lines, titleSt.Render(mePad(" Menu Editor — " + wname, innerW)))
+    lines = APPEND(lines, rowBase.Render(meField(m, "Caption: ", 0, innerW)))
+    lines = APPEND(lines, rowBase.Render(meField(m, "Name:    ", 1, innerW)))
+    lines = APPEND(lines, rowBase.Render(meField(m, "Shortcut:", 2, innerW)))
+    DIM flags AS STRING = " Flags: "
+    IF m.MenuEdSel >= 0 AND m.MenuEdSel < LEN(m.MenuEdNodes) THEN
+        DIM nd AS MenuNode = m.MenuEdNodes[m.MenuEdSel]
+        flags = flags + meChk(nd.Checked) + " Checked  " + meChk(nd.Disabled) + " Disabled  " + meChk(nd.IsSep) + " Separator"
+    END IF
+    lines = APPEND(lines, rowBase.Render(mePad(flags, innerW)))
+    lines = APPEND(lines, rowBase.Render(strings.Repeat("─", innerW)))
+    DIM li AS INTEGER
+    FOR li = 0 TO LEN(m.MenuEdNodes) - 1
+        DIM ln AS STRING = meNodeLine(m.MenuEdNodes, li, innerW)
+        DIM st AS lipgloss.Style = rowBase
+        IF m.MenuEdNodes[li].IsSep THEN st = dimBase
+        IF li = m.MenuEdSel THEN st = selBase
+        lines = APPEND(lines, st.Render(ln))
+    NEXT li
+    lines = APPEND(lines, rowBase.Render(strings.Repeat("─", innerW)))
+    lines = APPEND(lines, dimBase.Render(mePad(" ↑↓ select · Tab fields · a add · x delete · < > indent", innerW)))
+    lines = APPEND(lines, dimBase.Render(mePad(" [ ] reorder · s sep · c check · g disable · Enter save · Esc", innerW)))
+    lines = APPEND(lines, rowBase.Render(mePad("  [ OK ]   [ Cancel ]", innerW)))
+    ' content-relative geometry for the hit-tests (see meLast* vars).
+    meListRowRel = 6
+    meListN      = LEN(m.MenuEdNodes)
+    meBtnRowRel  = 9 + LEN(m.MenuEdNodes)
+    meOkX0       = 2
+    meOkX1       = 7
+    meCancelX0   = 11
+    meCancelX1   = 20
+    DIM body AS STRING = strings.Join(lines, "\n")
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cMenuBg))
+    RETURN frame.Render(body)
+END FUNCTION
+
 ' ctxMenuItemAt — translate a screen (mx,my) inside the open event popup
 ' to an event index, or -1 if outside. The popup is composited at
 ' (CtxX, CtxY): top border at CtxY, item rows from CtxY+1; width matches
@@ -777,6 +910,28 @@ END FUNCTION
 '
 ' `xOrigin` is the absolute screen-X where this pane starts; we need
 ' it to translate the per-region hover position back to local rows.
+' clipPropLine — force a Properties row onto a single visual line of at most
+' `w` cells. Any embedded newline is collapsed to a space (so a value can
+' never spill onto extra rows), and an over-long line is cut with a trailing
+' … overflow marker. Keeping every row exactly one line tall is what keeps
+' the hover/click row math (one property == one row) correct.
+FUNCTION clipPropLine(s AS STRING, w AS INTEGER) AS STRING
+    ' Collapse every control char that could break the row across lines
+    ' (newline, carriage return, tab) into a space.
+    DIM oneLine AS STRING = strings.ReplaceAll(s, Chr(10), " ")
+    oneLine = strings.ReplaceAll(oneLine, Chr(13), " ")
+    oneLine = strings.ReplaceAll(oneLine, Chr(9), " ")
+    IF w < 1 THEN RETURN ""
+    ' Clip by CHARACTER count, then mark the overflow with ….  A string's
+    ' display width can never exceed its character count, so a result of at
+    ' most w characters is at most w display cells — guaranteeing the row
+    ' style (Width = w) never wraps, even for wide glyphs. (Measuring with
+    ' lipgloss.Width instead would be wrong here: it reports some wide
+    ' glyphs as 1 cell while the terminal draws 2, letting them wrap.)
+    IF LEN(oneLine) <= w THEN RETURN oneLine
+    RETURN Mid(oneLine, 1, w - 1) + "…"
+END FUNCTION
+
 FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigin AS INTEGER) AS STRING
     DIM dashStyle AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cBorder))
     DIM tabStyle  AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
@@ -1058,15 +1213,30 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
     DIM propLines AS []STRING
     DIM pi AS INTEGER
     FOR pi = 0 TO propsVisible - 1
-        DIM ptxt AS STRING = ""
-        IF pi < LEN(propRows) THEN ptxt = " " + propRows[pi]
         DIM propY AS INTEGER = propsFirstY + pi
-        IF propSelOn AND pi = m.PropSel AND pi < LEN(propRows) THEN
-            propLines = APPEND(propLines, propSelStyle.Render(ptxt))
-        ELSEIF m.HoverY = propY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND pi < LEN(propRows) THEN
-            propLines = APPEND(propLines, propHoverStyle.Render(ptxt))
+        IF m.PropEdit AND pi = m.PropEditRow AND pi < LEN(propRows) THEN
+            ' This row is being edited in place: keep the property's label
+            ' but swap the value cell for the inline textinput. The label is
+            ' the row's first word (e.g. "Text", "Name") padded to a column;
+            ' the field scrolls horizontally so long values stay on one line.
+            DIM eLbl AS STRING = ""
+            DIM eFields AS []STRING = strings.Fields(propRows[pi])
+            IF LEN(eFields) > 0 THEN eLbl = eFields[0]
+            IF LEN(eLbl) < 7 THEN eLbl = eLbl + strings.Repeat(" ", 7 - LEN(eLbl))
+            DIM eW AS INTEGER = propsInnerW - LEN(eLbl) - 2
+            IF eW < 4 THEN eW = 4
+            m.PropEditInput.SetWidth(eW)
+            propLines = APPEND(propLines, " " + eLbl + " " + m.PropEditInput.View())
         ELSE
-            propLines = APPEND(propLines, propRowStyle.Render(ptxt))
+            DIM ptxt AS STRING = ""
+            IF pi < LEN(propRows) THEN ptxt = clipPropLine(" " + propRows[pi], propsInnerW)
+            IF propSelOn AND pi = m.PropSel AND pi < LEN(propRows) THEN
+                propLines = APPEND(propLines, propSelStyle.Render(ptxt))
+            ELSEIF m.HoverY = propY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND pi < LEN(propRows) THEN
+                propLines = APPEND(propLines, propHoverStyle.Render(ptxt))
+            ELSE
+                propLines = APPEND(propLines, propRowStyle.Render(ptxt))
+            END IF
         END IF
     NEXT pi
     DIM propsBody   AS STRING = strings.Join(propLines, "\n")

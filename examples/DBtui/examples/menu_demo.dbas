@@ -16,10 +16,9 @@ TYPE Model
     DIM Focus  AS INTEGER
     DIM Hover  AS INTEGER
     DIM HoverTab AS INTEGER
-    DIM menubar1_Active AS INTEGER
-    DIM menubar1_Open   AS BOOLEAN
-    DIM menubar1_Path   AS []INTEGER
-    DIM panel1_Scroll AS INTEGER
+    DIM mb_Active AS INTEGER
+    DIM mb_Open   AS BOOLEAN
+    DIM mb_Path   AS []INTEGER
 END TYPE
 
 FUNCTION (m AS Model) Init() AS tea.Cmd
@@ -42,21 +41,22 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     kpd, kpdOk = msg.(tea.KeyPressMsg)
     IF kpdOk THEN
         DIM kpdK AS STRING = kpd.String()
-        IF m.menubar1_Open THEN
-            DIM mnAmenubar1 AS INTEGER
-            DIM mnOmenubar1 AS BOOLEAN
-            DIM mnPmenubar1 AS []INTEGER
-            DIM mnCmenubar1 AS STRING
-            mnAmenubar1, mnOmenubar1, mnPmenubar1, mnCmenubar1 = _mnKey(_mnNodes_menubar1(), kpdK, m.menubar1_Active, m.menubar1_Open, m.menubar1_Path)
-            m.menubar1_Active = mnAmenubar1
-            m.menubar1_Open = mnOmenubar1
-            m.menubar1_Path = mnPmenubar1
-            IF mnCmenubar1 <> "" THEN
-                IF mnCmenubar1 = "mnuNew" THEN mnuNew_Click()
-                IF mnCmenubar1 = "mnuOpen" THEN mnuOpen_Click()
-                IF mnCmenubar1 = "mnuQuit" THEN mnuQuit_Click()
-                IF mnCmenubar1 = "mnuCut" THEN mnuCut_Click()
-                IF mnCmenubar1 = "mnuCopy" THEN mnuCopy_Click()
+        IF m.mb_Open THEN
+            DIM mnAmb AS INTEGER
+            DIM mnOmb AS BOOLEAN
+            DIM mnPmb AS []INTEGER
+            DIM mnCmb AS STRING
+            mnAmb, mnOmb, mnPmb, mnCmb = _mnKey(_mnNodes_mb(), kpdK, m.mb_Active, m.mb_Open, m.mb_Path)
+            m.mb_Active = mnAmb
+            m.mb_Open = mnOmb
+            m.mb_Path = mnPmb
+            IF mnCmb <> "" THEN
+                IF mnCmb = "mnuNew" THEN mnuNew_Click()
+                IF mnCmb = "mnuAlpha" THEN mnuAlpha_Click()
+                IF mnCmb = "mnuBeta" THEN mnuBeta_Click()
+                IF mnCmb = "mnuSave" THEN mnuSave_Click()
+                IF mnCmb = "mnuExit" THEN mnuExit_Click()
+                IF mnCmb = "mnuAbout" THEN mnuAbout_Click()
             END IF
             RETURN m, NIL
         END IF
@@ -65,53 +65,52 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mc, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mc.Button = tea.MouseLeft THEN
-        IF m.menubar1_Open THEN
-            DIM mcAmenubar1 AS INTEGER
-            DIM mcOmenubar1 AS BOOLEAN
-            DIM mcPmenubar1 AS []INTEGER
-            DIM mcCmenubar1 AS STRING
-            DIM mcHmenubar1 AS BOOLEAN
-            mcAmenubar1, mcOmenubar1, mcPmenubar1, mcCmenubar1, mcHmenubar1 = _mnClickHit(_mnNodes_menubar1(), mc.X, mc.Y, m.menubar1_Active, m.menubar1_Open, m.menubar1_Path)
-            IF mcHmenubar1 THEN
-                m.menubar1_Active = mcAmenubar1
-                m.menubar1_Open = mcOmenubar1
-                m.menubar1_Path = mcPmenubar1
-                IF mcCmenubar1 <> "" THEN
-                    IF mcCmenubar1 = "mnuNew" THEN mnuNew_Click()
-                    IF mcCmenubar1 = "mnuOpen" THEN mnuOpen_Click()
-                    IF mcCmenubar1 = "mnuQuit" THEN mnuQuit_Click()
-                    IF mcCmenubar1 = "mnuCut" THEN mnuCut_Click()
-                    IF mcCmenubar1 = "mnuCopy" THEN mnuCopy_Click()
+        IF m.mb_Open THEN
+            DIM mcAmb AS INTEGER
+            DIM mcOmb AS BOOLEAN
+            DIM mcPmb AS []INTEGER
+            DIM mcCmb AS STRING
+            DIM mcHmb AS BOOLEAN
+            mcAmb, mcOmb, mcPmb, mcCmb, mcHmb = _mnClickHit(_mnNodes_mb(), mc.X, mc.Y, m.mb_Active, m.mb_Open, m.mb_Path)
+            IF mcHmb THEN
+                m.mb_Active = mcAmb
+                m.mb_Open = mcOmb
+                m.mb_Path = mcPmb
+                IF mcCmb <> "" THEN
+                    IF mcCmb = "mnuNew" THEN mnuNew_Click()
+                    IF mcCmb = "mnuAlpha" THEN mnuAlpha_Click()
+                    IF mcCmb = "mnuBeta" THEN mnuBeta_Click()
+                    IF mcCmb = "mnuSave" THEN mnuSave_Click()
+                    IF mcCmb = "mnuExit" THEN mnuExit_Click()
+                    IF mcCmb = "mnuAbout" THEN mnuAbout_Click()
                 END IF
                 RETURN m, NIL
             END IF
         END IF
-        IF mc.X >= 2 AND mc.X < 2 + 30 AND mc.Y >= 2 AND mc.Y < 2 + 8 THEN
+        IF mc.X >= 2 AND mc.X < 2 + 20 AND mc.Y >= 12 AND mc.Y < 12 + 1 THEN
             m.Focus = 1
-            DIM pnRel1 AS INTEGER = mc.Y - 2
-            IF pnRel1 = 1 AND m.panel1_Scroll > 0 THEN m.panel1_Scroll = m.panel1_Scroll - 1
-            IF pnRel1 = 6 AND m.panel1_Scroll < 0 THEN m.panel1_Scroll = m.panel1_Scroll + 1
+            _ = mc
             RETURN m, NIL
         END IF
-        IF mc.X >= 0 AND mc.X < 0 + 44 AND mc.Y >= 0 AND mc.Y < 0 + 1 THEN
+        IF mc.X >= 0 AND mc.X < 0 + 40 AND mc.Y >= 0 AND mc.Y < 0 + 1 THEN
             m.Focus = 0
             DIM mbTX0 AS INTEGER = mc.X - 0
             IF mbTX0 >= 0 AND mbTX0 < 6 THEN
-                IF m.menubar1_Open AND m.menubar1_Active = 0 THEN
-                    m.menubar1_Open = FALSE
+                IF m.mb_Open AND m.mb_Active = 0 THEN
+                    m.mb_Open = FALSE
                 ELSE
-                    m.menubar1_Active = 0
-                    m.menubar1_Open = TRUE
-                    m.menubar1_Path = _mnOpenPath(_mnNodes_menubar1(), 0)
+                    m.mb_Active = 0
+                    m.mb_Open = TRUE
+                    m.mb_Path = _mnOpenPath(_mnNodes_mb(), 0)
                 END IF
             END IF
             IF mbTX0 >= 6 AND mbTX0 < 12 THEN
-                IF m.menubar1_Open AND m.menubar1_Active = 1 THEN
-                    m.menubar1_Open = FALSE
+                IF m.mb_Open AND m.mb_Active = 1 THEN
+                    m.mb_Open = FALSE
                 ELSE
-                    m.menubar1_Active = 1
-                    m.menubar1_Open = TRUE
-                    m.menubar1_Path = _mnOpenPath(_mnNodes_menubar1(), 1)
+                    m.mb_Active = 1
+                    m.mb_Open = TRUE
+                    m.mb_Path = _mnOpenPath(_mnNodes_mb(), 1)
                 END IF
             END IF
             RETURN m, NIL
@@ -122,8 +121,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     mm, mmOk = msg.(tea.MouseMotionMsg)
     IF mmOk THEN
         DIM mmHit AS INTEGER = 0 - 1
-        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 30 AND mm.Y >= 2 AND mm.Y < 2 + 8 THEN mmHit = 1
-        IF mmHit < 0 AND mm.X >= 0 AND mm.X < 0 + 44 AND mm.Y >= 0 AND mm.Y < 0 + 1 THEN mmHit = 0
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 20 AND mm.Y >= 12 AND mm.Y < 12 + 1 THEN mmHit = 1
+        IF mmHit < 0 AND mm.X >= 0 AND mm.X < 0 + 40 AND mm.Y >= 0 AND mm.Y < 0 + 1 THEN mmHit = 0
         _ = mm
         m.Hover = mmHit
         m.HoverTab = 0 - 1
@@ -143,36 +142,25 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM key AS STRING = k.String()
         IF key = "ctrl+c" OR key = "esc" THEN RETURN m, tea.Quit
         IF key = "tab" THEN
-            m.Focus = (m.Focus + 1) MOD 3
+            m.Focus = (m.Focus + 1) MOD 2
             RETURN m, NIL
         END IF
         IF key = "shift+tab" THEN
             m.Focus = m.Focus - 1
-            IF m.Focus < 0 THEN m.Focus = 2
+            IF m.Focus < 0 THEN m.Focus = 1
             RETURN m, NIL
         END IF
         IF m.Focus = 0 THEN
-            IF key = "left" AND m.menubar1_Active > 0 THEN m.menubar1_Active = m.menubar1_Active - 1
-            IF key = "right" AND m.menubar1_Active < 1 THEN m.menubar1_Active = m.menubar1_Active + 1
+            IF key = "left" AND m.mb_Active > 0 THEN m.mb_Active = m.mb_Active - 1
+            IF key = "right" AND m.mb_Active < 1 THEN m.mb_Active = m.mb_Active + 1
             IF key = "down" OR key = "enter" OR key = "space" THEN
-                m.menubar1_Open = TRUE
-                m.menubar1_Path = _mnOpenPath(_mnNodes_menubar1(), m.menubar1_Active)
+                m.mb_Open = TRUE
+                m.mb_Path = _mnOpenPath(_mnNodes_mb(), m.mb_Active)
             END IF
             RETURN m, NIL
         END IF
         IF m.Focus = 1 THEN
-            IF key = "up" AND m.panel1_Scroll > 0 THEN m.panel1_Scroll = m.panel1_Scroll - 1
-            IF key = "down" AND m.panel1_Scroll < 0 THEN m.panel1_Scroll = m.panel1_Scroll + 1
-            IF key = "pgup" THEN
-                m.panel1_Scroll = m.panel1_Scroll - 6
-                IF m.panel1_Scroll < 0 THEN m.panel1_Scroll = 0
-            END IF
-            IF key = "pgdown" THEN
-                m.panel1_Scroll = m.panel1_Scroll + 6
-                IF m.panel1_Scroll > 0 THEN m.panel1_Scroll = 0
-            END IF
-            IF key = "home" THEN m.panel1_Scroll = 0
-            IF key = "end" THEN m.panel1_Scroll = 0
+            _ = key
             RETURN m, NIL
         END IF
     END IF
@@ -189,32 +177,12 @@ FUNCTION (m AS Model) View() AS tea.View
     FOR r = 0 TO h - 2
         rows = APPEND(rows, strings.Repeat(" ", w))
     NEXT r
-    _mnPaintBar(rows, _mnNodes_menubar1(), 0, 0, m.menubar1_Active, m.menubar1_Open, m.Focus = 0)
-    DIM pnTop1 AS STRING = "┌" + strings.Repeat("─", 28) + "┐"
-    IF 2 >= 0 AND 2 < LEN(rows) THEN rows[2] = overlayRow(rows[2], 2, pnTop1)
-    DIM pnThumb1 AS INTEGER = 0 - 1
-    IF 0 > 0 AND 4 > 0 THEN
-        pnThumb1 = (m.panel1_Scroll * (4 - 1)) / 1
-        IF pnThumb1 < 0 THEN pnThumb1 = 0
-        IF pnThumb1 > 4 - 1 THEN pnThumb1 = 4 - 1
-    END IF
-    DIM pnRw1 AS INTEGER
-    FOR pnRw1 = 0 TO 6 - 1
-        DIM pnSb1 AS STRING = "░"
-        IF pnRw1 = 0 THEN pnSb1 = "▲"
-        IF pnRw1 = 6 - 1 THEN pnSb1 = "▼"
-        IF pnRw1 >= 1 AND pnRw1 <= 6 - 2 AND (pnRw1 - 1) = pnThumb1 THEN pnSb1 = "█"
-        DIM pnLn1 AS STRING = "│" + strings.Repeat(" ", 27) + pnSb1 + "│"
-        DIM pnLy1 AS INTEGER = 2 + 1 + pnRw1
-        IF pnLy1 >= 0 AND pnLy1 < LEN(rows) THEN rows[pnLy1] = overlayRow(rows[pnLy1], 2, pnLn1)
-    NEXT pnRw1
-    DIM pnBot1 AS STRING = "└" + strings.Repeat("─", 28) + "┘"
-    DIM pnBy1 AS INTEGER = 2 + 7
-    IF pnBy1 >= 0 AND pnBy1 < LEN(rows) THEN rows[pnBy1] = overlayRow(rows[pnBy1], 2, pnBot1)
-    DIM pcY1c2r0 AS INTEGER = 3 - m.panel1_Scroll
-    IF pcY1c2r0 >= 3 AND pcY1c2r0 <= 8 AND pcY1c2r0 >= 0 AND pcY1c2r0 < LEN(rows) THEN rows[pcY1c2r0] = overlayCells(rows[pcY1c2r0], 4, "child-in-panel")
-    IF m.menubar1_Open THEN
-        _mnPaintBoxes(rows, _mnNodes_menubar1(), 0, 0, m.menubar1_Active, m.menubar1_Path)
+    _mnPaintBar(rows, _mnNodes_mb(), 0, 0, m.mb_Active, m.mb_Open, m.Focus = 0)
+    DIM body1 AS STRING
+    body1 = "menu demo"
+    IF 12 >= 0 AND 12 < LEN(rows) THEN rows[12] = overlayFocus(rows[12], 2, body1, m.Focus = 1, m.Hover = 1)
+    IF m.mb_Open THEN
+        _mnPaintBoxes(rows, _mnNodes_mb(), 0, 0, m.mb_Active, m.mb_Path)
     END IF
     rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
     DIM fullView AS STRING = strings.Join(rows, "\n")
@@ -312,10 +280,6 @@ FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
     DIM pre AS STRING = ""
     IF strings.Contains(lf, Chr(27)) THEN pre = Chr(27) + "[0m"
     RETURN lf + pre + txt + rt
-END FUNCTION
-
-FUNCTION overlayCells(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
-    RETURN overlayRow(row, col, txt)
 END FUNCTION
 
 FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
@@ -644,15 +608,18 @@ FUNCTION _mnClickHit(nodes AS []_MNode, mx AS INTEGER, my AS INTEGER, active AS 
     RETURN active, open, path, chosen, FALSE
 END FUNCTION
 
-FUNCTION _mnNodes_menubar1() AS []_MNode
+FUNCTION _mnNodes_mb() AS []_MNode
     DIM ns AS []_MNode
     ns = APPEND(ns, _mkMN("File", "mnuFile", 0, "", FALSE, FALSE, FALSE))
-    ns = APPEND(ns, _mkMN("New", "mnuNew", 1, "", FALSE, FALSE, FALSE))
-    ns = APPEND(ns, _mkMN("Open", "mnuOpen", 1, "", FALSE, FALSE, FALSE))
-    ns = APPEND(ns, _mkMN("Quit", "mnuQuit", 1, "", FALSE, FALSE, FALSE))
-    ns = APPEND(ns, _mkMN("Edit", "mnuEdit", 0, "", FALSE, FALSE, FALSE))
-    ns = APPEND(ns, _mkMN("Cut", "mnuCut", 1, "", FALSE, FALSE, FALSE))
-    ns = APPEND(ns, _mkMN("Copy", "mnuCopy", 1, "", FALSE, FALSE, FALSE))
+    ns = APPEND(ns, _mkMN("New", "mnuNew", 1, "Ctrl+N", FALSE, FALSE, FALSE))
+    ns = APPEND(ns, _mkMN("Recent", "mnuRecent", 1, "", FALSE, FALSE, FALSE))
+    ns = APPEND(ns, _mkMN("Alpha", "mnuAlpha", 2, "", FALSE, FALSE, FALSE))
+    ns = APPEND(ns, _mkMN("Beta", "mnuBeta", 2, "", FALSE, FALSE, FALSE))
+    ns = APPEND(ns, _mkMN("", "", 1, "", FALSE, FALSE, TRUE))
+    ns = APPEND(ns, _mkMN("Save", "mnuSave", 1, "", TRUE, FALSE, FALSE))
+    ns = APPEND(ns, _mkMN("Exit", "mnuExit", 1, "", FALSE, TRUE, FALSE))
+    ns = APPEND(ns, _mkMN("Help", "mnuHelp", 0, "", FALSE, FALSE, FALSE))
+    ns = APPEND(ns, _mkMN("About", "mnuAbout", 1, "", FALSE, FALSE, FALSE))
     RETURN ns
 END FUNCTION
 
@@ -671,27 +638,32 @@ END SUB
 ' ===== DBTUI:USER ===== DO NOT EDIT OR DELETE THIS LINE =====
 ' Your code below — DBtui preserves everything here on F5.
 
-' Click handler for menubar1 ▸ New — edit freely.
+' Click handler for mb ▸ New — edit freely.
 SUB mnuNew_Click()
     ' TODO: your code here.
 END SUB
 
-' Click handler for menubar1 ▸ Open — edit freely.
-SUB mnuOpen_Click()
+' Click handler for mb ▸ Alpha — edit freely.
+SUB mnuAlpha_Click()
     ' TODO: your code here.
 END SUB
 
-' Click handler for menubar1 ▸ Quit — edit freely.
-SUB mnuQuit_Click()
+' Click handler for mb ▸ Beta — edit freely.
+SUB mnuBeta_Click()
     ' TODO: your code here.
 END SUB
 
-' Click handler for menubar1 ▸ Cut — edit freely.
-SUB mnuCut_Click()
+' Click handler for mb ▸ Save — edit freely.
+SUB mnuSave_Click()
     ' TODO: your code here.
 END SUB
 
-' Click handler for menubar1 ▸ Copy — edit freely.
-SUB mnuCopy_Click()
+' Click handler for mb ▸ Exit — edit freely.
+SUB mnuExit_Click()
+    ' TODO: your code here.
+END SUB
+
+' Click handler for mb ▸ About — edit freely.
+SUB mnuAbout_Click()
     ' TODO: your code here.
 END SUB
