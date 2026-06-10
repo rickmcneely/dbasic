@@ -1168,6 +1168,27 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             IF sw.Kind = "StatusBar" THEN
                 propRows = APPEND(propRows, "Segs   " + strings.Join(sw.Items, ", "))
             END IF
+            ' Frame / scroll rows — order MUST match propRowEditContext.
+            IF sw.Kind = "ScrollPanel" OR sw.Kind = "TextArea" OR sw.Kind = "TabStrip" THEN
+                DIM bsv AS STRING = sw.BorderStyle
+                IF bsv = "" THEN bsv = "none"
+                propRows = APPEND(propRows, "Border " + bsv)
+                DIM csv AS STRING = sw.CornerStyle
+                IF csv = "" THEN csv = "square"
+                propRows = APPEND(propRows, "Corners " + csv)
+                propRows = APPEND(propRows, "Caption " + sw.Caption)
+                DIM cjv AS STRING = sw.CaptionJust
+                IF cjv = "" THEN cjv = "left"
+                propRows = APPEND(propRows, "Just   " + cjv)
+            END IF
+            IF sw.Kind = "ScrollPanel" OR sw.Kind = "TextArea" THEN
+                DIM vsv AS STRING = sw.VScroll
+                IF vsv = "" THEN vsv = "off"
+                propRows = APPEND(propRows, "VScroll " + vsv)
+                DIM hsv AS STRING = sw.HScroll
+                IF hsv = "" THEN hsv = "off"
+                propRows = APPEND(propRows, "HScroll " + hsv)
+            END IF
             IF sw.Kind = "Button" THEN
                 propRows = APPEND(propRows, "OnClick " + sw.OnClickDialog)
             END IF

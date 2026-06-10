@@ -153,6 +153,16 @@ SUB enumPickerCommit(m AS POINTER TO Model)
             m.Tabs[m.TabIdx].Form.Widgets[sel].DialogKind = val
         ELSEIF m.EnumKey = "wprop:dialogmode" THEN
             m.Tabs[m.TabIdx].Form.Widgets[sel].DialogMode = val
+        ELSEIF m.EnumKey = "wprop:borderstyle" THEN
+            m.Tabs[m.TabIdx].Form.Widgets[sel].BorderStyle = val
+        ELSEIF m.EnumKey = "wprop:cornerstyle" THEN
+            m.Tabs[m.TabIdx].Form.Widgets[sel].CornerStyle = val
+        ELSEIF m.EnumKey = "wprop:captionjust" THEN
+            m.Tabs[m.TabIdx].Form.Widgets[sel].CaptionJust = val
+        ELSEIF m.EnumKey = "wprop:vscroll" THEN
+            m.Tabs[m.TabIdx].Form.Widgets[sel].VScroll = val
+        ELSEIF m.EnumKey = "wprop:hscroll" THEN
+            m.Tabs[m.TabIdx].Form.Widgets[sel].HScroll = val
         END IF
         m.Tabs[m.TabIdx].Dirty = TRUE
     END IF
@@ -470,6 +480,12 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
     IF m.ModalContext = "wprop:text" THEN
         IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
             m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Text = text
+        END IF
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "wprop:caption" THEN
+        IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Caption = text
         END IF
         RETURN FALSE, NIL
     END IF

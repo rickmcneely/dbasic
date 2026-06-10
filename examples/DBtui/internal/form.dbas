@@ -1175,6 +1175,34 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         IF rowIdx = cursor THEN RETURN "Edit Segments", "comma-separated:", strings.Join(w.Items, ", "), "wprop:items"
         cursor = cursor + 1
     END IF
+    ' Frame / scroll rows (ScrollPanel / TextArea / TabStrip). "Border"
+    ' folds on/off into the line style (none = no border).
+    IF w.Kind = "ScrollPanel" OR w.Kind = "TextArea" OR w.Kind = "TabStrip" THEN
+        DIM bs AS STRING = w.BorderStyle
+        IF bs = "" THEN bs = "none"
+        IF rowIdx = cursor THEN RETURN "Edit Border", "none|normal|thick|double:", bs, "wprop:borderstyle"
+        cursor = cursor + 1
+        DIM cs AS STRING = w.CornerStyle
+        IF cs = "" THEN cs = "square"
+        IF rowIdx = cursor THEN RETURN "Edit Corners", "square|rounded:", cs, "wprop:cornerstyle"
+        cursor = cursor + 1
+        IF rowIdx = cursor THEN RETURN "Edit Caption", "title text:", w.Caption, "wprop:caption"
+        cursor = cursor + 1
+        DIM cj AS STRING = w.CaptionJust
+        IF cj = "" THEN cj = "left"
+        IF rowIdx = cursor THEN RETURN "Edit Caption Justify", "left|center|right:", cj, "wprop:captionjust"
+        cursor = cursor + 1
+    END IF
+    IF w.Kind = "ScrollPanel" OR w.Kind = "TextArea" THEN
+        DIM vs AS STRING = w.VScroll
+        IF vs = "" THEN vs = "off"
+        IF rowIdx = cursor THEN RETURN "Edit V Scrollbar", "off|on|auto:", vs, "wprop:vscroll"
+        cursor = cursor + 1
+        DIM hs AS STRING = w.HScroll
+        IF hs = "" THEN hs = "off"
+        IF rowIdx = cursor THEN RETURN "Edit H Scrollbar", "off|on|auto:", hs, "wprop:hscroll"
+        cursor = cursor + 1
+    END IF
     IF w.Kind = "Button" THEN
         IF rowIdx = cursor THEN RETURN "OnClick Dialog", "Dialog widget name (blank = none):", w.OnClickDialog, "wprop:onclickdialog"
         cursor = cursor + 1
@@ -1234,6 +1262,11 @@ FUNCTION propRowKind(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, STRING)
     IF k = "wprop:orient" THEN RETURN "enum", "h,v"
     IF k = "wprop:dialogkind" THEN RETURN "enum", "confirm,input,file"
     IF k = "wprop:dialogmode" THEN RETURN "enum", "open,save"
+    IF k = "wprop:borderstyle" THEN RETURN "enum", "none,normal,thick,double"
+    IF k = "wprop:cornerstyle" THEN RETURN "enum", "square,rounded"
+    IF k = "wprop:captionjust" THEN RETURN "enum", "left,center,right"
+    IF k = "wprop:vscroll" THEN RETURN "enum", "off,on,auto"
+    IF k = "wprop:hscroll" THEN RETURN "enum", "off,on,auto"
     IF k = "wprop:fgcolor" OR k = "wprop:bgcolor" THEN RETURN "color", ""
     RETURN "text", ""
 END FUNCTION
