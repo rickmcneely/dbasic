@@ -659,6 +659,17 @@ FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
             LOOP
         NEXT rj
     NEXT wi
+    ' Resize handle — a ◢ glyph at the selected widget's bottom-right cell.
+    ' Dragging it (DragMode "formResize") changes the widget's W/H.
+    IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+        DIM hsw AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
+        DIM hRow AS INTEGER = hsw.Y + hsw.H - 1
+        DIM hCol AS INTEGER = hsw.X + hsw.W - 1
+        IF hRow >= 0 AND hRow < gridH AND hCol >= 0 AND hCol < width THEN
+            grid[hRow][hCol] = "◢"
+            selGrid[hRow][hCol] = TRUE
+        END IF
+    END IF
     ' Render rows.
     DIM lines AS []STRING
     DIM titleLine AS STRING = titleStyle.Render(" " + m.Tabs[m.TabIdx].Form.Title)

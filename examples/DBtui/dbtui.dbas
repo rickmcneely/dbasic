@@ -1620,6 +1620,20 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             invalidateEditorCache(@m)
             RETURN m, NIL
         END IF
+        ' Form-canvas resize-drag: the ◢ handle drags the widget's W/H.
+        IF m.DragMode = "formResize" AND m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+            DIM frx AS INTEGER
+            DIM fry AS INTEGER
+            frx, fry = formScreenToCanvas(m, mmMsg.X, mmMsg.Y)
+            DIM nw AS INTEGER = frx - m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].X + 1
+            DIM nh AS INTEGER = fry - m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Y + 1
+            IF nw < 1 THEN nw = 1
+            IF nh < 1 THEN nh = 1
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].W = nw
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].H = nh
+            invalidateEditorCache(@m)
+            RETURN m, NIL
+        END IF
         ' Editor drag-select: cursor follows the mouse, selection
         ' extends from the anchor pinned at MouseClickMsg time.
         IF m.DragMode = "editorSelect" AND hasActiveTab(m) THEN
@@ -2168,6 +2182,15 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM fcx AS INTEGER
             DIM fcy AS INTEGER
             fcx, fcy = formScreenToCanvas(m, mcMsg.X, mcMsg.Y)
+            ' Clicking the selected widget's bottom-right ◢ handle starts a
+            ' resize-drag (changes W/H) instead of selecting/moving.
+            IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+                DIM rsw AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
+                IF fcx = rsw.X + rsw.W - 1 AND fcy = rsw.Y + rsw.H - 1 THEN
+                    m.DragMode = "formResize"
+                    RETURN m, NIL
+                END IF
+            END IF
             DIM hit AS INTEGER = formWidgetAt(m, fcx, fcy)
             IF hit <> m.Tabs[m.TabIdx].SelWidget THEN m.PropSel = 0 - 1
             m.Tabs[m.TabIdx].SelWidget = hit
