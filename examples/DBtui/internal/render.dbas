@@ -994,7 +994,7 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             listLines = APPEND(listLines, listRowStyle.Render(toolTxt))
         NEXT li
     ELSEIF m.ViewMode = "form" THEN
-        ' Widgets palette: fixed list of widget kinds.
+        ' Widgets palette: the alphabetical kind list (one row per kind).
         FOR li = 0 TO listVisible - 1
             DIM palTxt AS STRING = ""
             IF li < formPaletteKinds THEN palTxt = " + " + formKindByIdx(li)

@@ -2044,11 +2044,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM pRemain AS INTEGER = pBodyH - 1
             DIM pListH  AS INTEGER = pRemain / 2
             DIM pRelRow AS INTEGER = mcMsg.Y - 3
-            ' formPaletteKinds is the count of palette entries; hard-
-            ' coded here because CONSTs in INCLUDEd files aren't
-            ' visible to the main module's analyzer pass. Keep in
-            ' sync with formKindByIdx in internal/form.dbas.
-            IF pRelRow >= 0 AND pRelRow < pListH - 2 AND pRelRow < 9 THEN
+            ' Bound by the visible rows AND the real kind count
+            ' (formPaletteCount, since INCLUDEd CONSTs aren't visible to this
+            ' module). Was hard-capped at 9, which silently ignored clicks on
+            ' every kind past ScrollBar (incl. Menubar) — now all kinds add.
+            DIM pKind AS INTEGER = pRelRow
+            IF pRelRow >= 0 AND pRelRow < pListH - 2 AND pKind < formPaletteCount() THEN
                 ' Safety net: ViewMode might be "form" while the
                 ' active tab is still a code buffer (older sessions,
                 ' or a flow that flipped ViewMode without creating a
@@ -2058,7 +2059,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 IF NOT hasActiveTab(m) OR m.Tabs[m.TabIdx].Kind <> "form" THEN
                     newUntitledForm(@m)
                 END IF
-                formAddWidget(@m, formKindByIdx(pRelRow))
+                formAddWidget(@m, formKindByIdx(pKind))
                 invalidateEditorCache(@m)
                 RETURN m, NIL
             END IF

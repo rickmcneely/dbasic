@@ -22,26 +22,35 @@ CONST formPaletteKinds AS INTEGER = 18  ' Button, Label, TextInput, Checkbox,
 ' formKindByIdx — fixed list of widget kinds in palette display order.
 ' The order is the order entries appear in the right-pane Widgets
 ' panel; index 0 = top of the palette.
+' Palette order is ALPHABETICAL (drives both the Widgets-pane display and
+' the click-to-add mapping — they share this single source). Adding a kind:
+' insert it alphabetically and bump formPaletteKinds.
 FUNCTION formKindByIdx(i AS INTEGER) AS STRING
     IF i = 0 THEN RETURN "Button"
-    IF i = 1 THEN RETURN "Label"
-    IF i = 2 THEN RETURN "TextInput"
-    IF i = 3 THEN RETURN "Checkbox"
-    IF i = 4 THEN RETURN "RadioButton"
-    IF i = 5 THEN RETURN "ComboBox"
-    IF i = 6 THEN RETURN "ListBox"
-    IF i = 7 THEN RETURN "ProgressBar"
-    IF i = 8 THEN RETURN "ScrollBar"
-    IF i = 9 THEN RETURN "Dialog"
-    IF i = 10 THEN RETURN "TabStrip"
-    IF i = 11 THEN RETURN "Tree"
-    IF i = 12 THEN RETURN "TextArea"
-    IF i = 13 THEN RETURN "PropGrid"
-    IF i = 14 THEN RETURN "ScrollPanel"
-    IF i = 15 THEN RETURN "Menubar"
-    IF i = 16 THEN RETURN "StatusBar"
-    IF i = 17 THEN RETURN "Panel"
+    IF i = 1 THEN RETURN "Checkbox"
+    IF i = 2 THEN RETURN "ComboBox"
+    IF i = 3 THEN RETURN "Dialog"
+    IF i = 4 THEN RETURN "Label"
+    IF i = 5 THEN RETURN "ListBox"
+    IF i = 6 THEN RETURN "Menubar"
+    IF i = 7 THEN RETURN "Panel"
+    IF i = 8 THEN RETURN "ProgressBar"
+    IF i = 9 THEN RETURN "PropGrid"
+    IF i = 10 THEN RETURN "RadioButton"
+    IF i = 11 THEN RETURN "ScrollBar"
+    IF i = 12 THEN RETURN "ScrollPanel"
+    IF i = 13 THEN RETURN "StatusBar"
+    IF i = 14 THEN RETURN "TabStrip"
+    IF i = 15 THEN RETURN "TextArea"
+    IF i = 16 THEN RETURN "TextInput"
+    IF i = 17 THEN RETURN "Tree"
     RETURN ""
+END FUNCTION
+
+' formPaletteCount — palette entry count, exposed as a function because the
+' main module's analyzer can't see CONSTs from INCLUDEd files.
+FUNCTION formPaletteCount() AS INTEGER
+    RETURN formPaletteKinds
 END FUNCTION
 
 ' defaultWidget — produce a widget of the given kind with sensible
