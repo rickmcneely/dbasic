@@ -1225,6 +1225,23 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             ' the color picker (formClickPropAt maps these row indices).
             ' Row order MUST match formClickPropAt's no-widget branch.
             propRows = APPEND(propRows, "Form   " + m.Tabs[m.TabIdx].Form.Name)
+            ' Form chrome rows — order MUST match formClickPropAt's no-widget branch.
+            propRows = APPEND(propRows, "Caption " + m.Tabs[m.TabIdx].Form.Title)
+            DIM fwL AS STRING = m.Tabs[m.TabIdx].Form.WExpr
+            IF fwL = "" THEN fwL = "(fill)"
+            propRows = APPEND(propRows, "Width  " + fwL)
+            DIM fhL AS STRING = m.Tabs[m.TabIdx].Form.HExpr
+            IF fhL = "" THEN fhL = "(fill)"
+            propRows = APPEND(propRows, "Height " + fhL)
+            DIM fbsL AS STRING = m.Tabs[m.TabIdx].Form.BorderStyle
+            IF fbsL = "" THEN fbsL = "none"
+            propRows = APPEND(propRows, "Border " + fbsL)
+            DIM fcsL AS STRING = m.Tabs[m.TabIdx].Form.CornerStyle
+            IF fcsL = "" THEN fcsL = "square"
+            propRows = APPEND(propRows, "Corners " + fcsL)
+            propRows = APPEND(propRows, "Min    " + yesNo(m.Tabs[m.TabIdx].Form.ShowMin))
+            propRows = APPEND(propRows, "Max    " + yesNo(m.Tabs[m.TabIdx].Form.ShowMax))
+            propRows = APPEND(propRows, "Close  " + yesNo(m.Tabs[m.TabIdx].Form.ShowClose))
             DIM ffgLbl AS STRING = "(default)"
             IF m.Tabs[m.TabIdx].Form.FgColor <> "" THEN ffgLbl = m.Tabs[m.TabIdx].Form.FgColor
             propRows = APPEND(propRows, "Fg     " + ffgLbl)

@@ -1290,12 +1290,54 @@ END SUB
 ' rows open the input modal, color rows open the swatch picker, a re-click
 ' on a bool toggles it (double-click), and enum rows only select (the
 ' multiselect list opens on right-click). Row 0 (Kind) is read-only.
+' yesNo — Boolean → "yes"/"no" for Properties display.
+FUNCTION yesNo(b AS BOOLEAN) AS STRING
+    IF b THEN RETURN "yes"
+    RETURN "no"
+END FUNCTION
+
 SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
-    ' No widget selected → the pane shows form-level properties. Rows:
-    ' 0 = Form name (read-only), 1 = Fg, 2 = Bg. Fg/Bg open the picker.
+    ' No widget selected → form-level properties (chrome + colors). Rows:
+    ' 0 Form name (read-only), 1 Caption, 2 Width, 3 Height, 4 Border,
+    ' 5 Corners, 6 Min, 7 Max, 8 Close, 9 Fg, 10 Bg. Border/Corners cycle
+    ' on click; Min/Max/Close toggle; Caption/Width/Height open the input
+    ' modal; Fg/Bg open the color picker. Order matches renderRightPane.
     IF m.Tabs[m.TabIdx].SelWidget < 0 OR m.Tabs[m.TabIdx].SelWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
-        IF rowIdx = 1 THEN showColorPicker(m, "formfg")
-        IF rowIdx = 2 THEN showColorPicker(m, "formbg")
+        m.PropSel = rowIdx
+        IF rowIdx = 1 THEN showInputModal(m, "Form Caption", "Title text:", m.Tabs[m.TabIdx].Form.Title, "fprop:title")
+        IF rowIdx = 2 THEN showInputModal(m, "Form Width", "expr over MAX_WIDTH (blank = fill):", m.Tabs[m.TabIdx].Form.WExpr, "fprop:wexpr")
+        IF rowIdx = 3 THEN showInputModal(m, "Form Height", "expr over MAX_HEIGHT (blank = fill):", m.Tabs[m.TabIdx].Form.HExpr, "fprop:hexpr")
+        IF rowIdx = 4 THEN
+            DIM fb AS STRING = m.Tabs[m.TabIdx].Form.BorderStyle
+            DIM nb AS STRING = "normal"
+            IF fb = "normal" THEN nb = "thick"
+            IF fb = "thick" THEN nb = "double"
+            IF fb = "double" THEN nb = "none"
+            m.Tabs[m.TabIdx].Form.BorderStyle = nb
+            m.Tabs[m.TabIdx].Dirty = TRUE
+        END IF
+        IF rowIdx = 5 THEN
+            IF m.Tabs[m.TabIdx].Form.CornerStyle = "rounded" THEN
+                m.Tabs[m.TabIdx].Form.CornerStyle = "square"
+            ELSE
+                m.Tabs[m.TabIdx].Form.CornerStyle = "rounded"
+            END IF
+            m.Tabs[m.TabIdx].Dirty = TRUE
+        END IF
+        IF rowIdx = 6 THEN
+            m.Tabs[m.TabIdx].Form.ShowMin = NOT m.Tabs[m.TabIdx].Form.ShowMin
+            m.Tabs[m.TabIdx].Dirty = TRUE
+        END IF
+        IF rowIdx = 7 THEN
+            m.Tabs[m.TabIdx].Form.ShowMax = NOT m.Tabs[m.TabIdx].Form.ShowMax
+            m.Tabs[m.TabIdx].Dirty = TRUE
+        END IF
+        IF rowIdx = 8 THEN
+            m.Tabs[m.TabIdx].Form.ShowClose = NOT m.Tabs[m.TabIdx].Form.ShowClose
+            m.Tabs[m.TabIdx].Dirty = TRUE
+        END IF
+        IF rowIdx = 9 THEN showColorPicker(m, "formfg")
+        IF rowIdx = 10 THEN showColorPicker(m, "formbg")
         RETURN
     END IF
     DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]

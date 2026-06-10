@@ -489,6 +489,22 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
         END IF
         RETURN FALSE, NIL
     END IF
+    ' Form-level chrome text fields (no widget selected).
+    IF m.ModalContext = "fprop:title" THEN
+        m.Tabs[m.TabIdx].Form.Title = text
+        m.Tabs[m.TabIdx].Dirty = TRUE
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "fprop:wexpr" THEN
+        m.Tabs[m.TabIdx].Form.WExpr = strings.TrimSpace(text)
+        m.Tabs[m.TabIdx].Dirty = TRUE
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "fprop:hexpr" THEN
+        m.Tabs[m.TabIdx].Form.HExpr = strings.TrimSpace(text)
+        m.Tabs[m.TabIdx].Dirty = TRUE
+        RETURN FALSE, NIL
+    END IF
     IF m.ModalContext = "wprop:pos" THEN
         DIM pX AS INTEGER
         DIM pY AS INTEGER

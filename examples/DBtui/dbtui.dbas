@@ -2199,7 +2199,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         ' (4c.2) Form-mode properties click — edit Name / Text / Pos /
         '        Size by clicking the row.
-        IF m.ViewMode = "form" AND m.Tabs[m.TabIdx].SelWidget >= 0 AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width THEN
+        IF m.ViewMode = "form" AND hasActiveTab(m) AND mcMsg.X >= m.Width - m.RightW AND mcMsg.X < m.Width THEN
             DIM peBodyH AS INTEGER = m.Height - 2
             IF m.BottomVisible THEN
                 DIM peBot AS INTEGER = 10
