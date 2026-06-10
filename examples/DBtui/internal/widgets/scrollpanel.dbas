@@ -72,6 +72,7 @@ FUNCTION scrollPanelEmitFramedLayer(wv AS DesignWidget, sfx AS STRING, xs AS STR
     DIM innerH AS INTEGER = framedContentH(wv)
     DIM contentW AS INTEGER = framedContentW(wv)
     DIM showV AS BOOLEAN = widgetReserveVGutter(wv)
+    DIM showH AS BOOLEAN = widgetReserveHGutter(wv)
     DIM total AS STRING = strconv.Itoa(LEN(wv.Items))
     DIM cwS AS STRING = strconv.Itoa(contentW)
     DIM vhS AS STRING = strconv.Itoa(innerH)
@@ -90,6 +91,12 @@ FUNCTION scrollPanelEmitFramedLayer(wv AS DesignWidget, sfx AS STRING, xs AS STR
     END IF
     s = s + "        spfin" + sfx + " = APPEND(spfin" + sfx + ", spc" + sfx + ")\n"
     s = s + "    NEXT spr" + sfx + "\n"
+    IF showH THEN
+        DIM tm1 AS INTEGER = contentW - 3
+        IF tm1 < 0 THEN tm1 = 0
+        s = s + "    DIM sphth" + sfx + " AS INTEGER = Int(m." + nm + "_vp.HorizontalScrollPercent() * " + strconv.Itoa(tm1) + ".0)\n"
+        s = s + "    spfin" + sfx + " = APPEND(spfin" + sfx + ", _hbar(" + cwS + ", sphth" + sfx + "))\n"
+    END IF
     s = s + "    DIM vw" + sfx + " AS STRING = _frame(spfin" + sfx + ", " + strconv.Itoa(wv.W - 2) + ", " + frameCallArgs(wv, qt) + ")\n"
     s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
     RETURN s

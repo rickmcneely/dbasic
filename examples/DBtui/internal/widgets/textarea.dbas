@@ -157,6 +157,7 @@ FUNCTION textAreaEmitFramedLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING
     DIM innerH AS INTEGER = framedContentH(wv)
     DIM contentW AS INTEGER = framedContentW(wv)
     DIM showV AS BOOLEAN = widgetReserveVGutter(wv)
+    DIM showH AS BOOLEAN = widgetReserveHGutter(wv)
     DIM cwS AS STRING = strconv.Itoa(contentW)
     DIM vhS AS STRING = strconv.Itoa(innerH)
     DIM s AS STRING = ""
@@ -174,6 +175,11 @@ FUNCTION textAreaEmitFramedLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING
     END IF
     s = s + "        tafin" + sfx + " = APPEND(tafin" + sfx + ", tac" + sfx + ")\n"
     s = s + "    NEXT tar" + sfx + "\n"
+    IF showH THEN
+        ' TextArea soft-wraps, so there's no horizontal scroll offset to track;
+        ' the bar is indicative (thumb parked at the left).
+        s = s + "    tafin" + sfx + " = APPEND(tafin" + sfx + ", _hbar(" + cwS + ", 0))\n"
+    END IF
     s = s + "    DIM vw" + sfx + " AS STRING = _frame(tafin" + sfx + ", " + strconv.Itoa(wv.W - 2) + ", " + frameCallArgs(wv, qt) + ")\n"
     s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
     RETURN s

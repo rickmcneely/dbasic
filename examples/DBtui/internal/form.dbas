@@ -1664,8 +1664,32 @@ FUNCTION framedContentW(w AS DesignWidget) AS INTEGER
 END FUNCTION
 FUNCTION framedContentH(w AS DesignWidget) AS INTEGER
     DIM ch AS INTEGER = w.H - 2
+    IF widgetReserveHGutter(w) THEN ch = ch - 1
     IF ch < 1 THEN ch = 1
     RETURN ch
+END FUNCTION
+
+' widgetMaxLineW — widest content line (ScrollPanel Items), for auto-h.
+FUNCTION widgetMaxLineW(w AS DesignWidget) AS INTEGER
+    DIM mx AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(w.Items) - 1
+        IF lipgloss.Width(w.Items[i]) > mx THEN mx = lipgloss.Width(w.Items[i])
+    NEXT i
+    RETURN mx
+END FUNCTION
+
+' widgetReserveHGutter — does a framed ScrollPanel/TextArea reserve the bottom
+' row for a horizontal scrollbar? "on" always; "auto" when content overflows
+' the content width (statically known for ScrollPanel; TextArea soft-wraps so
+' "auto" reserves it regardless — the bar is mostly indicative there).
+FUNCTION widgetReserveHGutter(w AS DesignWidget) AS BOOLEAN
+    IF w.HScroll = "on" THEN RETURN TRUE
+    IF w.HScroll = "auto" THEN
+        IF w.Kind = "ScrollPanel" THEN RETURN widgetMaxLineW(w) > framedContentW(w)
+        RETURN TRUE
+    END IF
+    RETURN FALSE
 END FUNCTION
 
 ' borderGlyphs — six box-drawing glyphs (h, v, TL, TR, BL, BR) for a line
@@ -2545,6 +2569,24 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "    IF thumb > track - 1 THEN thumb = track - 1\n"
         s = s + "    IF (row - 1) = thumb THEN RETURN " + qt + "█" + qt + "\n"
         s = s + "    RETURN " + qt + "░" + qt + "\n"
+        s = s + "END FUNCTION\n"
+        s = s + "\n"
+        ' _hbar — a horizontal scrollbar row of `width` cells: ◀ … ▶ with a █
+        ' thumb at column `thumb` over a ░ track.
+        s = s + "FUNCTION _hbar(width AS INTEGER, thumb AS INTEGER) AS STRING\n"
+        s = s + "    IF width < 3 THEN RETURN strings.Repeat(" + qt + "─" + qt + ", width)\n"
+        s = s + "    DIM track AS INTEGER = width - 2\n"
+        s = s + "    DIM out AS STRING = " + qt + "◀" + qt + "\n"
+        s = s + "    DIM i AS INTEGER\n"
+        s = s + "    FOR i = 0 TO track - 1\n"
+        s = s + "        IF i = thumb THEN\n"
+        s = s + "            out = out + " + qt + "█" + qt + "\n"
+        s = s + "        ELSE\n"
+        s = s + "            out = out + " + qt + "░" + qt + "\n"
+        s = s + "        END IF\n"
+        s = s + "    NEXT i\n"
+        s = s + "    out = out + " + qt + "▶" + qt + "\n"
+        s = s + "    RETURN out\n"
         s = s + "END FUNCTION\n"
         s = s + "\n"
     END IF
