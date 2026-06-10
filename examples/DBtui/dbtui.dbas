@@ -1755,24 +1755,80 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.CPActive = FALSE
             RETURN m, NIL
         END IF
-        ' (ME) Menu Editor — when open it owns the click: OK/Cancel buttons,
-        ' a list row selects that node; everything else inside is swallowed.
+        ' (ME) Menu Editor — fully mouse-driven: every click maps to an
+        ' action zone (fields, flag checkboxes, op toolbar, node rows,
+        ' OK/Cancel). Clicks anywhere else inside are swallowed (modal).
         IF m.MenuEdActive THEN
-            DIM meBtn AS STRING = menuEdButtonAt(mcMsg.X, mcMsg.Y)
-            IF meBtn = "ok" THEN
+            DIM meAct AS STRING = menuEdAction(mcMsg.X, mcMsg.Y)
+            IF meAct = "ok" THEN
                 menuEditorCommit(@m)
                 RETURN m, NIL
             END IF
-            IF meBtn = "cancel" THEN
+            IF meAct = "cancel" THEN
                 cancelMenuEditor(@m)
                 RETURN m, NIL
             END IF
-            DIM meRow AS INTEGER = menuEdRowAt(mcMsg.X, mcMsg.Y)
-            IF meRow >= 0 THEN
-                menuEdSyncInputs(@m)
-                m.MenuEdSel = meRow
-                m.MenuEdField = 0 - 1
-                menuEdSeedInputs(@m)
+            IF meAct = "op:add" THEN
+                menuEdInsert(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "op:del" THEN
+                menuEdDelete(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "op:indent" THEN
+                menuEdIndent(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "op:outdent" THEN
+                menuEdOutdent(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "op:up" THEN
+                menuEdMoveUp(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "op:down" THEN
+                menuEdMoveDown(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "toggle:checked" THEN
+                menuEdToggleChecked(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "toggle:disabled" THEN
+                menuEdToggleDisabled(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "toggle:sep" THEN
+                menuEdToggleSep(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "field:0" THEN
+                m.MenuEdField = 0
+                menuEdFocus(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "field:1" THEN
+                m.MenuEdField = 1
+                menuEdFocus(@m)
+                RETURN m, NIL
+            END IF
+            IF meAct = "field:2" THEN
+                m.MenuEdField = 2
+                menuEdFocus(@m)
+                RETURN m, NIL
+            END IF
+            IF strings.HasPrefix(meAct, "row:") THEN
+                DIM meRow AS INTEGER
+                DIM meRErr AS ERROR
+                meRow, meRErr = strconv.Atoi(Mid(meAct, 5, LEN(meAct) - 4))
+                IF meRErr = NIL AND meRow >= 0 AND meRow < LEN(m.MenuEdNodes) THEN
+                    menuEdSyncInputs(@m)
+                    m.MenuEdSel = meRow
+                    m.MenuEdField = 0 - 1
+                    menuEdSeedInputs(@m)
+                END IF
                 RETURN m, NIL
             END IF
             RETURN m, NIL

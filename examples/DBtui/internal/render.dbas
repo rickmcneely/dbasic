@@ -43,37 +43,42 @@ DIM epLastN     AS INTEGER
 ' the render shows (no geometry guessing).
 DIM palLastVisible AS INTEGER
 
-' Menu Editor geometry — written by View() each frame it composites the
-' editor, so the click handler can map a screen click onto a list row or
-' the OK / Cancel buttons. Coords are RELATIVE to the modal content area
-' (one cell in from the rounded border at the stashed origin).
-DIM meLastOrigX  AS INTEGER
-DIM meLastOrigY  AS INTEGER
-DIM meListRowRel AS INTEGER   ' content row of the first menu node
-DIM meListN      AS INTEGER   ' number of node rows
-DIM meBtnRowRel  AS INTEGER   ' content row of the OK / Cancel buttons
-DIM meOkX0       AS INTEGER
-DIM meOkX1       AS INTEGER
-DIM meCancelX0   AS INTEGER
-DIM meCancelX1   AS INTEGER
+' Menu Editor hit zones — a table of clickable regions written by
+' renderMenuEditor each frame (content-relative: one cell in from the
+' rounded border at the stashed origin). Every interactive element (fields,
+' flag checkboxes, toolbar ops, node rows, OK/Cancel) registers a zone with
+' an action string; menuEdAction maps a screen click to that action so the
+' whole editor is mouse-drivable. meAddZone appends; menuEdAction scans.
+DIM meLastOrigX AS INTEGER
+DIM meLastOrigY AS INTEGER
+DIM meZRow AS []INTEGER
+DIM meZX0  AS []INTEGER
+DIM meZX1  AS []INTEGER
+DIM meZAct AS []STRING
 
-' menuEdRowAt — screen (mx,my) → menu-list row index, or -1 if outside the
-' list. Content origin is one cell in from the border.
-FUNCTION menuEdRowAt(mx AS INTEGER, my AS INTEGER) AS INTEGER
-    DIM cy AS INTEGER = my - (meLastOrigY + 1)
-    DIM rel AS INTEGER = cy - meListRowRel
-    IF rel < 0 OR rel >= meListN THEN RETURN 0 - 1
-    RETURN rel
-END FUNCTION
+SUB meZonesReset()
+    meZRow = NIL
+    meZX0  = NIL
+    meZX1  = NIL
+    meZAct = NIL
+END SUB
 
-' menuEdButtonAt — screen (mx,my) → "ok" / "cancel" / "" for the editor's
-' button row.
-FUNCTION menuEdButtonAt(mx AS INTEGER, my AS INTEGER) AS STRING
+SUB meAddZone(row AS INTEGER, x0 AS INTEGER, x1 AS INTEGER, act AS STRING)
+    meZRow = APPEND(meZRow, row)
+    meZX0  = APPEND(meZX0, x0)
+    meZX1  = APPEND(meZX1, x1)
+    meZAct = APPEND(meZAct, act)
+END SUB
+
+' menuEdAction — screen (mx,my) → the action string of the zone it lands in,
+' or "" if none. First match wins.
+FUNCTION menuEdAction(mx AS INTEGER, my AS INTEGER) AS STRING
     DIM cy AS INTEGER = my - (meLastOrigY + 1)
-    IF cy <> meBtnRowRel THEN RETURN ""
     DIM cx AS INTEGER = mx - (meLastOrigX + 1)
-    IF cx >= meOkX0 AND cx <= meOkX1 THEN RETURN "ok"
-    IF cx >= meCancelX0 AND cx <= meCancelX1 THEN RETURN "cancel"
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(meZRow) - 1
+        IF meZRow[i] = cy AND cx >= meZX0[i] AND cx <= meZX1[i] THEN RETURN meZAct[i]
+    NEXT i
     RETURN ""
 END FUNCTION
 
@@ -579,17 +584,73 @@ FUNCTION renderMenuEditor(m AS Model) AS STRING
     DIM selBase   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
     DIM dimBase   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cBorder))
     DIM titleSt   AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cAccent)).Bold(TRUE)
+    meZonesReset()
     DIM lines AS []STRING
+    ' Row 0: title.
     lines = APPEND(lines, titleSt.Render(mePad(" Menu Editor — " + wname, innerW)))
+    ' Rows 1-3: editable fields — click the row to focus that field.
     lines = APPEND(lines, rowBase.Render(meField(m, "Caption: ", 0, innerW)))
+    meAddZone(1, 0, innerW - 1, "field:0")
     lines = APPEND(lines, rowBase.Render(meField(m, "Name:    ", 1, innerW)))
+    meAddZone(2, 0, innerW - 1, "field:1")
     lines = APPEND(lines, rowBase.Render(meField(m, "Shortcut:", 2, innerW)))
-    DIM flags AS STRING = " Flags: "
+    meAddZone(3, 0, innerW - 1, "field:2")
+    ' Row 4: flag checkboxes — click each to toggle. Track columns as built.
+    DIM chkC AS BOOLEAN = FALSE
+    DIM chkD AS BOOLEAN = FALSE
+    DIM chkS AS BOOLEAN = FALSE
     IF m.MenuEdSel >= 0 AND m.MenuEdSel < LEN(m.MenuEdNodes) THEN
-        DIM nd AS MenuNode = m.MenuEdNodes[m.MenuEdSel]
-        flags = flags + meChk(nd.Checked) + " Checked  " + meChk(nd.Disabled) + " Disabled  " + meChk(nd.IsSep) + " Separator"
+        chkC = m.MenuEdNodes[m.MenuEdSel].Checked
+        chkD = m.MenuEdNodes[m.MenuEdSel].Disabled
+        chkS = m.MenuEdNodes[m.MenuEdSel].IsSep
     END IF
+    DIM flbl AS []STRING
+    flbl = APPEND(flbl, meChk(chkC) + " Checked")
+    flbl = APPEND(flbl, meChk(chkD) + " Disabled")
+    flbl = APPEND(flbl, meChk(chkS) + " Separator")
+    DIM fact AS []STRING
+    fact = APPEND(fact, "toggle:checked")
+    fact = APPEND(fact, "toggle:disabled")
+    fact = APPEND(fact, "toggle:sep")
+    DIM flags AS STRING = " Flags:"
+    DIM fcol AS INTEGER = 7
+    DIM fi AS INTEGER
+    FOR fi = 0 TO LEN(flbl) - 1
+        flags = flags + "  "
+        fcol = fcol + 2
+        meAddZone(4, fcol, fcol + LEN(flbl[fi]) - 1, fact[fi])
+        flags = flags + flbl[fi]
+        fcol = fcol + LEN(flbl[fi])
+    NEXT fi
     lines = APPEND(lines, rowBase.Render(mePad(flags, innerW)))
+    ' Row 5: operation toolbar — clickable buttons.
+    DIM tlbl AS []STRING
+    DIM tact AS []STRING
+    tlbl = APPEND(tlbl, "Add")
+    tact = APPEND(tact, "op:add")
+    tlbl = APPEND(tlbl, "Del")
+    tact = APPEND(tact, "op:del")
+    tlbl = APPEND(tlbl, ">")
+    tact = APPEND(tact, "op:indent")
+    tlbl = APPEND(tlbl, "<")
+    tact = APPEND(tact, "op:outdent")
+    tlbl = APPEND(tlbl, "^")
+    tact = APPEND(tact, "op:up")
+    tlbl = APPEND(tlbl, "v")
+    tact = APPEND(tact, "op:down")
+    tlbl = APPEND(tlbl, "Sep")
+    tact = APPEND(tact, "op:sep")
+    DIM tbar AS STRING = " "
+    DIM tcol AS INTEGER = 1
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(tlbl) - 1
+        DIM btn AS STRING = "[" + tlbl[ti] + "]"
+        meAddZone(5, tcol, tcol + LEN(btn) - 1, tact[ti])
+        tbar = tbar + btn + " "
+        tcol = tcol + LEN(btn) + 1
+    NEXT ti
+    lines = APPEND(lines, rowBase.Render(mePad(tbar, innerW)))
+    ' Row 6: divider. Rows 7..: the node list (click a row to select it).
     lines = APPEND(lines, rowBase.Render(strings.Repeat("─", innerW)))
     DIM li AS INTEGER
     FOR li = 0 TO LEN(m.MenuEdNodes) - 1
@@ -598,19 +659,14 @@ FUNCTION renderMenuEditor(m AS Model) AS STRING
         IF m.MenuEdNodes[li].IsSep THEN st = dimBase
         IF li = m.MenuEdSel THEN st = selBase
         lines = APPEND(lines, st.Render(ln))
+        meAddZone(7 + li, 0, innerW - 1, "row:" + strconv.Itoa(li))
     NEXT li
+    ' Trailing divider + OK / Cancel buttons.
     lines = APPEND(lines, rowBase.Render(strings.Repeat("─", innerW)))
-    lines = APPEND(lines, dimBase.Render(mePad(" ↑↓ select · Tab fields · a add · x delete · < > indent", innerW)))
-    lines = APPEND(lines, dimBase.Render(mePad(" [ ] reorder · s sep · c check · g disable · Enter save · Esc", innerW)))
-    lines = APPEND(lines, rowBase.Render(mePad("  [ OK ]   [ Cancel ]", innerW)))
-    ' content-relative geometry for the hit-tests (see meLast* vars).
-    meListRowRel = 6
-    meListN      = LEN(m.MenuEdNodes)
-    meBtnRowRel  = 9 + LEN(m.MenuEdNodes)
-    meOkX0       = 2
-    meOkX1       = 7
-    meCancelX0   = 11
-    meCancelX1   = 20
+    DIM btnRow AS INTEGER = 8 + LEN(m.MenuEdNodes)
+    lines = APPEND(lines, rowBase.Render(mePad(" [ OK ]   [ Cancel ]", innerW)))
+    meAddZone(btnRow, 1, 6, "ok")
+    meAddZone(btnRow, 10, 19, "cancel")
     DIM body AS STRING = strings.Join(lines, "\n")
     DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cMenuBg))
     RETURN frame.Render(body)
