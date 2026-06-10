@@ -2360,6 +2360,11 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             ' Component-backed: the click only takes focus (done above);
             ' selection is via keyboard / wheel forwarded to the component.
             ' (Click coords don't map into the component's own space.)
+            ' Exception: a framed ScrollPanel's scrollbar arrows/track ARE
+            ' clickable and scroll its viewport.
+            IF mcw.Kind = "ScrollPanel" AND widgetFramed(mcw) THEN
+                s = s + scrollPanelEmitGutterClick(mcw, mcXs, mcYs, qt)
+            END IF
             s = s + "            _ = mc\n"
         ELSEIF mcw.Kind = "Button" THEN
             s = s + buttonEmitMouse(mcw, qt)

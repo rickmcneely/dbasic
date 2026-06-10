@@ -112,6 +112,54 @@ FUNCTION scrollPanelEmitFramedLayer(wv AS DesignWidget, sfx AS STRING, xs AS STR
     RETURN s
 END FUNCTION
 
+' Framed-gutter clicks: scroll the viewport when the user clicks the v-gutter
+' (▲/▼/track on the right column) or h-gutter (◀/▶/track on the bottom row).
+' Emitted inside the click dispatch for a framed ScrollPanel (the bare/unframed
+' one has no gutter). Coords are relative to the widget's (X, Y).
+FUNCTION scrollPanelEmitGutterClick(wv AS DesignWidget, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+    DIM nm AS STRING = wv.Name
+    DIM showV AS BOOLEAN = widgetReserveVGutter(wv)
+    DIM showH AS BOOLEAN = widgetReserveHGutter(wv)
+    DIM s AS STRING = ""
+    IF showV THEN
+        DIM vcol AS INTEGER = wv.W - 2
+        DIM vlast AS INTEGER = wv.H - 2
+        IF showH THEN vlast = vlast - 1
+        DIM vmid AS INTEGER = (1 + vlast) / 2
+        s = s + "            IF mc.X - " + xs + " = " + strconv.Itoa(vcol) + " AND mc.Y - " + ys + " >= 1 AND mc.Y - " + ys + " <= " + strconv.Itoa(vlast) + " THEN\n"
+        s = s + "                IF mc.Y - " + ys + " = 1 THEN\n"
+        s = s + "                    m." + nm + "_vp.ScrollUp(1)\n"
+        s = s + "                ELSEIF mc.Y - " + ys + " = " + strconv.Itoa(vlast) + " THEN\n"
+        s = s + "                    m." + nm + "_vp.ScrollDown(1)\n"
+        s = s + "                ELSEIF mc.Y - " + ys + " < " + strconv.Itoa(vmid) + " THEN\n"
+        s = s + "                    m." + nm + "_vp.ScrollUp(3)\n"
+        s = s + "                ELSE\n"
+        s = s + "                    m." + nm + "_vp.ScrollDown(3)\n"
+        s = s + "                END IF\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+    END IF
+    IF showH THEN
+        DIM hrow AS INTEGER = wv.H - 2
+        DIM hlast AS INTEGER = wv.W - 2
+        IF showV THEN hlast = hlast - 1
+        DIM hmid AS INTEGER = (1 + hlast) / 2
+        s = s + "            IF mc.Y - " + ys + " = " + strconv.Itoa(hrow) + " AND mc.X - " + xs + " >= 1 AND mc.X - " + xs + " <= " + strconv.Itoa(hlast) + " THEN\n"
+        s = s + "                IF mc.X - " + xs + " = 1 THEN\n"
+        s = s + "                    m." + nm + "_vp.ScrollLeft(2)\n"
+        s = s + "                ELSEIF mc.X - " + xs + " = " + strconv.Itoa(hlast) + " THEN\n"
+        s = s + "                    m." + nm + "_vp.ScrollRight(2)\n"
+        s = s + "                ELSEIF mc.X - " + xs + " < " + strconv.Itoa(hmid) + " THEN\n"
+        s = s + "                    m." + nm + "_vp.ScrollLeft(4)\n"
+        s = s + "                ELSE\n"
+        s = s + "                    m." + nm + "_vp.ScrollRight(4)\n"
+        s = s + "                END IF\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+    END IF
+    RETURN s
+END FUNCTION
+
 ' G — mouse: click the top cell (rel Y = 1) scrolls up, the bottom cell
 ' (rel Y = H-2) scrolls down (the ▲ / ▼ scrollbar ends).
 FUNCTION scrollPanelEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcYs AS STRING, qt AS STRING) AS STRING
