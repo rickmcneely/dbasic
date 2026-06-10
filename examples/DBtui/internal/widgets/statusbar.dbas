@@ -36,6 +36,18 @@ FUNCTION statusBarEmitModel(w AS DesignWidget) AS STRING
     RETURN "    DIM " + w.Name + "_Text AS STRING\n"
 END FUNCTION
 
+' Layer view (Charm path): the single status row as a lipgloss layer.
+FUNCTION statusBarEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, qt AS STRING) AS STRING
+    DIM sbWStr AS STRING = strconv.Itoa(wv.W)
+    DIM s AS STRING = ""
+    s = s + "    DIM sbTxt" + sfx + " AS STRING = m." + wv.Name + "_Text\n"
+    s = s + "    IF sbTxt" + sfx + " = " + qt + qt + " THEN sbTxt" + sfx + " = " + qt + escapeForDBString(statusBarText(wv.Items)) + qt + "\n"
+    s = s + "    IF lipgloss.Width(sbTxt" + sfx + ") > " + sbWStr + " THEN sbTxt" + sfx + " = Mid(sbTxt" + sfx + ", 1, " + sbWStr + ")\n"
+    s = s + "    DIM vw" + sfx + " AS STRING = compFocusView(sbTxt" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION
+
 ' H — View paint: single row — <name>_Text if set, else the static segments,
 ' clipped to W.
 FUNCTION statusBarEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING

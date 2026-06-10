@@ -211,25 +211,23 @@ FUNCTION menubarEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
     RETURN s
 END FUNCTION
 
-' H — View title bar: painted every frame (active title bracketed when the
-' bar is focused or a menu is open). The dropdown boxes themselves are
-' painted by menubarEmitDropdownPass after the whole widget loop.
-FUNCTION menubarEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
+' Layer view: the title bar as a lipgloss layer (active title bracketed when
+' the bar is focused or a menu is open). Dropdowns are composited separately
+' by menubarEmitDropdownPass over the fully-composited frame.
+FUNCTION menubarEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, qt AS STRING) AS STRING
     DIM nm AS STRING = wv.Name
     DIM s AS STRING = ""
-    s = s + "    _mnPaintBar(rows, _mnNodes_" + nm + "(), " + xs + ", " + ys + ", m." + nm + "_Active, m." + nm + "_Open, m.Focus = " + sfx + ")\n"
+    s = s + "    DIM vw" + sfx + " AS STRING = _mnBarView(_mnNodes_" + nm + "(), m." + nm + "_Active, m." + nm + "_Open, m.Focus = " + sfx + ")\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
     RETURN s
 END FUNCTION
 
-' View post-pass: paint the open cascading dropdown boxes over everything
-' and stash their rects for the click hit-test. Emitted inside its own
-' per-menubar FOR loop after the main widget paint loop.
+' View post-pass: composite the open cascading dropdown boxes over `full`
+' (after all widget layers) and stash their rects for the click hit-test.
 FUNCTION menubarEmitDropdownPass(mbPW AS DesignWidget, mbPI AS INTEGER, qt AS STRING) AS STRING
     DIM nm AS STRING = mbPW.Name
     DIM s AS STRING = ""
-    s = s + "    IF m." + nm + "_Open THEN\n"
-    s = s + "        _mnPaintBoxes(rows, _mnNodes_" + nm + "(), " + strconv.Itoa(mbPW.X) + ", " + strconv.Itoa(mbPW.Y) + ", m." + nm + "_Active, m." + nm + "_Path)\n"
-    s = s + "    END IF\n"
+    s = s + "    IF m." + nm + "_Open THEN fullView = _mnComposeBoxes(fullView, _mnNodes_" + nm + "(), " + strconv.Itoa(mbPW.X) + ", " + strconv.Itoa(mbPW.Y) + ", m." + nm + "_Active, m." + nm + "_Path)\n"
     RETURN s
 END FUNCTION
 
@@ -423,8 +421,8 @@ FUNCTION menubarEmitRuntime(qt AS STRING) AS STRING
     s = s + "    RETURN active, open, path, chosen\n"
     s = s + "END FUNCTION\n\n"
 
-    ' --- _mnPaintBar: the title strip ---
-    s = s + "SUB _mnPaintBar(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY AS INTEGER, active AS INTEGER, open AS BOOLEAN, focused AS BOOLEAN)\n"
+    ' --- _mnBarView: the title strip, as a string (placed as a layer) ---
+    s = s + "FUNCTION _mnBarView(nodes AS []_MNode, active AS INTEGER, open AS BOOLEAN, focused AS BOOLEAN) AS STRING\n"
     s = s + "    DIM bar AS STRING = " + qt + qt + "\n"
     s = s + "    DIM k AS INTEGER = 0\n"
     s = s + "    DIM i AS INTEGER\n"
@@ -438,16 +436,18 @@ FUNCTION menubarEmitRuntime(qt AS STRING) AS STRING
     s = s + "            k = k + 1\n"
     s = s + "        END IF\n"
     s = s + "    NEXT i\n"
-    s = s + "    IF baseY >= 0 AND baseY < LEN(rows) THEN rows[baseY] = overlayRow(rows[baseY], baseX, bar)\n"
-    s = s + "END SUB\n\n"
+    s = s + "    RETURN bar\n"
+    s = s + "END FUNCTION\n\n"
 
-    ' --- _mnPaintBoxes: the cascading dropdown boxes + hit-test stash ---
-    s = s + "SUB _mnPaintBoxes(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY AS INTEGER, active AS INTEGER, path AS []INTEGER)\n"
+    ' --- _mnComposeBoxes: composite the cascading dropdown boxes (as lipgloss
+    '     layers) over `full`, returning the new full; stashes each box's rect
+    '     into _mnB* for the click hit-test. ---
+    s = s + "FUNCTION _mnComposeBoxes(full AS STRING, nodes AS []_MNode, baseX AS INTEGER, baseY AS INTEGER, active AS INTEGER, path AS []INTEGER) AS STRING\n"
     s = s + "    _mnBX = NIL\n"
     s = s + "    _mnBY = NIL\n"
     s = s + "    _mnBW = NIL\n"
     s = s + "    _mnBP = NIL\n"
-    s = s + "    IF LEN(path) = 0 THEN RETURN\n"
+    s = s + "    IF LEN(path) = 0 THEN RETURN full\n"
     s = s + "    DIM prevX AS INTEGER = 0\n"
     s = s + "    DIM prevW AS INTEGER = 0\n"
     s = s + "    DIM prevTopY AS INTEGER = 0\n"
@@ -455,7 +455,7 @@ FUNCTION menubarEmitRuntime(qt AS STRING) AS STRING
     s = s + "    FOR lev = 0 TO LEN(path) - 1\n"
     s = s + "        DIM parent AS INTEGER = _mnNodeAt(nodes, active, path, lev)\n"
     s = s + "        DIM kids AS []INTEGER = _mnKids(nodes, parent)\n"
-    s = s + "        IF LEN(kids) = 0 THEN RETURN\n"
+    s = s + "        IF LEN(kids) = 0 THEN RETURN full\n"
     s = s + "        DIM boxX AS INTEGER = 0\n"
     s = s + "        DIM topY AS INTEGER = 0\n"
     s = s + "        IF lev = 0 THEN\n"
@@ -473,15 +473,12 @@ FUNCTION menubarEmitRuntime(qt AS STRING) AS STRING
     s = s + "            IF _mnIsSub(nodes, kids[j]) THEN cw = cw + 2\n"
     s = s + "            IF cw > innerW THEN innerW = cw\n"
     s = s + "        NEXT j\n"
-    s = s + "        DIM topB AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", innerW) + " + qt + "┐" + qt + "\n"
-    s = s + "        IF topY >= 0 AND topY < LEN(rows) THEN rows[topY] = overlayRow(rows[topY], boxX, topB)\n"
+    s = s + "        DIM box AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", innerW) + " + qt + "┐" + qt + "\n"
     s = s + "        DIM sel AS INTEGER = path[lev]\n"
     s = s + "        FOR j = 0 TO LEN(kids) - 1\n"
     s = s + "            DIM ndx AS INTEGER = kids[j]\n"
-    s = s + "            DIM itemY AS INTEGER = topY + 1 + j\n"
     s = s + "            IF nodes[ndx].Sp THEN\n"
-    s = s + "                DIM sepln AS STRING = " + qt + "├" + qt + " + strings.Repeat(" + qt + "─" + qt + ", innerW) + " + qt + "┤" + qt + "\n"
-    s = s + "                IF itemY >= 0 AND itemY < LEN(rows) THEN rows[itemY] = overlayRow(rows[itemY], boxX, sepln)\n"
+    s = s + "                box = box + " + qt + "\\n" + qt + " + " + qt + "├" + qt + " + strings.Repeat(" + qt + "─" + qt + ", innerW) + " + qt + "┤" + qt + "\n"
     s = s + "            ELSE\n"
     s = s + "                DIM chk AS STRING = " + qt + "  " + qt + "\n"
     s = s + "                IF nodes[ndx].Ck THEN chk = " + qt + "✓ " + qt + "\n"
@@ -503,24 +500,20 @@ FUNCTION menubarEmitRuntime(qt AS STRING) AS STRING
     s = s + "                DO WHILE lipgloss.Width(inner) < innerW\n"
     s = s + "                    inner = inner + " + qt + " " + qt + "\n"
     s = s + "                LOOP\n"
-    s = s + "                IF itemY >= 0 AND itemY < LEN(rows) THEN\n"
-    s = s + "                    IF j = sel THEN\n"
-    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX, " + qt + "│" + qt + ")\n"
-    s = s + "                        rows[itemY] = overlayRowAt(rows[itemY], boxX + 1, focusStyle.Render(inner))\n"
-    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX + 1 + innerW, " + qt + "│" + qt + ")\n"
-    s = s + "                    ELSEIF nodes[ndx].Ds THEN\n"
-    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX, " + qt + "│" + qt + ")\n"
-    s = s + "                        rows[itemY] = overlayRowAt(rows[itemY], boxX + 1, _mnDim.Render(inner))\n"
-    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX + 1 + innerW, " + qt + "│" + qt + ")\n"
-    s = s + "                    ELSE\n"
-    s = s + "                        rows[itemY] = overlayRow(rows[itemY], boxX, " + qt + "│" + qt + " + inner + " + qt + "│" + qt + ")\n"
-    s = s + "                    END IF\n"
+    s = s + "                DIM cell AS STRING = inner\n"
+    s = s + "                IF j = sel THEN\n"
+    s = s + "                    cell = focusStyle.Render(inner)\n"
+    s = s + "                ELSEIF nodes[ndx].Ds THEN\n"
+    s = s + "                    cell = _mnDim.Render(inner)\n"
     s = s + "                END IF\n"
+    s = s + "                box = box + " + qt + "\\n" + qt + " + " + qt + "│" + qt + " + cell + " + qt + "│" + qt + "\n"
     s = s + "            END IF\n"
     s = s + "        NEXT j\n"
-    s = s + "        DIM botY AS INTEGER = topY + 1 + LEN(kids)\n"
-    s = s + "        DIM botB AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", innerW) + " + qt + "┘" + qt + "\n"
-    s = s + "        IF botY >= 0 AND botY < LEN(rows) THEN rows[botY] = overlayRow(rows[botY], boxX, botB)\n"
+    s = s + "        box = box + " + qt + "\\n" + qt + " + " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", innerW) + " + qt + "┘" + qt + "\n"
+    s = s + "        DIM bBg AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)\n"
+    s = s + "        DIM bLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(box).X(boxX).Y(topY).Z(50 + lev)\n"
+    s = s + "        DIM bCmp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bBg, bLy)\n"
+    s = s + "        full = bCmp.Render()\n"
     s = s + "        _mnBX = APPEND(_mnBX, boxX)\n"
     s = s + "        _mnBY = APPEND(_mnBY, topY + 1)\n"
     s = s + "        _mnBW = APPEND(_mnBW, innerW + 2)\n"
@@ -529,7 +522,8 @@ FUNCTION menubarEmitRuntime(qt AS STRING) AS STRING
     s = s + "        prevW = innerW + 2\n"
     s = s + "        prevTopY = topY\n"
     s = s + "    NEXT lev\n"
-    s = s + "END SUB\n\n"
+    s = s + "    RETURN full\n"
+    s = s + "END FUNCTION\n\n"
 
     ' --- _mnClickHit: map a click to a box row (topmost box wins) ---
     s = s + "FUNCTION _mnClickHit(nodes AS []_MNode, mx AS INTEGER, my AS INTEGER, active AS INTEGER, open AS BOOLEAN, path AS []INTEGER) AS (INTEGER, BOOLEAN, []INTEGER, STRING, BOOLEAN)\n"

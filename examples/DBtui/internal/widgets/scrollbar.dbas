@@ -168,6 +168,46 @@ FUNCTION scrollBarEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcXs AS STRIN
 END FUNCTION
 
 ' H (vertical) — multi-row View paint: ▲ / █ thumb / ▼ with focus caret.
+' Layer view (Charm path): build the scrollbar (vertical = H glyph rows,
+' horizontal = one ◄─█─► line) as a string placed as a lipgloss layer.
+FUNCTION scrollBarEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    IF strings.ToLower(wv.Orient) = "v" THEN
+        DIM svH AS STRING = strconv.Itoa(wv.H)
+        DIM svMin AS STRING = strconv.Itoa(wv.Min)
+        DIM svRng AS STRING = strconv.Itoa(wv.Max - wv.Min)
+        IF wv.Max - wv.Min <= 0 THEN svRng = "1"
+        s = s + "    DIM svThumb" + sfx + " AS INTEGER = 1 + ((m." + wv.Name + "_Val - " + svMin + ") * (" + svH + " - 3)) / " + svRng + "\n"
+        s = s + "    IF svThumb" + sfx + " < 1 THEN svThumb" + sfx + " = 1\n"
+        s = s + "    IF svThumb" + sfx + " > " + svH + " - 2 THEN svThumb" + sfx + " = " + svH + " - 2\n"
+        s = s + "    DIM svraw" + sfx + " AS STRING = " + qt + qt + "\n"
+        s = s + "    DIM svi" + sfx + " AS INTEGER\n"
+        s = s + "    FOR svi" + sfx + " = 0 TO " + svH + " - 1\n"
+        s = s + "        DIM svGlyph" + sfx + " AS STRING = " + qt + "│" + qt + "\n"
+        s = s + "        IF svi" + sfx + " = 0 THEN svGlyph" + sfx + " = " + qt + "▲" + qt + "\n"
+        s = s + "        IF svi" + sfx + " = " + svH + " - 1 THEN svGlyph" + sfx + " = " + qt + "▼" + qt + "\n"
+        s = s + "        IF svi" + sfx + " = svThumb" + sfx + " THEN svGlyph" + sfx + " = " + qt + "█" + qt + "\n"
+        s = s + "        IF svi" + sfx + " > 0 THEN svraw" + sfx + " = svraw" + sfx + " + " + qt + "\\n" + qt + "\n"
+        s = s + "        svraw" + sfx + " = svraw" + sfx + " + svGlyph" + sfx + "\n"
+        s = s + "    NEXT svi" + sfx + "\n"
+        s = s + "    DIM vw" + sfx + " AS STRING = compFocusView(svraw" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
+        s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+        RETURN s
+    END IF
+    DIM hwStr AS STRING = strconv.Itoa(wv.W - 2)
+    IF wv.W - 2 < 1 THEN hwStr = "1"
+    DIM hMinStr AS STRING = strconv.Itoa(wv.Min)
+    DIM hRngStr AS STRING = strconv.Itoa(wv.Max - wv.Min)
+    IF wv.Max - wv.Min <= 0 THEN hRngStr = "1"
+    s = s + "    DIM hThumb" + sfx + " AS INTEGER = (m." + wv.Name + "_Val - " + hMinStr + ") * (" + hwStr + " - 1) / " + hRngStr + "\n"
+    s = s + "    IF hThumb" + sfx + " < 0 THEN hThumb" + sfx + " = 0\n"
+    s = s + "    IF hThumb" + sfx + " > " + hwStr + " - 1 THEN hThumb" + sfx + " = " + hwStr + " - 1\n"
+    s = s + "    DIM hraw" + sfx + " AS STRING = " + qt + "◄" + qt + " + strings.Repeat(" + qt + "─" + qt + ", hThumb" + sfx + ") + " + qt + "█" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + hwStr + " - 1 - hThumb" + sfx + ") + " + qt + "►" + qt + "\n"
+    s = s + "    DIM vw" + sfx + " AS STRING = compFocusView(hraw" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION
+
 FUNCTION scrollBarEmitViewVert(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
     DIM svH AS STRING = strconv.Itoa(wv.H)
     DIM svMin AS STRING = strconv.Itoa(wv.Min)

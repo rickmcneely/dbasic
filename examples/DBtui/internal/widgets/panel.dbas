@@ -94,6 +94,47 @@ FUNCTION panelEmitKey(ww AS DesignWidget, widgets AS []DesignWidget, qt AS STRIN
     RETURN s
 END FUNCTION
 
+' Layer view (Charm path): compose the panel as a bordered lipgloss box whose
+' interior is a sub-canvas with each child placed as a clipped lipgloss layer
+' (offset by the panel's scroll). No buffer painting — pure composition.
+FUNCTION panelEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, f AS DesignForm, n AS INTEGER, qt AS STRING) AS STRING
+    DIM innerW AS INTEGER = wv.W - 2
+    IF innerW < 1 THEN innerW = 1
+    DIM innerH AS INTEGER = wv.H - 2
+    IF innerH < 1 THEN innerH = 1
+    DIM s AS STRING = ""
+    s = s + "    DIM pnInner" + sfx + " AS STRING = _blankCanvas(" + strconv.Itoa(innerW) + ", " + strconv.Itoa(innerH) + ")\n"
+    s = s + "    DIM pnBaseL" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(pnInner" + sfx + ")\n"
+    DIM childLayers AS STRING = ""
+    DIM zc AS INTEGER = 1
+    DIM pnCi AS INTEGER
+    FOR pnCi = 0 TO n - 1
+        DIM pnChild AS DesignWidget = f.Widgets[pnCi]
+        IF pnChild.Parent = wv.Name THEN
+            DIM tag AS STRING = sfx + "c" + strconv.Itoa(pnCi)
+            DIM pnCrows AS []STRING = widgetVisibleLines(pnChild)
+            DIM cvExpr AS STRING = qt + qt
+            DIM cj AS INTEGER
+            FOR cj = 0 TO LEN(pnCrows) - 1
+                IF cj > 0 THEN cvExpr = cvExpr + " + " + qt + "\\n" + qt
+                cvExpr = cvExpr + " + " + qt + escapeForDBString(pnCrows[cj]) + qt
+            NEXT cj
+            s = s + "    DIM pnCv" + tag + " AS STRING = " + cvExpr + "\n"
+            DIM cx AS INTEGER = pnChild.X - (wv.X + 1)
+            IF cx < 0 THEN cx = 0
+            s = s + "    DIM pnCL" + tag + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(pnCv" + tag + ").X(" + strconv.Itoa(cx) + ").Y(" + strconv.Itoa(pnChild.Y - (wv.Y + 1)) + " - m." + wv.Name + "_Scroll).Z(" + strconv.Itoa(zc) + ")\n"
+            childLayers = childLayers + ", pnCL" + tag
+            zc = zc + 1
+        END IF
+    NEXT pnCi
+    s = s + "    DIM pnComp" + sfx + " AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(pnBaseL" + sfx + childLayers + ")\n"
+    s = s + "    DIM pnIn2" + sfx + " AS STRING = pnComp" + sfx + ".Render()\n"
+    s = s + "    DIM pnBox" + sfx + " AS STRING = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Render(pnIn2" + sfx + ")\n"
+    s = s + "    DIM vw" + sfx + " AS STRING = compFocusView(pnBox" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION
+
 ' H — View paint: container frame + right-edge scrollbar, then each child's
 ' (clipped) design render shifted up by _Scroll and clipped to the content
 ' band. Takes the widget list `f` + count `n` to walk the children.

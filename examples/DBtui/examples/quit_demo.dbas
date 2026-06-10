@@ -102,27 +102,36 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     RETURN m, NIL
 END FUNCTION
 
+FUNCTION _blankCanvas(w AS INTEGER, h AS INTEGER) AS STRING
+    DIM cr AS []STRING
+    DIM ci AS INTEGER
+    FOR ci = 0 TO h - 1
+        cr = APPEND(cr, strings.Repeat(" ", w))
+    NEXT ci
+    RETURN strings.Join(cr, "\n")
+END FUNCTION
+
 FUNCTION (m AS Model) View() AS tea.View
     DIM w AS INTEGER = m.Width
     DIM h AS INTEGER = m.Height
     IF w < 60 THEN w = 80
     IF h < 20 THEN h = 24
-    DIM rows AS []STRING
-    DIM r AS INTEGER
-    FOR r = 0 TO h - 2
-        rows = APPEND(rows, strings.Repeat(" ", w))
-    NEXT r
+    DIM fullView AS STRING = _blankCanvas(w, h)
     DIM body0 AS STRING
     body0 = "Unsaved changes will be lost. Discard?"
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 2, body0, m.Focus = 0, m.Hover = 0)
+    DIM vw0 AS STRING = compFocusView(body0, m.Focus = 0, m.Hover = 0)
+    DIM ly0 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw0).X(2).Y(1).Z(10)
     DIM body1 AS STRING
     body1 = "[ Discard ]"
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 2, body1, m.Focus = 1, m.Hover = 1)
+    DIM vw1 AS STRING = compFocusView(body1, m.Focus = 1, m.Hover = 1)
+    DIM ly1 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw1).X(2).Y(4).Z(11)
     DIM body2 AS STRING
     body2 = "[ Cancel ]"
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 18, body2, m.Focus = 2, m.Hover = 2)
-    rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
-    DIM fullView AS STRING = strings.Join(rows, "\n")
+    DIM vw2 AS STRING = compFocusView(body2, m.Focus = 2, m.Hover = 2)
+    DIM ly2 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw2).X(18).Y(4).Z(12)
+    DIM baseLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)
+    DIM cmpLy AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(baseLy, ly0, ly1, ly2)
+    fullView = cmpLy.Render()
     DIM vw AS tea.View = tea.NewView(fullView)
     vw.MouseMode = tea.MouseModeAllMotion
     vw.AltScreen = TRUE
@@ -141,102 +150,13 @@ SUB Main()
     _ = final
 END SUB
 
-FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER
-    DIM b AS INTEGER = 0
-    DIM c AS INTEGER = 0
-    DIM lead AS INTEGER = 0
-    DIM nb AS INTEGER = 0
-    DIM fb AS INTEGER = 0
-    DO WHILE b < LEN(sIn) AND c < cell
-        lead = Asc(Mid(sIn, b + 1, 1))
-        IF lead = 27 THEN
-            b = b + 1
-            IF b < LEN(sIn) AND Asc(Mid(sIn, b + 1, 1)) = 91 THEN b = b + 1
-            DO WHILE b < LEN(sIn)
-                fb = Asc(Mid(sIn, b + 1, 1))
-                b = b + 1
-                IF fb >= 64 AND fb <= 126 THEN EXIT DO
-            LOOP
-        ELSE
-            nb = 1
-            IF lead >= 240 THEN
-                nb = 4
-            ELSEIF lead >= 224 THEN
-                nb = 3
-            ELSEIF lead >= 192 THEN
-                nb = 2
-            END IF
-            b = b + nb
-            c = c + 1
-        END IF
-    LOOP
-    RETURN b
-END FUNCTION
-
-FUNCTION cellLen(sIn AS STRING) AS INTEGER
-    DIM b AS INTEGER = 0
-    DIM c AS INTEGER = 0
-    DO WHILE b < LEN(sIn)
-        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))
-        DIM nb AS INTEGER = 1
-        IF lead >= 240 THEN
-            nb = 4
-        ELSEIF lead >= 224 THEN
-            nb = 3
-        ELSEIF lead >= 192 THEN
-            nb = 2
-        END IF
-        b = b + nb
-        c = c + 1
-    LOOP
-    RETURN c
-END FUNCTION
-
-FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
-    DIM txtCells AS INTEGER = 0
-    DIM tb AS INTEGER = 0
-    DO WHILE tb < LEN(txt)
-        DIM tl AS INTEGER = Asc(Mid(txt, tb + 1, 1))
-        DIM tn AS INTEGER = 1
-        IF tl >= 240 THEN
-            tn = 4
-        ELSEIF tl >= 224 THEN
-            tn = 3
-        ELSEIF tl >= 192 THEN
-            tn = 2
-        END IF
-        tb = tb + tn
-        txtCells = txtCells + 1
-    LOOP
-    DIM startB AS INTEGER = cellByteIdx(row, col)
-    DIM endB AS INTEGER = cellByteIdx(row, col + txtCells)
-    DIM lf AS STRING = ""
-    IF startB > 0 THEN lf = Mid(row, 1, startB)
-    DIM rt AS STRING = ""
-    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
-    DIM pre AS STRING = ""
-    IF strings.Contains(lf, Chr(27)) THEN pre = Chr(27) + "[0m"
-    RETURN lf + pre + txt + rt
-END FUNCTION
-
-FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
-    DIM cells AS INTEGER = lipgloss.Width(txt)
-    DIM startB AS INTEGER = cellByteIdx(row, col)
-    DIM endB AS INTEGER = cellByteIdx(row, col + cells)
-    DIM lf AS STRING = ""
-    IF startB > 0 THEN lf = Mid(row, 1, startB)
-    DIM rt AS STRING = ""
-    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
-    RETURN lf + txt + rt
-END FUNCTION
-
 DIM focusStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
 DIM hoverStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
 
-FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN) AS STRING
-    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))
-    IF hovered THEN RETURN overlayRowAt(row, col, hoverStyle.Render(txt))
-    RETURN overlayRow(row, col, txt)
+FUNCTION compFocusView(v AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN) AS STRING
+    IF focused THEN RETURN focusStyle.Render(v)
+    IF hovered THEN RETURN hoverStyle.Render(v)
+    RETURN v
 END FUNCTION
 
 ' Generated dispatcher — routes a Button click to its user handler.

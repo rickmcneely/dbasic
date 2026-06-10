@@ -30,36 +30,44 @@ FUNCTION textInputVisibleText(w AS DesignWidget) AS STRING
     RETURN "[" + inner + "]"
 END FUNCTION
 
-' E — Model field: a single STRING holding the live text.
+' --- CHARM-BACKED (bubbles/textinput) -----------------------------------
+' Runtime state is a real bubbles textinput.Model; the field is rendered as
+' its .View() composed as a lipgloss layer, not painted into rows[].
+' [[dbtui_charm_first]]
+
+' E — Model field: the bubbles textinput component.
 FUNCTION textInputEmitModel(w AS DesignWidget) AS STRING
-    RETURN "    DIM " + w.Name + "_Val AS STRING\n"
+    RETURN "    DIM " + w.Name + "_ti AS textinput.Model\n"
 END FUNCTION
 
-' F — keyboard: printable chars + space append; backspace trims one char.
-FUNCTION textInputEmitKey(ww AS DesignWidget, qt AS STRING) AS STRING
+' Init (Main seed): construct the component, size it to the widget box, seed
+' the design Text. Prompt cleared so it reads as a plain field (no "> ").
+FUNCTION textInputEmitInit(w AS DesignWidget, qt AS STRING) AS STRING
+    DIM wInner AS INTEGER = w.W - 1
+    IF wInner < 1 THEN wInner = 1
     DIM s AS STRING = ""
-    ' One codepoint (not one byte) = a printable char, so multi-byte
-    ' input (é, ü, emoji) is accepted; named keys (backspace, enter…)
-    ' have cellLen > 1 and fall through.
-    s = s + "            IF cellLen(key) = 1 THEN m." + ww.Name + "_Val = m." + ww.Name + "_Val + key\n"
-    s = s + "            IF key = " + qt + "space" + qt + " THEN m." + ww.Name + "_Val = m." + ww.Name + "_Val + " + qt + " " + qt + "\n"
-    s = s + "            IF key = " + qt + "backspace" + qt + " AND LEN(m." + ww.Name + "_Val) > 0 THEN\n"
-    ' Drop the last CHARACTER (codepoint), not the last byte, so
-    ' backspacing a multi-byte char doesn't leave a broken UTF-8 tail.
-    s = s + "                m." + ww.Name + "_Val = Mid(m." + ww.Name + "_Val, 1, cellByteIdx(m." + ww.Name + "_Val, cellLen(m." + ww.Name + "_Val) - 1))\n"
-    s = s + "            END IF\n"
+    s = s + "    m." + w.Name + "_ti = textinput.New()\n"
+    s = s + "    m." + w.Name + "_ti.Prompt = " + qt + qt + "\n"
+    s = s + "    m." + w.Name + "_ti.SetWidth(" + strconv.Itoa(wInner) + ")\n"
+    IF w.Text <> "" THEN s = s + "    m." + w.Name + "_ti.SetValue(" + qt + escapeForDBString(w.Text) + qt + ")\n"
     RETURN s
 END FUNCTION
 
-' H — View paint: body<sfx> is the bracketed value padded to W-2.
-' Pad amount uses cellLen (cells, not bytes) so multi-byte values align,
-' and is floored at 0 so an over-long value can't pass a negative count
-' to strings.Repeat (which would panic at runtime).
-FUNCTION textInputEmitView(wv AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
-    DIM widStr AS STRING = strconv.Itoa(wv.W)
+' F — keyboard: forward the message to the component; return its cmd. The
+' router skips its own trailing RETURN for ported kinds.
+FUNCTION textInputEmitKey(ww AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
     DIM s AS STRING = ""
-    s = s + "    DIM tiPad" + sfx + " AS INTEGER = " + widStr + " - 2 - cellLen(m." + wv.Name + "_Val)\n"
-    s = s + "    IF tiPad" + sfx + " < 0 THEN tiPad" + sfx + " = 0\n"
-    s = s + "    body" + sfx + " = " + qt + "[" + qt + " + m." + wv.Name + "_Val + strings.Repeat(" + qt + " " + qt + ", tiPad" + sfx + ") + " + qt + "]" + qt + "\n"
+    s = s + "            DIM tiCmd" + sfx + " AS tea.Cmd\n"
+    s = s + "            m." + ww.Name + "_ti, tiCmd" + sfx + " = m." + ww.Name + "_ti.Update(msg)\n"
+    s = s + "            RETURN m, tiCmd" + sfx + "\n"
+    RETURN s
+END FUNCTION
+
+' Layer view: append code building this widget's component view + a lipgloss
+' layer placed at its (X,Y). `zStr` is the Z-order; layer var is _ly<sfx>.
+FUNCTION textInputEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "    DIM vw" + sfx + " AS STRING = m." + wv.Name + "_ti.View()\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
     RETURN s
 END FUNCTION

@@ -5,6 +5,32 @@ IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "charm.land/bubbles/v2/textinput" AS textinput
+IMPORT "charm.land/bubbles/v2/textarea" AS textarea
+IMPORT "charm.land/bubbles/v2/list" AS list
+IMPORT "charm.land/bubbles/v2/table" AS table
+IMPORT "charm.land/bubbles/v2/viewport" AS viewport
+IMPORT "charm.land/bubbles/v2/progress" AS progress
+
+TYPE _LItem
+    DIM cap AS STRING
+END TYPE
+FUNCTION (i AS _LItem) Title() AS STRING
+    RETURN i.cap
+END FUNCTION
+FUNCTION (i AS _LItem) Description() AS STRING
+    RETURN ""
+END FUNCTION
+FUNCTION (i AS _LItem) FilterValue() AS STRING
+    RETURN i.cap
+END FUNCTION
+FUNCTION _newMenuDelegate() AS list.DefaultDelegate
+    DIM d AS list.DefaultDelegate = list.NewDefaultDelegate()
+    d.ShowDescription = FALSE
+    d.SetSpacing(0)
+    d.SetHeight(1)
+    RETURN d
+END FUNCTION
 
 SUB _dbtuiKeepFmtAlive()
     _ = fmt.Sprintf("")
@@ -16,27 +42,35 @@ TYPE Model
     DIM Focus  AS INTEGER
     DIM Hover  AS INTEGER
     DIM HoverTab AS INTEGER
-    DIM textinput1_Val AS STRING
+    DIM textinput1_ti AS textinput.Model
     DIM checkbox1_Val AS BOOLEAN
     DIM radiobutton1_Val AS BOOLEAN
-    DIM combobox1_Val AS INTEGER
-    DIM listbox1_Val AS INTEGER
-    DIM progressbar1_Val AS INTEGER
+    DIM combobox1_cb AS list.Model
+    DIM listbox1_lb AS list.Model
+    DIM progressbar1_pb AS progress.Model
     DIM scrollbar1_Val AS INTEGER
     DIM tabstrip1_Val AS INTEGER
     DIM tree1_Val AS INTEGER
     DIM tree1_Collapsed AS []BOOLEAN
-    DIM textarea1_Val AS STRING
-    DIM textarea1_Cur AS INTEGER
-    DIM propgrid1_Val AS INTEGER
-    DIM scrollpanel1_Scroll AS INTEGER
+    DIM textarea1_ta AS textarea.Model
+    DIM propgrid1_tbl AS table.Model
+    DIM scrollpanel1_vp AS viewport.Model
+    DIM dialog1_Active AS BOOLEAN
+    DIM dialog1_Idx    AS INTEGER
 END TYPE
 
 FUNCTION (m AS Model) Init() AS tea.Cmd
     RETURN NIL
 END FUNCTION
 
+DIM _currentModel AS POINTER TO Model
+DIM _dlgX AS INTEGER
+DIM _dlgY AS INTEGER
+DIM _dlgW AS INTEGER
+DIM _dlgH AS INTEGER
+
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    _currentModel = @m
     DIM sz AS tea.WindowSizeMsg
     DIM szOk AS BOOLEAN
     sz, szOk = msg.(tea.WindowSizeMsg)
@@ -45,56 +79,111 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Height = sz.Height
         RETURN m, NIL
     END IF
+    DIM kpd AS tea.KeyPressMsg
+    DIM kpdOk AS BOOLEAN
+    kpd, kpdOk = msg.(tea.KeyPressMsg)
+    IF kpdOk THEN
+        DIM kpdK AS STRING = kpd.String()
+        IF m.dialog1_Active THEN
+            IF kpdK = "esc" THEN
+                m.dialog1_Active = FALSE
+                dialog1_Close("")
+                RETURN m, NIL
+            END IF
+            IF kpdK = "left" OR kpdK = "shift+tab" THEN
+                m.dialog1_Idx = m.dialog1_Idx - 1
+                IF m.dialog1_Idx < 0 THEN m.dialog1_Idx = 1
+                RETURN m, NIL
+            END IF
+            IF kpdK = "right" OR kpdK = "tab" THEN
+                m.dialog1_Idx = (m.dialog1_Idx + 1) MOD 2
+                RETURN m, NIL
+            END IF
+            IF kpdK = "enter" OR kpdK = "space" THEN
+                DIM pickeddialog1 AS STRING = ""
+                IF m.dialog1_Idx = 0 THEN pickeddialog1 = "OK"
+                IF m.dialog1_Idx = 1 THEN pickeddialog1 = "Cancel"
+                m.dialog1_Active = FALSE
+                dialog1_Close(pickeddialog1)
+                RETURN m, NIL
+            END IF
+            RETURN m, NIL
+        END IF
+    END IF
     DIM mc AS tea.MouseClickMsg
     DIM mcOk AS BOOLEAN
     mc, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mc.Button = tea.MouseLeft THEN
+        IF m.dialog1_Active AND _dlgW > 0 THEN
+            DIM lxdialog1 AS INTEGER = mc.X - _dlgX
+            DIM lydialog1 AS INTEGER = mc.Y - _dlgY
+            IF lxdialog1 >= 0 AND lydialog1 >= 0 AND lxdialog1 < _dlgW AND lydialog1 < _dlgH THEN
+                IF lydialog1 = 0 AND (lxdialog1 = _dlgW - 3 OR lxdialog1 = _dlgW - 4) THEN
+                    m.dialog1_Active = FALSE
+                    dialog1_Close("")
+                    RETURN m, NIL
+                END IF
+                IF lydialog1 = 4 THEN
+                    DIM btnWdialog1 AS []INTEGER
+                    DIM btnTdialog1 AS INTEGER = 0
+                    btnWdialog1 = APPEND(btnWdialog1, 6)
+                    btnTdialog1 = btnTdialog1 + 6
+                    btnTdialog1 = btnTdialog1 + 2
+                    btnWdialog1 = APPEND(btnWdialog1, 10)
+                    btnTdialog1 = btnTdialog1 + 10
+                    DIM innerDWdialog1 AS INTEGER = _dlgW - 6
+                    DIM padDdialog1 AS INTEGER = innerDWdialog1 - btnTdialog1
+                    IF padDdialog1 < 0 THEN padDdialog1 = 0
+                    DIM bxDdialog1 AS INTEGER = 3 + padDdialog1
+                    DIM bkDdialog1 AS INTEGER
+                    FOR bkDdialog1 = 0 TO LEN(btnWdialog1) - 1
+                        IF lxdialog1 >= bxDdialog1 AND lxdialog1 < bxDdialog1 + btnWdialog1[bkDdialog1] THEN
+                            DIM clickedLbldialog1 AS STRING = ""
+                            IF bkDdialog1 = 0 THEN clickedLbldialog1 = "OK"
+                            IF bkDdialog1 = 1 THEN clickedLbldialog1 = "Cancel"
+                            m.dialog1_Active = FALSE
+                            dialog1_Close(clickedLbldialog1)
+                            RETURN m, NIL
+                        END IF
+                        bxDdialog1 = bxDdialog1 + btnWdialog1[bkDdialog1] + 2
+                    NEXT bkDdialog1
+                END IF
+                RETURN m, NIL
+            END IF
+        END IF
         IF mc.X >= 0 AND mc.X < 0 + 80 AND mc.Y >= 0 AND mc.Y < 0 + 1 THEN
+            m.Focus = 15
+            syncFocusComp(@m)
+            _ = mc
+            RETURN m, NIL
+        END IF
+        IF mc.X >= 56 AND mc.X < 56 + 22 AND mc.Y >= 14 AND mc.Y < 14 + 1 THEN
             m.Focus = 14
+            syncFocusComp(@m)
             _ = mc
             RETURN m, NIL
         END IF
         IF mc.X >= 30 AND mc.X < 30 + 26 AND mc.Y >= 14 AND mc.Y < 14 + 7 THEN
             m.Focus = 13
-            DIM spRel13 AS INTEGER = mc.Y - 14
-            IF spRel13 = 1 AND m.scrollpanel1_Scroll > 0 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 1
-            IF spRel13 = 5 AND m.scrollpanel1_Scroll < 7 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 1
-            DIM spRelX13 AS INTEGER = mc.X - 30
-            IF spRelX13 = 24 AND spRel13 >= 2 AND spRel13 <= 4 THEN
-                DIM spThm13 AS INTEGER = 0
-                IF 7 > 0 THEN
-                    spThm13 = (m.scrollpanel1_Scroll * 2) / 7
-                    IF spThm13 < 0 THEN spThm13 = 0
-                    IF spThm13 > 2 THEN spThm13 = 2
-                END IF
-                DIM spClk13 AS INTEGER = spRel13 - 2
-                IF spClk13 < spThm13 THEN
-                    m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 5
-                    IF m.scrollpanel1_Scroll < 0 THEN m.scrollpanel1_Scroll = 0
-                END IF
-                IF spClk13 > spThm13 THEN
-                    m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 5
-                    IF m.scrollpanel1_Scroll > 7 THEN m.scrollpanel1_Scroll = 7
-                END IF
-            END IF
+            syncFocusComp(@m)
+            _ = mc
             RETURN m, NIL
         END IF
         IF mc.X >= 56 AND mc.X < 56 + 24 AND mc.Y >= 7 AND mc.Y < 7 + 5 THEN
             m.Focus = 12
-            DIM mcGRow12 AS INTEGER = mc.Y - 7
-            IF mcGRow12 >= 0 AND mcGRow12 < 4 THEN
-                m.propgrid1_Val = mcGRow12
-                dispatchChange("propgrid1")
-            END IF
+            syncFocusComp(@m)
+            _ = mc
             RETURN m, NIL
         END IF
         IF mc.X >= 56 AND mc.X < 56 + 22 AND mc.Y >= 1 AND mc.Y < 1 + 5 THEN
             m.Focus = 11
+            syncFocusComp(@m)
             _ = mc
             RETURN m, NIL
         END IF
         IF mc.X >= 30 AND mc.X < 30 + 24 AND mc.Y >= 7 AND mc.Y < 7 + 6 THEN
             m.Focus = 10
+            syncFocusComp(@m)
             DIM tmRel10 AS INTEGER = mc.Y - 7
             DIM tmVis10 AS []INTEGER = treeVisibleRows(tree1_depths(), m.tree1_Collapsed)
             IF tmRel10 >= 0 AND tmRel10 < LEN(tmVis10) THEN
@@ -110,6 +199,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF mc.X >= 30 AND mc.X < 30 + 28 AND mc.Y >= 1 AND mc.Y < 1 + 5 THEN
             m.Focus = 9
+            syncFocusComp(@m)
             DIM mcTsY9 AS INTEGER = mc.Y - 1
             DIM mcTsX9 AS INTEGER = mc.X - 30
             IF mcTsY9 = 0 THEN
@@ -136,6 +226,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF mc.X >= 2 AND mc.X < 2 + 1 AND mc.Y >= 10 AND mc.Y < 10 + 8 THEN
             m.Focus = 8
+            syncFocusComp(@m)
             DIM mcRelY8 AS INTEGER = mc.Y - 10
             IF mcRelY8 = 0 THEN
                 IF m.scrollbar1_Val > 0 THEN m.scrollbar1_Val = m.scrollbar1_Val - 1
@@ -162,48 +253,51 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF mc.X >= 2 AND mc.X < 2 + 20 AND mc.Y >= 18 AND mc.Y < 18 + 1 THEN
             m.Focus = 7
+            syncFocusComp(@m)
             _ = mc
             RETURN m, NIL
         END IF
         IF mc.X >= 2 AND mc.X < 2 + 18 AND mc.Y >= 7 AND mc.Y < 7 + 5 THEN
             m.Focus = 6
-            DIM mcRelRow6 AS INTEGER = mc.Y - 7
-            IF mcRelRow6 >= 0 AND mcRelRow6 < 3 THEN
-                m.listbox1_Val = mcRelRow6
-                dispatchChange("listbox1")
-            END IF
+            syncFocusComp(@m)
+            _ = mc
             RETURN m, NIL
         END IF
         IF mc.X >= 2 AND mc.X < 2 + 16 AND mc.Y >= 6 AND mc.Y < 6 + 1 THEN
             m.Focus = 5
-            m.combobox1_Val = (m.combobox1_Val + 1) MOD 3
-            dispatchChange("combobox1")
+            syncFocusComp(@m)
+            _ = mc
             RETURN m, NIL
         END IF
         IF mc.X >= 2 AND mc.X < 2 + 14 AND mc.Y >= 5 AND mc.Y < 5 + 1 THEN
             m.Focus = 4
+            syncFocusComp(@m)
             m.radiobutton1_Val = TRUE
             dispatchChange("radiobutton1")
             RETURN m, NIL
         END IF
         IF mc.X >= 2 AND mc.X < 2 + 14 AND mc.Y >= 4 AND mc.Y < 4 + 1 THEN
             m.Focus = 3
+            syncFocusComp(@m)
             m.checkbox1_Val = NOT m.checkbox1_Val
             dispatchChange("checkbox1")
             RETURN m, NIL
         END IF
         IF mc.X >= 2 AND mc.X < 2 + 16 AND mc.Y >= 3 AND mc.Y < 3 + 1 THEN
             m.Focus = 2
+            syncFocusComp(@m)
             _ = mc
             RETURN m, NIL
         END IF
         IF mc.X >= 2 AND mc.X < 2 + 10 AND mc.Y >= 2 AND mc.Y < 2 + 1 THEN
             m.Focus = 1
+            syncFocusComp(@m)
             _ = mc
             RETURN m, NIL
         END IF
         IF mc.X >= 2 AND mc.X < 2 + 12 AND mc.Y >= 1 AND mc.Y < 1 + 1 THEN
             m.Focus = 0
+            syncFocusComp(@m)
             dispatchClick("button1")
             RETURN m, NIL
         END IF
@@ -213,7 +307,8 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     mm, mmOk = msg.(tea.MouseMotionMsg)
     IF mmOk THEN
         DIM mmHit AS INTEGER = 0 - 1
-        IF mmHit < 0 AND mm.X >= 0 AND mm.X < 0 + 80 AND mm.Y >= 0 AND mm.Y < 0 + 1 THEN mmHit = 14
+        IF mmHit < 0 AND mm.X >= 0 AND mm.X < 0 + 80 AND mm.Y >= 0 AND mm.Y < 0 + 1 THEN mmHit = 15
+        IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 22 AND mm.Y >= 14 AND mm.Y < 14 + 1 THEN mmHit = 14
         IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 26 AND mm.Y >= 14 AND mm.Y < 14 + 7 THEN mmHit = 13
         IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 24 AND mm.Y >= 7 AND mm.Y < 7 + 5 THEN mmHit = 12
         IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 22 AND mm.Y >= 1 AND mm.Y < 1 + 5 THEN mmHit = 11
@@ -252,25 +347,15 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     mw, mwOk = msg.(tea.MouseWheelMsg)
     IF mwOk THEN
         IF mw.X >= 30 AND mw.X < 30 + 26 AND mw.Y >= 14 AND mw.Y < 14 + 7 THEN
-            IF mw.Button = tea.MouseWheelUp THEN
-                IF m.scrollpanel1_Scroll > 0 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 1
-            ELSE
-                IF m.scrollpanel1_Scroll < 7 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 1
-            END IF
+            DIM wwc13 AS tea.Cmd
+            m.scrollpanel1_vp, wwc13 = m.scrollpanel1_vp.Update(msg)
+            _ = wwc13
             RETURN m, NIL
         END IF
         IF mw.X >= 56 AND mw.X < 56 + 24 AND mw.Y >= 7 AND mw.Y < 7 + 5 THEN
-            IF mw.Button = tea.MouseWheelUp THEN
-                IF m.propgrid1_Val > 0 THEN
-                    m.propgrid1_Val = m.propgrid1_Val - 1
-                    dispatchChange("propgrid1")
-                END IF
-            ELSE
-                IF m.propgrid1_Val < 3 THEN
-                    m.propgrid1_Val = m.propgrid1_Val + 1
-                    dispatchChange("propgrid1")
-                END IF
-            END IF
+            DIM wwc12 AS tea.Cmd
+            m.propgrid1_tbl, wwc12 = m.propgrid1_tbl.Update(msg)
+            _ = wwc12
             RETURN m, NIL
         END IF
         IF mw.X >= 30 AND mw.X < 30 + 24 AND mw.Y >= 7 AND mw.Y < 7 + 6 THEN
@@ -308,31 +393,15 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF mw.X >= 2 AND mw.X < 2 + 18 AND mw.Y >= 7 AND mw.Y < 7 + 5 THEN
-            IF mw.Button = tea.MouseWheelUp THEN
-                IF m.listbox1_Val > 0 THEN
-                    m.listbox1_Val = m.listbox1_Val - 1
-                    dispatchChange("listbox1")
-                END IF
-            ELSE
-                IF m.listbox1_Val < 2 THEN
-                    m.listbox1_Val = m.listbox1_Val + 1
-                    dispatchChange("listbox1")
-                END IF
-            END IF
+            DIM wwc6 AS tea.Cmd
+            m.listbox1_lb, wwc6 = m.listbox1_lb.Update(msg)
+            _ = wwc6
             RETURN m, NIL
         END IF
         IF mw.X >= 2 AND mw.X < 2 + 16 AND mw.Y >= 6 AND mw.Y < 6 + 1 THEN
-            IF mw.Button = tea.MouseWheelUp THEN
-                IF m.combobox1_Val > 0 THEN
-                    m.combobox1_Val = m.combobox1_Val - 1
-                    dispatchChange("combobox1")
-                END IF
-            ELSE
-                IF m.combobox1_Val < 2 THEN
-                    m.combobox1_Val = m.combobox1_Val + 1
-                    dispatchChange("combobox1")
-                END IF
-            END IF
+            DIM wwc5 AS tea.Cmd
+            m.combobox1_cb, wwc5 = m.combobox1_cb.Update(msg)
+            _ = wwc5
             RETURN m, NIL
         END IF
         _ = mw
@@ -345,12 +414,14 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM key AS STRING = k.String()
         IF key = "ctrl+c" OR key = "esc" THEN RETURN m, tea.Quit
         IF key = "tab" THEN
-            m.Focus = (m.Focus + 1) MOD 15
+            m.Focus = (m.Focus + 1) MOD 16
+            syncFocusComp(@m)
             RETURN m, NIL
         END IF
         IF key = "shift+tab" THEN
             m.Focus = m.Focus - 1
-            IF m.Focus < 0 THEN m.Focus = 14
+            IF m.Focus < 0 THEN m.Focus = 15
+            syncFocusComp(@m)
             RETURN m, NIL
         END IF
         IF m.Focus = 0 THEN
@@ -362,12 +433,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF m.Focus = 2 THEN
-            IF cellLen(key) = 1 THEN m.textinput1_Val = m.textinput1_Val + key
-            IF key = "space" THEN m.textinput1_Val = m.textinput1_Val + " "
-            IF key = "backspace" AND LEN(m.textinput1_Val) > 0 THEN
-                m.textinput1_Val = Mid(m.textinput1_Val, 1, cellByteIdx(m.textinput1_Val, cellLen(m.textinput1_Val) - 1))
-            END IF
-            RETURN m, NIL
+            DIM cCmd2 AS tea.Cmd
+            m.textinput1_ti, cCmd2 = m.textinput1_ti.Update(msg)
+            RETURN m, cCmd2
         END IF
         IF m.Focus = 3 THEN
             IF key = "space" OR key = "enter" THEN
@@ -384,34 +452,18 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF m.Focus = 5 THEN
-            IF key = "up" THEN
-                IF m.combobox1_Val > 0 THEN
-                    m.combobox1_Val = m.combobox1_Val - 1
-                    dispatchChange("combobox1")
-                END IF
-            END IF
-            IF key = "down" THEN
-                IF m.combobox1_Val < 3 - 1 THEN
-                    m.combobox1_Val = m.combobox1_Val + 1
-                    dispatchChange("combobox1")
-                END IF
-            END IF
-            RETURN m, NIL
+            DIM cCmd5 AS tea.Cmd
+            DIM prevI5 AS INTEGER = m.combobox1_cb.Index()
+            m.combobox1_cb, cCmd5 = m.combobox1_cb.Update(msg)
+            IF m.combobox1_cb.Index() <> prevI5 THEN dispatchChange("combobox1")
+            RETURN m, cCmd5
         END IF
         IF m.Focus = 6 THEN
-            IF key = "up" THEN
-                IF m.listbox1_Val > 0 THEN
-                    m.listbox1_Val = m.listbox1_Val - 1
-                    dispatchChange("listbox1")
-                END IF
-            END IF
-            IF key = "down" THEN
-                IF m.listbox1_Val < 3 - 1 THEN
-                    m.listbox1_Val = m.listbox1_Val + 1
-                    dispatchChange("listbox1")
-                END IF
-            END IF
-            RETURN m, NIL
+            DIM cCmd6 AS tea.Cmd
+            DIM prevI6 AS INTEGER = m.listbox1_lb.Index()
+            m.listbox1_lb, cCmd6 = m.listbox1_lb.Update(msg)
+            IF m.listbox1_lb.Index() <> prevI6 THEN dispatchChange("listbox1")
+            RETURN m, cCmd6
         END IF
         IF m.Focus = 7 THEN
             _ = key
@@ -476,65 +528,27 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF m.Focus = 11 THEN
-            IF LEN(key) = 1 THEN
-                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur) + key + Mid(m.textarea1_Val, m.textarea1_Cur + 1, LEN(m.textarea1_Val) - m.textarea1_Cur)
-                m.textarea1_Cur = m.textarea1_Cur + 1
-            END IF
-            IF key = "space" THEN
-                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur) + " " + Mid(m.textarea1_Val, m.textarea1_Cur + 1, LEN(m.textarea1_Val) - m.textarea1_Cur)
-                m.textarea1_Cur = m.textarea1_Cur + 1
-            END IF
-            IF key = "enter" THEN
-                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur) + "\n" + Mid(m.textarea1_Val, m.textarea1_Cur + 1, LEN(m.textarea1_Val) - m.textarea1_Cur)
-                m.textarea1_Cur = m.textarea1_Cur + 1
-            END IF
-            IF key = "backspace" AND m.textarea1_Cur > 0 THEN
-                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur - 1) + Mid(m.textarea1_Val, m.textarea1_Cur + 1, LEN(m.textarea1_Val) - m.textarea1_Cur)
-                m.textarea1_Cur = m.textarea1_Cur - 1
-            END IF
-            IF key = "delete" AND m.textarea1_Cur < LEN(m.textarea1_Val) THEN
-                m.textarea1_Val = Mid(m.textarea1_Val, 1, m.textarea1_Cur) + Mid(m.textarea1_Val, m.textarea1_Cur + 2, LEN(m.textarea1_Val) - m.textarea1_Cur - 1)
-            END IF
-            IF key = "left" AND m.textarea1_Cur > 0 THEN m.textarea1_Cur = m.textarea1_Cur - 1
-            IF key = "right" AND m.textarea1_Cur < LEN(m.textarea1_Val) THEN m.textarea1_Cur = m.textarea1_Cur + 1
-            IF key = "home" THEN m.textarea1_Cur = taLineHome(m.textarea1_Val, m.textarea1_Cur)
-            IF key = "end" THEN m.textarea1_Cur = taLineEnd(m.textarea1_Val, m.textarea1_Cur)
-            IF key = "up" THEN m.textarea1_Cur = taMoveVert(m.textarea1_Val, m.textarea1_Cur, 0 - 1)
-            IF key = "down" THEN m.textarea1_Cur = taMoveVert(m.textarea1_Val, m.textarea1_Cur, 1)
-            RETURN m, NIL
+            DIM cCmd11 AS tea.Cmd
+            m.textarea1_ta, cCmd11 = m.textarea1_ta.Update(msg)
+            RETURN m, cCmd11
         END IF
         IF m.Focus = 12 THEN
-            IF key = "up" THEN
-                IF m.propgrid1_Val > 0 THEN
-                    m.propgrid1_Val = m.propgrid1_Val - 1
-                    dispatchChange("propgrid1")
-                END IF
-            END IF
-            IF key = "down" THEN
-                IF m.propgrid1_Val < 4 - 1 THEN
-                    m.propgrid1_Val = m.propgrid1_Val + 1
-                    dispatchChange("propgrid1")
-                END IF
-            END IF
-            IF key = "enter" OR key = "space" THEN dispatchChange("propgrid1")
-            RETURN m, NIL
+            DIM cCmd12 AS tea.Cmd
+            DIM prevC12 AS INTEGER = m.propgrid1_tbl.Cursor()
+            m.propgrid1_tbl, cCmd12 = m.propgrid1_tbl.Update(msg)
+            IF m.propgrid1_tbl.Cursor() <> prevC12 THEN dispatchChange("propgrid1")
+            RETURN m, cCmd12
         END IF
         IF m.Focus = 13 THEN
-            IF key = "up" AND m.scrollpanel1_Scroll > 0 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 1
-            IF key = "down" AND m.scrollpanel1_Scroll < 7 THEN m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 1
-            IF key = "pgup" THEN
-                m.scrollpanel1_Scroll = m.scrollpanel1_Scroll - 5
-                IF m.scrollpanel1_Scroll < 0 THEN m.scrollpanel1_Scroll = 0
-            END IF
-            IF key = "pgdown" THEN
-                m.scrollpanel1_Scroll = m.scrollpanel1_Scroll + 5
-                IF m.scrollpanel1_Scroll > 7 THEN m.scrollpanel1_Scroll = 7
-            END IF
-            IF key = "home" THEN m.scrollpanel1_Scroll = 0
-            IF key = "end" THEN m.scrollpanel1_Scroll = 7
-            RETURN m, NIL
+            DIM cCmd13 AS tea.Cmd
+            m.scrollpanel1_vp, cCmd13 = m.scrollpanel1_vp.Update(msg)
+            RETURN m, cCmd13
         END IF
         IF m.Focus = 14 THEN
+            _ = key
+            RETURN m, NIL
+        END IF
+        IF m.Focus = 15 THEN
             _ = key
             RETURN m, NIL
         END IF
@@ -542,86 +556,68 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     RETURN m, NIL
 END FUNCTION
 
+FUNCTION _blankCanvas(w AS INTEGER, h AS INTEGER) AS STRING
+    DIM cr AS []STRING
+    DIM ci AS INTEGER
+    FOR ci = 0 TO h - 1
+        cr = APPEND(cr, strings.Repeat(" ", w))
+    NEXT ci
+    RETURN strings.Join(cr, "\n")
+END FUNCTION
+
 FUNCTION (m AS Model) View() AS tea.View
     DIM w AS INTEGER = m.Width
     DIM h AS INTEGER = m.Height
     IF w < 60 THEN w = 80
     IF h < 20 THEN h = 24
-    DIM rows AS []STRING
-    DIM r AS INTEGER
-    FOR r = 0 TO h - 2
-        rows = APPEND(rows, strings.Repeat(" ", w))
-    NEXT r
+    DIM fullView AS STRING = _blankCanvas(w, h)
     DIM body0 AS STRING
     body0 = "[ Button ]"
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 2, body0, m.Focus = 0, m.Hover = 0)
+    DIM vw0 AS STRING = compFocusView(body0, m.Focus = 0, m.Hover = 0)
+    DIM ly0 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw0).X(2).Y(1).Z(10)
     DIM body1 AS STRING
     body1 = "Label"
-    IF 2 >= 0 AND 2 < LEN(rows) THEN rows[2] = overlayFocus(rows[2], 2, body1, m.Focus = 1, m.Hover = 1)
-    DIM body2 AS STRING
-    DIM tiPad2 AS INTEGER = 16 - 2 - cellLen(m.textinput1_Val)
-    IF tiPad2 < 0 THEN tiPad2 = 0
-    body2 = "[" + m.textinput1_Val + strings.Repeat(" ", tiPad2) + "]"
-    IF 3 >= 0 AND 3 < LEN(rows) THEN rows[3] = overlayFocus(rows[3], 2, body2, m.Focus = 2, m.Hover = 2)
+    DIM vw1 AS STRING = compFocusView(body1, m.Focus = 1, m.Hover = 1)
+    DIM ly1 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw1).X(2).Y(2).Z(11)
+    DIM vw2 AS STRING = m.textinput1_ti.View()
+    DIM ly2 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw2).X(2).Y(3).Z(12)
     DIM body3 AS STRING
     IF m.checkbox1_Val THEN
         body3 = "[x] option"
     ELSE
         body3 = "[ ] option"
     END IF
-    IF 4 >= 0 AND 4 < LEN(rows) THEN rows[4] = overlayFocus(rows[4], 2, body3, m.Focus = 3, m.Hover = 3)
+    DIM vw3 AS STRING = compFocusView(body3, m.Focus = 3, m.Hover = 3)
+    DIM ly3 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw3).X(2).Y(4).Z(13)
     DIM body4 AS STRING
     IF m.radiobutton1_Val THEN
         body4 = "(o) option"
     ELSE
         body4 = "( ) option"
     END IF
-    IF 5 >= 0 AND 5 < LEN(rows) THEN rows[5] = overlayFocus(rows[5], 2, body4, m.Focus = 4, m.Hover = 4)
-    DIM body5 AS STRING
-    DIM cbItems5 AS []STRING
-    cbItems5 = APPEND(cbItems5, "red")
-    cbItems5 = APPEND(cbItems5, "green")
-    cbItems5 = APPEND(cbItems5, "blue")
-    DIM cbCur5 AS STRING = ""
-    IF m.combobox1_Val >= 0 AND m.combobox1_Val < LEN(cbItems5) THEN cbCur5 = cbItems5[m.combobox1_Val]
-    IF LEN(cbCur5) > 12 THEN cbCur5 = Mid(cbCur5, 1, 12)
-    IF LEN(cbCur5) < 12 THEN cbCur5 = cbCur5 + strings.Repeat(" ", 12 - LEN(cbCur5))
-    body5 = "[" + cbCur5 + " v]"
-    IF 6 >= 0 AND 6 < LEN(rows) THEN rows[6] = overlayFocus(rows[6], 2, body5, m.Focus = 5, m.Hover = 5)
-    DIM items6 AS []STRING
-    items6 = APPEND(items6, "item one")
-    items6 = APPEND(items6, "item two")
-    items6 = APPEND(items6, "item three")
-    DIM lbi6 AS INTEGER
-    FOR lbi6 = 0 TO 5 - 1
-        DIM lbItem6 AS STRING = ""
-        IF lbi6 < LEN(items6) THEN lbItem6 = items6[lbi6]
-        IF cellLen(lbItem6) > 16 THEN lbItem6 = Mid(lbItem6, 1, cellByteIdx(lbItem6, 16))
-        IF cellLen(lbItem6) < 16 THEN lbItem6 = lbItem6 + strings.Repeat(" ", 16 - cellLen(lbItem6))
-        DIM lbMark6 AS STRING = "  "
-        IF lbi6 = m.listbox1_Val THEN lbMark6 = "▶ "
-        DIM lbRow6 AS STRING = lbMark6 + lbItem6
-        DIM yPos6 AS INTEGER = 7 + lbi6
-        IF yPos6 >= 0 AND yPos6 < LEN(rows) THEN rows[yPos6] = overlayFocus(rows[yPos6], 2, lbRow6, m.Focus = 6, m.Hover = 6)
-    NEXT lbi6
-    DIM body7 AS STRING
-    DIM pbFilled7 AS INTEGER = (m.progressbar1_Val - 0) * 18 / 100
-    IF pbFilled7 < 0 THEN pbFilled7 = 0
-    IF pbFilled7 > 18 THEN pbFilled7 = 18
-    body7 = "[" + strings.Repeat("█", pbFilled7) + strings.Repeat("░", 18 - pbFilled7) + "]"
-    IF 18 >= 0 AND 18 < LEN(rows) THEN rows[18] = overlayFocus(rows[18], 2, body7, m.Focus = 7, m.Hover = 7)
-    DIM svi8 AS INTEGER
+    DIM vw4 AS STRING = compFocusView(body4, m.Focus = 4, m.Hover = 4)
+    DIM ly4 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw4).X(2).Y(5).Z(14)
+    DIM vw5 AS STRING = m.combobox1_cb.View()
+    DIM ly5 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw5).X(2).Y(6).Z(15)
+    DIM vw6 AS STRING = m.listbox1_lb.View()
+    DIM ly6 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw6).X(2).Y(7).Z(16)
+    DIM vw7 AS STRING = m.progressbar1_pb.ViewAs(0.400)
+    DIM ly7 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw7).X(2).Y(18).Z(17)
     DIM svThumb8 AS INTEGER = 1 + ((m.scrollbar1_Val - 0) * (8 - 3)) / 100
     IF svThumb8 < 1 THEN svThumb8 = 1
     IF svThumb8 > 8 - 2 THEN svThumb8 = 8 - 2
+    DIM svraw8 AS STRING = ""
+    DIM svi8 AS INTEGER
     FOR svi8 = 0 TO 8 - 1
         DIM svGlyph8 AS STRING = "│"
         IF svi8 = 0 THEN svGlyph8 = "▲"
         IF svi8 = 8 - 1 THEN svGlyph8 = "▼"
         IF svi8 = svThumb8 THEN svGlyph8 = "█"
-        DIM svY8 AS INTEGER = 10 + svi8
-        IF svY8 >= 0 AND svY8 < LEN(rows) THEN rows[svY8] = overlayFocus(rows[svY8], 2, svGlyph8, m.Focus = 8, m.Hover = 8)
+        IF svi8 > 0 THEN svraw8 = svraw8 + "\n"
+        svraw8 = svraw8 + svGlyph8
     NEXT svi8
+    DIM vw8 AS STRING = compFocusView(svraw8, m.Focus = 8, m.Hover = 8)
+    DIM ly8 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw8).X(2).Y(10).Z(18)
     DIM tsItems9 AS []STRING
     tsItems9 = APPEND(tsItems9, "General")
     tsItems9 = APPEND(tsItems9, "Advanced")
@@ -639,20 +635,20 @@ FUNCTION (m AS Model) View() AS tea.View
         IF m.Hover = 9 AND m.HoverTab = tsk9 AND m.Focus <> 9 THEN tsSeg9 = hoverStyle.Render(tsSeg9)
         tsBar9 = tsBar9 + tsSeg9
     NEXT tsk9
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 30, tsBar9, m.Focus = 9, FALSE)
     DIM tsRule9 AS STRING = strings.Repeat("─", 28)
-    DIM tsRuleY9 AS INTEGER = 1 + 1
-    IF tsRuleY9 >= 0 AND tsRuleY9 < LEN(rows) THEN rows[tsRuleY9] = overlayFocus(rows[tsRuleY9], 30, tsRule9, m.Focus = 9, FALSE)
     DIM tsAct9 AS STRING = ""
     IF m.tabstrip1_Val >= 0 AND m.tabstrip1_Val < LEN(tsItems9) THEN tsAct9 = tsItems9[m.tabstrip1_Val]
     DIM tsContent9 AS STRING = " " + tsAct9 + " tab"
-    DIM tsContentY9 AS INTEGER = 1 + 2
-    IF tsContentY9 >= 0 AND tsContentY9 < LEN(rows) THEN rows[tsContentY9] = overlayFocus(rows[tsContentY9], 30, tsContent9, m.Focus = 9, FALSE)
+    DIM vwraw9 AS STRING = tsBar9 + "\n" + tsRule9 + "\n" + tsContent9
+    DIM vw9 AS STRING = compFocusView(vwraw9, m.Focus = 9, FALSE)
+    DIM ly9 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw9).X(30).Y(1).Z(19)
     DIM tnVis10 AS []INTEGER = treeVisibleRows(tree1_depths(), m.tree1_Collapsed)
     DIM tnDep10 AS []INTEGER = tree1_depths()
     DIM tnLab10 AS []STRING = tree1_labels()
+    DIM vwraw10 AS STRING = ""
     DIM tnR10 AS INTEGER
     FOR tnR10 = 0 TO 6 - 1
+        DIM tnLine10 AS STRING = ""
         IF tnR10 < LEN(tnVis10) THEN
             DIM tnIdx10 AS INTEGER = tnVis10[tnR10]
             DIM tnD10 AS INTEGER = tnDep10[tnIdx10]
@@ -661,109 +657,54 @@ FUNCTION (m AS Model) View() AS tea.View
                 tnG10 = "▾"
                 IF tnIdx10 < LEN(m.tree1_Collapsed) AND m.tree1_Collapsed[tnIdx10] THEN tnG10 = "▸"
             END IF
-            DIM tnLine10 AS STRING = strings.Repeat("  ", tnD10) + tnG10 + " " + tnLab10[tnIdx10]
-            DIM tnY10 AS INTEGER = 7 + tnR10
-            IF tnY10 >= 0 AND tnY10 < LEN(rows) THEN rows[tnY10] = overlayFocus(rows[tnY10], 30, tnLine10, m.Focus = 10, m.Hover = 10)
+            tnLine10 = strings.Repeat("  ", tnD10) + tnG10 + " " + tnLab10[tnIdx10]
+            IF tnIdx10 = m.tree1_Val THEN tnLine10 = focusStyle.Render(tnLine10)
         END IF
+        IF tnR10 > 0 THEN vwraw10 = vwraw10 + "\n"
+        vwraw10 = vwraw10 + tnLine10
     NEXT tnR10
-    DIM taTop11 AS STRING = "┌" + strings.Repeat("─", 20) + "┐"
-    IF 1 >= 0 AND 1 < LEN(rows) THEN rows[1] = overlayFocus(rows[1], 56, taTop11, FALSE, m.Hover = 11 AND m.Focus <> 11)
-    DIM taLines11 AS []STRING = strings.Split(m.textarea1_Val, "\n")
-    DIM taCRow11 AS INTEGER
-    DIM taCCol11 AS INTEGER
-    taCRow11, taCCol11 = taRowCol(m.textarea1_Val, m.textarea1_Cur)
-    DIM taStart11 AS INTEGER = 0
-    IF taCRow11 >= 3 THEN taStart11 = taCRow11 - 3 + 1
-    DIM taRow11 AS INTEGER
-    FOR taRow11 = 0 TO 3 - 1
-        DIM taSrc11 AS INTEGER = taStart11 + taRow11
-        DIM taLn11 AS STRING = ""
-        IF taSrc11 < LEN(taLines11) THEN taLn11 = taLines11[taSrc11]
-        IF m.Focus = 11 AND taSrc11 = taCRow11 THEN
-            DIM taCp11 AS INTEGER = taCCol11
-            IF taCp11 >= LEN(taLn11) THEN
-                taLn11 = taLn11 + "█"
-            ELSE
-                taLn11 = Mid(taLn11, 1, taCp11) + "█" + Mid(taLn11, taCp11 + 2, LEN(taLn11) - taCp11 - 1)
-            END IF
-        END IF
-        IF lipgloss.Width(taLn11) > 20 THEN taLn11 = Mid(taLn11, 1, 20)
-        IF lipgloss.Width(taLn11) < 20 THEN taLn11 = taLn11 + strings.Repeat(" ", 20 - lipgloss.Width(taLn11))
-        DIM taLine11 AS STRING = "│" + taLn11 + "│"
-        DIM taY11 AS INTEGER = 1 + 1 + taRow11
-        IF taY11 >= 0 AND taY11 < LEN(rows) THEN rows[taY11] = overlayFocus(rows[taY11], 56, taLine11, FALSE, m.Hover = 11 AND m.Focus <> 11)
-    NEXT taRow11
-    DIM taBot11 AS STRING = "└" + strings.Repeat("─", 20) + "┘"
-    DIM taBotY11 AS INTEGER = 1 + 5 - 1
-    IF taBotY11 >= 0 AND taBotY11 < LEN(rows) THEN rows[taBotY11] = overlayFocus(rows[taBotY11], 56, taBot11, FALSE, m.Hover = 11 AND m.Focus <> 11)
-    DIM gKeys12 AS []STRING
-    DIM gVals12 AS []STRING
-    gKeys12 = APPEND(gKeys12, "Name")
-    gVals12 = APPEND(gVals12, "Widget1")
-    gKeys12 = APPEND(gKeys12, "Width")
-    gVals12 = APPEND(gVals12, "100")
-    gKeys12 = APPEND(gKeys12, "Height")
-    gVals12 = APPEND(gVals12, "40")
-    gKeys12 = APPEND(gKeys12, "Visible")
-    gVals12 = APPEND(gVals12, "true")
-    DIM gRow12 AS INTEGER
-    FOR gRow12 = 0 TO 5 - 1
-        IF gRow12 < LEN(gKeys12) THEN
-            DIM gk12 AS STRING = gKeys12[gRow12]
-            DIM gv12 AS STRING = gVals12[gRow12]
-            IF lipgloss.Width(gk12) > 10 THEN gk12 = Mid(gk12, 1, 10)
-            IF lipgloss.Width(gk12) < 10 THEN gk12 = gk12 + strings.Repeat(" ", 10 - lipgloss.Width(gk12))
-            DIM gmk12 AS STRING = "  "
-            IF gRow12 = m.propgrid1_Val THEN gmk12 = "▶ "
-            DIM gLine12 AS STRING = gmk12 + gk12 + "│ " + gv12
-            DIM gY12 AS INTEGER = 7 + gRow12
-            IF gY12 >= 0 AND gY12 < LEN(rows) THEN rows[gY12] = overlayFocus(rows[gY12], 56, gLine12, FALSE, m.Hover = 12 AND m.Focus <> 12)
-        END IF
-    NEXT gRow12
-    DIM spItems13 AS []STRING
-    spItems13 = APPEND(spItems13, "Content line 1")
-    spItems13 = APPEND(spItems13, "Content line 2")
-    spItems13 = APPEND(spItems13, "Content line 3")
-    spItems13 = APPEND(spItems13, "Content line 4")
-    spItems13 = APPEND(spItems13, "Content line 5")
-    spItems13 = APPEND(spItems13, "Content line 6")
-    spItems13 = APPEND(spItems13, "Content line 7")
-    spItems13 = APPEND(spItems13, "Content line 8")
-    spItems13 = APPEND(spItems13, "Content line 9")
-    spItems13 = APPEND(spItems13, "Content line 10")
-    spItems13 = APPEND(spItems13, "Content line 11")
-    spItems13 = APPEND(spItems13, "Content line 12")
-    DIM spTop13 AS STRING = "┌" + strings.Repeat("─", 24) + "┐"
-    IF 14 >= 0 AND 14 < LEN(rows) THEN rows[14] = overlayFocus(rows[14], 30, spTop13, FALSE, m.Hover = 13 AND m.Focus <> 13)
-    DIM spThumb13 AS INTEGER = 0 - 1
-    IF 7 > 0 AND 3 > 0 THEN
-        spThumb13 = (m.scrollpanel1_Scroll * (3 - 1)) / 7
-        IF spThumb13 < 0 THEN spThumb13 = 0
-        IF spThumb13 > 3 - 1 THEN spThumb13 = 3 - 1
+    DIM vw10 AS STRING = vwraw10
+    IF m.Hover = 10 AND m.Focus <> 10 THEN vw10 = hoverStyle.Render(vwraw10)
+    DIM ly10 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw10).X(30).Y(7).Z(20)
+    DIM vw11 AS STRING = m.textarea1_ta.View()
+    DIM ly11 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw11).X(56).Y(1).Z(21)
+    DIM vw12 AS STRING = m.propgrid1_tbl.View()
+    DIM ly12 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw12).X(56).Y(7).Z(22)
+    DIM vw13 AS STRING = m.scrollpanel1_vp.View()
+    DIM ly13 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw13).X(30).Y(14).Z(23)
+    DIM body15 AS STRING
+    body15 = "01234567890123456789012345678901234567890123456789012345678901234567890123456789"
+    DIM vw15 AS STRING = compFocusView(body15, m.Focus = 15, m.Hover = 15)
+    DIM ly15 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw15).X(0).Y(0).Z(25)
+    DIM baseLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)
+    DIM cmpLy AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(baseLy, ly0, ly1, ly2, ly3, ly4, ly5, ly6, ly7, ly8, ly9, ly10, ly11, ly12, ly13, ly15)
+    fullView = cmpLy.Render()
+    DIM dlgStr AS STRING = ""
+    IF dlgStr = "" AND m.dialog1_Active THEN
+        DIM btnsdialog1 AS []STRING
+        btnsdialog1 = APPEND(btnsdialog1, "OK")
+        btnsdialog1 = APPEND(btnsdialog1, "Cancel")
+        dlgStr = fdRenderConfirm("Confirm", "Are you sure?", btnsdialog1, m.dialog1_Idx)
     END IF
-    DIM spRow13 AS INTEGER
-    FOR spRow13 = 0 TO 5 - 1
-        DIM spSrc13 AS INTEGER = m.scrollpanel1_Scroll + spRow13
-        DIM spcl13 AS STRING = ""
-        IF spSrc13 < LEN(spItems13) THEN spcl13 = spItems13[spSrc13]
-        IF lipgloss.Width(spcl13) > 23 THEN spcl13 = Mid(spcl13, 1, 23)
-        IF lipgloss.Width(spcl13) < 23 THEN spcl13 = spcl13 + strings.Repeat(" ", 23 - lipgloss.Width(spcl13))
-        DIM spsb13 AS STRING = "░"
-        IF spRow13 = 0 THEN spsb13 = "▲"
-        IF spRow13 = 5 - 1 THEN spsb13 = "▼"
-        IF spRow13 >= 1 AND spRow13 <= 5 - 2 AND (spRow13 - 1) = spThumb13 THEN spsb13 = "█"
-        DIM spLine13 AS STRING = "│" + spcl13 + spsb13 + "│"
-        DIM spY13 AS INTEGER = 14 + 1 + spRow13
-        IF spY13 >= 0 AND spY13 < LEN(rows) THEN rows[spY13] = overlayFocus(rows[spY13], 30, spLine13, FALSE, m.Hover = 13 AND m.Focus <> 13)
-    NEXT spRow13
-    DIM spBot13 AS STRING = "└" + strings.Repeat("─", 24) + "┘"
-    DIM spBotY13 AS INTEGER = 14 + 6
-    IF spBotY13 >= 0 AND spBotY13 < LEN(rows) THEN rows[spBotY13] = overlayFocus(rows[spBotY13], 30, spBot13, FALSE, m.Hover = 13 AND m.Focus <> 13)
-    DIM body14 AS STRING
-    body14 = "01234567890123456789012345678901234567890123456789012345678901234567890123456789"
-    IF 0 >= 0 AND 0 < LEN(rows) THEN rows[0] = overlayFocus(rows[0], 0, body14, m.Focus = 14, m.Hover = 14)
-    rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
-    DIM fullView AS STRING = strings.Join(rows, "\n")
+    IF dlgStr <> "" THEN
+        DIM dwW AS INTEGER = lipgloss.Width(dlgStr)
+        DIM dwH AS INTEGER = lipgloss.Height(dlgStr)
+        DIM dwX AS INTEGER = (w - dwW) / 2
+        DIM dwY AS INTEGER = (h - dwH) / 2
+        IF dwX < 0 THEN dwX = 0
+        IF dwY < 0 THEN dwY = 0
+        _dlgX = dwX
+        _dlgY = dwY
+        _dlgW = dwW
+        _dlgH = dwH
+        DIM dBg AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)
+        DIM dLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dlgStr).X(dwX).Y(dwY).Z(100)
+        DIM dCmp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(dBg, dLy)
+        fullView = dCmp.Render()
+    ELSE
+        _dlgW = 0
+        _dlgH = 0
+    END IF
     DIM vw AS tea.View = tea.NewView(fullView)
     vw.MouseMode = tea.MouseModeAllMotion
     vw.AltScreen = TRUE
@@ -774,9 +715,41 @@ SUB Main()
     DIM m AS Model
     m.Hover = 0 - 1
     m.HoverTab = 0 - 1
-    m.combobox1_Val = 0
-    m.listbox1_Val = 0
-    m.progressbar1_Val = 40
+    m.textinput1_ti = textinput.New()
+    m.textinput1_ti.Prompt = ""
+    m.textinput1_ti.SetWidth(15)
+    DIM itemscombobox1 AS []list.Item
+    DIM itcombobox10 AS _LItem
+    itcombobox10.cap = "red"
+    itemscombobox1 = APPEND(itemscombobox1, itcombobox10)
+    DIM itcombobox11 AS _LItem
+    itcombobox11.cap = "green"
+    itemscombobox1 = APPEND(itemscombobox1, itcombobox11)
+    DIM itcombobox12 AS _LItem
+    itcombobox12.cap = "blue"
+    itemscombobox1 = APPEND(itemscombobox1, itcombobox12)
+    m.combobox1_cb = list.New(itemscombobox1, _newMenuDelegate(), 16, 6)
+    m.combobox1_cb.SetShowHelp(FALSE)
+    m.combobox1_cb.SetShowStatusBar(FALSE)
+    m.combobox1_cb.SetShowTitle(FALSE)
+    m.combobox1_cb.SetFilteringEnabled(FALSE)
+    DIM itemslistbox1 AS []list.Item
+    DIM itlistbox10 AS _LItem
+    itlistbox10.cap = "item one"
+    itemslistbox1 = APPEND(itemslistbox1, itlistbox10)
+    DIM itlistbox11 AS _LItem
+    itlistbox11.cap = "item two"
+    itemslistbox1 = APPEND(itemslistbox1, itlistbox11)
+    DIM itlistbox12 AS _LItem
+    itlistbox12.cap = "item three"
+    itemslistbox1 = APPEND(itemslistbox1, itlistbox12)
+    m.listbox1_lb = list.New(itemslistbox1, _newMenuDelegate(), 18, 5)
+    m.listbox1_lb.SetShowHelp(FALSE)
+    m.listbox1_lb.SetShowStatusBar(FALSE)
+    m.listbox1_lb.SetShowTitle(FALSE)
+    m.listbox1_lb.SetFilteringEnabled(FALSE)
+    m.progressbar1_pb = progress.New()
+    m.progressbar1_pb.SetWidth(20)
     m.scrollbar1_Val = 0
     m.tabstrip1_Val = 0
     m.tree1_Val = 0
@@ -784,9 +757,42 @@ SUB Main()
     FOR seedCtree1 = 0 TO 5
         m.tree1_Collapsed = APPEND(m.tree1_Collapsed, FALSE)
     NEXT seedCtree1
-    m.textarea1_Val = "Edit me..."
-    m.textarea1_Cur = LEN(m.textarea1_Val)
-    m.propgrid1_Val = 0
+    m.textarea1_ta = textarea.New()
+    m.textarea1_ta.SetWidth(22)
+    m.textarea1_ta.SetHeight(5)
+    m.textarea1_ta.SetValue("Edit me...")
+    DIM colspropgrid1 AS []table.Column
+    DIM ckpropgrid1 AS table.Column
+    ckpropgrid1.Title = "Key"
+    ckpropgrid1.Width = 11
+    DIM cvpropgrid1 AS table.Column
+    cvpropgrid1.Title = "Value"
+    cvpropgrid1.Width = 11
+    colspropgrid1 = APPEND(colspropgrid1, ckpropgrid1)
+    colspropgrid1 = APPEND(colspropgrid1, cvpropgrid1)
+    DIM rwspropgrid1 AS []table.Row
+    DIM rwpropgrid10 AS table.Row
+    rwpropgrid10 = APPEND(rwpropgrid10, "Name")
+    rwpropgrid10 = APPEND(rwpropgrid10, "Widget1")
+    rwspropgrid1 = APPEND(rwspropgrid1, rwpropgrid10)
+    DIM rwpropgrid11 AS table.Row
+    rwpropgrid11 = APPEND(rwpropgrid11, "Width")
+    rwpropgrid11 = APPEND(rwpropgrid11, "100")
+    rwspropgrid1 = APPEND(rwspropgrid1, rwpropgrid11)
+    DIM rwpropgrid12 AS table.Row
+    rwpropgrid12 = APPEND(rwpropgrid12, "Height")
+    rwpropgrid12 = APPEND(rwpropgrid12, "40")
+    rwspropgrid1 = APPEND(rwspropgrid1, rwpropgrid12)
+    DIM rwpropgrid13 AS table.Row
+    rwpropgrid13 = APPEND(rwpropgrid13, "Visible")
+    rwpropgrid13 = APPEND(rwpropgrid13, "true")
+    rwspropgrid1 = APPEND(rwspropgrid1, rwpropgrid13)
+    m.propgrid1_tbl = table.New(table.WithColumns(colspropgrid1), table.WithRows(rwspropgrid1), table.WithHeight(5))
+    m.scrollpanel1_vp = viewport.New()
+    m.scrollpanel1_vp.SetWidth(26)
+    m.scrollpanel1_vp.SetHeight(7)
+    m.scrollpanel1_vp.SetContent("" + "Content line 1" + "\n" + "Content line 2" + "\n" + "Content line 3" + "\n" + "Content line 4" + "\n" + "Content line 5" + "\n" + "Content line 6" + "\n" + "Content line 7" + "\n" + "Content line 8" + "\n" + "Content line 9" + "\n" + "Content line 10" + "\n" + "Content line 11" + "\n" + "Content line 12")
+    syncFocusComp(@m)
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)
     DIM final AS tea.Model
     DIM rerr AS ERROR
@@ -795,109 +801,40 @@ SUB Main()
     _ = final
 END SUB
 
-FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER
-    DIM b AS INTEGER = 0
-    DIM c AS INTEGER = 0
-    DIM lead AS INTEGER = 0
-    DIM nb AS INTEGER = 0
-    DIM fb AS INTEGER = 0
-    DO WHILE b < LEN(sIn) AND c < cell
-        lead = Asc(Mid(sIn, b + 1, 1))
-        IF lead = 27 THEN
-            b = b + 1
-            IF b < LEN(sIn) AND Asc(Mid(sIn, b + 1, 1)) = 91 THEN b = b + 1
-            DO WHILE b < LEN(sIn)
-                fb = Asc(Mid(sIn, b + 1, 1))
-                b = b + 1
-                IF fb >= 64 AND fb <= 126 THEN EXIT DO
-            LOOP
-        ELSE
-            nb = 1
-            IF lead >= 240 THEN
-                nb = 4
-            ELSEIF lead >= 224 THEN
-                nb = 3
-            ELSEIF lead >= 192 THEN
-                nb = 2
-            END IF
-            b = b + nb
-            c = c + 1
-        END IF
-    LOOP
-    RETURN b
-END FUNCTION
-
-FUNCTION cellLen(sIn AS STRING) AS INTEGER
-    DIM b AS INTEGER = 0
-    DIM c AS INTEGER = 0
-    DO WHILE b < LEN(sIn)
-        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))
-        DIM nb AS INTEGER = 1
-        IF lead >= 240 THEN
-            nb = 4
-        ELSEIF lead >= 224 THEN
-            nb = 3
-        ELSEIF lead >= 192 THEN
-            nb = 2
-        END IF
-        b = b + nb
-        c = c + 1
-    LOOP
-    RETURN c
-END FUNCTION
-
-FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
-    DIM txtCells AS INTEGER = 0
-    DIM tb AS INTEGER = 0
-    DO WHILE tb < LEN(txt)
-        DIM tl AS INTEGER = Asc(Mid(txt, tb + 1, 1))
-        DIM tn AS INTEGER = 1
-        IF tl >= 240 THEN
-            tn = 4
-        ELSEIF tl >= 224 THEN
-            tn = 3
-        ELSEIF tl >= 192 THEN
-            tn = 2
-        END IF
-        tb = tb + tn
-        txtCells = txtCells + 1
-    LOOP
-    DIM startB AS INTEGER = cellByteIdx(row, col)
-    DIM endB AS INTEGER = cellByteIdx(row, col + txtCells)
-    DIM lf AS STRING = ""
-    IF startB > 0 THEN lf = Mid(row, 1, startB)
-    DIM rt AS STRING = ""
-    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
-    DIM pre AS STRING = ""
-    IF strings.Contains(lf, Chr(27)) THEN pre = Chr(27) + "[0m"
-    RETURN lf + pre + txt + rt
-END FUNCTION
-
-FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
-    DIM cells AS INTEGER = lipgloss.Width(txt)
-    DIM startB AS INTEGER = cellByteIdx(row, col)
-    DIM endB AS INTEGER = cellByteIdx(row, col + cells)
-    DIM lf AS STRING = ""
-    IF startB > 0 THEN lf = Mid(row, 1, startB)
-    DIM rt AS STRING = ""
-    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
-    RETURN lf + txt + rt
-END FUNCTION
+SUB syncFocusComp(m AS POINTER TO Model)
+    m.textinput1_ti.Blur()
+    m.textarea1_ta.Blur()
+    m.propgrid1_tbl.Blur()
+    IF m.Focus = 2 THEN
+        DIM fcc2 AS tea.Cmd = m.textinput1_ti.Focus()
+        _ = fcc2
+    END IF
+    IF m.Focus = 11 THEN
+        DIM fcc11 AS tea.Cmd = m.textarea1_ta.Focus()
+        _ = fcc11
+    END IF
+    IF m.Focus = 12 THEN
+        m.propgrid1_tbl.Focus()
+    END IF
+END SUB
 
 DIM focusStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
 DIM hoverStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
 
-FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN) AS STRING
-    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))
-    IF hovered THEN RETURN overlayRowAt(row, col, hoverStyle.Render(txt))
-    RETURN overlayRow(row, col, txt)
+FUNCTION compFocusView(v AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN) AS STRING
+    IF focused THEN RETURN focusStyle.Render(v)
+    IF hovered THEN RETURN hoverStyle.Render(v)
+    RETURN v
 END FUNCTION
 
 ' Generated dispatcher — routes a Button click to its user handler.
 ' When a Button has OnClickDialog set, the dialog's Show<Name>()
 ' fires first so the user doesn't have to wire it from code.
 SUB dispatchClick(id AS STRING)
-    IF id = "button1" THEN button1_Click()
+    IF id = "button1" THEN
+        Showdialog1()
+        button1_Click()
+    END IF
 END SUB
 
 ' Generated dispatcher — routes a value change to its _Change handler.
@@ -1011,6 +948,118 @@ FUNCTION taRowCol(text AS STRING, cur AS INTEGER) AS (INTEGER, INTEGER)
     RETURN row, col
 END FUNCTION
 
+' Showdialog1 — pop the dialog1 dialog.
+' Call from inside a _Click / _Change handler. On commit/
+' cancel dialog1_Close(button STRING) fires (defined
+' below the marker — user fills in the body).
+SUB Showdialog1()
+    IF _currentModel = NIL THEN RETURN
+    _currentModel.dialog1_Active = TRUE
+    _currentModel.dialog1_Idx    = 0
+END SUB
+
+FUNCTION fdRenderConfirm(title AS STRING, msg AS STRING, buttons AS []STRING, activeIdx AS INTEGER) AS STRING
+    DIM innerW AS INTEGER = 48
+    DIM cBg     AS STRING = "#1a1b2e"
+    DIM cFg     AS STRING = "#e0def4"
+    DIM cAccent AS STRING = "#7dcfff"
+    DIM cBorder AS STRING = "#3b3d5e"
+    DIM cHl     AS STRING = "#2d4f67"
+    DIM cClose  AS STRING = "#f9e2af"
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder)).Background(lipgloss.Color(cBg))
+    DIM titleStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg)).Bold(TRUE).Italic(TRUE)
+    DIM bodyStyle   AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cBg)).Width(innerW)
+    DIM btnStyle    AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cBg))
+    DIM btnActive   AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cHl)).Bold(TRUE)
+    DIM bgFill      AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg))
+    DIM closeStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cClose)).Background(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM body AS STRING = bodyStyle.Render(msg)
+    DIM totalW AS INTEGER = 0
+    DIM bi AS INTEGER
+    FOR bi = 0 TO LEN(buttons) - 1
+        totalW = totalW + lipgloss.Width("[ " + buttons[bi] + " ]")
+        IF bi < LEN(buttons) - 1 THEN totalW = totalW + 2
+    NEXT bi
+    DIM padBtn AS INTEGER = innerW - totalW
+    IF padBtn < 0 THEN padBtn = 0
+    DIM btnRow AS STRING = bgFill.Render(strings.Repeat(" ", padBtn))
+    FOR bi = 0 TO LEN(buttons) - 1
+        DIM lbl AS STRING = "[ " + buttons[bi] + " ]"
+        IF bi = activeIdx THEN
+            btnRow = btnRow + btnActive.Render(lbl)
+        ELSE
+            btnRow = btnRow + btnStyle.Render(lbl)
+        END IF
+        IF bi < LEN(buttons) - 1 THEN btnRow = btnRow + bgFill.Render("  ")
+    NEXT bi
+    DIM spacer AS STRING = bodyStyle.Render(" ")
+    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, body, spacer, btnRow)
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderTop(FALSE).BorderForeground(lipgloss.Color(cBorder)).BorderBackground(lipgloss.Color(cBg)).Background(lipgloss.Color(cBg)).Padding(1, 2)
+    DIM bodyStr AS STRING = frame.Render(stacked)
+    DIM totalDW AS INTEGER = lipgloss.Width(bodyStr)
+    DIM titleTxt AS STRING = " " + title + " "
+    DIM titleLen AS INTEGER = lipgloss.Width(titleTxt)
+    DIM dashLen AS INTEGER = totalDW - titleLen - 6
+    IF dashLen < 0 THEN dashLen = 0
+    DIM topBorder AS STRING = borderStyle.Render("╭─") + titleStyle.Render(titleTxt) + borderStyle.Render(strings.Repeat("─", dashLen) + " ") + closeStyle.Render("✕") + borderStyle.Render(" ╮")
+    RETURN topBorder + "\n" + bodyStr
+END FUNCTION
+
+FUNCTION fdRenderInput(title AS STRING, prompt AS STRING, txt AS STRING, onField AS BOOLEAN, activeIdx AS INTEGER) AS STRING
+    DIM innerW AS INTEGER = 48
+    DIM cBg     AS STRING = "#1a1b2e"
+    DIM cFg     AS STRING = "#e0def4"
+    DIM cAccent AS STRING = "#7dcfff"
+    DIM cBorder AS STRING = "#3b3d5e"
+    DIM cHl     AS STRING = "#2d4f67"
+    DIM cClose  AS STRING = "#f9e2af"
+    DIM cField  AS STRING = "#11121f"
+    DIM borderStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cBorder)).Background(lipgloss.Color(cBg))
+    DIM titleStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cBg)).Bold(TRUE).Italic(TRUE)
+    DIM bodyStyle   AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cBg)).Width(innerW)
+    DIM fieldStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cField)).Width(innerW)
+    DIM btnStyle    AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cBg))
+    DIM btnActive   AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cFg)).Background(lipgloss.Color(cHl)).Bold(TRUE)
+    DIM bgFill      AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cBg))
+    DIM closeStyle  AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(cClose)).Background(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM promptRow AS STRING = bodyStyle.Render(prompt)
+    DIM fieldTxt AS STRING = " " + txt
+    IF onField THEN fieldTxt = fieldTxt + "█"
+    DIM fieldRow AS STRING = fieldStyle.Render(fieldTxt)
+    DIM buttons AS []STRING
+    buttons = APPEND(buttons, "OK")
+    buttons = APPEND(buttons, "Cancel")
+    DIM totalW AS INTEGER = 0
+    DIM bi AS INTEGER
+    FOR bi = 0 TO LEN(buttons) - 1
+        totalW = totalW + lipgloss.Width("[ " + buttons[bi] + " ]")
+        IF bi < LEN(buttons) - 1 THEN totalW = totalW + 2
+    NEXT bi
+    DIM padBtn AS INTEGER = innerW - totalW
+    IF padBtn < 0 THEN padBtn = 0
+    DIM btnRow AS STRING = bgFill.Render(strings.Repeat(" ", padBtn))
+    FOR bi = 0 TO LEN(buttons) - 1
+        DIM lbl AS STRING = "[ " + buttons[bi] + " ]"
+        IF bi = activeIdx THEN
+            btnRow = btnRow + btnActive.Render(lbl)
+        ELSE
+            btnRow = btnRow + btnStyle.Render(lbl)
+        END IF
+        IF bi < LEN(buttons) - 1 THEN btnRow = btnRow + bgFill.Render("  ")
+    NEXT bi
+    DIM spacer AS STRING = bodyStyle.Render(" ")
+    DIM stacked AS STRING = lipgloss.JoinVertical(lipgloss.Left, promptRow, spacer, fieldRow, spacer, btnRow)
+    DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderTop(FALSE).BorderForeground(lipgloss.Color(cBorder)).BorderBackground(lipgloss.Color(cBg)).Background(lipgloss.Color(cBg)).Padding(1, 2)
+    DIM bodyStr AS STRING = frame.Render(stacked)
+    DIM totalDW AS INTEGER = lipgloss.Width(bodyStr)
+    DIM titleTxt AS STRING = " " + title + " "
+    DIM titleLen AS INTEGER = lipgloss.Width(titleTxt)
+    DIM dashLen AS INTEGER = totalDW - titleLen - 6
+    IF dashLen < 0 THEN dashLen = 0
+    DIM topBorder AS STRING = borderStyle.Render("╭─") + titleStyle.Render(titleTxt) + borderStyle.Render(strings.Repeat("─", dashLen) + " ") + closeStyle.Render("✕") + borderStyle.Render(" ╮")
+    RETURN topBorder + "\n" + bodyStr
+END FUNCTION
+
 ' ===== DBTUI:USER ===== DO NOT EDIT OR DELETE THIS LINE =====
 ' Your code below — DBtui preserves everything here on F5.
 
@@ -1082,4 +1131,12 @@ END SUB
 ' Click handler for button5 — edit freely.
 SUB button5_Click()
     ' TODO: your code here.
+END SUB
+
+' Close handler for dialog1 — edit freely.
+SUB dialog1_Close(button AS STRING)
+    ' Called when the user dismisses dialog1.
+    ' `button` is the label clicked (e.g. "OK"), or ""
+    ' for Esc / ✕ close. Add your branching code here.
+    _ = button
 END SUB

@@ -118,6 +118,40 @@ END FUNCTION
 ' <name>_Val; a > marker when focused). Row 1: rule. Row 2: active-tab
 ' content placeholder. Plain text — no lipgloss dependency. Caller supplies
 ' the widget, its suffix, and the emitted x/y origin expressions + quote.
+' Layer view (Charm path): build the 3-line tab block (caption bar, rule,
+' content) as a string and place it as a lipgloss layer. Per-tab hover is
+' embedded; focus reverses the whole block via compFocusView.
+FUNCTION tabStripEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, qt AS STRING) AS STRING
+    DIM tsWStr AS STRING = strconv.Itoa(wv.W)
+    DIM s AS STRING = ""
+    s = s + "    DIM tsItems" + sfx + " AS []STRING\n"
+    DIM tsvI AS INTEGER
+    FOR tsvI = 0 TO LEN(wv.Items) - 1
+        s = s + "    tsItems" + sfx + " = APPEND(tsItems" + sfx + ", " + qt + escapeForDBString(wv.Items[tsvI]) + qt + ")\n"
+    NEXT tsvI
+    s = s + "    DIM tsBar" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "    DIM tsk" + sfx + " AS INTEGER\n"
+    s = s + "    FOR tsk" + sfx + " = 0 TO LEN(tsItems" + sfx + ") - 1\n"
+    s = s + "        IF tsk" + sfx + " > 0 THEN tsBar" + sfx + " = tsBar" + sfx + " + " + qt + "│" + qt + "\n"
+    s = s + "        DIM tsSeg" + sfx + " AS STRING\n"
+    s = s + "        IF tsk" + sfx + " = m." + wv.Name + "_Val THEN\n"
+    s = s + "            tsSeg" + sfx + " = " + qt + "[" + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + "]" + qt + "\n"
+    s = s + "        ELSE\n"
+    s = s + "            tsSeg" + sfx + " = " + qt + " " + qt + " + tsItems" + sfx + "[tsk" + sfx + "] + " + qt + " " + qt + "\n"
+    s = s + "        END IF\n"
+    s = s + "        IF m.Hover = " + sfx + " AND m.HoverTab = tsk" + sfx + " AND m.Focus <> " + sfx + " THEN tsSeg" + sfx + " = hoverStyle.Render(tsSeg" + sfx + ")\n"
+    s = s + "        tsBar" + sfx + " = tsBar" + sfx + " + tsSeg" + sfx + "\n"
+    s = s + "    NEXT tsk" + sfx + "\n"
+    s = s + "    DIM tsRule" + sfx + " AS STRING = strings.Repeat(" + qt + "─" + qt + ", " + tsWStr + ")\n"
+    s = s + "    DIM tsAct" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "    IF m." + wv.Name + "_Val >= 0 AND m." + wv.Name + "_Val < LEN(tsItems" + sfx + ") THEN tsAct" + sfx + " = tsItems" + sfx + "[m." + wv.Name + "_Val]\n"
+    s = s + "    DIM tsContent" + sfx + " AS STRING = " + qt + " " + qt + " + tsAct" + sfx + " + " + qt + " tab" + qt + "\n"
+    s = s + "    DIM vwraw" + sfx + " AS STRING = tsBar" + sfx + " + " + qt + "\\n" + qt + " + tsRule" + sfx + " + " + qt + "\\n" + qt + " + tsContent" + sfx + "\n"
+    s = s + "    DIM vw" + sfx + " AS STRING = compFocusView(vwraw" + sfx + ", m.Focus = " + sfx + ", FALSE)\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION
+
 FUNCTION tabStripEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
     DIM tsWStr AS STRING = strconv.Itoa(wv.W)
     DIM s AS STRING = ""

@@ -167,25 +167,31 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     RETURN m, NIL
 END FUNCTION
 
+FUNCTION _blankCanvas(w AS INTEGER, h AS INTEGER) AS STRING
+    DIM cr AS []STRING
+    DIM ci AS INTEGER
+    FOR ci = 0 TO h - 1
+        cr = APPEND(cr, strings.Repeat(" ", w))
+    NEXT ci
+    RETURN strings.Join(cr, "\n")
+END FUNCTION
+
 FUNCTION (m AS Model) View() AS tea.View
     DIM w AS INTEGER = m.Width
     DIM h AS INTEGER = m.Height
     IF w < 60 THEN w = 80
     IF h < 20 THEN h = 24
-    DIM rows AS []STRING
-    DIM r AS INTEGER
-    FOR r = 0 TO h - 2
-        rows = APPEND(rows, strings.Repeat(" ", w))
-    NEXT r
-    _mnPaintBar(rows, _mnNodes_mb(), 0, 0, m.mb_Active, m.mb_Open, m.Focus = 0)
+    DIM fullView AS STRING = _blankCanvas(w, h)
+    DIM vw0 AS STRING = _mnBarView(_mnNodes_mb(), m.mb_Active, m.mb_Open, m.Focus = 0)
+    DIM ly0 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw0).X(0).Y(0).Z(10)
     DIM body1 AS STRING
     body1 = "menu demo"
-    IF 12 >= 0 AND 12 < LEN(rows) THEN rows[12] = overlayFocus(rows[12], 2, body1, m.Focus = 1, m.Hover = 1)
-    IF m.mb_Open THEN
-        _mnPaintBoxes(rows, _mnNodes_mb(), 0, 0, m.mb_Active, m.mb_Path)
-    END IF
-    rows = APPEND(rows, " — Tab to cycle focus, Esc to quit")
-    DIM fullView AS STRING = strings.Join(rows, "\n")
+    DIM vw1 AS STRING = compFocusView(body1, m.Focus = 1, m.Hover = 1)
+    DIM ly1 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw1).X(2).Y(12).Z(11)
+    DIM baseLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)
+    DIM cmpLy AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(baseLy, ly0, ly1)
+    fullView = cmpLy.Render()
+    IF m.mb_Open THEN fullView = _mnComposeBoxes(fullView, _mnNodes_mb(), 0, 0, m.mb_Active, m.mb_Path)
     DIM vw AS tea.View = tea.NewView(fullView)
     vw.MouseMode = tea.MouseModeAllMotion
     vw.AltScreen = TRUE
@@ -204,102 +210,13 @@ SUB Main()
     _ = final
 END SUB
 
-FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER
-    DIM b AS INTEGER = 0
-    DIM c AS INTEGER = 0
-    DIM lead AS INTEGER = 0
-    DIM nb AS INTEGER = 0
-    DIM fb AS INTEGER = 0
-    DO WHILE b < LEN(sIn) AND c < cell
-        lead = Asc(Mid(sIn, b + 1, 1))
-        IF lead = 27 THEN
-            b = b + 1
-            IF b < LEN(sIn) AND Asc(Mid(sIn, b + 1, 1)) = 91 THEN b = b + 1
-            DO WHILE b < LEN(sIn)
-                fb = Asc(Mid(sIn, b + 1, 1))
-                b = b + 1
-                IF fb >= 64 AND fb <= 126 THEN EXIT DO
-            LOOP
-        ELSE
-            nb = 1
-            IF lead >= 240 THEN
-                nb = 4
-            ELSEIF lead >= 224 THEN
-                nb = 3
-            ELSEIF lead >= 192 THEN
-                nb = 2
-            END IF
-            b = b + nb
-            c = c + 1
-        END IF
-    LOOP
-    RETURN b
-END FUNCTION
-
-FUNCTION cellLen(sIn AS STRING) AS INTEGER
-    DIM b AS INTEGER = 0
-    DIM c AS INTEGER = 0
-    DO WHILE b < LEN(sIn)
-        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))
-        DIM nb AS INTEGER = 1
-        IF lead >= 240 THEN
-            nb = 4
-        ELSEIF lead >= 224 THEN
-            nb = 3
-        ELSEIF lead >= 192 THEN
-            nb = 2
-        END IF
-        b = b + nb
-        c = c + 1
-    LOOP
-    RETURN c
-END FUNCTION
-
-FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
-    DIM txtCells AS INTEGER = 0
-    DIM tb AS INTEGER = 0
-    DO WHILE tb < LEN(txt)
-        DIM tl AS INTEGER = Asc(Mid(txt, tb + 1, 1))
-        DIM tn AS INTEGER = 1
-        IF tl >= 240 THEN
-            tn = 4
-        ELSEIF tl >= 224 THEN
-            tn = 3
-        ELSEIF tl >= 192 THEN
-            tn = 2
-        END IF
-        tb = tb + tn
-        txtCells = txtCells + 1
-    LOOP
-    DIM startB AS INTEGER = cellByteIdx(row, col)
-    DIM endB AS INTEGER = cellByteIdx(row, col + txtCells)
-    DIM lf AS STRING = ""
-    IF startB > 0 THEN lf = Mid(row, 1, startB)
-    DIM rt AS STRING = ""
-    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
-    DIM pre AS STRING = ""
-    IF strings.Contains(lf, Chr(27)) THEN pre = Chr(27) + "[0m"
-    RETURN lf + pre + txt + rt
-END FUNCTION
-
-FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING
-    DIM cells AS INTEGER = lipgloss.Width(txt)
-    DIM startB AS INTEGER = cellByteIdx(row, col)
-    DIM endB AS INTEGER = cellByteIdx(row, col + cells)
-    DIM lf AS STRING = ""
-    IF startB > 0 THEN lf = Mid(row, 1, startB)
-    DIM rt AS STRING = ""
-    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)
-    RETURN lf + txt + rt
-END FUNCTION
-
 DIM focusStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
 DIM hoverStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)
 
-FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN) AS STRING
-    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))
-    IF hovered THEN RETURN overlayRowAt(row, col, hoverStyle.Render(txt))
-    RETURN overlayRow(row, col, txt)
+FUNCTION compFocusView(v AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN) AS STRING
+    IF focused THEN RETURN focusStyle.Render(v)
+    IF hovered THEN RETURN hoverStyle.Render(v)
+    RETURN v
 END FUNCTION
 
 TYPE _MNode
@@ -474,7 +391,7 @@ FUNCTION _mnKey(nodes AS []_MNode, key AS STRING, active AS INTEGER, open AS BOO
     RETURN active, open, path, chosen
 END FUNCTION
 
-SUB _mnPaintBar(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY AS INTEGER, active AS INTEGER, open AS BOOLEAN, focused AS BOOLEAN)
+FUNCTION _mnBarView(nodes AS []_MNode, active AS INTEGER, open AS BOOLEAN, focused AS BOOLEAN) AS STRING
     DIM bar AS STRING = ""
     DIM k AS INTEGER = 0
     DIM i AS INTEGER
@@ -488,15 +405,15 @@ SUB _mnPaintBar(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY AS 
             k = k + 1
         END IF
     NEXT i
-    IF baseY >= 0 AND baseY < LEN(rows) THEN rows[baseY] = overlayRow(rows[baseY], baseX, bar)
-END SUB
+    RETURN bar
+END FUNCTION
 
-SUB _mnPaintBoxes(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY AS INTEGER, active AS INTEGER, path AS []INTEGER)
+FUNCTION _mnComposeBoxes(full AS STRING, nodes AS []_MNode, baseX AS INTEGER, baseY AS INTEGER, active AS INTEGER, path AS []INTEGER) AS STRING
     _mnBX = NIL
     _mnBY = NIL
     _mnBW = NIL
     _mnBP = NIL
-    IF LEN(path) = 0 THEN RETURN
+    IF LEN(path) = 0 THEN RETURN full
     DIM prevX AS INTEGER = 0
     DIM prevW AS INTEGER = 0
     DIM prevTopY AS INTEGER = 0
@@ -504,7 +421,7 @@ SUB _mnPaintBoxes(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY A
     FOR lev = 0 TO LEN(path) - 1
         DIM parent AS INTEGER = _mnNodeAt(nodes, active, path, lev)
         DIM kids AS []INTEGER = _mnKids(nodes, parent)
-        IF LEN(kids) = 0 THEN RETURN
+        IF LEN(kids) = 0 THEN RETURN full
         DIM boxX AS INTEGER = 0
         DIM topY AS INTEGER = 0
         IF lev = 0 THEN
@@ -522,15 +439,12 @@ SUB _mnPaintBoxes(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY A
             IF _mnIsSub(nodes, kids[j]) THEN cw = cw + 2
             IF cw > innerW THEN innerW = cw
         NEXT j
-        DIM topB AS STRING = "┌" + strings.Repeat("─", innerW) + "┐"
-        IF topY >= 0 AND topY < LEN(rows) THEN rows[topY] = overlayRow(rows[topY], boxX, topB)
+        DIM box AS STRING = "┌" + strings.Repeat("─", innerW) + "┐"
         DIM sel AS INTEGER = path[lev]
         FOR j = 0 TO LEN(kids) - 1
             DIM ndx AS INTEGER = kids[j]
-            DIM itemY AS INTEGER = topY + 1 + j
             IF nodes[ndx].Sp THEN
-                DIM sepln AS STRING = "├" + strings.Repeat("─", innerW) + "┤"
-                IF itemY >= 0 AND itemY < LEN(rows) THEN rows[itemY] = overlayRow(rows[itemY], boxX, sepln)
+                box = box + "\n" + "├" + strings.Repeat("─", innerW) + "┤"
             ELSE
                 DIM chk AS STRING = "  "
                 IF nodes[ndx].Ck THEN chk = "✓ "
@@ -552,24 +466,20 @@ SUB _mnPaintBoxes(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY A
                 DO WHILE lipgloss.Width(inner) < innerW
                     inner = inner + " "
                 LOOP
-                IF itemY >= 0 AND itemY < LEN(rows) THEN
-                    IF j = sel THEN
-                        rows[itemY] = overlayRow(rows[itemY], boxX, "│")
-                        rows[itemY] = overlayRowAt(rows[itemY], boxX + 1, focusStyle.Render(inner))
-                        rows[itemY] = overlayRow(rows[itemY], boxX + 1 + innerW, "│")
-                    ELSEIF nodes[ndx].Ds THEN
-                        rows[itemY] = overlayRow(rows[itemY], boxX, "│")
-                        rows[itemY] = overlayRowAt(rows[itemY], boxX + 1, _mnDim.Render(inner))
-                        rows[itemY] = overlayRow(rows[itemY], boxX + 1 + innerW, "│")
-                    ELSE
-                        rows[itemY] = overlayRow(rows[itemY], boxX, "│" + inner + "│")
-                    END IF
+                DIM cell AS STRING = inner
+                IF j = sel THEN
+                    cell = focusStyle.Render(inner)
+                ELSEIF nodes[ndx].Ds THEN
+                    cell = _mnDim.Render(inner)
                 END IF
+                box = box + "\n" + "│" + cell + "│"
             END IF
         NEXT j
-        DIM botY AS INTEGER = topY + 1 + LEN(kids)
-        DIM botB AS STRING = "└" + strings.Repeat("─", innerW) + "┘"
-        IF botY >= 0 AND botY < LEN(rows) THEN rows[botY] = overlayRow(rows[botY], boxX, botB)
+        box = box + "\n" + "└" + strings.Repeat("─", innerW) + "┘"
+        DIM bBg AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+        DIM bLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(box).X(boxX).Y(topY).Z(50 + lev)
+        DIM bCmp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(bBg, bLy)
+        full = bCmp.Render()
         _mnBX = APPEND(_mnBX, boxX)
         _mnBY = APPEND(_mnBY, topY + 1)
         _mnBW = APPEND(_mnBW, innerW + 2)
@@ -578,7 +488,8 @@ SUB _mnPaintBoxes(rows AS []STRING, nodes AS []_MNode, baseX AS INTEGER, baseY A
         prevW = innerW + 2
         prevTopY = topY
     NEXT lev
-END SUB
+    RETURN full
+END FUNCTION
 
 FUNCTION _mnClickHit(nodes AS []_MNode, mx AS INTEGER, my AS INTEGER, active AS INTEGER, open AS BOOLEAN, path AS []INTEGER) AS (INTEGER, BOOLEAN, []INTEGER, STRING, BOOLEAN)
     DIM chosen AS STRING = ""

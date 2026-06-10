@@ -1291,6 +1291,237 @@ END FUNCTION
 ' -------------------------------------------------------------------------
 CONST formUserMarker AS STRING = "' ===== DBTUI:USER ===== DO NOT EDIT OR DELETE THIS LINE ====="
 
+' widgetPorted — TRUE for widget kinds migrated to the Charm-component +
+' lipgloss-layer rendering path. A ported kind renders via a component layer
+' (composited over the rows[] base) instead of overlay-painting into rows[];
+' its Update forwards messages to the component. Un-ported kinds keep the
+' legacy rows[] path until migrated. See [[dbtui_charm_first]].
+FUNCTION widgetPorted(kind AS STRING) AS BOOLEAN
+    IF widgetComponent(kind) THEN RETURN TRUE
+    IF kind = "Label" THEN RETURN TRUE
+    IF kind = "Button" THEN RETURN TRUE
+    IF kind = "Checkbox" THEN RETURN TRUE
+    IF kind = "RadioButton" THEN RETURN TRUE
+    IF kind = "TabStrip" THEN RETURN TRUE
+    IF kind = "Tree" THEN RETURN TRUE
+    IF kind = "ScrollBar" THEN RETURN TRUE
+    IF kind = "StatusBar" THEN RETURN TRUE
+    IF kind = "Panel" THEN RETURN TRUE
+    IF kind = "Menubar" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' widgetComponent — TRUE for kinds backed by a real bubbles component held as
+' a Model field (constructed in Main, rendered via .View(), driven by .Update).
+FUNCTION widgetComponent(kind AS STRING) AS BOOLEAN
+    IF kind = "TextInput" THEN RETURN TRUE
+    IF kind = "TextArea" THEN RETURN TRUE
+    IF kind = "ListBox" THEN RETURN TRUE
+    IF kind = "ComboBox" THEN RETURN TRUE
+    IF kind = "PropGrid" THEN RETURN TRUE
+    IF kind = "ScrollPanel" THEN RETURN TRUE
+    IF kind = "ProgressBar" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' widgetForwards — TRUE for component kinds whose runtime input is consumed by
+' the component's own Update (so generated Update FORWARDS the msg and returns
+' its cmd). ProgressBar is a component but display-only (no input). Lipgloss-
+' composed kinds keep their inline key/mouse state logic.
+FUNCTION widgetForwards(kind AS STRING) AS BOOLEAN
+    IF kind = "ProgressBar" THEN RETURN FALSE
+    RETURN widgetComponent(kind)
+END FUNCTION
+
+' compSuffix / compPkg — the Model-field suffix and bubbles package alias for
+' a component kind. ListBox and ComboBox share the list package.
+FUNCTION compSuffix(kind AS STRING) AS STRING
+    IF kind = "TextInput" THEN RETURN "_ti"
+    IF kind = "TextArea" THEN RETURN "_ta"
+    IF kind = "ListBox" THEN RETURN "_lb"
+    IF kind = "ComboBox" THEN RETURN "_cb"
+    IF kind = "PropGrid" THEN RETURN "_tbl"
+    IF kind = "ScrollPanel" THEN RETURN "_vp"
+    IF kind = "ProgressBar" THEN RETURN "_pb"
+    RETURN "_comp"
+END FUNCTION
+
+FUNCTION compPkg(kind AS STRING) AS STRING
+    IF kind = "TextInput" THEN RETURN "textinput"
+    IF kind = "TextArea" THEN RETURN "textarea"
+    IF kind = "ListBox" THEN RETURN "list"
+    IF kind = "ComboBox" THEN RETURN "list"
+    IF kind = "PropGrid" THEN RETURN "table"
+    IF kind = "ScrollPanel" THEN RETURN "viewport"
+    IF kind = "ProgressBar" THEN RETURN "progress"
+    RETURN ""
+END FUNCTION
+
+' compHasFocus — component exposes Focus()/Blur() (so syncFocusComp toggles it).
+' list/viewport/progress have no focus state; they just receive forwarded msgs.
+FUNCTION compHasFocus(kind AS STRING) AS BOOLEAN
+    IF kind = "TextInput" THEN RETURN TRUE
+    IF kind = "TextArea" THEN RETURN TRUE
+    IF kind = "PropGrid" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' widgetEmitLayer — emit View code building widget `wv`'s Charm view string +
+' a lipgloss layer at its (X,Y,Z). Component kinds render via .View();
+' lipgloss-composed kinds reuse their body builder wrapped in compFocusView.
+FUNCTION widgetEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, f AS DesignForm, n AS INTEGER, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    IF wv.Kind = "TabStrip" THEN RETURN tabStripEmitLayer(wv, sfx, xs, ys, zStr, qt)
+    IF wv.Kind = "Tree" THEN RETURN treeEmitLayer(wv, sfx, xs, ys, zStr, qt)
+    IF wv.Kind = "ScrollBar" THEN RETURN scrollBarEmitLayer(wv, sfx, xs, ys, zStr, qt)
+    IF wv.Kind = "StatusBar" THEN RETURN statusBarEmitLayer(wv, sfx, xs, ys, zStr, qt)
+    IF wv.Kind = "Panel" THEN RETURN panelEmitLayer(wv, sfx, xs, ys, zStr, f, n, qt)
+    IF wv.Kind = "Menubar" THEN RETURN menubarEmitLayer(wv, sfx, xs, ys, zStr, qt)
+    IF wv.Kind = "ProgressBar" THEN
+        ' Render a static fill via ViewAs(percent) (View() would animate from 0).
+        DIM rng AS INTEGER = wv.Max - wv.Min
+        IF rng < 1 THEN rng = 1
+        s = s + "    DIM vw" + sfx + " AS STRING = m." + wv.Name + "_pb.ViewAs(" + fmtFloat(wv.Value - wv.Min, rng) + ")\n"
+        s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+        RETURN s
+    END IF
+    IF widgetComponent(wv.Kind) THEN
+        s = s + "    DIM vw" + sfx + " AS STRING = m." + wv.Name + compSuffix(wv.Kind) + ".View()\n"
+        s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+        RETURN s
+    END IF
+    s = s + "    DIM body" + sfx + " AS STRING\n"
+    IF wv.Kind = "Checkbox" THEN
+        s = s + checkboxEmitView(wv, sfx, qt)
+    ELSEIF wv.Kind = "RadioButton" THEN
+        s = s + radioButtonEmitView(wv, sfx, qt)
+    ELSE
+        ' Button / Label: static bracketed/plain text.
+        s = s + "    body" + sfx + " = " + qt + escapeForDBString(widgetVisibleText(wv)) + qt + "\n"
+    END IF
+    s = s + "    DIM vw" + sfx + " AS STRING = compFocusView(body" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION
+
+' compEmitModelField — the Model declaration for a component kind.
+FUNCTION compEmitModelField(w AS DesignWidget) AS STRING
+    RETURN "    DIM " + w.Name + compSuffix(w.Kind) + " AS " + compPkg(w.Kind) + ".Model\n"
+END FUNCTION
+
+' compEmitInit — construct + size + seed the component in Main.
+FUNCTION compEmitInit(w AS DesignWidget, qt AS STRING) AS STRING
+    DIM nm AS STRING = w.Name + compSuffix(w.Kind)
+    DIM s AS STRING = ""
+    IF w.Kind = "TextInput" THEN
+        DIM tiw AS INTEGER = w.W - 1
+        IF tiw < 1 THEN tiw = 1
+        s = s + "    m." + nm + " = textinput.New()\n"
+        s = s + "    m." + nm + ".Prompt = " + qt + qt + "\n"
+        s = s + "    m." + nm + ".SetWidth(" + strconv.Itoa(tiw) + ")\n"
+        IF w.Text <> "" THEN s = s + "    m." + nm + ".SetValue(" + qt + escapeForDBString(w.Text) + qt + ")\n"
+    ELSEIF w.Kind = "TextArea" THEN
+        s = s + "    m." + nm + " = textarea.New()\n"
+        s = s + "    m." + nm + ".SetWidth(" + strconv.Itoa(w.W) + ")\n"
+        s = s + "    m." + nm + ".SetHeight(" + strconv.Itoa(w.H) + ")\n"
+        IF w.Text <> "" THEN s = s + "    m." + nm + ".SetValue(" + qt + escapeForDBString(w.Text) + qt + ")\n"
+    ELSEIF w.Kind = "ListBox" OR w.Kind = "ComboBox" THEN
+        s = s + "    DIM items" + w.Name + " AS []list.Item\n"
+        DIM li AS INTEGER
+        FOR li = 0 TO LEN(w.Items) - 1
+            s = s + "    DIM it" + w.Name + strconv.Itoa(li) + " AS _LItem\n"
+            s = s + "    it" + w.Name + strconv.Itoa(li) + ".cap = " + qt + escapeForDBString(w.Items[li]) + qt + "\n"
+            s = s + "    items" + w.Name + " = APPEND(items" + w.Name + ", it" + w.Name + strconv.Itoa(li) + ")\n"
+        NEXT li
+        DIM lh AS INTEGER = w.H
+        IF w.Kind = "ComboBox" THEN lh = 6
+        IF lh < 1 THEN lh = 1
+        s = s + "    m." + nm + " = list.New(items" + w.Name + ", _newMenuDelegate(), " + strconv.Itoa(w.W) + ", " + strconv.Itoa(lh) + ")\n"
+        s = s + "    m." + nm + ".SetShowHelp(FALSE)\n"
+        s = s + "    m." + nm + ".SetShowStatusBar(FALSE)\n"
+        s = s + "    m." + nm + ".SetShowTitle(FALSE)\n"
+        s = s + "    m." + nm + ".SetFilteringEnabled(FALSE)\n"
+        IF w.Selected > 0 THEN s = s + "    m." + nm + ".Select(" + strconv.Itoa(w.Selected) + ")\n"
+    ELSEIF w.Kind = "PropGrid" THEN
+        DIM colW AS INTEGER = (w.W - 2) / 2
+        IF colW < 4 THEN colW = 4
+        s = s + "    DIM cols" + w.Name + " AS []table.Column\n"
+        s = s + "    DIM ck" + w.Name + " AS table.Column\n"
+        s = s + "    ck" + w.Name + ".Title = " + qt + "Key" + qt + "\n"
+        s = s + "    ck" + w.Name + ".Width = " + strconv.Itoa(colW) + "\n"
+        s = s + "    DIM cv" + w.Name + " AS table.Column\n"
+        s = s + "    cv" + w.Name + ".Title = " + qt + "Value" + qt + "\n"
+        s = s + "    cv" + w.Name + ".Width = " + strconv.Itoa(colW) + "\n"
+        s = s + "    cols" + w.Name + " = APPEND(cols" + w.Name + ", ck" + w.Name + ")\n"
+        s = s + "    cols" + w.Name + " = APPEND(cols" + w.Name + ", cv" + w.Name + ")\n"
+        s = s + "    DIM rws" + w.Name + " AS []table.Row\n"
+        DIM ri AS INTEGER
+        FOR ri = 0 TO LEN(w.Items) - 1
+            s = s + "    DIM rw" + w.Name + strconv.Itoa(ri) + " AS table.Row\n"
+            s = s + "    rw" + w.Name + strconv.Itoa(ri) + " = APPEND(rw" + w.Name + strconv.Itoa(ri) + ", " + qt + escapeForDBString(propKey(w.Items[ri])) + qt + ")\n"
+            s = s + "    rw" + w.Name + strconv.Itoa(ri) + " = APPEND(rw" + w.Name + strconv.Itoa(ri) + ", " + qt + escapeForDBString(propVal(w.Items[ri])) + qt + ")\n"
+            s = s + "    rws" + w.Name + " = APPEND(rws" + w.Name + ", rw" + w.Name + strconv.Itoa(ri) + ")\n"
+        NEXT ri
+        s = s + "    m." + nm + " = table.New(table.WithColumns(cols" + w.Name + "), table.WithRows(rws" + w.Name + "), table.WithHeight(" + strconv.Itoa(w.H) + "))\n"
+    ELSEIF w.Kind = "ScrollPanel" THEN
+        s = s + "    m." + nm + " = viewport.New()\n"
+        s = s + "    m." + nm + ".SetWidth(" + strconv.Itoa(w.W) + ")\n"
+        s = s + "    m." + nm + ".SetHeight(" + strconv.Itoa(w.H) + ")\n"
+        DIM contentExpr AS STRING = qt + qt
+        DIM ci AS INTEGER
+        FOR ci = 0 TO LEN(w.Items) - 1
+            IF ci > 0 THEN contentExpr = contentExpr + " + " + qt + "\\n" + qt
+            contentExpr = contentExpr + " + " + qt + escapeForDBString(w.Items[ci]) + qt
+        NEXT ci
+        s = s + "    m." + nm + ".SetContent(" + contentExpr + ")\n"
+    ELSEIF w.Kind = "ProgressBar" THEN
+        DIM pw AS INTEGER = w.W
+        IF pw < 1 THEN pw = 1
+        ' Width only; the fill is drawn statically by ViewAs in the layer.
+        s = s + "    m." + nm + " = progress.New()\n"
+        s = s + "    m." + nm + ".SetWidth(" + strconv.Itoa(pw) + ")\n"
+    END IF
+    RETURN s
+END FUNCTION
+
+' fmtFloat — emit a float64 decimal literal for num/den, clamped to [0,1]
+' (for progress.SetPercent, which expects float64). Computed at codegen as
+' thousandths so no runtime float conversion is needed.
+FUNCTION fmtFloat(num AS INTEGER, den AS INTEGER) AS STRING
+    IF den = 0 THEN RETURN "0.0"
+    DIM milli AS INTEGER = (num * 1000) / den
+    IF milli < 0 THEN milli = 0
+    IF milli > 1000 THEN milli = 1000
+    DIM ip AS INTEGER = milli / 1000
+    DIM fp AS INTEGER = milli MOD 1000
+    DIM fps AS STRING = strconv.Itoa(fp)
+    DO WHILE LEN(fps) < 3
+        fps = "0" + fps
+    LOOP
+    RETURN strconv.Itoa(ip) + "." + fps
+END FUNCTION
+
+' compEmitForward — Update key/msg forward for a forwarding component kind.
+' Fires <Name>_Change when a selection-bearing component's index changes.
+FUNCTION compEmitForward(w AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRING
+    DIM nm AS STRING = w.Name + compSuffix(w.Kind)
+    DIM s AS STRING = ""
+    s = s + "            DIM cCmd" + sfx + " AS tea.Cmd\n"
+    IF w.Kind = "ListBox" OR w.Kind = "ComboBox" THEN
+        s = s + "            DIM prevI" + sfx + " AS INTEGER = m." + nm + ".Index()\n"
+        s = s + "            m." + nm + ", cCmd" + sfx + " = m." + nm + ".Update(msg)\n"
+        s = s + "            IF m." + nm + ".Index() <> prevI" + sfx + " THEN dispatchChange(" + qt + w.Name + qt + ")\n"
+    ELSEIF w.Kind = "PropGrid" THEN
+        s = s + "            DIM prevC" + sfx + " AS INTEGER = m." + nm + ".Cursor()\n"
+        s = s + "            m." + nm + ", cCmd" + sfx + " = m." + nm + ".Update(msg)\n"
+        s = s + "            IF m." + nm + ".Cursor() <> prevC" + sfx + " THEN dispatchChange(" + qt + w.Name + qt + ")\n"
+    ELSE
+        s = s + "            m." + nm + ", cCmd" + sfx + " = m." + nm + ".Update(msg)\n"
+    END IF
+    s = s + "            RETURN m, cCmd" + sfx + "\n"
+    RETURN s
+END FUNCTION
+
 ' generateFormPrelude — emit ONLY the generated half of the partner
 ' .dbas (Model + Init + Update + View + Main + dispatchClick). The
 ' user-edited handler bodies live below the formUserMarker line and
@@ -1306,14 +1537,27 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     DIM hasTree AS BOOLEAN = FALSE
     DIM hasTextArea AS BOOLEAN = FALSE
     DIM hasMenubar AS BOOLEAN = FALSE
-    DIM hasPanel AS BOOLEAN = FALSE
+    ' Charm-component-backed kinds (migration off hand-rolled overlay painting
+    ' onto bubbles components composed as lipgloss layers). Each "ported" kind
+    ' pulls in its bubbles package and renders via a component layer instead of
+    ' the rows[] buffer; un-ported kinds still paint into rows[] and are layered
+    ' under the component layers. See [[dbtui_charm_first]].
+    DIM hasTextInput AS BOOLEAN = FALSE
+    DIM hasListW AS BOOLEAN = FALSE
+    DIM hasTable AS BOOLEAN = FALSE
+    DIM hasViewport AS BOOLEAN = FALSE
+    DIM hasProgress AS BOOLEAN = FALSE
     DIM scanI AS INTEGER
     FOR scanI = 0 TO n - 1
         IF f.Widgets[scanI].Kind = "Dialog" THEN hasDialog = TRUE
         IF f.Widgets[scanI].Kind = "Tree" THEN hasTree = TRUE
         IF f.Widgets[scanI].Kind = "TextArea" THEN hasTextArea = TRUE
         IF f.Widgets[scanI].Kind = "Menubar" THEN hasMenubar = TRUE
-        IF f.Widgets[scanI].Kind = "Panel" THEN hasPanel = TRUE
+        IF f.Widgets[scanI].Kind = "TextInput" THEN hasTextInput = TRUE
+        IF f.Widgets[scanI].Kind = "ListBox" OR f.Widgets[scanI].Kind = "ComboBox" THEN hasListW = TRUE
+        IF f.Widgets[scanI].Kind = "PropGrid" THEN hasTable = TRUE
+        IF f.Widgets[scanI].Kind = "ScrollPanel" THEN hasViewport = TRUE
+        IF f.Widgets[scanI].Kind = "ProgressBar" THEN hasProgress = TRUE
     NEXT scanI
     s = s + "' === GENERATED BY DBtui — rewritten on every F5 (do not edit above the marker) ===\n"
     s = s + "\n"
@@ -1326,7 +1570,38 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' every generated form references lipgloss. (Previously gated on the
     ' kinds that called lipgloss.* at run time.)
     s = s + "IMPORT " + qt + "charm.land/lipgloss/v2" + qt + " AS lipgloss\n"
+    ' Charm component packages, pulled in per ported widget kind present.
+    IF hasTextInput THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/textinput" + qt + " AS textinput\n"
+    IF hasTextArea THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/textarea" + qt + " AS textarea\n"
+    IF hasListW THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/list" + qt + " AS list\n"
+    IF hasTable THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/table" + qt + " AS table\n"
+    IF hasViewport THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/viewport" + qt + " AS viewport\n"
+    IF hasProgress THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/progress" + qt + " AS progress\n"
     s = s + "\n"
+    ' List item type + compact (single-line) delegate, shared by every
+    ' ListBox / ComboBox on the form.
+    IF hasListW THEN
+        s = s + "TYPE _LItem\n"
+        s = s + "    DIM cap AS STRING\n"
+        s = s + "END TYPE\n"
+        s = s + "FUNCTION (i AS _LItem) Title() AS STRING\n"
+        s = s + "    RETURN i.cap\n"
+        s = s + "END FUNCTION\n"
+        s = s + "FUNCTION (i AS _LItem) Description() AS STRING\n"
+        s = s + "    RETURN " + qt + qt + "\n"
+        s = s + "END FUNCTION\n"
+        s = s + "FUNCTION (i AS _LItem) FilterValue() AS STRING\n"
+        s = s + "    RETURN i.cap\n"
+        s = s + "END FUNCTION\n"
+        s = s + "FUNCTION _newMenuDelegate() AS list.DefaultDelegate\n"
+        s = s + "    DIM d AS list.DefaultDelegate = list.NewDefaultDelegate()\n"
+        s = s + "    d.ShowDescription = FALSE\n"
+        s = s + "    d.SetSpacing(0)\n"
+        s = s + "    d.SetHeight(1)\n"
+        s = s + "    RETURN d\n"
+        s = s + "END FUNCTION\n"
+        s = s + "\n"
+    END IF
     ' fmt is imported pre-emptively so user handlers can call
     ' fmt.Println etc. without adding their own IMPORT line. Go
     ' rejects unused imports, so reference it from an uncalled
@@ -1354,13 +1629,11 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     FOR i = 0 TO n - 1
         DIM w AS DesignWidget = f.Widgets[i]
       IF w.Parent = "" THEN
-        IF w.Kind = "TextInput" THEN
-            s = s + textInputEmitModel(w)
-        ELSEIF w.Kind = "TextArea" THEN
-            s = s + textAreaEmitModel(w)
+        IF widgetComponent(w.Kind) THEN
+            s = s + compEmitModelField(w)
         ELSEIF w.Kind = "Checkbox" OR w.Kind = "RadioButton" THEN
             s = s + "    DIM " + w.Name + "_Val AS BOOLEAN\n"
-        ELSEIF w.Kind = "ComboBox" OR w.Kind = "ListBox" OR w.Kind = "ScrollBar" OR w.Kind = "ProgressBar" OR w.Kind = "TabStrip" OR w.Kind = "PropGrid" THEN
+        ELSEIF w.Kind = "ScrollBar" OR w.Kind = "TabStrip" THEN
             s = s + "    DIM " + w.Name + "_Val AS INTEGER\n"
         ELSEIF w.Kind = "Tree" THEN
             ' Cursor index into the node list + a per-node collapse flag.
@@ -1501,28 +1774,20 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
       IF mcw.Parent = "" THEN
         s = s + "        IF mc.X >= " + mcXs + " AND mc.X < " + mcXs + " + " + mcWs + " AND mc.Y >= " + mcYs + " AND mc.Y < " + mcYs + " + " + mcHs + " THEN\n"
         s = s + "            m.Focus = " + mcIStr + "\n"
-        IF mcw.Kind = "Button" THEN
+        IF hasTextInput OR hasTextArea OR hasTable THEN s = s + "            syncFocusComp(@m)\n"
+        IF widgetForwards(mcw.Kind) THEN
+            ' Component-backed: the click only takes focus (done above);
+            ' selection is via keyboard / wheel forwarded to the component.
+            ' (Click coords don't map into the component's own space.)
+            s = s + "            _ = mc\n"
+        ELSEIF mcw.Kind = "Button" THEN
             s = s + buttonEmitMouse(mcw, qt)
         ELSEIF mcw.Kind = "Checkbox" THEN
             s = s + checkboxEmitMouse(mcw, qt)
         ELSEIF mcw.Kind = "RadioButton" THEN
             s = s + radioButtonEmitMouse(mcw, mci, f.Widgets, n, qt)
-        ELSEIF mcw.Kind = "ComboBox" THEN
-            s = s + comboBoxEmitMouse(mcw, qt)
-        ELSEIF mcw.Kind = "ListBox" THEN
-            s = s + listBoxEmitMouse(mcw, mcIStr, mcYs, qt)
         ELSEIF mcw.Kind = "ScrollBar" THEN
             s = s + scrollBarEmitMouse(mcw, mcIStr, mcXs, mcYs, mcWs, mcHs, qt)
-        ELSEIF mcw.Kind = "PropGrid" THEN
-            ' Click row N selects it (if it exists), firing _Change.
-            DIM mcGridN AS STRING = strconv.Itoa(LEN(mcw.Items))
-            IF LEN(mcw.Items) > 0 THEN
-                s = s + "            DIM mcGRow" + mcIStr + " AS INTEGER = mc.Y - " + mcYs + "\n"
-                s = s + "            IF mcGRow" + mcIStr + " >= 0 AND mcGRow" + mcIStr + " < " + mcGridN + " THEN\n"
-                s = s + "                m." + mcw.Name + "_Val = mcGRow" + mcIStr + "\n"
-                s = s + "                dispatchChange(" + qt + mcw.Name + qt + ")\n"
-                s = s + "            END IF\n"
-            END IF
         ELSEIF mcw.Kind = "Menubar" THEN
             ' Title-row click: pick the menu by column. Clicking the
             ' already-open active menu closes it; otherwise open it.
@@ -1646,24 +1911,17 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             DIM mwWs AS STRING = strconv.Itoa(mww.W)
             DIM mwHs AS STRING = strconv.Itoa(mww.H)
             DIM mwNm AS STRING = mww.Name
-            DIM mwMax AS STRING = strconv.Itoa(LEN(mww.Items) - 1)
             DIM mwVis AS INTEGER = mww.H - 2
             IF mwVis < 1 THEN mwVis = 1
             DIM mwSpMax AS INTEGER = LEN(mww.Items) - mwVis
             IF mwSpMax < 0 THEN mwSpMax = 0
             s = s + "        IF mw.X >= " + mwXs + " AND mw.X < " + mwXs + " + " + mwWs + " AND mw.Y >= " + mwYs + " AND mw.Y < " + mwYs + " + " + mwHs + " THEN\n"
-            IF mww.Kind = "ListBox" OR mww.Kind = "ComboBox" OR mww.Kind = "PropGrid" THEN
-                s = s + "            IF mw.Button = tea.MouseWheelUp THEN\n"
-                s = s + "                IF m." + mwNm + "_Val > 0 THEN\n"
-                s = s + "                    m." + mwNm + "_Val = m." + mwNm + "_Val - 1\n"
-                s = s + "                    dispatchChange(" + qt + mwNm + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            ELSE\n"
-                s = s + "                IF m." + mwNm + "_Val < " + mwMax + " THEN\n"
-                s = s + "                    m." + mwNm + "_Val = m." + mwNm + "_Val + 1\n"
-                s = s + "                    dispatchChange(" + qt + mwNm + qt + ")\n"
-                s = s + "                END IF\n"
-                s = s + "            END IF\n"
+            IF widgetForwards(mww.Kind) THEN
+                ' Component-backed: forward the wheel to the hovered
+                ' component's Update (it scrolls / moves selection itself).
+                s = s + "            DIM wwc" + strconv.Itoa(mwi) + " AS tea.Cmd\n"
+                s = s + "            m." + mwNm + compSuffix(mww.Kind) + ", wwc" + strconv.Itoa(mwi) + " = m." + mwNm + compSuffix(mww.Kind) + ".Update(msg)\n"
+                s = s + "            _ = wwc" + strconv.Itoa(mwi) + "\n"
             ELSEIF mww.Kind = "ScrollBar" THEN
                 s = s + "            IF mw.Button = tea.MouseWheelUp THEN\n"
                 s = s + "                IF m." + mwNm + "_Val > " + strconv.Itoa(mww.Min) + " THEN\n"
@@ -1717,11 +1975,13 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     IF n > 0 THEN
         s = s + "        IF key = " + qt + "tab" + qt + " THEN\n"
         s = s + "            m.Focus = (m.Focus + 1) MOD " + nStr + "\n"
+        IF hasTextInput OR hasTextArea OR hasTable THEN s = s + "            syncFocusComp(@m)\n"
         s = s + "            RETURN m, NIL\n"
         s = s + "        END IF\n"
         s = s + "        IF key = " + qt + "shift+tab" + qt + " THEN\n"
         s = s + "            m.Focus = m.Focus - 1\n"
         s = s + "            IF m.Focus < 0 THEN m.Focus = " + strconv.Itoa(n - 1) + "\n"
+        IF hasTextInput OR hasTextArea OR hasTable THEN s = s + "            syncFocusComp(@m)\n"
         s = s + "            RETURN m, NIL\n"
         s = s + "        END IF\n"
         ' Per-widget key handling.
@@ -1730,45 +1990,20 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             DIM iStr AS STRING = strconv.Itoa(i)
           IF ww.Parent = "" THEN
             s = s + "        IF m.Focus = " + iStr + " THEN\n"
-            IF ww.Kind = "TextInput" THEN
-                s = s + textInputEmitKey(ww, qt)
-            ELSEIF ww.Kind = "TextArea" THEN
-                s = s + textAreaEmitKey(ww, qt)
+            IF widgetForwards(ww.Kind) THEN
+                ' Component-backed: forward the message to the component's
+                ' own Update (it handles its keys + mouse) and return its cmd.
+                s = s + compEmitForward(ww, iStr, qt)
             ELSEIF ww.Kind = "Checkbox" THEN
                 s = s + checkboxEmitKey(ww, qt)
             ELSEIF ww.Kind = "RadioButton" THEN
                 s = s + radioButtonEmitKey(ww, i, f.Widgets, n, qt)
-            ELSEIF ww.Kind = "ComboBox" OR ww.Kind = "ListBox" THEN
-                s = s + comboListEmitKey(ww, qt)
             ELSEIF ww.Kind = "ScrollBar" THEN
                 s = s + scrollBarEmitKey(ww, qt)
             ELSEIF ww.Kind = "TabStrip" THEN
                 s = s + tabStripEmitKey(ww, qt)
-            ELSEIF ww.Kind = "PropGrid" THEN
-                s = s + propGridEmitKey(ww, qt)
             ELSEIF ww.Kind = "Menubar" THEN
                 s = s + menubarEmitKey(ww, qt)
-            ELSEIF ww.Kind = "ScrollPanel" THEN
-                ' Scroll the viewport. maxScroll is fixed at codegen time
-                ' from the line count and visible height.
-                DIM spVis AS INTEGER = ww.H - 2
-                IF spVis < 1 THEN spVis = 1
-                DIM spMax AS INTEGER = LEN(ww.Items) - spVis
-                IF spMax < 0 THEN spMax = 0
-                DIM spMaxStr AS STRING = strconv.Itoa(spMax)
-                DIM spVisStr AS STRING = strconv.Itoa(spVis)
-                s = s + "            IF key = " + qt + "up" + qt + " AND m." + ww.Name + "_Scroll > 0 THEN m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll - 1\n"
-                s = s + "            IF key = " + qt + "down" + qt + " AND m." + ww.Name + "_Scroll < " + spMaxStr + " THEN m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll + 1\n"
-                s = s + "            IF key = " + qt + "pgup" + qt + " THEN\n"
-                s = s + "                m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll - " + spVisStr + "\n"
-                s = s + "                IF m." + ww.Name + "_Scroll < 0 THEN m." + ww.Name + "_Scroll = 0\n"
-                s = s + "            END IF\n"
-                s = s + "            IF key = " + qt + "pgdown" + qt + " THEN\n"
-                s = s + "                m." + ww.Name + "_Scroll = m." + ww.Name + "_Scroll + " + spVisStr + "\n"
-                s = s + "                IF m." + ww.Name + "_Scroll > " + spMaxStr + " THEN m." + ww.Name + "_Scroll = " + spMaxStr + "\n"
-                s = s + "            END IF\n"
-                s = s + "            IF key = " + qt + "home" + qt + " THEN m." + ww.Name + "_Scroll = 0\n"
-                s = s + "            IF key = " + qt + "end" + qt + " THEN m." + ww.Name + "_Scroll = " + spMaxStr + "\n"
             ELSEIF ww.Kind = "Tree" THEN
                 s = s + treeEmitKey(ww, qt)
             ELSEIF ww.Kind = "Button" THEN
@@ -1779,7 +2014,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
                 ' Label / ProgressBar / others: no state changes.
                 s = s + "            _ = key\n"
             END IF
-            s = s + "            RETURN m, NIL\n"
+            ' Forwarding kinds' EmitKey already RETURNs (it returns the
+            ' component cmd); everything else needs the trailing swallow-return.
+            IF NOT widgetForwards(ww.Kind) THEN s = s + "            RETURN m, NIL\n"
             s = s + "        END IF\n"
           END IF
         NEXT i
@@ -1788,185 +2025,57 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    RETURN m, NIL\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
-    ' --- View: paint canvas + widgets at their (X,Y); focused gets > -
+    ' _blankCanvas — an h-line string of w spaces; the lipgloss base layer
+    ' the widget layers composite onto (replaces the old rows[] buffer).
+    s = s + "FUNCTION _blankCanvas(w AS INTEGER, h AS INTEGER) AS STRING\n"
+    s = s + "    DIM cr AS []STRING\n"
+    s = s + "    DIM ci AS INTEGER\n"
+    s = s + "    FOR ci = 0 TO h - 1\n"
+    s = s + "        cr = APPEND(cr, strings.Repeat(" + qt + " " + qt + ", w))\n"
+    s = s + "    NEXT ci\n"
+    s = s + "    RETURN strings.Join(cr, " + qt + "\\n" + qt + ")\n"
+    s = s + "END FUNCTION\n"
+    s = s + "\n"
+    ' --- View: a blank lipgloss canvas + every widget as a layer at (X,Y,Z).
     s = s + "FUNCTION (m AS Model) View() AS tea.View\n"
     s = s + "    DIM w AS INTEGER = m.Width\n"
     s = s + "    DIM h AS INTEGER = m.Height\n"
     s = s + "    IF w < 60 THEN w = 80\n"
     s = s + "    IF h < 20 THEN h = 24\n"
-    s = s + "    DIM rows AS []STRING\n"
-    s = s + "    DIM r AS INTEGER\n"
-    s = s + "    FOR r = 0 TO h - 2\n"
-    s = s + "        rows = APPEND(rows, strings.Repeat(" + qt + " " + qt + ", w))\n"
-    s = s + "    NEXT r\n"
+    ' Charm-component layers for ported widgets are accumulated here and
+    ' composited over the rows[] base (built from un-ported kinds) just
+    ' before the View is returned. portedSfx records each layer var suffix.
+    DIM layerCode AS STRING = ""
+    DIM portedSfx AS []STRING
     FOR i = 0 TO n - 1
         DIM wv  AS DesignWidget = f.Widgets[i]
         DIM xs  AS STRING = strconv.Itoa(wv.X)
         DIM ys  AS STRING = strconv.Itoa(wv.Y)
         DIM sfx AS STRING = strconv.Itoa(i)
 
-        DIM isMulti AS BOOLEAN = (wv.Kind = "ListBox") OR (wv.Kind = "ScrollBar" AND strings.ToLower(wv.Orient) = "v")
-
-        ' --- Multi-row kinds: emit a per-row paint loop and skip the
-        '     single-row body+overlay path below. Children (Parent set)
-        '     are skipped here — their Panel renders them.
-      IF wv.Parent = "" THEN
-        IF wv.Kind = "ListBox" THEN
-            s = s + listBoxEmitView(wv, sfx, xs, ys, qt)
-        ELSEIF wv.Kind = "ScrollBar" AND strings.ToLower(wv.Orient) = "v" THEN
-            s = s + scrollBarEmitViewVert(wv, sfx, xs, ys, qt)
-        ELSEIF wv.Kind = "TabStrip" THEN
-            s = s + tabStripEmitView(wv, sfx, xs, ys, qt)
-        ELSEIF wv.Kind = "Tree" THEN
-            s = s + treeEmitView(wv, sfx, xs, ys, qt)
-        ELSEIF wv.Kind = "TextArea" THEN
-            s = s + textAreaEmitView(wv, sfx, xs, ys, qt)
-        ELSEIF wv.Kind = "PropGrid" THEN
-            ' Two-column key/value rows; the cursor row (reading
-            ' <name>_Val) gets a ▶ marker. Keys padded to a half-width
-            ' column via lipgloss.Width so the │ separator lines up.
-            DIM gKeyWStr AS STRING = strconv.Itoa((wv.W - 4) / 2)
-            IF (wv.W - 4) / 2 < 1 THEN gKeyWStr = "1"
-            DIM gHStr AS STRING = strconv.Itoa(wv.H)
-            s = s + "    DIM gKeys" + sfx + " AS []STRING\n"
-            s = s + "    DIM gVals" + sfx + " AS []STRING\n"
-            DIM gvI AS INTEGER
-            FOR gvI = 0 TO LEN(wv.Items) - 1
-                s = s + "    gKeys" + sfx + " = APPEND(gKeys" + sfx + ", " + qt + escapeForDBString(propKey(wv.Items[gvI])) + qt + ")\n"
-                s = s + "    gVals" + sfx + " = APPEND(gVals" + sfx + ", " + qt + escapeForDBString(propVal(wv.Items[gvI])) + qt + ")\n"
-            NEXT gvI
-            s = s + "    DIM gRow" + sfx + " AS INTEGER\n"
-            s = s + "    FOR gRow" + sfx + " = 0 TO " + gHStr + " - 1\n"
-            s = s + "        IF gRow" + sfx + " < LEN(gKeys" + sfx + ") THEN\n"
-            s = s + "            DIM gk" + sfx + " AS STRING = gKeys" + sfx + "[gRow" + sfx + "]\n"
-            s = s + "            DIM gv" + sfx + " AS STRING = gVals" + sfx + "[gRow" + sfx + "]\n"
-            s = s + "            IF lipgloss.Width(gk" + sfx + ") > " + gKeyWStr + " THEN gk" + sfx + " = Mid(gk" + sfx + ", 1, " + gKeyWStr + ")\n"
-            s = s + "            IF lipgloss.Width(gk" + sfx + ") < " + gKeyWStr + " THEN gk" + sfx + " = gk" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + gKeyWStr + " - lipgloss.Width(gk" + sfx + "))\n"
-            s = s + "            DIM gmk" + sfx + " AS STRING = " + qt + "  " + qt + "\n"
-            s = s + "            IF gRow" + sfx + " = m." + wv.Name + "_Val THEN gmk" + sfx + " = " + qt + "▶ " + qt + "\n"
-            s = s + "            DIM gLine" + sfx + " AS STRING = gmk" + sfx + " + gk" + sfx + " + " + qt + "│ " + qt + " + gv" + sfx + "\n"
-            s = s + "            DIM gY" + sfx + " AS INTEGER = " + ys + " + gRow" + sfx + "\n"
-            ' Hover-highlight the whole grid when moused over (but not while
-            ' focused — the ▶ cursor already marks the active row).
-            s = s + "            IF gY" + sfx + " >= 0 AND gY" + sfx + " < LEN(rows) THEN rows[gY" + sfx + "] = overlayFocus(rows[gY" + sfx + "], " + xs + ", gLine" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
-            s = s + "        END IF\n"
-            s = s + "    NEXT gRow" + sfx + "\n"
-        ELSEIF wv.Kind = "ScrollPanel" THEN
-            ' Framed box: top border, H-2 content rows (each = a content
-            ' line + a scrollbar cell reading <name>_Scroll), bottom
-            ' border. The thumb position is derived from the scroll
-            ' offset over the fixed line count.
-            DIM spBordStr AS STRING = strconv.Itoa(wv.W - 2)
-            DIM spVisStr2 AS STRING = strconv.Itoa(wv.H - 2)
-            DIM spCWStr AS STRING = strconv.Itoa(wv.W - 3)
-            IF wv.W - 3 < 1 THEN spCWStr = "1"
-            DIM spTrackV AS INTEGER = (wv.H - 2) - 2
-            DIM spMaxV AS INTEGER = LEN(wv.Items) - (wv.H - 2)
-            IF spMaxV < 0 THEN spMaxV = 0
-            DIM spMaxStr2 AS STRING = strconv.Itoa(spMaxV)
-            DIM spTrackStr AS STRING = strconv.Itoa(spTrackV)
-            s = s + "    DIM spItems" + sfx + " AS []STRING\n"
-            DIM spvI AS INTEGER
-            FOR spvI = 0 TO LEN(wv.Items) - 1
-                s = s + "    spItems" + sfx + " = APPEND(spItems" + sfx + ", " + qt + escapeForDBString(wv.Items[spvI]) + qt + ")\n"
-            NEXT spvI
-            s = s + "    DIM spTop" + sfx + " AS STRING = " + qt + "┌" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + spBordStr + ") + " + qt + "┐" + qt + "\n"
-            ' Hover-highlight the whole panel (top border, content, bottom
-            ' border) when moused over, but not while focused.
-            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocus(rows[" + ys + "], " + xs + ", spTop" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
-            s = s + "    DIM spThumb" + sfx + " AS INTEGER = 0 - 1\n"
-            s = s + "    IF " + spMaxStr2 + " > 0 AND " + spTrackStr + " > 0 THEN\n"
-            s = s + "        spThumb" + sfx + " = (m." + wv.Name + "_Scroll * (" + spTrackStr + " - 1)) / " + spMaxStr2 + "\n"
-            s = s + "        IF spThumb" + sfx + " < 0 THEN spThumb" + sfx + " = 0\n"
-            s = s + "        IF spThumb" + sfx + " > " + spTrackStr + " - 1 THEN spThumb" + sfx + " = " + spTrackStr + " - 1\n"
-            s = s + "    END IF\n"
-            s = s + "    DIM spRow" + sfx + " AS INTEGER\n"
-            s = s + "    FOR spRow" + sfx + " = 0 TO " + spVisStr2 + " - 1\n"
-            s = s + "        DIM spSrc" + sfx + " AS INTEGER = m." + wv.Name + "_Scroll + spRow" + sfx + "\n"
-            s = s + "        DIM spcl" + sfx + " AS STRING = " + qt + qt + "\n"
-            s = s + "        IF spSrc" + sfx + " < LEN(spItems" + sfx + ") THEN spcl" + sfx + " = spItems" + sfx + "[spSrc" + sfx + "]\n"
-            s = s + "        IF lipgloss.Width(spcl" + sfx + ") > " + spCWStr + " THEN spcl" + sfx + " = Mid(spcl" + sfx + ", 1, " + spCWStr + ")\n"
-            s = s + "        IF lipgloss.Width(spcl" + sfx + ") < " + spCWStr + " THEN spcl" + sfx + " = spcl" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + spCWStr + " - lipgloss.Width(spcl" + sfx + "))\n"
-            s = s + "        DIM spsb" + sfx + " AS STRING = " + qt + "░" + qt + "\n"
-            s = s + "        IF spRow" + sfx + " = 0 THEN spsb" + sfx + " = " + qt + "▲" + qt + "\n"
-            s = s + "        IF spRow" + sfx + " = " + spVisStr2 + " - 1 THEN spsb" + sfx + " = " + qt + "▼" + qt + "\n"
-            s = s + "        IF spRow" + sfx + " >= 1 AND spRow" + sfx + " <= " + spVisStr2 + " - 2 AND (spRow" + sfx + " - 1) = spThumb" + sfx + " THEN spsb" + sfx + " = " + qt + "█" + qt + "\n"
-            s = s + "        DIM spLine" + sfx + " AS STRING = " + qt + "│" + qt + " + spcl" + sfx + " + spsb" + sfx + " + " + qt + "│" + qt + "\n"
-            s = s + "        DIM spY" + sfx + " AS INTEGER = " + ys + " + 1 + spRow" + sfx + "\n"
-            s = s + "        IF spY" + sfx + " >= 0 AND spY" + sfx + " < LEN(rows) THEN rows[spY" + sfx + "] = overlayFocus(rows[spY" + sfx + "], " + xs + ", spLine" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
-            s = s + "    NEXT spRow" + sfx + "\n"
-            s = s + "    DIM spBot" + sfx + " AS STRING = " + qt + "└" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + spBordStr + ") + " + qt + "┘" + qt + "\n"
-            s = s + "    DIM spBotY" + sfx + " AS INTEGER = " + ys + " + " + strconv.Itoa(wv.H - 1) + "\n"
-            s = s + "    IF spBotY" + sfx + " >= 0 AND spBotY" + sfx + " < LEN(rows) THEN rows[spBotY" + sfx + "] = overlayFocus(rows[spBotY" + sfx + "], " + xs + ", spBot" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
-        ELSEIF wv.Kind = "StatusBar" THEN
-            s = s + statusBarEmitView(wv, sfx, xs, ys, qt)
-        ELSEIF wv.Kind = "Menubar" THEN
-            s = s + menubarEmitView(wv, sfx, xs, ys, qt)
-        ELSEIF wv.Kind = "Panel" THEN
-            s = s + panelEmitView(wv, sfx, xs, ys, f, n, qt)
-        ELSE
-        ' --- Single-row kinds: build body string, prefix focus
-        '     marker, overlay onto the target row in `rows`.
-        s = s + "    DIM body" + sfx + " AS STRING\n"
-        IF wv.Kind = "TextInput" THEN
-            s = s + textInputEmitView(wv, sfx, qt)
-        ELSEIF wv.Kind = "Checkbox" THEN
-            s = s + checkboxEmitView(wv, sfx, qt)
-        ELSEIF wv.Kind = "RadioButton" THEN
-            s = s + radioButtonEmitView(wv, sfx, qt)
-        ELSEIF wv.Kind = "ComboBox" THEN
-            DIM cwidStr AS STRING = strconv.Itoa(wv.W - 4)
-            IF wv.W - 4 < 1 THEN cwidStr = "1"
-            s = s + "    DIM cbItems" + sfx + " AS []STRING\n"
-            DIM cbI AS INTEGER
-            FOR cbI = 0 TO LEN(wv.Items) - 1
-                s = s + "    cbItems" + sfx + " = APPEND(cbItems" + sfx + ", " + qt + escapeForDBString(wv.Items[cbI]) + qt + ")\n"
-            NEXT cbI
-            s = s + "    DIM cbCur" + sfx + " AS STRING = " + qt + qt + "\n"
-            s = s + "    IF m." + wv.Name + "_Val >= 0 AND m." + wv.Name + "_Val < LEN(cbItems" + sfx + ") THEN cbCur" + sfx + " = cbItems" + sfx + "[m." + wv.Name + "_Val]\n"
-            s = s + "    IF LEN(cbCur" + sfx + ") > " + cwidStr + " THEN cbCur" + sfx + " = Mid(cbCur" + sfx + ", 1, " + cwidStr + ")\n"
-            s = s + "    IF LEN(cbCur" + sfx + ") < " + cwidStr + " THEN cbCur" + sfx + " = cbCur" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + cwidStr + " - LEN(cbCur" + sfx + "))\n"
-            s = s + "    body" + sfx + " = " + qt + "[" + qt + " + cbCur" + sfx + " + " + qt + " v]" + qt + "\n"
-        ELSEIF wv.Kind = "ProgressBar" THEN
-            s = s + progressBarEmitView(wv, sfx, qt)
-        ELSEIF wv.Kind = "ScrollBar" THEN
-            ' Horizontal scrollbar — single row "◄──█──►".
-            DIM hwStr AS STRING = strconv.Itoa(wv.W - 2)
-            IF wv.W - 2 < 1 THEN hwStr = "1"
-            DIM hMinStr AS STRING = strconv.Itoa(wv.Min)
-            DIM hRngStr AS STRING = strconv.Itoa(wv.Max - wv.Min)
-            IF wv.Max - wv.Min <= 0 THEN hRngStr = "1"
-            s = s + "    DIM hThumb" + sfx + " AS INTEGER = (m." + wv.Name + "_Val - " + hMinStr + ") * (" + hwStr + " - 1) / " + hRngStr + "\n"
-            s = s + "    IF hThumb" + sfx + " < 0 THEN hThumb" + sfx + " = 0\n"
-            s = s + "    IF hThumb" + sfx + " > " + hwStr + " - 1 THEN hThumb" + sfx + " = " + hwStr + " - 1\n"
-            s = s + "    body" + sfx + " = " + qt + "◄" + qt + " + strings.Repeat(" + qt + "─" + qt + ", hThumb" + sfx + ") + " + qt + "█" + qt + " + strings.Repeat(" + qt + "─" + qt + ", " + hwStr + " - 1 - hThumb" + sfx + ") + " + qt + "►" + qt + "\n"
-        ELSE
-            ' Button / Label / others: static text via widgetVisibleText.
-            DIM txt AS STRING = widgetVisibleText(wv)
-            s = s + "    body" + sfx + " = " + qt + escapeForDBString(txt) + qt + "\n"
-        END IF
-        ' Content renders at the widget's X (WYSIWYG). Keyboard focus is
-        ' shown via focusStyle; a mouse-hovered (but unfocused) widget gets
-        ' hoverStyle. The normal (unselected) state uses the widget's own
-        ' Fg/Bg, falling back to the form's Fg/Bg, then the terminal default.
-        ' Uncolored widgets keep the plain overlayFocus path so output is
-        ' byte-identical to before this feature.
-        DIM effFg AS STRING = wv.FgColor
-        IF effFg = "" THEN effFg = f.FgColor
-        DIM effBg AS STRING = wv.BgColor
-        IF effBg = "" THEN effBg = f.BgColor
-        IF effFg <> "" OR effBg <> "" THEN
-            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocusC(rows[" + ys + "], " + xs + ", body" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ", " + qt + effFg + qt + ", " + qt + effBg + qt + ")\n"
-        ELSE
-            s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayFocus(rows[" + ys + "], " + xs + ", body" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
-        END IF
-        END IF
+        _ = xs
+        _ = ys
+      IF wv.Parent = "" AND wv.Kind <> "Dialog" THEN
+        DIM zStr AS STRING = strconv.Itoa(i + 10)
+        layerCode = layerCode + widgetEmitLayer(wv, sfx, xs, ys, zStr, f, n, qt)
+        portedSfx = APPEND(portedSfx, sfx)
       END IF
-        _ = isMulti
     NEXT i
-    ' --- Menubar dropdown post-pass. Drawn after every widget so the
-    '     open dropdown overlays whatever is beneath it. Also stashes the
-    '     dropdown rect into _mb* for Update's click hit-test.
+    ' --- Pure-lipgloss composition: a blank canvas base + every widget as a
+    '     layer at its (X,Y,Z). No rows[] / overlay painting — the whole View
+    '     is Charm composition. [[dbtui_charm_first]]
+    s = s + "    DIM fullView AS STRING = _blankCanvas(w, h)\n"
+    s = s + layerCode
+    s = s + "    DIM baseLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)\n"
+    s = s + "    DIM cmpLy AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(baseLy"
+    DIM plI AS INTEGER
+    FOR plI = 0 TO LEN(portedSfx) - 1
+        s = s + ", ly" + portedSfx[plI]
+    NEXT plI
+    s = s + ")\n"
+    s = s + "    fullView = cmpLy.Render()\n"
+    ' --- Menubar open dropdowns: composited (as layers) over the frame so
+    '     they sit above every widget. Also stashes each box rect for clicks.
     IF hasMenubar THEN
         DIM mbPI AS INTEGER
         FOR mbPI = 0 TO n - 1
@@ -1976,17 +2085,8 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             END IF
         NEXT mbPI
     END IF
-    s = s + "    rows = APPEND(rows, " + qt + " — Tab to cycle focus, Esc to quit" + qt + ")\n"
-    ' Enable mouse capture so the Update handler above receives
-    ' MouseClickMsg. AllMotion (not CellMotion) so we also get button-less
-    ' motion events, which drive hover-to-highlight (m.Hover).
-    s = s + "    DIM fullView AS STRING = strings.Join(rows, " + qt + "\\n" + qt + ")\n"
-    ' Dialog overlay. When a dialog is active we manually overlay each
-    ' of its rows onto the widget grid via overlayRowAt (which counts
-    ' visible cells, not bytes), then return that. When none is active
-    ' the widget grid is returned as-is. Going through the lipgloss
-    ' compositor here left the dialog's top row "stuck" on the next
-    ' frame in some terminals; manual overlay sidesteps that.
+    ' --- Dialog overlay: the active dialog composited as a centered, high-Z
+    '     layer over everything. Its rect is stashed for the click hit-test.
     IF hasDialog THEN
         s = s + "    DIM dlgStr AS STRING = " + qt + qt + "\n"
         DIM dlgVI AS INTEGER
@@ -2003,23 +2103,14 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "        DIM dwY AS INTEGER = (h - dwH) / 2\n"
         s = s + "        IF dwX < 0 THEN dwX = 0\n"
         s = s + "        IF dwY < 0 THEN dwY = 0\n"
-        ' Stash the rect so Update's click handler can hit-test
-        ' against the on-screen dialog position.
         s = s + "        _dlgX = dwX\n"
         s = s + "        _dlgY = dwY\n"
         s = s + "        _dlgW = dwW\n"
         s = s + "        _dlgH = dwH\n"
-        ' Overlay each line of the dialog onto its corresponding
-        ' row in the grid.
-        s = s + "        DIM dlgLines AS []STRING = strings.Split(dlgStr, " + qt + "\\n" + qt + ")\n"
-        s = s + "        DIM dlgRi AS INTEGER\n"
-        s = s + "        FOR dlgRi = 0 TO LEN(dlgLines) - 1\n"
-        s = s + "            DIM tgtY AS INTEGER = dwY + dlgRi\n"
-        s = s + "            IF tgtY >= 0 AND tgtY < LEN(rows) THEN\n"
-        s = s + "                rows[tgtY] = overlayRowAt(rows[tgtY], dwX, dlgLines[dlgRi])\n"
-        s = s + "            END IF\n"
-        s = s + "        NEXT dlgRi\n"
-        s = s + "        fullView = strings.Join(rows, " + qt + "\\n" + qt + ")\n"
+        s = s + "        DIM dBg AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)\n"
+        s = s + "        DIM dLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(dlgStr).X(dwX).Y(dwY).Z(100)\n"
+        s = s + "        DIM dCmp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(dBg, dLy)\n"
+        s = s + "        fullView = dCmp.Render()\n"
         s = s + "    ELSE\n"
         s = s + "        _dlgW = 0\n"
         s = s + "        _dlgH = 0\n"
@@ -2047,14 +2138,14 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     FOR mi = 0 TO n - 1
         DIM mw AS DesignWidget = f.Widgets[mi]
       IF mw.Parent = "" THEN
-        IF mw.Kind = "RadioButton" AND mw.Checked THEN
+        IF widgetComponent(mw.Kind) THEN
+            s = s + compEmitInit(mw, qt)
+        ELSEIF mw.Kind = "RadioButton" AND mw.Checked THEN
             s = s + radioButtonEmitSeed(mw)
-        ELSEIF mw.Kind = "ComboBox" OR mw.Kind = "ListBox" OR mw.Kind = "TabStrip" OR mw.Kind = "PropGrid" THEN
+        ELSEIF mw.Kind = "TabStrip" THEN
             s = s + "    m." + mw.Name + "_Val = " + strconv.Itoa(mw.Selected) + "\n"
-        ELSEIF mw.Kind = "ScrollBar" OR mw.Kind = "ProgressBar" THEN
+        ELSEIF mw.Kind = "ScrollBar" THEN
             s = s + "    m." + mw.Name + "_Val = " + strconv.Itoa(mw.Value) + "\n"
-        ELSEIF mw.Kind = "TextArea" THEN
-            s = s + textAreaEmitSeed(mw, qt)
         ELSEIF mw.Kind = "Tree" THEN
             ' Cursor starts at Selected; every node starts expanded.
             s = s + "    m." + mw.Name + "_Val = " + strconv.Itoa(mw.Selected) + "\n"
@@ -2065,6 +2156,8 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         END IF
       END IF
     NEXT mi
+    ' Sync component focus to the start-focused widget.
+    IF hasTextInput OR hasTextArea OR hasTable THEN s = s + "    syncFocusComp(@m)\n"
     s = s + "    DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)\n"
     s = s + "    DIM final AS tea.Model\n"
     s = s + "    DIM rerr AS ERROR\n"
@@ -2073,164 +2166,48 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    _ = final\n"
     s = s + "END SUB\n"
     s = s + "\n"
-    ' --- cellByteIdx — byte offset of the Nth display cell (each UTF-8
-    '     codepoint = 1 cell). Emitted unconditionally because overlayRow
-    '     now relies on it to splice by visible column, not by byte.
-    s = s + "FUNCTION cellByteIdx(sIn AS STRING, cell AS INTEGER) AS INTEGER\n"
-    s = s + "    DIM b AS INTEGER = 0\n"
-    s = s + "    DIM c AS INTEGER = 0\n"
-    s = s + "    DIM lead AS INTEGER = 0\n"
-    s = s + "    DIM nb AS INTEGER = 0\n"
-    s = s + "    DIM fb AS INTEGER = 0\n"
-    s = s + "    DO WHILE b < LEN(sIn) AND c < cell\n"
-    s = s + "        lead = Asc(Mid(sIn, b + 1, 1))\n"
-    ' An ANSI CSI escape (ESC '[' params final-byte) is zero display
-    ' width — skip it whole so a splice never lands mid-escape (which
-    ' would leave a literal "[7m" on screen when widgets overlap a
-    ' color-highlighted one).
-    s = s + "        IF lead = 27 THEN\n"
-    s = s + "            b = b + 1\n"
-    s = s + "            IF b < LEN(sIn) AND Asc(Mid(sIn, b + 1, 1)) = 91 THEN b = b + 1\n"
-    s = s + "            DO WHILE b < LEN(sIn)\n"
-    s = s + "                fb = Asc(Mid(sIn, b + 1, 1))\n"
-    s = s + "                b = b + 1\n"
-    s = s + "                IF fb >= 64 AND fb <= 126 THEN EXIT DO\n"
-    s = s + "            LOOP\n"
-    s = s + "        ELSE\n"
-    s = s + "            nb = 1\n"
-    s = s + "            IF lead >= 240 THEN\n"
-    s = s + "                nb = 4\n"
-    s = s + "            ELSEIF lead >= 224 THEN\n"
-    s = s + "                nb = 3\n"
-    s = s + "            ELSEIF lead >= 192 THEN\n"
-    s = s + "                nb = 2\n"
-    s = s + "            END IF\n"
-    s = s + "            b = b + nb\n"
-    s = s + "            c = c + 1\n"
-    s = s + "        END IF\n"
-    s = s + "    LOOP\n"
-    s = s + "    RETURN b\n"
-    s = s + "END FUNCTION\n"
-    s = s + "\n"
-    ' --- cellLen — display width of a string in cells (each UTF-8
-    '     codepoint = 1 cell). Companion to cellByteIdx; used for
-    '     cell-aware truncate/pad in ListBox / ComboBox / TextInput so
-    '     non-ASCII content (accents, emoji) doesn't break alignment.
-    s = s + "FUNCTION cellLen(sIn AS STRING) AS INTEGER\n"
-    s = s + "    DIM b AS INTEGER = 0\n"
-    s = s + "    DIM c AS INTEGER = 0\n"
-    s = s + "    DO WHILE b < LEN(sIn)\n"
-    s = s + "        DIM lead AS INTEGER = Asc(Mid(sIn, b + 1, 1))\n"
-    s = s + "        DIM nb AS INTEGER = 1\n"
-    s = s + "        IF lead >= 240 THEN\n"
-    s = s + "            nb = 4\n"
-    s = s + "        ELSEIF lead >= 224 THEN\n"
-    s = s + "            nb = 3\n"
-    s = s + "        ELSEIF lead >= 192 THEN\n"
-    s = s + "            nb = 2\n"
-    s = s + "        END IF\n"
-    s = s + "        b = b + nb\n"
-    s = s + "        c = c + 1\n"
-    s = s + "    LOOP\n"
-    s = s + "    RETURN c\n"
-    s = s + "END FUNCTION\n"
-    s = s + "\n"
-    ' --- overlayRow — shared helper for painting a body string onto
-    '     a target row at visible column `col`, preserving cells either
-    '     side. CELL-aware: it counts `txt`'s width in display cells (so
-    '     a 3-byte glyph like ▲ replaces exactly ONE cell, not 3 bytes)
-    '     and splices via cellByteIdx, so overlapping widgets and rows
-    '     containing multi-byte box glyphs line up correctly. Used by
-    '     every per-widget paint site in View, single-row or multi-row.
-    s = s + "FUNCTION overlayRow(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING\n"
-    s = s + "    DIM txtCells AS INTEGER = 0\n"
-    s = s + "    DIM tb AS INTEGER = 0\n"
-    s = s + "    DO WHILE tb < LEN(txt)\n"
-    s = s + "        DIM tl AS INTEGER = Asc(Mid(txt, tb + 1, 1))\n"
-    s = s + "        DIM tn AS INTEGER = 1\n"
-    s = s + "        IF tl >= 240 THEN\n"
-    s = s + "            tn = 4\n"
-    s = s + "        ELSEIF tl >= 224 THEN\n"
-    s = s + "            tn = 3\n"
-    s = s + "        ELSEIF tl >= 192 THEN\n"
-    s = s + "            tn = 2\n"
-    s = s + "        END IF\n"
-    s = s + "        tb = tb + tn\n"
-    s = s + "        txtCells = txtCells + 1\n"
-    s = s + "    LOOP\n"
-    s = s + "    DIM startB AS INTEGER = cellByteIdx(row, col)\n"
-    s = s + "    DIM endB AS INTEGER = cellByteIdx(row, col + txtCells)\n"
-    s = s + "    DIM lf AS STRING = " + qt + qt + "\n"
-    s = s + "    IF startB > 0 THEN lf = Mid(row, 1, startB)\n"
-    s = s + "    DIM rt AS STRING = " + qt + qt + "\n"
-    s = s + "    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)\n"
-    ' If lf carries an open SGR (a focus-highlighted widget whose styled
-    ' span this PLAIN overlay cuts into), terminate it with a reset before
-    ' txt so reverse-video can't bleed across the overlay and rightward.
-    s = s + "    DIM pre AS STRING = " + qt + qt + "\n"
-    s = s + "    IF strings.Contains(lf, Chr(27)) THEN pre = Chr(27) + " + qt + "[0m" + qt + "\n"
-    s = s + "    RETURN lf + pre + txt + rt\n"
-    s = s + "END FUNCTION\n"
-    s = s + "\n"
-    ' --- overlayCells — Panel child overlays call this by name; now that
-    '     overlayRow is itself cell-aware it is a thin alias. Kept so the
-    '     Panel emitter doesn't need to change.
-    IF hasPanel THEN
-        s = s + "FUNCTION overlayCells(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING\n"
-        s = s + "    RETURN overlayRow(row, col, txt)\n"
-        s = s + "END FUNCTION\n"
+    ' --- syncFocusComp — blur every focusable Charm component, then focus
+    '     the one whose widget index is m.Focus. Called from Main and on
+    '     every focus change (Tab / Shift+Tab / click) so the focused
+    '     component shows its cursor and receives forwarded input.
+    IF hasTextInput OR hasTextArea OR hasTable THEN
+        s = s + "SUB syncFocusComp(m AS POINTER TO Model)\n"
+        DIM sfBI AS INTEGER
+        FOR sfBI = 0 TO n - 1
+            IF compHasFocus(f.Widgets[sfBI].Kind) AND f.Widgets[sfBI].Parent = "" THEN
+                s = s + "    m." + f.Widgets[sfBI].Name + compSuffix(f.Widgets[sfBI].Kind) + ".Blur()\n"
+            END IF
+        NEXT sfBI
+        DIM sfFI AS INTEGER
+        FOR sfFI = 0 TO n - 1
+            IF compHasFocus(f.Widgets[sfFI].Kind) AND f.Widgets[sfFI].Parent = "" THEN
+                DIM sfNm AS STRING = f.Widgets[sfFI].Name + compSuffix(f.Widgets[sfFI].Kind)
+                s = s + "    IF m.Focus = " + strconv.Itoa(sfFI) + " THEN\n"
+                IF f.Widgets[sfFI].Kind = "PropGrid" THEN
+                    ' table.Focus() returns nothing.
+                    s = s + "        m." + sfNm + ".Focus()\n"
+                ELSE
+                    ' textinput / textarea Focus() returns a cmd.
+                    s = s + "        DIM fcc" + strconv.Itoa(sfFI) + " AS tea.Cmd = m." + sfNm + ".Focus()\n"
+                    s = s + "        _ = fcc" + strconv.Itoa(sfFI) + "\n"
+                END IF
+                s = s + "    END IF\n"
+            END IF
+        NEXT sfFI
+        s = s + "END SUB\n"
         s = s + "\n"
     END IF
-    ' overlayRowAt — splice a (possibly ANSI-styled) string into `row` at
-    ' visible column `col`, replacing lipgloss.Width(txt) DISPLAY CELLS of
-    ' the row's content. Cell-aware (multi-byte safe) via cellByteIdx so a
-    ' styled body lands at the right column even over box glyphs. Used by
-    ' the dialog overlay AND the focus highlight. Always emitted now.
-    s = s + "FUNCTION overlayRowAt(row AS STRING, col AS INTEGER, txt AS STRING) AS STRING\n"
-    s = s + "    DIM cells AS INTEGER = lipgloss.Width(txt)\n"
-    s = s + "    DIM startB AS INTEGER = cellByteIdx(row, col)\n"
-    s = s + "    DIM endB AS INTEGER = cellByteIdx(row, col + cells)\n"
-    s = s + "    DIM lf AS STRING = " + qt + qt + "\n"
-    s = s + "    IF startB > 0 THEN lf = Mid(row, 1, startB)\n"
-    s = s + "    DIM rt AS STRING = " + qt + qt + "\n"
-    s = s + "    IF endB < LEN(row) THEN rt = Mid(row, endB + 1, LEN(row) - endB)\n"
-    s = s + "    RETURN lf + txt + rt\n"
-    s = s + "END FUNCTION\n"
-    s = s + "\n"
-    ' Widget highlight styles — three package-level lipgloss styles forming
-    ' the color scheme the user can reassign:
-    '   focusStyle  — the keyboard-focused (selected) widget. Reverse video.
-    '   hoverStyle  — the widget under the mouse cursor. Defaults to the
-    '                 opposite of unselected (plain), i.e. reverse video too.
-    ' Unselected widgets paint plain. Content stays at the widget's X either
-    ' way (WYSIWYG). overlayFocus picks the style: focus beats hover beats
-    ' plain. These are package-level vars so the generated program (or the
-    ' user's handler code) can restyle the scheme in one place.
     s = s + "DIM focusStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)\n"
     s = s + "DIM hoverStyle AS lipgloss.Style = lipgloss.NewStyle().Reverse(TRUE)\n"
     s = s + "\n"
-    s = s + "FUNCTION overlayFocus(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN) AS STRING\n"
-    s = s + "    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))\n"
-    s = s + "    IF hovered THEN RETURN overlayRowAt(row, col, hoverStyle.Render(txt))\n"
-    s = s + "    RETURN overlayRow(row, col, txt)\n"
+    ' compFocusView — wrap a Charm-composed widget view in the focus (or
+    ' hover) style for the layer-composition path. Plain when neither.
+    s = s + "FUNCTION compFocusView(v AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN) AS STRING\n"
+    s = s + "    IF focused THEN RETURN focusStyle.Render(v)\n"
+    s = s + "    IF hovered THEN RETURN hoverStyle.Render(v)\n"
+    s = s + "    RETURN v\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
-    ' overlayFocusC — colored variant. The normal (unselected) state paints
-    ' the body with the widget's resolved Fg/Bg (ANSI-256 index strings,
-    ' "" = inherit). Focus/hover still win and use the global reverse styles.
-    ' Emitted only when the form actually uses colors, so uncolored forms
-    ' keep byte-identical output.
-    IF formHasColors(f) THEN
-        s = s + "FUNCTION overlayFocusC(row AS STRING, col AS INTEGER, txt AS STRING, focused AS BOOLEAN, hovered AS BOOLEAN, fg AS STRING, bg AS STRING) AS STRING\n"
-        s = s + "    IF focused THEN RETURN overlayRowAt(row, col, focusStyle.Render(txt))\n"
-        s = s + "    IF hovered THEN RETURN overlayRowAt(row, col, hoverStyle.Render(txt))\n"
-        s = s + "    DIM st AS lipgloss.Style = lipgloss.NewStyle()\n"
-        s = s + "    IF fg <> " + qt + qt + " THEN st = st.Foreground(lipgloss.Color(fg))\n"
-        s = s + "    IF bg <> " + qt + qt + " THEN st = st.Background(lipgloss.Color(bg))\n"
-        s = s + "    RETURN overlayRowAt(row, col, st.Render(txt))\n"
-        s = s + "END FUNCTION\n"
-        s = s + "\n"
-    END IF
     ' --- Menubar runtime: the generic _MNode type + _mn* navigation /
     '     paint / hit-test helpers (once), then one _mnNodes_<Name>()
     '     data table per Menubar widget. Emitted before dispatchClick so

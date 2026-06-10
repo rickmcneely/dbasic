@@ -118,6 +118,39 @@ END FUNCTION
 
 ' H — View paint: one grid row per VISIBLE node (collapsed subtrees hidden),
 ' capped at H; indent + glyph (▾/▸ parent, • leaf) + label, cursor gets >.
+' Layer view (Charm path): build the visible node rows as one multi-line
+' string, placed as a lipgloss layer. The selected (cursor) row is reversed;
+' focus/hover reverse the whole block via compFocusView.
+FUNCTION treeEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, qt AS STRING) AS STRING
+    DIM tnHStr AS STRING = strconv.Itoa(wv.H)
+    DIM s AS STRING = ""
+    s = s + "    DIM tnVis" + sfx + " AS []INTEGER = treeVisibleRows(" + wv.Name + "_depths(), m." + wv.Name + "_Collapsed)\n"
+    s = s + "    DIM tnDep" + sfx + " AS []INTEGER = " + wv.Name + "_depths()\n"
+    s = s + "    DIM tnLab" + sfx + " AS []STRING = " + wv.Name + "_labels()\n"
+    s = s + "    DIM vwraw" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "    DIM tnR" + sfx + " AS INTEGER\n"
+    s = s + "    FOR tnR" + sfx + " = 0 TO " + tnHStr + " - 1\n"
+    s = s + "        DIM tnLine" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "        IF tnR" + sfx + " < LEN(tnVis" + sfx + ") THEN\n"
+    s = s + "            DIM tnIdx" + sfx + " AS INTEGER = tnVis" + sfx + "[tnR" + sfx + "]\n"
+    s = s + "            DIM tnD" + sfx + " AS INTEGER = tnDep" + sfx + "[tnIdx" + sfx + "]\n"
+    s = s + "            DIM tnG" + sfx + " AS STRING = " + qt + "•" + qt + "\n"
+    s = s + "            IF " + wv.Name + "_isParent(tnIdx" + sfx + ") THEN\n"
+    s = s + "                tnG" + sfx + " = " + qt + "▾" + qt + "\n"
+    s = s + "                IF tnIdx" + sfx + " < LEN(m." + wv.Name + "_Collapsed) AND m." + wv.Name + "_Collapsed[tnIdx" + sfx + "] THEN tnG" + sfx + " = " + qt + "▸" + qt + "\n"
+    s = s + "            END IF\n"
+    s = s + "            tnLine" + sfx + " = strings.Repeat(" + qt + "  " + qt + ", tnD" + sfx + ") + tnG" + sfx + " + " + qt + " " + qt + " + tnLab" + sfx + "[tnIdx" + sfx + "]\n"
+    s = s + "            IF tnIdx" + sfx + " = m." + wv.Name + "_Val THEN tnLine" + sfx + " = focusStyle.Render(tnLine" + sfx + ")\n"
+    s = s + "        END IF\n"
+    s = s + "        IF tnR" + sfx + " > 0 THEN vwraw" + sfx + " = vwraw" + sfx + " + " + qt + "\\n" + qt + "\n"
+    s = s + "        vwraw" + sfx + " = vwraw" + sfx + " + tnLine" + sfx + "\n"
+    s = s + "    NEXT tnR" + sfx + "\n"
+    s = s + "    DIM vw" + sfx + " AS STRING = vwraw" + sfx + "\n"
+    s = s + "    IF m.Hover = " + sfx + " AND m.Focus <> " + sfx + " THEN vw" + sfx + " = hoverStyle.Render(vwraw" + sfx + ")\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION
+
 FUNCTION treeEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, qt AS STRING) AS STRING
     DIM tnHStr AS STRING = strconv.Itoa(wv.H)
     DIM s AS STRING = ""

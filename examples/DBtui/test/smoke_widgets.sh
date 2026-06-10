@@ -91,9 +91,10 @@ case_run "$SHOW" "startup renders" "hold:0.3" \
 case_run "$SHOW" "checkbox toggles on Space" "$T3,space,hold:0.3" \
     --want "[x] option"
 
-# ListBox (idx 6): Down moves the selection caret to item two.
+# ListBox (idx 6, bubbles/list): Down moves the selection bar to item two
+# (the bubbles default delegate marks the selected row with a "│" cursor bar).
 case_run "$SHOW" "listbox Down moves selection" "$T6,down,hold:0.3" \
-    --want "▶ item two"
+    --want "│ item two"
 
 # TabStrip (idx 9): Right activates the next tab (bracketed) + content row.
 case_run "$SHOW" "tabstrip Right switches tab" "$T9,right,hold:0.3" \

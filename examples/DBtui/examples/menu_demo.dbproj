@@ -7,22 +7,153 @@
       "Title": "Menu Demo",
       "Widgets": [
         {
-          "Kind": "Menubar", "Name": "mb", "X": 0, "Y": 0, "W": 40, "H": 1,
+          "Kind": "Menubar",
+          "Name": "mb",
+          "Text": "",
+          "X": 0,
+          "Y": 0,
+          "W": 40,
+          "H": 1,
+          "Items": null,
+          "Selected": 0,
+          "Checked": false,
+          "Group": "",
+          "Min": 0,
+          "Max": 0,
+          "Value": 0,
+          "Orient": "",
           "Menu": [
-            {"Caption": "File", "Name": "mnuFile", "Depth": 0},
-            {"Caption": "New",  "Name": "mnuNew",  "Depth": 1, "Shortcut": "Ctrl+N"},
-            {"Caption": "Recent", "Name": "mnuRecent", "Depth": 1},
-            {"Caption": "Alpha", "Name": "mnuAlpha", "Depth": 2},
-            {"Caption": "Beta",  "Name": "mnuBeta",  "Depth": 2},
-            {"Depth": 1, "IsSep": true},
-            {"Caption": "Save", "Name": "mnuSave", "Depth": 1, "Checked": true},
-            {"Caption": "Exit", "Name": "mnuExit", "Depth": 1, "Disabled": true},
-            {"Caption": "Help", "Name": "mnuHelp", "Depth": 0},
-            {"Caption": "About", "Name": "mnuAbout", "Depth": 1}
-          ]
+            {
+              "Caption": "File",
+              "Name": "mnuFile",
+              "Depth": 0,
+              "Shortcut": "",
+              "Checked": false,
+              "Disabled": false,
+              "IsSep": false
+            },
+            {
+              "Caption": "New",
+              "Name": "mnuNew",
+              "Depth": 1,
+              "Shortcut": "Ctrl+N",
+              "Checked": false,
+              "Disabled": false,
+              "IsSep": false
+            },
+            {
+              "Caption": "Recent",
+              "Name": "mnuRecent",
+              "Depth": 1,
+              "Shortcut": "",
+              "Checked": false,
+              "Disabled": false,
+              "IsSep": false
+            },
+            {
+              "Caption": "Alpha",
+              "Name": "mnuAlpha",
+              "Depth": 2,
+              "Shortcut": "",
+              "Checked": false,
+              "Disabled": false,
+              "IsSep": false
+            },
+            {
+              "Caption": "Beta",
+              "Name": "mnuBeta",
+              "Depth": 2,
+              "Shortcut": "",
+              "Checked": false,
+              "Disabled": false,
+              "IsSep": false
+            },
+            {
+              "Caption": "",
+              "Name": "",
+              "Depth": 1,
+              "Shortcut": "",
+              "Checked": false,
+              "Disabled": false,
+              "IsSep": true
+            },
+            {
+              "Caption": "Save",
+              "Name": "mnuSave",
+              "Depth": 1,
+              "Shortcut": "",
+              "Checked": true,
+              "Disabled": false,
+              "IsSep": false
+            },
+            {
+              "Caption": "Exit",
+              "Name": "mnuExit",
+              "Depth": 1,
+              "Shortcut": "",
+              "Checked": false,
+              "Disabled": true,
+              "IsSep": false
+            },
+            {
+              "Caption": "Help",
+              "Name": "mnuHelp",
+              "Depth": 0,
+              "Shortcut": "",
+              "Checked": false,
+              "Disabled": false,
+              "IsSep": false
+            },
+            {
+              "Caption": "About",
+              "Name": "mnuAbout",
+              "Depth": 1,
+              "Shortcut": "",
+              "Checked": false,
+              "Disabled": false,
+              "IsSep": false
+            }
+          ],
+          "DialogKind": "",
+          "DialogMsg": "",
+          "DialogDef": "",
+          "DialogMode": "",
+          "DialogMask": "",
+          "OnClickDialog": "",
+          "Parent": "",
+          "FgColor": "",
+          "BgColor": ""
         },
-        {"Kind": "Label", "Name": "lbl", "Text": "menu demo", "X": 2, "Y": 12, "W": 20, "H": 1}
-      ]
+        {
+          "Kind": "Label",
+          "Name": "lbl",
+          "Text": "menu demo",
+          "X": 2,
+          "Y": 12,
+          "W": 20,
+          "H": 1,
+          "Items": null,
+          "Selected": 0,
+          "Checked": false,
+          "Group": "",
+          "Min": 0,
+          "Max": 0,
+          "Value": 0,
+          "Orient": "",
+          "Menu": null,
+          "DialogKind": "",
+          "DialogMsg": "",
+          "DialogDef": "",
+          "DialogMode": "",
+          "DialogMask": "",
+          "OnClickDialog": "",
+          "Parent": "",
+          "FgColor": "",
+          "BgColor": ""
+        }
+      ],
+      "FgColor": "",
+      "BgColor": ""
     }
   ]
 }
