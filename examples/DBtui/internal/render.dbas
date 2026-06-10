@@ -1091,7 +1091,9 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
                 propRows = APPEND(propRows, "Lines  " + strings.Join(sw.Items, ", "))
             END IF
             IF sw.Kind = "Menubar" THEN
-                propRows = APPEND(propRows, "Menus  " + strings.Join(sw.Items, ", "))
+                ' Menus live in the structured Menu tree (not Items); show the
+                ' top-level titles as a preview. Clicking opens the Menu Editor.
+                propRows = APPEND(propRows, "Menus " + strings.TrimSpace(menuTopTitles(sw.Menu)))
             END IF
             IF sw.Kind = "StatusBar" THEN
                 propRows = APPEND(propRows, "Segs   " + strings.Join(sw.Items, ", "))
