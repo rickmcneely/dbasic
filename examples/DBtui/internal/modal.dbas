@@ -141,32 +141,68 @@ SUB showEnumPicker(m AS POINTER TO Model, rowIdx AS INTEGER, ax AS INTEGER, ay A
     m.EnumActive = TRUE
 END SUB
 
+' applyWidgetEnum — write `val` to the selected widget's field named by the
+' wprop:* enum `key`. Shared by the dropdown commit and the left-click cycle.
+SUB applyWidgetEnum(m AS POINTER TO Model, sel AS INTEGER, key AS STRING, val AS STRING)
+    IF sel < 0 OR sel >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    IF key = "wprop:orient" THEN
+        m.Tabs[m.TabIdx].Form.Widgets[sel].Orient = val
+    ELSEIF key = "wprop:dialogkind" THEN
+        m.Tabs[m.TabIdx].Form.Widgets[sel].DialogKind = val
+    ELSEIF key = "wprop:dialogmode" THEN
+        m.Tabs[m.TabIdx].Form.Widgets[sel].DialogMode = val
+    ELSEIF key = "wprop:borderstyle" THEN
+        m.Tabs[m.TabIdx].Form.Widgets[sel].BorderStyle = val
+    ELSEIF key = "wprop:cornerstyle" THEN
+        m.Tabs[m.TabIdx].Form.Widgets[sel].CornerStyle = val
+    ELSEIF key = "wprop:captionjust" THEN
+        m.Tabs[m.TabIdx].Form.Widgets[sel].CaptionJust = val
+    ELSEIF key = "wprop:vscroll" THEN
+        m.Tabs[m.TabIdx].Form.Widgets[sel].VScroll = val
+    ELSEIF key = "wprop:hscroll" THEN
+        m.Tabs[m.TabIdx].Form.Widgets[sel].HScroll = val
+    END IF
+    m.Tabs[m.TabIdx].Dirty = TRUE
+END SUB
+
 ' enumPickerCommit — apply the highlighted option to the widget's enum
-' field (Orient / DialogKind / DialogMode) and close the dropdown.
+' field and close the dropdown.
 SUB enumPickerCommit(m AS POINTER TO Model)
     DIM sel AS INTEGER = m.Tabs[m.TabIdx].SelWidget
     IF sel >= 0 AND sel < LEN(m.Tabs[m.TabIdx].Form.Widgets) AND m.EnumIdx >= 0 AND m.EnumIdx < LEN(m.EnumOpts) THEN
-        DIM val AS STRING = m.EnumOpts[m.EnumIdx]
-        IF m.EnumKey = "wprop:orient" THEN
-            m.Tabs[m.TabIdx].Form.Widgets[sel].Orient = val
-        ELSEIF m.EnumKey = "wprop:dialogkind" THEN
-            m.Tabs[m.TabIdx].Form.Widgets[sel].DialogKind = val
-        ELSEIF m.EnumKey = "wprop:dialogmode" THEN
-            m.Tabs[m.TabIdx].Form.Widgets[sel].DialogMode = val
-        ELSEIF m.EnumKey = "wprop:borderstyle" THEN
-            m.Tabs[m.TabIdx].Form.Widgets[sel].BorderStyle = val
-        ELSEIF m.EnumKey = "wprop:cornerstyle" THEN
-            m.Tabs[m.TabIdx].Form.Widgets[sel].CornerStyle = val
-        ELSEIF m.EnumKey = "wprop:captionjust" THEN
-            m.Tabs[m.TabIdx].Form.Widgets[sel].CaptionJust = val
-        ELSEIF m.EnumKey = "wprop:vscroll" THEN
-            m.Tabs[m.TabIdx].Form.Widgets[sel].VScroll = val
-        ELSEIF m.EnumKey = "wprop:hscroll" THEN
-            m.Tabs[m.TabIdx].Form.Widgets[sel].HScroll = val
-        END IF
-        m.Tabs[m.TabIdx].Dirty = TRUE
+        applyWidgetEnum(m, sel, m.EnumKey, m.EnumOpts[m.EnumIdx])
     END IF
     m.EnumActive = FALSE
+END SUB
+
+' formCycleEnum — advance the selected widget's enum row to its next option
+' (left-click behavior, so users can change e.g. VScroll without the dropdown).
+SUB formCycleEnum(m AS POINTER TO Model, rowIdx AS INTEGER)
+    DIM sel AS INTEGER = m.Tabs[m.TabIdx].SelWidget
+    IF sel < 0 OR sel >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[sel]
+    DIM kind AS STRING
+    DIM optsCsv AS STRING
+    kind, optsCsv = propRowKind(w, rowIdx)
+    IF kind <> "enum" THEN RETURN
+    DIM t AS STRING
+    DIM p AS STRING
+    DIM cur AS STRING
+    DIM key AS STRING
+    t, p, cur, key = propRowEditContext(w, rowIdx)
+    _ = t
+    _ = p
+    DIM parts AS []STRING = strings.Split(optsCsv, ",")
+    DIM nextVal AS STRING = ""
+    DIM oi AS INTEGER
+    DIM found AS INTEGER = 0 - 1
+    FOR oi = 0 TO LEN(parts) - 1
+        IF strings.TrimSpace(parts[oi]) = cur THEN found = oi
+    NEXT oi
+    DIM ni AS INTEGER = found + 1
+    IF ni >= LEN(parts) THEN ni = 0
+    IF ni >= 0 AND ni < LEN(parts) THEN nextVal = strings.TrimSpace(parts[ni])
+    IF nextVal <> "" THEN applyWidgetEnum(m, sel, key, nextVal)
 END SUB
 
 ' startInlinePropEdit — begin editing Properties row `rowIdx` of the

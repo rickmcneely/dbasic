@@ -1409,8 +1409,10 @@ SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
         RETURN
     END IF
     IF kind = "enum" THEN
-        ' Left-click selects only; the list opens on right-click.
+        ' Left-click cycles to the next option (so e.g. VScroll changes with a
+        ' plain click); right-click still opens the full dropdown.
         IF m.PropEdit THEN cancelInlinePropEdit(m)
+        formCycleEnum(m, rowIdx)
         RETURN
     END IF
     ' Color rows open the swatch picker rather than a text input.
