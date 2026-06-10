@@ -209,6 +209,19 @@ TYPE DesignWidget
     ' use the global reverse styles).
     DIM FgColor AS STRING      ' foreground swatch, "" = inherit
     DIM BgColor AS STRING      ' background swatch, "" = inherit
+
+    ' --- Frame / scroll options (ScrollPanel / TextArea / TabStrip) ---
+    ' All default to "" so legacy .dbproj files render byte-identically
+    ' (the historical look is unframed). Border on/off + line style +
+    ' corner shape compose a lipgloss border; Caption is a title drawn on
+    ' the top border. HScroll/VScroll add scrollbar gutters (ScrollPanel /
+    ' TextArea). Enum values below; "" means "off / none / default".
+    DIM BorderStyle AS STRING  ' "" | "none" | "normal" | "thick" | "double"
+    DIM CornerStyle AS STRING  ' "" | "square" | "rounded"
+    DIM Caption     AS STRING  ' title text on the top border ("" = none)
+    DIM CaptionJust AS STRING  ' "" | "left" | "center" | "right"
+    DIM HScroll     AS STRING  ' "" | "off" | "on" | "auto"
+    DIM VScroll     AS STRING  ' "" | "off" | "on" | "auto"
 END TYPE
 
 TYPE DesignForm

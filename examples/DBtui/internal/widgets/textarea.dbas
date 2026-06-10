@@ -149,6 +149,36 @@ FUNCTION textAreaEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS
     RETURN s
 END FUNCTION
 
+' Framed layer: wrap the bubbles textarea's view in a border + caption, with
+' an optional vertical scrollbar gutter (thumb tracks the cursor line, since
+' the textarea doesn't expose its scroll offset). Used when widgetFramed(wv).
+FUNCTION textAreaEmitFramedLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, qt AS STRING) AS STRING
+    DIM nm AS STRING = wv.Name
+    DIM innerH AS INTEGER = framedContentH(wv)
+    DIM contentW AS INTEGER = framedContentW(wv)
+    DIM showV AS BOOLEAN = widgetReserveVGutter(wv)
+    DIM cwS AS STRING = strconv.Itoa(contentW)
+    DIM vhS AS STRING = strconv.Itoa(innerH)
+    DIM s AS STRING = ""
+    s = s + "    DIM tav" + sfx + " AS STRING = m." + nm + "_ta.View()\n"
+    s = s + "    DIM tal" + sfx + " AS []STRING = strings.Split(tav" + sfx + ", " + qt + "\\n" + qt + ")\n"
+    s = s + "    DIM tafin" + sfx + " AS []STRING\n"
+    s = s + "    DIM tar" + sfx + " AS INTEGER\n"
+    s = s + "    FOR tar" + sfx + " = 0 TO " + vhS + " - 1\n"
+    s = s + "        DIM tac" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "        IF tar" + sfx + " < LEN(tal" + sfx + ") THEN tac" + sfx + " = tal" + sfx + "[tar" + sfx + "]\n"
+    s = s + "        IF lipgloss.Width(tac" + sfx + ") > " + cwS + " THEN tac" + sfx + " = Mid(tac" + sfx + ", 1, " + cwS + ")\n"
+    s = s + "        IF lipgloss.Width(tac" + sfx + ") < " + cwS + " THEN tac" + sfx + " = tac" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + cwS + " - lipgloss.Width(tac" + sfx + "))\n"
+    IF showV THEN
+        s = s + "        tac" + sfx + " = tac" + sfx + " + _vgutter(tar" + sfx + ", " + vhS + ", m." + nm + "_ta.Line(), m." + nm + "_ta.LineCount())\n"
+    END IF
+    s = s + "        tafin" + sfx + " = APPEND(tafin" + sfx + ", tac" + sfx + ")\n"
+    s = s + "    NEXT tar" + sfx + "\n"
+    s = s + "    DIM vw" + sfx + " AS STRING = _frame(tafin" + sfx + ", " + strconv.Itoa(wv.W - 2) + ", " + frameCallArgs(wv, qt) + ")\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION
+
 ' Helper-function emitter: byte-offset cursor helpers, emitted once when any
 ' TextArea is present (the prelude's `IF hasTextArea` block).
 FUNCTION textAreaEmitHelpers(qt AS STRING) AS STRING

@@ -1544,11 +1544,116 @@ FUNCTION compHasFocus(kind AS STRING) AS BOOLEAN
     RETURN FALSE
 END FUNCTION
 
+' --- Frame / border helpers (ScrollPanel / TextArea / TabStrip) ---------
+' widgetFramed — does this widget draw a border frame? Legacy widgets (all
+' frame fields "") render unframed, byte-identical to before; a frame appears
+' only when the user opts in via border style, a caption, or a scrollbar.
+FUNCTION widgetFramed(w AS DesignWidget) AS BOOLEAN
+    IF w.BorderStyle = "none" THEN RETURN FALSE
+    IF w.BorderStyle = "normal" OR w.BorderStyle = "thick" OR w.BorderStyle = "double" THEN RETURN TRUE
+    IF w.Caption <> "" THEN RETURN TRUE
+    IF w.VScroll = "on" OR w.VScroll = "auto" THEN RETURN TRUE
+    IF w.HScroll = "on" OR w.HScroll = "auto" THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' widgetEffBorder — the effective line style when framed (default normal).
+FUNCTION widgetEffBorder(w AS DesignWidget) AS STRING
+    IF w.BorderStyle = "thick" OR w.BorderStyle = "double" THEN RETURN w.BorderStyle
+    RETURN "normal"
+END FUNCTION
+
+' widgetReserveVGutter — does a framed ScrollPanel/TextArea reserve a column
+' for a vertical scrollbar? "on" always; "auto" reserves when the content
+' overflows (statically known for ScrollPanel via Items; TextArea content is
+' dynamic, so "auto" always reserves the gutter and the thumb tracks live).
+FUNCTION widgetReserveVGutter(w AS DesignWidget) AS BOOLEAN
+    IF w.VScroll = "on" THEN RETURN TRUE
+    IF w.VScroll = "auto" THEN
+        IF w.Kind = "ScrollPanel" THEN
+            DIM innerH AS INTEGER = w.H - 2
+            RETURN LEN(w.Items) > innerH
+        END IF
+        RETURN TRUE
+    END IF
+    RETURN FALSE
+END FUNCTION
+
+' framedContentW / framedContentH — inner area a framed widget's component is
+' sized to: box minus the 2 border cells, minus the v-scrollbar gutter column.
+FUNCTION framedContentW(w AS DesignWidget) AS INTEGER
+    DIM cw AS INTEGER = w.W - 2
+    IF widgetReserveVGutter(w) THEN cw = cw - 1
+    IF cw < 1 THEN cw = 1
+    RETURN cw
+END FUNCTION
+FUNCTION framedContentH(w AS DesignWidget) AS INTEGER
+    DIM ch AS INTEGER = w.H - 2
+    IF ch < 1 THEN ch = 1
+    RETURN ch
+END FUNCTION
+
+' borderGlyphs — six box-drawing glyphs (h, v, TL, TR, BL, BR) for a line
+' style + corner shape. Rounded corners (╭╮╰╯) override any style's corners;
+' thick/double have no rounded glyphs, so rounded arcs meet their edges (this
+' is exactly the thick+rounded look the chooser previews).
+FUNCTION borderGlyphs(style AS STRING, corner AS STRING) AS (STRING, STRING, STRING, STRING, STRING, STRING)
+    DIM gh AS STRING = "─"
+    DIM gv AS STRING = "│"
+    DIM tl AS STRING = "┌"
+    DIM tr AS STRING = "┐"
+    DIM bl AS STRING = "└"
+    DIM br AS STRING = "┘"
+    IF style = "thick" THEN
+        gh = "━"
+        gv = "┃"
+        tl = "┏"
+        tr = "┓"
+        bl = "┗"
+        br = "┛"
+    END IF
+    IF style = "double" THEN
+        gh = "═"
+        gv = "║"
+        tl = "╔"
+        tr = "╗"
+        bl = "╚"
+        br = "╝"
+    END IF
+    IF corner = "rounded" THEN
+        tl = "╭"
+        tr = "╮"
+        bl = "╰"
+        br = "╯"
+    END IF
+    RETURN gh, gv, tl, tr, bl, br
+END FUNCTION
+
+' frameCallArgs — emit the trailing _frame(...) argument string (glyphs +
+' caption + justification) shared by every framed widget.
+FUNCTION frameCallArgs(w AS DesignWidget, qt AS STRING) AS STRING
+    DIM gh AS STRING
+    DIM gv AS STRING
+    DIM tl AS STRING
+    DIM tr AS STRING
+    DIM bl AS STRING
+    DIM br AS STRING
+    gh, gv, tl, tr, bl, br = borderGlyphs(widgetEffBorder(w), w.CornerStyle)
+    DIM just AS STRING = w.CaptionJust
+    IF just = "" THEN just = "left"
+    RETURN qt + gh + qt + ", " + qt + gv + qt + ", " + qt + tl + qt + ", " + qt + tr + qt + ", " + qt + bl + qt + ", " + qt + br + qt + ", " + qt + escapeForDBString(w.Caption) + qt + ", " + qt + just + qt
+END FUNCTION
+
 ' widgetEmitLayer — emit View code building widget `wv`'s Charm view string +
 ' a lipgloss layer at its (X,Y,Z). Component kinds render via .View();
 ' lipgloss-composed kinds reuse their body builder wrapped in compFocusView.
 FUNCTION widgetEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, f AS DesignForm, n AS INTEGER, qt AS STRING) AS STRING
     DIM s AS STRING = ""
+    ' Framed ScrollPanel / TextArea: wrap the component view in a border +
+    ' caption (+ scrollbar gutters). Unframed → fall through to the bare
+    ' component path below (byte-identical to the pre-frame output).
+    IF wv.Kind = "ScrollPanel" AND widgetFramed(wv) THEN RETURN scrollPanelEmitFramedLayer(wv, sfx, xs, ys, zStr, qt)
+    IF wv.Kind = "TextArea" AND widgetFramed(wv) THEN RETURN textAreaEmitFramedLayer(wv, sfx, xs, ys, zStr, qt)
     IF wv.Kind = "TabStrip" THEN RETURN tabStripEmitLayer(wv, sfx, xs, ys, zStr, qt)
     IF wv.Kind = "Tree" THEN RETURN treeEmitLayer(wv, sfx, xs, ys, zStr, qt)
     IF wv.Kind = "ScrollBar" THEN RETURN scrollBarEmitLayer(wv, sfx, xs, ys, zStr, qt)
@@ -1599,9 +1704,16 @@ FUNCTION compEmitInit(w AS DesignWidget, qt AS STRING) AS STRING
         s = s + "    m." + nm + ".SetWidth(" + strconv.Itoa(tiw) + ")\n"
         IF w.Text <> "" THEN s = s + "    m." + nm + ".SetValue(" + qt + escapeForDBString(w.Text) + qt + ")\n"
     ELSEIF w.Kind = "TextArea" THEN
+        ' Framed → size to the inner content area (box minus border + gutter).
+        DIM taW AS INTEGER = w.W
+        DIM taH AS INTEGER = w.H
+        IF widgetFramed(w) THEN
+            taW = framedContentW(w)
+            taH = framedContentH(w)
+        END IF
         s = s + "    m." + nm + " = textarea.New()\n"
-        s = s + "    m." + nm + ".SetWidth(" + strconv.Itoa(w.W) + ")\n"
-        s = s + "    m." + nm + ".SetHeight(" + strconv.Itoa(w.H) + ")\n"
+        s = s + "    m." + nm + ".SetWidth(" + strconv.Itoa(taW) + ")\n"
+        s = s + "    m." + nm + ".SetHeight(" + strconv.Itoa(taH) + ")\n"
         IF w.Text <> "" THEN s = s + "    m." + nm + ".SetValue(" + qt + escapeForDBString(w.Text) + qt + ")\n"
     ELSEIF w.Kind = "ListBox" OR w.Kind = "ComboBox" THEN
         s = s + "    DIM items" + w.Name + " AS []list.Item\n"
@@ -1642,9 +1754,16 @@ FUNCTION compEmitInit(w AS DesignWidget, qt AS STRING) AS STRING
         NEXT ri
         s = s + "    m." + nm + " = table.New(table.WithColumns(cols" + w.Name + "), table.WithRows(rws" + w.Name + "), table.WithHeight(" + strconv.Itoa(w.H) + "))\n"
     ELSEIF w.Kind = "ScrollPanel" THEN
+        ' Framed → size the viewport to the inner content area.
+        DIM spW AS INTEGER = w.W
+        DIM spH AS INTEGER = w.H
+        IF widgetFramed(w) THEN
+            spW = framedContentW(w)
+            spH = framedContentH(w)
+        END IF
         s = s + "    m." + nm + " = viewport.New()\n"
-        s = s + "    m." + nm + ".SetWidth(" + strconv.Itoa(w.W) + ")\n"
-        s = s + "    m." + nm + ".SetHeight(" + strconv.Itoa(w.H) + ")\n"
+        s = s + "    m." + nm + ".SetWidth(" + strconv.Itoa(spW) + ")\n"
+        s = s + "    m." + nm + ".SetHeight(" + strconv.Itoa(spH) + ")\n"
         DIM contentExpr AS STRING = qt + qt
         DIM ci AS INTEGER
         FOR ci = 0 TO LEN(w.Items) - 1
@@ -1725,6 +1844,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     DIM hasTable AS BOOLEAN = FALSE
     DIM hasViewport AS BOOLEAN = FALSE
     DIM hasProgress AS BOOLEAN = FALSE
+    DIM hasFramed AS BOOLEAN = FALSE
     DIM scanI AS INTEGER
     FOR scanI = 0 TO n - 1
         IF f.Widgets[scanI].Kind = "Dialog" THEN hasDialog = TRUE
@@ -1736,6 +1856,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         IF f.Widgets[scanI].Kind = "PropGrid" THEN hasTable = TRUE
         IF f.Widgets[scanI].Kind = "ScrollPanel" THEN hasViewport = TRUE
         IF f.Widgets[scanI].Kind = "ProgressBar" THEN hasProgress = TRUE
+        IF widgetFramed(f.Widgets[scanI]) THEN hasFramed = TRUE
     NEXT scanI
     s = s + "' === GENERATED BY DBtui — rewritten on every F5 (do not edit above the marker) ===\n"
     s = s + "\n"
@@ -2221,6 +2342,54 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    RETURN strings.Join(cr, " + qt + "\\n" + qt + ")\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
+    IF hasFramed THEN
+        ' _frame — wrap content rows in a border with an optional caption on
+        ' the top edge. `inner` rows are each `innerW` display cells wide
+        ' (the caller pads + appends any scrollbar gutter). Glyphs (gh,gv +
+        ' corners) and the caption/justify come from the widget's design.
+        s = s + "FUNCTION _frame(inner AS []STRING, innerW AS INTEGER, gh AS STRING, gv AS STRING, tl AS STRING, tr AS STRING, bl AS STRING, br AS STRING, caption AS STRING, just AS STRING) AS STRING\n"
+        s = s + "    DIM top AS STRING = tl\n"
+        s = s + "    IF caption = " + qt + qt + " THEN\n"
+        s = s + "        top = top + strings.Repeat(gh, innerW)\n"
+        s = s + "    ELSE\n"
+        s = s + "        DIM cap AS STRING = " + qt + " " + qt + " + caption + " + qt + " " + qt + "\n"
+        s = s + "        IF lipgloss.Width(cap) > innerW THEN cap = Mid(cap, 1, innerW)\n"
+        s = s + "        DIM fill AS INTEGER = innerW - lipgloss.Width(cap)\n"
+        s = s + "        DIM lead AS INTEGER = 0\n"
+        s = s + "        IF just = " + qt + "center" + qt + " THEN lead = fill / 2\n"
+        s = s + "        IF just = " + qt + "right" + qt + " THEN lead = fill\n"
+        s = s + "        top = top + strings.Repeat(gh, lead) + cap + strings.Repeat(gh, fill - lead)\n"
+        s = s + "    END IF\n"
+        s = s + "    top = top + tr\n"
+        s = s + "    DIM out AS STRING = top\n"
+        s = s + "    DIM i AS INTEGER\n"
+        s = s + "    FOR i = 0 TO LEN(inner) - 1\n"
+        s = s + "        DIM ln AS STRING = inner[i]\n"
+        s = s + "        IF lipgloss.Width(ln) < innerW THEN ln = ln + strings.Repeat(" + qt + " " + qt + ", innerW - lipgloss.Width(ln))\n"
+        s = s + "        out = out + " + qt + "\\n" + qt + " + gv + ln + gv\n"
+        s = s + "    NEXT i\n"
+        s = s + "    out = out + " + qt + "\\n" + qt + " + bl + strings.Repeat(gh, innerW) + br\n"
+        s = s + "    RETURN out\n"
+        s = s + "END FUNCTION\n"
+        s = s + "\n"
+        ' _vgutter — build the vertical-scrollbar cell for content row `row`
+        ' of `rows` total, given `top` (the first visible content index) and
+        ' `vis` visible rows: ▲ top, ▼ bottom, █ thumb, ░ track.
+        s = s + "FUNCTION _vgutter(row AS INTEGER, vis AS INTEGER, top AS INTEGER, total AS INTEGER) AS STRING\n"
+        s = s + "    IF row = 0 THEN RETURN " + qt + "▲" + qt + "\n"
+        s = s + "    IF row = vis - 1 THEN RETURN " + qt + "▼" + qt + "\n"
+        s = s + "    DIM track AS INTEGER = vis - 2\n"
+        s = s + "    IF track < 1 OR total <= vis THEN RETURN " + qt + "░" + qt + "\n"
+        s = s + "    DIM maxTop AS INTEGER = total - vis\n"
+        s = s + "    IF maxTop < 1 THEN maxTop = 1\n"
+        s = s + "    DIM thumb AS INTEGER = (top * (track - 1)) / maxTop\n"
+        s = s + "    IF thumb < 0 THEN thumb = 0\n"
+        s = s + "    IF thumb > track - 1 THEN thumb = track - 1\n"
+        s = s + "    IF (row - 1) = thumb THEN RETURN " + qt + "█" + qt + "\n"
+        s = s + "    RETURN " + qt + "░" + qt + "\n"
+        s = s + "END FUNCTION\n"
+        s = s + "\n"
+    END IF
     ' --- View: a blank lipgloss canvas + every widget as a layer at (X,Y,Z).
     s = s + "FUNCTION (m AS Model) View() AS tea.View\n"
     s = s + "    DIM w AS INTEGER = m.Width\n"

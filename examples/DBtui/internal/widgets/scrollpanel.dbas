@@ -64,6 +64,37 @@ FUNCTION scrollPanelEmitModel(w AS DesignWidget) AS STRING
     RETURN "    DIM " + w.Name + "_Scroll AS INTEGER\n"
 END FUNCTION
 
+' Framed layer: wrap the viewport's content in a border + caption, with an
+' optional vertical scrollbar gutter (thumb tracks the viewport's YOffset).
+' Used instead of the bare component layer when widgetFramed(wv) is true.
+FUNCTION scrollPanelEmitFramedLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, qt AS STRING) AS STRING
+    DIM nm AS STRING = wv.Name
+    DIM innerH AS INTEGER = framedContentH(wv)
+    DIM contentW AS INTEGER = framedContentW(wv)
+    DIM showV AS BOOLEAN = widgetReserveVGutter(wv)
+    DIM total AS STRING = strconv.Itoa(LEN(wv.Items))
+    DIM cwS AS STRING = strconv.Itoa(contentW)
+    DIM vhS AS STRING = strconv.Itoa(innerH)
+    DIM s AS STRING = ""
+    s = s + "    DIM spv" + sfx + " AS STRING = m." + nm + "_vp.View()\n"
+    s = s + "    DIM spl" + sfx + " AS []STRING = strings.Split(spv" + sfx + ", " + qt + "\\n" + qt + ")\n"
+    s = s + "    DIM spfin" + sfx + " AS []STRING\n"
+    s = s + "    DIM spr" + sfx + " AS INTEGER\n"
+    s = s + "    FOR spr" + sfx + " = 0 TO " + vhS + " - 1\n"
+    s = s + "        DIM spc" + sfx + " AS STRING = " + qt + qt + "\n"
+    s = s + "        IF spr" + sfx + " < LEN(spl" + sfx + ") THEN spc" + sfx + " = spl" + sfx + "[spr" + sfx + "]\n"
+    s = s + "        IF lipgloss.Width(spc" + sfx + ") > " + cwS + " THEN spc" + sfx + " = Mid(spc" + sfx + ", 1, " + cwS + ")\n"
+    s = s + "        IF lipgloss.Width(spc" + sfx + ") < " + cwS + " THEN spc" + sfx + " = spc" + sfx + " + strings.Repeat(" + qt + " " + qt + ", " + cwS + " - lipgloss.Width(spc" + sfx + "))\n"
+    IF showV THEN
+        s = s + "        spc" + sfx + " = spc" + sfx + " + _vgutter(spr" + sfx + ", " + vhS + ", m." + nm + "_vp.YOffset(), " + total + ")\n"
+    END IF
+    s = s + "        spfin" + sfx + " = APPEND(spfin" + sfx + ", spc" + sfx + ")\n"
+    s = s + "    NEXT spr" + sfx + "\n"
+    s = s + "    DIM vw" + sfx + " AS STRING = _frame(spfin" + sfx + ", " + strconv.Itoa(wv.W - 2) + ", " + frameCallArgs(wv, qt) + ")\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION
+
 ' G — mouse: click the top cell (rel Y = 1) scrolls up, the bottom cell
 ' (rel Y = H-2) scrolls down (the ▲ / ▼ scrollbar ends).
 FUNCTION scrollPanelEmitMouse(mcw AS DesignWidget, mcIStr AS STRING, mcYs AS STRING, qt AS STRING) AS STRING
