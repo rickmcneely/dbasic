@@ -123,36 +123,39 @@ FUNCTION scrollPanelEmitGutterClick(wv AS DesignWidget, xs AS STRING, ys AS STRI
     DIM s AS STRING = ""
     IF showV THEN
         DIM vcol AS INTEGER = wv.W - 2
-        DIM vlast AS INTEGER = wv.H - 2
-        IF showH THEN vlast = vlast - 1
-        DIM vmid AS INTEGER = (1 + vlast) / 2
+        DIM vlast AS INTEGER = framedContentH(wv)
+        DIM maxY AS INTEGER = LEN(wv.Items) - vlast
+        IF maxY < 0 THEN maxY = 0
+        DIM vspan AS INTEGER = vlast - 3
+        IF vspan < 1 THEN vspan = 1
+        ' ▲ / ▼ step by one; clicking the track jumps the thumb to that
+        ' position (SetYOffset proportional), so repeated/positional clicks
+        ' behave predictably and small overflows aren't slammed to the end.
         s = s + "            IF mc.X - " + xs + " = " + strconv.Itoa(vcol) + " AND mc.Y - " + ys + " >= 1 AND mc.Y - " + ys + " <= " + strconv.Itoa(vlast) + " THEN\n"
         s = s + "                IF mc.Y - " + ys + " = 1 THEN\n"
         s = s + "                    m." + nm + "_vp.ScrollUp(1)\n"
         s = s + "                ELSEIF mc.Y - " + ys + " = " + strconv.Itoa(vlast) + " THEN\n"
         s = s + "                    m." + nm + "_vp.ScrollDown(1)\n"
-        s = s + "                ELSEIF mc.Y - " + ys + " < " + strconv.Itoa(vmid) + " THEN\n"
-        s = s + "                    m." + nm + "_vp.ScrollUp(3)\n"
         s = s + "                ELSE\n"
-        s = s + "                    m." + nm + "_vp.ScrollDown(3)\n"
+        s = s + "                    m." + nm + "_vp.SetYOffset(((mc.Y - " + ys + " - 2) * " + strconv.Itoa(maxY) + ") / " + strconv.Itoa(vspan) + ")\n"
         s = s + "                END IF\n"
         s = s + "                RETURN m, NIL\n"
         s = s + "            END IF\n"
     END IF
     IF showH THEN
         DIM hrow AS INTEGER = wv.H - 2
-        DIM hlast AS INTEGER = wv.W - 2
-        IF showV THEN hlast = hlast - 1
-        DIM hmid AS INTEGER = (1 + hlast) / 2
+        DIM hlast AS INTEGER = framedContentW(wv)
+        DIM maxX AS INTEGER = widgetMaxLineW(wv) - hlast
+        IF maxX < 0 THEN maxX = 0
+        DIM hspan AS INTEGER = hlast - 3
+        IF hspan < 1 THEN hspan = 1
         s = s + "            IF mc.Y - " + ys + " = " + strconv.Itoa(hrow) + " AND mc.X - " + xs + " >= 1 AND mc.X - " + xs + " <= " + strconv.Itoa(hlast) + " THEN\n"
         s = s + "                IF mc.X - " + xs + " = 1 THEN\n"
-        s = s + "                    m." + nm + "_vp.ScrollLeft(2)\n"
+        s = s + "                    m." + nm + "_vp.ScrollLeft(1)\n"
         s = s + "                ELSEIF mc.X - " + xs + " = " + strconv.Itoa(hlast) + " THEN\n"
-        s = s + "                    m." + nm + "_vp.ScrollRight(2)\n"
-        s = s + "                ELSEIF mc.X - " + xs + " < " + strconv.Itoa(hmid) + " THEN\n"
-        s = s + "                    m." + nm + "_vp.ScrollLeft(4)\n"
+        s = s + "                    m." + nm + "_vp.ScrollRight(1)\n"
         s = s + "                ELSE\n"
-        s = s + "                    m." + nm + "_vp.ScrollRight(4)\n"
+        s = s + "                    m." + nm + "_vp.SetXOffset(((mc.X - " + xs + " - 2) * " + strconv.Itoa(maxX) + ") / " + strconv.Itoa(hspan) + ")\n"
         s = s + "                END IF\n"
         s = s + "                RETURN m, NIL\n"
         s = s + "            END IF\n"
