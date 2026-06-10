@@ -749,9 +749,36 @@ FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
             selGrid[hRow][hCol] = TRUE
         END IF
     END IF
+    ' Form chrome — when chromed, draw the form's border box into the grid
+    ' (left/right sides on content rows + bottom border) so the designer
+    ' mirrors the runtime; the title row becomes the bordered title bar.
+    DIM fchrome AS BOOLEAN = formChromed(m.Tabs[m.TabIdx].Form)
+    IF fchrome THEN
+        DIM fgh AS STRING
+        DIM fgv AS STRING
+        DIM fbl AS STRING
+        DIM fbr AS STRING
+        fgh, fgv, _, _, fbl, fbr = borderGlyphs(formEffBorder(m.Tabs[m.TabIdx].Form), m.Tabs[m.TabIdx].Form.CornerStyle)
+        DIM cbr AS INTEGER
+        FOR cbr = 0 TO gridH - 2
+            grid[cbr][0] = fgv
+            IF width - 1 > 0 THEN grid[cbr][width - 1] = fgv
+        NEXT cbr
+        DIM cbc AS INTEGER
+        FOR cbc = 0 TO width - 1
+            grid[gridH - 1][cbc] = fgh
+        NEXT cbc
+        grid[gridH - 1][0] = fbl
+        IF width - 1 > 0 THEN grid[gridH - 1][width - 1] = fbr
+    END IF
     ' Render rows.
     DIM lines AS []STRING
-    DIM titleLine AS STRING = titleStyle.Render(" " + m.Tabs[m.TabIdx].Form.Title)
+    DIM titleLine AS STRING
+    IF fchrome THEN
+        titleLine = titleStyle.Render(formDesignTitleBar(m.Tabs[m.TabIdx].Form, width))
+    ELSE
+        titleLine = titleStyle.Render(" " + m.Tabs[m.TabIdx].Form.Title)
+    END IF
     lines = APPEND(lines, titleLine)
     FOR r = 0 TO gridH - 1
         DIM out AS STRING = ""
@@ -1810,6 +1837,27 @@ END FUNCTION
 FUNCTION formEffBorder(f AS DesignForm) AS STRING
     IF f.BorderStyle = "thick" OR f.BorderStyle = "double" THEN RETURN f.BorderStyle
     RETURN "normal"
+END FUNCTION
+
+' formDesignTitleBar — the form's top border row for the designer: caption
+' (Title) on the left + window glyphs on the right, `width` cells wide.
+FUNCTION formDesignTitleBar(f AS DesignForm, width AS INTEGER) AS STRING
+    DIM gh AS STRING
+    DIM tl AS STRING
+    DIM tr AS STRING
+    gh, _, tl, tr, _, _ = borderGlyphs(formEffBorder(f), f.CornerStyle)
+    DIM innerW AS INTEGER = width - 2
+    IF innerW < 0 THEN innerW = 0
+    DIM glyphs AS STRING = ""
+    IF f.ShowMin THEN glyphs = glyphs + "— "
+    IF f.ShowMax THEN glyphs = glyphs + "▢ "
+    IF f.ShowClose THEN glyphs = glyphs + "✕ "
+    DIM cap AS STRING = ""
+    IF f.Title <> "" THEN cap = " " + f.Title + " "
+    DIM used AS INTEGER = lipgloss.Width(cap) + lipgloss.Width(glyphs)
+    DIM fill AS INTEGER = innerW - used
+    IF fill < 0 THEN fill = 0
+    RETURN tl + cap + strings.Repeat(gh, fill) + glyphs + tr
 END FUNCTION
 
 ' translateSizeExpr — turn a design-time size expression over MAX_WIDTH /
