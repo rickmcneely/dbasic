@@ -2849,11 +2849,13 @@ END FUNCTION
 
 ' pickWidgetEvent — the action behind the right-click event popup. Given
 ' the widget index and the chosen event ROW (index into widgetEvents),
-' it: (1) closes the popup, (2) auto-saves the form (assigning a default
-' .dbproj path for an untitled form — no dialog), (3) regenerates the
-' partner .dbas, (4) ensures the handler SUB exists exactly once, placed
-' ADJACENT to the widget's other handlers, (5) opens/refreshes that .dbas
-' as a code tab, and (6) jumps the cursor to the handler.
+' it: (1) closes the popup, (2) requires the form to be SAVED (it never
+' writes the .dbproj itself — an untitled/unsaved form is rejected with a
+' "save first" status, so wiring an event can't silently persist unsaved
+' form edits), (3) regenerates the partner .dbas from the ON-DISK form,
+' (4) ensures the handler SUB exists exactly once, placed ADJACENT to the
+' widget's other handlers, (5) opens/refreshes that .dbas as a code tab,
+' and (6) jumps the cursor to the handler.
 SUB pickWidgetEvent(m AS POINTER TO Model, widgetIdx AS INTEGER, itemIdx AS INTEGER)
     IF NOT hasActiveTab(^m) THEN RETURN
     IF widgetIdx < 0 OR widgetIdx >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
@@ -2871,29 +2873,36 @@ SUB pickWidgetEvent(m AS POINTER TO Model, widgetIdx AS INTEGER, itemIdx AS INTE
     DIM ev AS STRING = evs[itemIdx]
     DIM handler AS STRING = w.Name + "_" + ev
 
-    ' (2) Auto-save. Untitled forms get a silent default path so the
-    ' partner .dbas has somewhere to live; saveForm then writes both.
+    ' (2) Require a SAVED form. Wiring an event must never silently persist
+    ' unsaved form edits: we don't write the .dbproj here at all, and we
+    ' generate the partner .dbas from the ON-DISK project (not the live,
+    ' possibly-unsaved form) so an unsaved addition (e.g. a stray Menubar)
+    ' can't leak onto disk. Untitled / unreadable → ask the user to save.
     IF m.Tabs[m.TabIdx].Path = "" THEN
-        DIM pwDir AS STRING
-        DIM pwErr AS ERROR
-        pwDir, pwErr = os.Getwd()
-        IF pwErr <> NIL THEN pwDir = "."
-        DIM pwBase AS STRING = m.Tabs[m.TabIdx].Form.Name
-        IF pwBase = "" THEN pwBase = "untitled"
-        m.Tabs[m.TabIdx].Path = joinPath(pwDir, pwBase + ".dbproj")
+        m.Status = "Save the form first (Ctrl+S) to add an event handler"
+        RETURN
     END IF
-    saveForm(m)
-
-    ' (3) Regenerate the partner .dbas for the active form.
     DIM proj AS Project
     DIM pok AS BOOLEAN
     DIM preason AS STRING
     proj, pok, preason = readProjectFromDisk(m.Tabs[m.TabIdx].Path)
     _ = preason
-    DIM nForms AS INTEGER = 1
-    IF pok THEN nForms = LEN(proj.Forms)
+    IF NOT pok OR LEN(proj.Forms) = 0 THEN
+        m.Status = "Save the form first (Ctrl+S) to add an event handler"
+        RETURN
+    END IF
+    DIM nForms AS INTEGER = LEN(proj.Forms)
+
+    ' (3) Regenerate the partner .dbas from the SAVED form matching this tab.
+    DIM diskForm AS DesignForm = proj.Forms[0]
+    IF m.Tabs[m.TabIdx].FormName <> "" THEN
+        DIM dfi AS INTEGER
+        FOR dfi = 0 TO LEN(proj.Forms) - 1
+            IF proj.Forms[dfi].Name = m.Tabs[m.TabIdx].FormName THEN diskForm = proj.Forms[dfi]
+        NEXT dfi
+    END IF
     DIM outPath AS STRING = formOutputPath(m.Tabs[m.TabIdx].Path, m.Tabs[m.TabIdx].FormName, nForms)
-    DIM text AS STRING = mergeFormDbas(m.Tabs[m.TabIdx].Form, outPath)
+    DIM text AS STRING = mergeFormDbas(diskForm, outPath)
 
     ' (4) Ensure the handler exists — exactly once, adjacent to the
     ' widget's other handlers. mergeFormDbas already seeds the primary
