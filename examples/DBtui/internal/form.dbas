@@ -2026,6 +2026,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    IF szOk THEN\n"
     s = s + "        m.Width = sz.Width\n"
     s = s + "        m.Height = sz.Height\n"
+    s = s + "        Form_Resize(m.Width, m.Height)\n"
     s = s + "        RETURN m, NIL\n"
     s = s + "    END IF\n"
 
@@ -2310,7 +2311,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    k, kOk = msg.(tea.KeyPressMsg)\n"
     s = s + "    IF kOk THEN\n"
     s = s + "        DIM key AS STRING = k.String()\n"
-    s = s + "        IF key = " + qt + "ctrl+c" + qt + " OR key = " + qt + "esc" + qt + " THEN RETURN m, tea.Quit\n"
+    s = s + "        IF key = " + qt + "ctrl+c" + qt + " OR key = " + qt + "esc" + qt + " THEN\n"
+    s = s + "            Form_Close()\n"
+    s = s + "            RETURN m, tea.Quit\n"
+    s = s + "        END IF\n"
     IF n > 0 THEN
         s = s + "        IF key = " + qt + "tab" + qt + " THEN\n"
         s = s + "            m.Focus = (m.Focus + 1) MOD " + nStr + "\n"
@@ -2545,6 +2549,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     NEXT mi
     ' Sync component focus to the start-focused widget.
     IF hasTextInput OR hasTextArea OR hasTable THEN s = s + "    syncFocusComp(@m)\n"
+    s = s + "    Form_Load()\n"
     s = s + "    DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)\n"
     s = s + "    DIM final AS tea.Model\n"
     s = s + "    DIM rerr AS ERROR\n"
@@ -2957,6 +2962,24 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
             trailing = TRUE
         END IF
     NEXT i
+    ' Form lifecycle events — always available; the runtime calls these.
+    ' Form_Load() once at startup, Form_Resize(w,h) on every terminal resize,
+    ' Form_Close() just before the program quits. Seeded once, then preserved.
+    IF NOT subDefined(out, "Form_Load") THEN
+        IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+        out = out + "' Fired once at startup. Edit freely.\n"
+        out = out + "SUB Form_Load()\n    ' TODO: your code here.\nEND SUB\n"
+    END IF
+    IF NOT subDefined(out, "Form_Resize") THEN
+        IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+        out = out + "' Fired on every terminal resize with the new size. Edit freely.\n"
+        out = out + "SUB Form_Resize(w AS INTEGER, h AS INTEGER)\n    ' TODO: your code here.\n    _ = w\n    _ = h\nEND SUB\n"
+    END IF
+    IF NOT subDefined(out, "Form_Close") THEN
+        IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+        out = out + "' Fired just before the program quits. Edit freely.\n"
+        out = out + "SUB Form_Close()\n    ' TODO: your code here.\nEND SUB\n"
+    END IF
     RETURN out
 END FUNCTION
 
