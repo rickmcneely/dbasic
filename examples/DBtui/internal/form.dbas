@@ -135,16 +135,82 @@ SUB formAddWidget(m AS POINTER TO Model, kind AS STRING)
 END SUB
 
 ' formDeleteSelected — drop the currently-selected widget.
+' --- Selection helpers (single + multi) --------------------------------
+' The selection is SelSet when non-empty (multi-select via ctrl-click),
+' otherwise just SelWidget. formSelected returns the unified list.
+
+FUNCTION formSelected(m AS POINTER TO Model) AS []INTEGER
+    DIM r AS []INTEGER
+    IF LEN(m.Tabs[m.TabIdx].SelSet) > 0 THEN RETURN m.Tabs[m.TabIdx].SelSet
+    IF m.Tabs[m.TabIdx].SelWidget >= 0 THEN r = APPEND(r, m.Tabs[m.TabIdx].SelWidget)
+    RETURN r
+END FUNCTION
+
+FUNCTION formIsSelected(m AS POINTER TO Model, idx AS INTEGER) AS BOOLEAN
+    DIM sel AS []INTEGER = formSelected(m)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(sel) - 1
+        IF sel[i] = idx THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' Single-select idx (or clear, idx<0). Drops any multi-selection.
+SUB formSelectOne(m AS POINTER TO Model, idx AS INTEGER)
+    m.Tabs[m.TabIdx].SelWidget = idx
+    m.Tabs[m.TabIdx].SelSet = NIL
+END SUB
+
+' Toggle idx in the multi-selection; SelWidget stays the primary (the last
+' one added, or another remaining member / -1 when the primary is removed).
+SUB formSelToggle(m AS POINTER TO Model, idx AS INTEGER)
+    IF idx < 0 THEN RETURN
+    DIM cur AS []INTEGER = formSelected(m)
+    DIM newset AS []INTEGER
+    DIM present AS BOOLEAN = FALSE
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(cur) - 1
+        IF cur[i] = idx THEN
+            present = TRUE
+        ELSE
+            newset = APPEND(newset, cur[i])
+        END IF
+    NEXT i
+    IF NOT present THEN
+        newset = APPEND(newset, idx)
+        m.Tabs[m.TabIdx].SelWidget = idx
+    ELSE
+        IF LEN(newset) > 0 THEN
+            m.Tabs[m.TabIdx].SelWidget = newset[0]
+        ELSE
+            m.Tabs[m.TabIdx].SelWidget = 0 - 1
+        END IF
+    END IF
+    m.Tabs[m.TabIdx].SelSet = newset
+END SUB
+
+' Delete every selected widget (descending order keeps indices valid).
 SUB formDeleteSelected(m AS POINTER TO Model)
-    IF m.Tabs[m.TabIdx].SelWidget < 0 OR m.Tabs[m.TabIdx].SelWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    DIM sel AS []INTEGER = formSelected(m)
+    IF LEN(sel) = 0 THEN RETURN
     DIM kept AS []DesignWidget
     DIM i AS INTEGER
     FOR i = 0 TO LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1
-        IF i <> m.Tabs[m.TabIdx].SelWidget THEN kept = APPEND(kept, m.Tabs[m.TabIdx].Form.Widgets[i])
+        DIM drop AS BOOLEAN = FALSE
+        DIM j AS INTEGER
+        FOR j = 0 TO LEN(sel) - 1
+            IF sel[j] = i THEN drop = TRUE
+        NEXT j
+        IF NOT drop THEN kept = APPEND(kept, m.Tabs[m.TabIdx].Form.Widgets[i])
     NEXT i
     m.Tabs[m.TabIdx].Form.Widgets = kept
     m.Tabs[m.TabIdx].SelWidget = 0 - 1
-    m.Status = "widget deleted"
+    m.Tabs[m.TabIdx].SelSet = NIL
+    IF LEN(sel) = 1 THEN
+        m.Status = "widget deleted"
+    ELSE
+        m.Status = fmt.Sprintf("%d widgets deleted", LEN(sel))
+    END IF
 END SUB
 
 ' tabStripBar — render a TabStrip's tab row: each tab as " label ",
@@ -627,7 +693,7 @@ FUNCTION renderFormCanvas(m AS Model, width AS INTEGER, height AS INTEGER) AS ST
     FOR wi = 0 TO LEN(m.Tabs[m.TabIdx].Form.Widgets) - 1
         DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[wi]
         DIM rows AS []STRING = widgetVisibleLines(w)
-        DIM isSel AS BOOLEAN = (wi = m.Tabs[m.TabIdx].SelWidget)
+        DIM isSel AS BOOLEAN = formIsSelected(@m, wi)
         DIM rj AS INTEGER
         FOR rj = 0 TO LEN(rows) - 1
             DIM line AS STRING = rows[rj]

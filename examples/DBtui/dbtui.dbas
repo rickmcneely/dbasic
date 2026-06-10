@@ -99,7 +99,10 @@ TYPE Tab
                                          ' entry from Project.Forms keyed by FormName
     DIM FormName    AS STRING            ' which form within the project this tab edits
                                          ' (empty for single-form / legacy .dbproj)
-    DIM SelWidget   AS INTEGER           ' selected widget index in Form (-1 = none)
+    DIM SelWidget   AS INTEGER           ' primary selected widget index (-1 = none)
+    DIM SelSet      AS []INTEGER         ' multi-selection (ctrl-click); when non-empty
+                                         ' it is authoritative and includes SelWidget.
+                                         ' Empty → the selection is just SelWidget.
     DIM Dirty       AS BOOLEAN           ' buffer differs from disk
     DIM LoadedMtime AS time.Time         ' mtime when last read / saved
 END TYPE
@@ -1615,8 +1618,22 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM ny AS INTEGER = fmy - m.FormDragOffY
             IF nx < 0 THEN nx = 0
             IF ny < 0 THEN ny = 0
-            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].X = nx
-            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Y = ny
+            ' Delta from the primary's current position, applied to the whole
+            ' selection so a multi-selected group moves rigidly. Clamp the
+            ' delta so the left/top-most selected widget never goes negative.
+            DIM mvSel AS []INTEGER = formSelected(@m)
+            DIM dgx AS INTEGER = nx - m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].X
+            DIM dgy AS INTEGER = ny - m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Y
+            DIM mvi AS INTEGER
+            FOR mvi = 0 TO LEN(mvSel) - 1
+                DIM mw AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[mvSel[mvi]]
+                IF mw.X + dgx < 0 THEN dgx = 0 - mw.X
+                IF mw.Y + dgy < 0 THEN dgy = 0 - mw.Y
+            NEXT mvi
+            FOR mvi = 0 TO LEN(mvSel) - 1
+                m.Tabs[m.TabIdx].Form.Widgets[mvSel[mvi]].X = m.Tabs[m.TabIdx].Form.Widgets[mvSel[mvi]].X + dgx
+                m.Tabs[m.TabIdx].Form.Widgets[mvSel[mvi]].Y = m.Tabs[m.TabIdx].Form.Widgets[mvSel[mvi]].Y + dgy
+            NEXT mvi
             invalidateEditorCache(@m)
             RETURN m, NIL
         END IF
@@ -2192,8 +2209,27 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 END IF
             END IF
             DIM hit AS INTEGER = formWidgetAt(m, fcx, fcy)
+            ' Ctrl-click toggles a widget in the multi-selection (no drag).
+            IF BitAnd(mcMsg.Mod, tea.ModCtrl) <> 0 AND hit >= 0 THEN
+                m.PropSel = 0 - 1
+                formSelToggle(@m, hit)
+                m.Status = fmt.Sprintf("%d selected", LEN(formSelected(@m)))
+                invalidateEditorCache(@m)
+                RETURN m, NIL
+            END IF
+            IF hit >= 0 AND formIsSelected(@m, hit) AND LEN(formSelected(@m)) > 1 THEN
+                ' Pressing a widget already in a multi-selection keeps the
+                ' whole set and arms a GROUP move (re-anchor the primary to
+                ' the clicked one so the drag offset is right).
+                m.Tabs[m.TabIdx].SelWidget = hit
+                m.DragMode = "formMove"
+                m.FormDragOffX = fcx - m.Tabs[m.TabIdx].Form.Widgets[hit].X
+                m.FormDragOffY = fcy - m.Tabs[m.TabIdx].Form.Widgets[hit].Y
+                invalidateEditorCache(@m)
+                RETURN m, NIL
+            END IF
             IF hit <> m.Tabs[m.TabIdx].SelWidget THEN m.PropSel = 0 - 1
-            m.Tabs[m.TabIdx].SelWidget = hit
+            formSelectOne(@m, hit)
             IF hit >= 0 THEN
                 ' Arm a move-drag — record the cursor's offset within
                 ' the widget so the drag motion translates 1:1.
