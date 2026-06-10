@@ -42,7 +42,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF szOk THEN
         m.Width = sz.Width
         m.Height = sz.Height
-        Form_Resize(m.Width, m.Height)
+        Terminal_Resize(m.Width, m.Height)
         RETURN m, NIL
     END IF
     DIM kpd AS tea.KeyPressMsg
@@ -580,7 +580,7 @@ SUB Form_Load()
 END SUB
 
 ' Fired on every terminal resize with the new size. Edit freely.
-SUB Form_Resize(w AS INTEGER, h AS INTEGER)
+SUB Terminal_Resize(w AS INTEGER, h AS INTEGER)
     ' TODO: your code here.
     _ = w
     _ = h

@@ -1677,6 +1677,38 @@ FUNCTION frameCallArgs(w AS DesignWidget, qt AS STRING) AS STRING
     RETURN qt + gh + qt + ", " + qt + gv + qt + ", " + qt + tl + qt + ", " + qt + tr + qt + ", " + qt + bl + qt + ", " + qt + br + qt + ", " + qt + escapeForDBString(w.Caption) + qt + ", " + qt + just + qt
 END FUNCTION
 
+' --- Form chrome helpers ------------------------------------------------
+' formChromed — does the form render as a bordered box (vs filling the
+' terminal)? True when a border style, a size expression, or any window
+' glyph is set; legacy forms (all defaults) stay full-screen + byte-identical.
+FUNCTION formChromed(f AS DesignForm) AS BOOLEAN
+    IF f.BorderStyle = "normal" OR f.BorderStyle = "thick" OR f.BorderStyle = "double" THEN RETURN TRUE
+    IF f.WExpr <> "" OR f.HExpr <> "" THEN RETURN TRUE
+    IF f.ShowMin OR f.ShowMax OR f.ShowClose THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+FUNCTION formEffBorder(f AS DesignForm) AS STRING
+    IF f.BorderStyle = "thick" OR f.BorderStyle = "double" THEN RETURN f.BorderStyle
+    RETURN "normal"
+END FUNCTION
+
+' translateSizeExpr — turn a design-time size expression over MAX_WIDTH /
+' MAX_HEIGHT into a Go int expression over the View's clamped `w` / `h`
+' terminal vars. Only digits, the two constants, + - * / ( ) and spaces are
+' allowed; anything else (or empty) falls back to the full-axis var.
+FUNCTION translateSizeExpr(expr AS STRING, fallback AS STRING) AS STRING
+    DIM e AS STRING = strings.TrimSpace(expr)
+    IF e = "" THEN RETURN fallback
+    e = strings.ReplaceAll(e, "MAX_WIDTH", "w")
+    e = strings.ReplaceAll(e, "MAX_HEIGHT", "h")
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(e)
+        IF NOT strings.Contains("0123456789wh+-*/() ", Mid(e, i, 1)) THEN RETURN fallback
+    NEXT i
+    RETURN "(" + e + ")"
+END FUNCTION
+
 ' widgetEmitLayer — emit View code building widget `wv`'s Charm view string +
 ' a lipgloss layer at its (X,Y,Z). Component kinds render via .View();
 ' lipgloss-composed kinds reuse their body builder wrapped in compFocusView.
@@ -1957,6 +1989,14 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' time instead of the whole bar. Only meaningful while Hover names a
     ' TabStrip; one field suffices since one widget is hovered at a time.
     s = s + "    DIM HoverTab AS INTEGER\n"
+    ' Form-chrome state (chromed forms only): the evaluated box size + the
+    ' maximize / minimize toggles driven by the title-bar glyphs.
+    IF formChromed(f) THEN
+        s = s + "    DIM _formW AS INTEGER\n"
+        s = s + "    DIM _formH AS INTEGER\n"
+        s = s + "    DIM _maximized AS BOOLEAN\n"
+        s = s + "    DIM _minimized AS BOOLEAN\n"
+    END IF
     DIM i AS INTEGER
     FOR i = 0 TO n - 1
         DIM w AS DesignWidget = f.Widgets[i]
@@ -2026,7 +2066,8 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    IF szOk THEN\n"
     s = s + "        m.Width = sz.Width\n"
     s = s + "        m.Height = sz.Height\n"
-    s = s + "        Form_Resize(m.Width, m.Height)\n"
+    IF formChromed(f) THEN s = s + "        _formSize(@m)\n"
+    s = s + "        Terminal_Resize(m.Width, m.Height)\n"
     s = s + "        RETURN m, NIL\n"
     s = s + "    END IF\n"
 
@@ -2067,6 +2108,44 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    DIM mcOk AS BOOLEAN\n"
     s = s + "    mc, mcOk = msg.(tea.MouseClickMsg)\n"
     s = s + "    IF mcOk AND mc.Button = tea.MouseLeft THEN\n"
+    ' Form title-bar window glyphs (chromed forms): a click on the top row
+    ' over a glyph minimizes / maximizes / closes. Block is right-aligned,
+    ' each glyph 2 cells wide, ending just before the top-right corner.
+    IF formChromed(f) AND (f.ShowMin OR f.ShowMax OR f.ShowClose) THEN
+        DIM gcount AS INTEGER = 0
+        IF f.ShowMin THEN gcount = gcount + 1
+        IF f.ShowMax THEN gcount = gcount + 1
+        IF f.ShowClose THEN gcount = gcount + 1
+        s = s + "        IF mc.Y = 0 THEN\n"
+        s = s + "            DIM gstart AS INTEGER = m._formW - 1 - " + strconv.Itoa(gcount * 2) + "\n"
+        s = s + "            DIM ggi AS INTEGER = (mc.X - gstart) / 2\n"
+        DIM gidx AS INTEGER = 0
+        IF f.ShowMin THEN
+            s = s + "            IF mc.X >= gstart AND ggi = " + strconv.Itoa(gidx) + " THEN\n"
+            s = s + "                m._minimized = NOT m._minimized\n"
+            s = s + "                _formSize(@m)\n"
+            s = s + "                RETURN m, NIL\n"
+            s = s + "            END IF\n"
+            gidx = gidx + 1
+        END IF
+        IF f.ShowMax THEN
+            s = s + "            IF mc.X >= gstart AND ggi = " + strconv.Itoa(gidx) + " THEN\n"
+            s = s + "                m._maximized = NOT m._maximized\n"
+            s = s + "                m._minimized = FALSE\n"
+            s = s + "                _formSize(@m)\n"
+            s = s + "                RETURN m, NIL\n"
+            s = s + "            END IF\n"
+            gidx = gidx + 1
+        END IF
+        IF f.ShowClose THEN
+            s = s + "            IF mc.X >= gstart AND ggi = " + strconv.Itoa(gidx) + " THEN\n"
+            s = s + "                Form_Close()\n"
+            s = s + "                RETURN m, tea.Quit\n"
+            s = s + "            END IF\n"
+            gidx = gidx + 1
+        END IF
+        s = s + "        END IF\n"
+    END IF
     ' Dialog priority — hit-test the active dialog's ✕ glyph + button
     ' row in modal-local coords. Other clicks inside the dialog rect
     ' are swallowed; clicks outside fall through to the widget hit-
@@ -2427,6 +2506,50 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "END FUNCTION\n"
         s = s + "\n"
     END IF
+    IF formChromed(f) THEN
+        ' _formSize — evaluate the form box size from the size expressions
+        ' (or full terminal when maximized), clamped to the terminal; height
+        ' collapses to 1 (title bar only) when minimized.
+        s = s + "SUB _formSize(m AS POINTER TO Model)\n"
+        s = s + "    DIM w AS INTEGER = m.Width\n"
+        s = s + "    DIM h AS INTEGER = m.Height\n"
+        s = s + "    IF w < 60 THEN w = 80\n"
+        s = s + "    IF h < 20 THEN h = 24\n"
+        s = s + "    IF m._maximized THEN\n"
+        s = s + "        m._formW = w\n"
+        s = s + "        m._formH = h\n"
+        s = s + "    ELSE\n"
+        s = s + "        m._formW = " + translateSizeExpr(f.WExpr, "w") + "\n"
+        s = s + "        m._formH = " + translateSizeExpr(f.HExpr, "h") + "\n"
+        s = s + "    END IF\n"
+        s = s + "    IF m._formW < 3 THEN m._formW = 3\n"
+        s = s + "    IF m._formW > w THEN m._formW = w\n"
+        s = s + "    IF m._formH < 2 THEN m._formH = 2\n"
+        s = s + "    IF m._formH > h THEN m._formH = h\n"
+        s = s + "    IF m._minimized THEN m._formH = 1\n"
+        s = s + "END SUB\n"
+        s = s + "\n"
+        ' _formBox — the bordered form box (caption left + window glyphs right
+        ' on the top edge), blank interior; widget layers composite on top.
+        s = s + "FUNCTION _formBox(fw AS INTEGER, fh AS INTEGER, gh AS STRING, gv AS STRING, tl AS STRING, tr AS STRING, bl AS STRING, br AS STRING, caption AS STRING, glyphs AS STRING) AS STRING\n"
+        s = s + "    DIM innerW AS INTEGER = fw - 2\n"
+        s = s + "    IF innerW < 0 THEN innerW = 0\n"
+        s = s + "    DIM cap AS STRING = " + qt + qt + "\n"
+        s = s + "    IF caption <> " + qt + qt + " THEN cap = " + qt + " " + qt + " + caption + " + qt + " " + qt + "\n"
+        s = s + "    DIM used AS INTEGER = lipgloss.Width(cap) + lipgloss.Width(glyphs)\n"
+        s = s + "    DIM fill AS INTEGER = innerW - used\n"
+        s = s + "    IF fill < 0 THEN fill = 0\n"
+        s = s + "    DIM out AS STRING = tl + cap + strings.Repeat(gh, fill) + glyphs + tr\n"
+        s = s + "    IF fh <= 1 THEN RETURN out\n"
+        s = s + "    DIM r AS INTEGER\n"
+        s = s + "    FOR r = 0 TO fh - 3\n"
+        s = s + "        out = out + " + qt + "\\n" + qt + " + gv + strings.Repeat(" + qt + " " + qt + ", innerW) + gv\n"
+        s = s + "    NEXT r\n"
+        s = s + "    out = out + " + qt + "\\n" + qt + " + bl + strings.Repeat(gh, innerW) + br\n"
+        s = s + "    RETURN out\n"
+        s = s + "END FUNCTION\n"
+        s = s + "\n"
+    END IF
     ' --- View: a blank lipgloss canvas + every widget as a layer at (X,Y,Z).
     s = s + "FUNCTION (m AS Model) View() AS tea.View\n"
     s = s + "    DIM w AS INTEGER = m.Width\n"
@@ -2457,8 +2580,36 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     '     is Charm composition. [[dbtui_charm_first]]
     s = s + "    DIM fullView AS STRING = _blankCanvas(w, h)\n"
     s = s + layerCode
+    DIM chromed AS BOOLEAN = formChromed(f)
+    IF chromed THEN
+        ' Build the form box (border + title bar) as a low-Z layer; widget
+        ' layers composite over its blank interior. Minimized → only the box.
+        DIM cgh AS STRING
+        DIM cgv AS STRING
+        DIM ctl AS STRING
+        DIM ctr AS STRING
+        DIM cbl AS STRING
+        DIM cbr AS STRING
+        cgh, cgv, ctl, ctr, cbl, cbr = borderGlyphs(formEffBorder(f), f.CornerStyle)
+        DIM glyphStr AS STRING = ""
+        IF f.ShowMin THEN glyphStr = glyphStr + "— "
+        IF f.ShowMax THEN glyphStr = glyphStr + "▢ "
+        IF f.ShowClose THEN glyphStr = glyphStr + "✕ "
+        DIM boxArgs AS STRING = qt + cgh + qt + ", " + qt + cgv + qt + ", " + qt + ctl + qt + ", " + qt + ctr + qt + ", " + qt + cbl + qt + ", " + qt + cbr + qt + ", " + qt + escapeForDBString(f.Title) + qt + ", " + qt + glyphStr + qt
+        s = s + "    DIM formBoxStr AS STRING = _formBox(m._formW, m._formH, " + boxArgs + ")\n"
+        s = s + "    DIM formLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(formBoxStr).X(0).Y(0).Z(1)\n"
+        s = s + "    IF m._minimized THEN\n"
+        s = s + "        DIM mBase AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)\n"
+        s = s + "        DIM mCmp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(mBase, formLy)\n"
+        s = s + "        DIM mvw AS tea.View = tea.NewView(mCmp.Render())\n"
+        s = s + "        mvw.MouseMode = tea.MouseModeAllMotion\n"
+        s = s + "        mvw.AltScreen = TRUE\n"
+        s = s + "        RETURN mvw\n"
+        s = s + "    END IF\n"
+    END IF
     s = s + "    DIM baseLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)\n"
     s = s + "    DIM cmpLy AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(baseLy"
+    IF chromed THEN s = s + ", formLy"
     DIM plI AS INTEGER
     FOR plI = 0 TO LEN(portedSfx) - 1
         s = s + ", ly" + portedSfx[plI]
@@ -2549,6 +2700,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     NEXT mi
     ' Sync component focus to the start-focused widget.
     IF hasTextInput OR hasTextArea OR hasTable THEN s = s + "    syncFocusComp(@m)\n"
+    IF formChromed(f) THEN s = s + "    _formSize(@m)\n"
     s = s + "    Form_Load()\n"
     s = s + "    DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)\n"
     s = s + "    DIM final AS tea.Model\n"
@@ -2963,17 +3115,17 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
         END IF
     NEXT i
     ' Form lifecycle events — always available; the runtime calls these.
-    ' Form_Load() once at startup, Form_Resize(w,h) on every terminal resize,
+    ' Form_Load() once at startup, Terminal_Resize(w,h) on every terminal resize,
     ' Form_Close() just before the program quits. Seeded once, then preserved.
     IF NOT subDefined(out, "Form_Load") THEN
         IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
         out = out + "' Fired once at startup. Edit freely.\n"
         out = out + "SUB Form_Load()\n    ' TODO: your code here.\nEND SUB\n"
     END IF
-    IF NOT subDefined(out, "Form_Resize") THEN
+    IF NOT subDefined(out, "Terminal_Resize") THEN
         IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
-        out = out + "' Fired on every terminal resize with the new size. Edit freely.\n"
-        out = out + "SUB Form_Resize(w AS INTEGER, h AS INTEGER)\n    ' TODO: your code here.\n    _ = w\n    _ = h\nEND SUB\n"
+        out = out + "' Fired whenever the TERMINAL size changes, with the new w/h. Edit freely.\n"
+        out = out + "SUB Terminal_Resize(w AS INTEGER, h AS INTEGER)\n    ' TODO: your code here.\n    _ = w\n    _ = h\nEND SUB\n"
     END IF
     IF NOT subDefined(out, "Form_Close") THEN
         IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"

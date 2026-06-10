@@ -234,6 +234,20 @@ TYPE DesignForm
     ' so legacy .dbproj files load as "" = inherit (output unchanged).
     DIM FgColor AS STRING
     DIM BgColor AS STRING
+
+    ' --- Form chrome / responsive size --------------------------------
+    ' All default to "" / FALSE so legacy forms fill the terminal with no
+    ' border (byte-identical). BorderStyle/CornerStyle reuse the widget
+    ' enums. WExpr/HExpr are size expressions over MAX_WIDTH / MAX_HEIGHT
+    ' (the live terminal size), e.g. "MAX_WIDTH - 10"; "" = fill that axis.
+    ' Show* draw functional window glyphs in the title bar.
+    DIM BorderStyle AS STRING  ' "" | "none" | "normal" | "thick" | "double"
+    DIM CornerStyle AS STRING  ' "" | "square" | "rounded"
+    DIM WExpr       AS STRING  ' width expression ("" = MAX_WIDTH)
+    DIM HExpr       AS STRING  ' height expression ("" = MAX_HEIGHT)
+    DIM ShowMin     AS BOOLEAN ' minimize glyph (collapse to title bar)
+    DIM ShowMax     AS BOOLEAN ' maximize glyph (toggle full screen)
+    DIM ShowClose   AS BOOLEAN ' close glyph (quit, fires Form_Close)
 END TYPE
 
 ' -------------------------------------------------------------------------
