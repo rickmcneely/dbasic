@@ -1851,7 +1851,7 @@ FUNCTION formDesignTitleBar(f AS DesignForm, width AS INTEGER) AS STRING
     DIM innerW AS INTEGER = width - 2
     IF innerW < 0 THEN innerW = 0
     DIM glyphs AS STRING = ""
-    IF f.ShowMin THEN glyphs = glyphs + "— "
+    IF f.ShowMin THEN glyphs = glyphs + "_ "
     IF f.ShowMax THEN glyphs = glyphs + "▢ "
     IF f.ShowClose THEN glyphs = glyphs + "✕ "
     DIM cap AS STRING = ""
@@ -2784,7 +2784,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         DIM cbr AS STRING
         cgh, cgv, ctl, ctr, cbl, cbr = borderGlyphs(formEffBorder(f), f.CornerStyle)
         DIM glyphStr AS STRING = ""
-        IF f.ShowMin THEN glyphStr = glyphStr + "— "
+        IF f.ShowMin THEN glyphStr = glyphStr + "_ "
         IF f.ShowMax THEN glyphStr = glyphStr + "▢ "
         IF f.ShowClose THEN glyphStr = glyphStr + "✕ "
         DIM boxArgs AS STRING = qt + cgh + qt + ", " + qt + cgv + qt + ", " + qt + ctl + qt + ", " + qt + ctr + qt + ", " + qt + cbl + qt + ", " + qt + cbr + qt + ", " + qt + escapeForDBString(f.Title) + qt + ", " + qt + glyphStr + qt
