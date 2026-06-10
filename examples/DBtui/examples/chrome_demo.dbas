@@ -127,6 +127,11 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         _ = mm
         m.Hover = mmHit
         m.HoverTab = 0 - 1
+        IF mmHit = 0 THEN
+            DIM mhCol0 AS INTEGER = mm.X - 0
+            IF mhCol0 >= 0 AND mhCol0 < 6 THEN m.HoverTab = 0
+            IF mhCol0 >= 6 AND mhCol0 < 12 THEN m.HoverTab = 1
+        END IF
         RETURN m, NIL
     END IF
     DIM mw AS tea.MouseWheelMsg
@@ -194,7 +199,7 @@ FUNCTION (m AS Model) View() AS tea.View
     IF w < 60 THEN w = 80
     IF h < 20 THEN h = 24
     DIM fullView AS STRING = _blankCanvas(w, h)
-    DIM vw0 AS STRING = _mnBarView(_mnNodes_menubar1(), m.menubar1_Active, m.menubar1_Open, m.Focus = 0)
+    DIM vw0 AS STRING = _mnBarView(_mnNodes_menubar1(), m.menubar1_Active, m.menubar1_Open, m.Focus = 0, m.Hover = 0, m.HoverTab)
     DIM ly0 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw0).X(0).Y(0).Z(10)
     DIM pnInner1 AS STRING = _blankCanvas(28, 6)
     DIM pnBaseL1 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(pnInner1)
@@ -408,7 +413,7 @@ FUNCTION _mnKey(nodes AS []_MNode, key AS STRING, active AS INTEGER, open AS BOO
     RETURN active, open, path, chosen
 END FUNCTION
 
-FUNCTION _mnBarView(nodes AS []_MNode, active AS INTEGER, open AS BOOLEAN, focused AS BOOLEAN) AS STRING
+FUNCTION _mnBarView(nodes AS []_MNode, active AS INTEGER, open AS BOOLEAN, focused AS BOOLEAN, hovActive AS BOOLEAN, hoverIdx AS INTEGER) AS STRING
     DIM bar AS STRING = ""
     DIM k AS INTEGER = 0
     DIM i AS INTEGER
@@ -416,6 +421,8 @@ FUNCTION _mnBarView(nodes AS []_MNode, active AS INTEGER, open AS BOOLEAN, focus
         IF nodes[i].Dp = 0 AND NOT nodes[i].Sp THEN
             IF (focused OR open) AND active = k THEN
                 bar = bar + "[" + nodes[i].Cap + "]"
+            ELSEIF hovActive AND hoverIdx = k THEN
+                bar = bar + hoverStyle.Render(" " + nodes[i].Cap + " ")
             ELSE
                 bar = bar + " " + nodes[i].Cap + " "
             END IF

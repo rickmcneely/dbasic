@@ -1993,6 +1993,13 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "        END IF\n"
         END IF
     NEXT mmtI
+    ' Menubar: which top-level title is under the cursor (reuses m.HoverTab).
+    DIM mmnI AS INTEGER
+    FOR mmnI = 0 TO n - 1
+        IF f.Widgets[mmnI].Kind = "Menubar" AND f.Widgets[mmnI].Parent = "" THEN
+            s = s + menubarEmitHoverTab(f.Widgets[mmnI], strconv.Itoa(mmnI), qt)
+        END IF
+    NEXT mmnI
     s = s + "        RETURN m, NIL\n"
     s = s + "    END IF\n"
     ' --- Mouse wheel -> scroll/move the scrollable widget under the

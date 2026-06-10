@@ -217,8 +217,32 @@ END FUNCTION
 FUNCTION menubarEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, qt AS STRING) AS STRING
     DIM nm AS STRING = wv.Name
     DIM s AS STRING = ""
-    s = s + "    DIM vw" + sfx + " AS STRING = _mnBarView(_mnNodes_" + nm + "(), m." + nm + "_Active, m." + nm + "_Open, m.Focus = " + sfx + ")\n"
+    ' Hover highlight: m.Hover = this widget marks the bar hovered; m.HoverTab
+    ' is which top title the mouse is over (set by the motion handler).
+    s = s + "    DIM vw" + sfx + " AS STRING = _mnBarView(_mnNodes_" + nm + "(), m." + nm + "_Active, m." + nm + "_Open, m.Focus = " + sfx + ", m.Hover = " + sfx + ", m.HoverTab)\n"
     s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION
+
+' menubarEmitHoverTab — emitted inside the View motion handler's m.HoverTab
+' computation: when this Menubar is hovered, set m.HoverTab to the top-level
+' title under the cursor (each title spans width(cap)+2 columns, no gap).
+FUNCTION menubarEmitHoverTab(wv AS DesignWidget, iStr AS STRING, qt AS STRING) AS STRING
+    DIM s AS STRING = ""
+    s = s + "        IF mmHit = " + iStr + " THEN\n"
+    s = s + "            DIM mhCol" + iStr + " AS INTEGER = mm.X - " + strconv.Itoa(wv.X) + "\n"
+    DIM col AS INTEGER = 0
+    DIM vk AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(wv.Menu) - 1
+        IF wv.Menu[i].Depth = 0 AND NOT wv.Menu[i].IsSep THEN
+            DIM w AS INTEGER = lipgloss.Width(wv.Menu[i].Caption) + 2
+            s = s + "            IF mhCol" + iStr + " >= " + strconv.Itoa(col) + " AND mhCol" + iStr + " < " + strconv.Itoa(col + w) + " THEN m.HoverTab = " + strconv.Itoa(vk) + "\n"
+            col = col + w
+            vk = vk + 1
+        END IF
+    NEXT i
+    s = s + "        END IF\n"
     RETURN s
 END FUNCTION
 
@@ -421,8 +445,11 @@ FUNCTION menubarEmitRuntime(qt AS STRING) AS STRING
     s = s + "    RETURN active, open, path, chosen\n"
     s = s + "END FUNCTION\n\n"
 
-    ' --- _mnBarView: the title strip, as a string (placed as a layer) ---
-    s = s + "FUNCTION _mnBarView(nodes AS []_MNode, active AS INTEGER, open AS BOOLEAN, focused AS BOOLEAN) AS STRING\n"
+    ' --- _mnBarView: the title strip, as a string (placed as a layer). The
+    '     active title is bracketed when focused/open; the title under the
+    '     mouse (hovActive + hoverIdx, from m.Hover/m.HoverTab) is reverse-
+    '     highlighted via hoverStyle. ---
+    s = s + "FUNCTION _mnBarView(nodes AS []_MNode, active AS INTEGER, open AS BOOLEAN, focused AS BOOLEAN, hovActive AS BOOLEAN, hoverIdx AS INTEGER) AS STRING\n"
     s = s + "    DIM bar AS STRING = " + qt + qt + "\n"
     s = s + "    DIM k AS INTEGER = 0\n"
     s = s + "    DIM i AS INTEGER\n"
@@ -430,6 +457,8 @@ FUNCTION menubarEmitRuntime(qt AS STRING) AS STRING
     s = s + "        IF nodes[i].Dp = 0 AND NOT nodes[i].Sp THEN\n"
     s = s + "            IF (focused OR open) AND active = k THEN\n"
     s = s + "                bar = bar + " + qt + "[" + qt + " + nodes[i].Cap + " + qt + "]" + qt + "\n"
+    s = s + "            ELSEIF hovActive AND hoverIdx = k THEN\n"
+    s = s + "                bar = bar + hoverStyle.Render(" + qt + " " + qt + " + nodes[i].Cap + " + qt + " " + qt + ")\n"
     s = s + "            ELSE\n"
     s = s + "                bar = bar + " + qt + " " + qt + " + nodes[i].Cap + " + qt + " " + qt + "\n"
     s = s + "            END IF\n"
