@@ -25,7 +25,10 @@ FUNCTION widgetEvents(kind AS STRING) AS []STRING
     IF kind = "Button" THEN RETURN strings.Split("Click,GotFocus,LostFocus,KeyDown,KeyPress,KeyUp,MouseDown,MouseMove,MouseUp", ",")
     IF kind = "Checkbox" OR kind = "RadioButton" OR kind = "ComboBox" OR kind = "ListBox" OR kind = "ScrollBar" OR kind = "TabStrip" OR kind = "Tree" OR kind = "PropGrid" THEN RETURN strings.Split("Change,Click,GotFocus,LostFocus,KeyDown,KeyPress,KeyUp,MouseDown,MouseMove,MouseUp", ",")
     IF kind = "Dialog" THEN RETURN strings.Split("Close,GotFocus,LostFocus", ",")
-    IF kind = "Menubar" THEN RETURN strings.Split("Select,Click", ",")
+    ' Menubar has no widget-level event: each item fires its own
+    ' <ItemName>_Click() (auto-generated, edited in the Menu Editor). The
+    ' popup shows a single entry that opens the editor — see pickWidgetEvent.
+    IF kind = "Menubar" THEN RETURN strings.Split("Edit menus (Menu Editor)", ",")
     IF kind = "Label" THEN RETURN strings.Split("Click,DblClick,Change,MouseDown,MouseMove,MouseUp", ",")
     IF kind = "TextInput" THEN RETURN strings.Split("Change,Click,DblClick,GotFocus,LostFocus,KeyDown,KeyPress,KeyUp,MouseDown,MouseMove,MouseUp", ",")
     ' TextArea / ProgressBar / Panel / ScrollPanel / StatusBar and any
@@ -43,7 +46,6 @@ FUNCTION eventSig(w AS DesignWidget, ev AS STRING) AS STRING
         IF dk = "input" THEN RETURN "(button AS STRING, text AS STRING)"
         RETURN "(button AS STRING)"
     END IF
-    IF w.Kind = "Menubar" AND ev = "Select" THEN RETURN "(item AS STRING)"
     RETURN "()"
 END FUNCTION
 

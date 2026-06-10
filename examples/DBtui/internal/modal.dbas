@@ -458,7 +458,12 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
     ' Properties panel rows in form mode.
     IF m.ModalContext = "wprop:name" THEN
         IF m.Tabs[m.TabIdx].SelWidget >= 0 AND m.Tabs[m.TabIdx].SelWidget < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
-            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Name = strings.TrimSpace(text)
+            DIM oldNm AS STRING = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Name
+            DIM newNm AS STRING = strings.TrimSpace(text)
+            m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget].Name = newNm
+            ' Rename every reference (handlers, model-field refs, Show<Name>())
+            ' in the code editor + partner .dbas so the wiring survives regen.
+            renameWidgetRefs(m, oldNm, newNm)
         END IF
         RETURN FALSE, NIL
     END IF

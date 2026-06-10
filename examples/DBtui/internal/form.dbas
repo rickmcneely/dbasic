@@ -1258,6 +1258,98 @@ END FUNCTION
 ' handlers per widget kind, named identifiers in the Model, etc.
 ' -------------------------------------------------------------------------
 
+' renameIdentRefs — rename whole-identifier references to a widget in source
+' text: replace `oldN` only where it starts an identifier token (preceded by
+' a non-word char / start) and is followed by `_` (handler/model-field suffix
+' like oldN_Click / m.oldN_ti) or a non-word boundary (bare reference). Avoids
+' clobbering longer identifiers (oldNExtra). Also rewrites dialog Show<old>()
+' call sites. Used by renameWidgetRefs when a widget is renamed.
+FUNCTION renameIdentRefs(src AS STRING, oldN AS STRING, newN AS STRING) AS STRING
+    IF oldN = "" OR newN = "" OR oldN = newN THEN RETURN src
+    DIM word AS STRING = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+    DIM oldLen AS INTEGER = LEN(oldN)
+    DIM out AS STRING = ""
+    DIM i AS INTEGER = 0
+    DO WHILE i < LEN(src)
+        DIM rest AS STRING = Mid(src, i + 1, LEN(src) - i)
+        IF strings.HasPrefix(rest, oldN) THEN
+            DIM prevOk AS BOOLEAN = TRUE
+            IF i > 0 THEN
+                IF strings.Contains(word, Mid(src, i, 1)) THEN prevOk = FALSE
+            END IF
+            DIM nextOk AS BOOLEAN = TRUE
+            DIM aft AS INTEGER = i + oldLen
+            IF aft < LEN(src) THEN
+                DIM nc AS STRING = Mid(src, aft + 1, 1)
+                IF strings.Contains(word, nc) AND nc <> "_" THEN nextOk = FALSE
+            END IF
+            IF prevOk AND nextOk THEN
+                out = out + newN
+                i = i + oldLen
+            ELSE
+                out = out + Mid(src, i + 1, 1)
+                i = i + 1
+            END IF
+        ELSE
+            out = out + Mid(src, i + 1, 1)
+            i = i + 1
+        END IF
+    LOOP
+    ' Dialog Show<Name>() call sites (Show + name is concatenated, so the
+    ' boundary scan above won't catch the name inside ShowOld().
+    out = strings.ReplaceAll(out, "Show" + oldN + "(", "Show" + newN + "(")
+    RETURN out
+END FUNCTION
+
+' renameWidgetRefs — when widget `oldN` is renamed to `newN`, update every
+' reference in the code: each open CODE tab's editor buffer, plus the active
+' form's partner .dbas on disk (so F5/save-regen keeps the renamed handlers
+' wired). The form designer keeps handler subs named <widget>_<Event> and
+' model-field refs m.<widget>_*, so renaming the identifier preserves the
+' wiring that regen otherwise breaks.
+SUB renameWidgetRefs(m AS POINTER TO Model, oldN AS STRING, newN AS STRING)
+    IF oldN = "" OR newN = "" OR oldN = newN THEN RETURN
+    ' Partner .dbas path for the active form (so we can avoid double-editing
+    ' it if it's also open as a tab).
+    DIM partner AS STRING = ""
+    IF m.Tabs[m.TabIdx].Path <> "" THEN
+        DIM proj AS Project
+        DIM pok AS BOOLEAN
+        DIM preason AS STRING
+        proj, pok, preason = readProjectFromDisk(m.Tabs[m.TabIdx].Path)
+        _ = preason
+        DIM nForms AS INTEGER = 1
+        IF pok THEN nForms = LEN(proj.Forms)
+        partner = formOutputPath(m.Tabs[m.TabIdx].Path, m.Tabs[m.TabIdx].FormName, nForms)
+    END IF
+    DIM partnerOpen AS BOOLEAN = FALSE
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(m.Tabs) - 1
+        IF m.Tabs[ti].Kind = "code" THEN
+            DIM v AS STRING = m.Tabs[ti].Editor.Value()
+            DIM nv AS STRING = renameIdentRefs(v, oldN, newN)
+            IF nv <> v THEN
+                m.Tabs[ti].Editor.SetValue(nv)
+                m.Tabs[ti].Dirty = TRUE
+            END IF
+            IF m.Tabs[ti].Path = partner AND partner <> "" THEN partnerOpen = TRUE
+        END IF
+    NEXT ti
+    ' Partner .dbas not open in a tab → rewrite its user section on disk.
+    IF partner <> "" AND NOT partnerOpen THEN
+        DIM data AS BYTES
+        DIM rerr AS ERROR
+        data, rerr = os.ReadFile(partner)
+        IF rerr = NIL THEN
+            DIM nv2 AS STRING = renameIdentRefs(string(data), oldN, newN)
+            IF nv2 <> string(data) THEN
+                DIM werr AS ERROR = os.WriteFile(partner, Encode(nv2), 0644)
+                _ = werr
+            END IF
+        END IF
+    END IF
+END SUB
+
 ' escapeForDBString — backslash-escape backslashes and quotes so the
 ' string is safe to drop inside a DBasic string literal.
 FUNCTION escapeForDBString(s AS STRING) AS STRING
@@ -2675,6 +2767,12 @@ SUB pickWidgetEvent(m AS POINTER TO Model, widgetIdx AS INTEGER, itemIdx AS INTE
     ' Close the popup first.
     m.CtxWidget = 0 - 1
     DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[widgetIdx]
+    ' Menubar has no widget-level event — its single popup entry opens the
+    ' visual Menu Editor, where per-item <Name>_Click() handlers are managed.
+    IF w.Kind = "Menubar" THEN
+        showMenuEditor(m, widgetIdx)
+        RETURN
+    END IF
     DIM evs AS []STRING = widgetEvents(w.Kind)
     IF itemIdx < 0 OR itemIdx >= LEN(evs) THEN RETURN
     DIM ev AS STRING = evs[itemIdx]
