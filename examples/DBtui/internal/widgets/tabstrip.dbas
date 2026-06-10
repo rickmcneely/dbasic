@@ -47,6 +47,19 @@ END FUNCTION
 ' Rows 2..H-1: the active tab's content placeholder (the generated program
 ' shows the active label; real page content is the user's to add).
 FUNCTION tabStripVisibleLines(w AS DesignWidget) AS []STRING
+    IF widgetFramed(w) THEN
+        DIM tactive AS STRING = ""
+        IF w.Selected >= 0 AND w.Selected < LEN(w.Items) THEN tactive = w.Items[w.Selected]
+        DIM tbody AS []STRING
+        tbody = APPEND(tbody, tabStripBar(w.Items, w.Selected, w.W - 2))
+        tbody = APPEND(tbody, strings.Repeat("─", w.W - 2))
+        tbody = APPEND(tbody, " " + tactive + " tab")
+        DIM tfi AS INTEGER
+        FOR tfi = 3 TO w.H - 3
+            tbody = APPEND(tbody, "")
+        NEXT tfi
+        RETURN designFrame(w, tbody)
+    END IF
     DIM lines AS []STRING
     DIM th AS INTEGER = w.H
     IF th < 3 THEN th = 3

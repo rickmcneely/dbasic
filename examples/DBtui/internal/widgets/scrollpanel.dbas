@@ -37,6 +37,16 @@ END FUNCTION
 ' C — multi-row design render: framed box, H-2 content rows + scrollbar
 ' column, thumb parked at the top (scroll = 0).
 FUNCTION scrollPanelVisibleLines(w AS DesignWidget) AS []STRING
+    IF widgetFramed(w) THEN
+        DIM sbody AS []STRING
+        DIM sbi AS INTEGER
+        FOR sbi = 0 TO w.H - 3
+            DIM sbl AS STRING = ""
+            IF sbi < LEN(w.Items) THEN sbl = w.Items[sbi]
+            sbody = APPEND(sbody, sbl)
+        NEXT sbi
+        RETURN designFrame(w, sbody)
+    END IF
     DIM lines AS []STRING
     DIM spw AS INTEGER = w.W
     IF spw < 4 THEN spw = 4

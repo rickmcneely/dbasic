@@ -34,6 +34,17 @@ END FUNCTION
 ' C — multi-row design render: framed box, H-2 content rows from the initial
 ' Text split on newlines.
 FUNCTION textAreaVisibleLines(w AS DesignWidget) AS []STRING
+    IF widgetFramed(w) THEN
+        DIM tcl AS []STRING = strings.Split(w.Text, "\n")
+        DIM tbody AS []STRING
+        DIM tbi AS INTEGER
+        FOR tbi = 0 TO w.H - 3
+            DIM tbl AS STRING = ""
+            IF tbi < LEN(tcl) THEN tbl = tcl[tbi]
+            tbody = APPEND(tbody, tbl)
+        NEXT tbi
+        RETURN designFrame(w, tbody)
+    END IF
     DIM lines AS []STRING
     DIM aw AS INTEGER = w.W
     IF aw < 3 THEN aw = 3

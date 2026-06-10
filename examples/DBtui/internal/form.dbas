@@ -536,6 +536,19 @@ END FUNCTION
 ' returned slice and writes each row to the grid at (X, Y + i).
 FUNCTION widgetVisibleLines(w AS DesignWidget) AS []STRING
     DIM lines AS []STRING
+    ' Framed ScrollPanel → WYSIWYG border + caption (the inline ScrollPanel
+    ' render below is the unframed default). TabStrip/TextArea handle framing
+    ' inside their own *VisibleLines.
+    IF w.Kind = "ScrollPanel" AND widgetFramed(w) THEN
+        DIM spbody AS []STRING
+        DIM spbi AS INTEGER
+        FOR spbi = 0 TO w.H - 3
+            DIM spbl AS STRING = ""
+            IF spbi < LEN(w.Items) THEN spbl = w.Items[spbi]
+            spbody = APPEND(spbody, spbl)
+        NEXT spbi
+        RETURN designFrame(w, spbody)
+    END IF
     IF w.Kind = "ListBox" THEN
         lines = listBoxVisibleLines(w)
     ELSEIF w.Kind = "ScrollBar" AND strings.ToLower(w.Orient) = "v" THEN
@@ -1741,6 +1754,46 @@ FUNCTION frameCallArgs(w AS DesignWidget, qt AS STRING) AS STRING
     DIM just AS STRING = w.CaptionJust
     IF just = "" THEN just = "left"
     RETURN qt + gh + qt + ", " + qt + gv + qt + ", " + qt + tl + qt + ", " + qt + tr + qt + ", " + qt + bl + qt + ", " + qt + br + qt + ", " + qt + escapeForDBString(w.Caption) + qt + ", " + qt + just + qt
+END FUNCTION
+
+' designFrame — design-time WYSIWYG: wrap `body` content rows in the widget's
+' configured border (style + corners) with its caption justified on the top
+' edge, mirroring what the generated _frame produces at runtime. body should
+' be H-2 rows; each is padded/clipped to the inner width.
+FUNCTION designFrame(w AS DesignWidget, body AS []STRING) AS []STRING
+    DIM gh AS STRING
+    DIM gv AS STRING
+    DIM tl AS STRING
+    DIM tr AS STRING
+    DIM bl AS STRING
+    DIM br AS STRING
+    gh, gv, tl, tr, bl, br = borderGlyphs(widgetEffBorder(w), w.CornerStyle)
+    DIM innerW AS INTEGER = w.W - 2
+    IF innerW < 1 THEN innerW = 1
+    DIM top AS STRING = tl
+    IF w.Caption = "" THEN
+        top = top + strings.Repeat(gh, innerW)
+    ELSE
+        DIM cap AS STRING = " " + w.Caption + " "
+        IF lipgloss.Width(cap) > innerW THEN cap = Mid(cap, 1, innerW)
+        DIM fill AS INTEGER = innerW - lipgloss.Width(cap)
+        DIM lead AS INTEGER = 0
+        IF w.CaptionJust = "center" THEN lead = fill / 2
+        IF w.CaptionJust = "right" THEN lead = fill
+        top = top + strings.Repeat(gh, lead) + cap + strings.Repeat(gh, fill - lead)
+    END IF
+    top = top + tr
+    DIM lines AS []STRING
+    lines = APPEND(lines, top)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(body) - 1
+        DIM ln AS STRING = body[i]
+        IF lipgloss.Width(ln) > innerW THEN ln = Mid(ln, 1, innerW)
+        IF lipgloss.Width(ln) < innerW THEN ln = ln + strings.Repeat(" ", innerW - lipgloss.Width(ln))
+        lines = APPEND(lines, gv + ln + gv)
+    NEXT i
+    lines = APPEND(lines, bl + strings.Repeat(gh, innerW) + br)
+    RETURN lines
 END FUNCTION
 
 ' --- Form chrome helpers ------------------------------------------------
