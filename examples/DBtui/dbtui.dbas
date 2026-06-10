@@ -309,6 +309,10 @@ TYPE Model
     ' like the FileDialog). The label that's currently active gets
     ' inverted; rendering of the body switches on this value.
     DIM RightTab AS STRING               ' "list" or "tools"
+    ' Scroll offset into the (alphabetical) Widgets palette so every kind is
+    ' reachable when the list area is shorter than the kind count. Mouse wheel
+    ' over the palette adjusts it; clamped to [0, count - visibleRows].
+    DIM PaletteScroll AS INTEGER
 
     ' --- File browser state (Open/Save/SaveAs/SaveForm) -------------
     ' When BrowseActive is TRUE every input event routes through the
@@ -1702,6 +1706,21 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         invalidateEditorCache(@m)
         RETURN m, NIL
     END IF
+    ' Wheel over the right-pane Widgets palette scrolls the kind list, so
+    ' every alphabetical entry is reachable on a short pane. palLastVisible is
+    ' stashed by renderRightPane (exact rows shown) so the clamp matches.
+    IF mwOk AND mwMsg.X >= m.Width - m.RightW AND mwMsg.X < m.Width AND m.RightTab = "list" AND m.ViewMode = "form" THEN
+        DIM palMax AS INTEGER = formPaletteCount() - palLastVisible
+        IF palMax < 0 THEN palMax = 0
+        IF mwMsg.Button = tea.MouseWheelUp THEN
+            m.PaletteScroll = m.PaletteScroll - 1
+        ELSE
+            m.PaletteScroll = m.PaletteScroll + 1
+        END IF
+        IF m.PaletteScroll < 0 THEN m.PaletteScroll = 0
+        IF m.PaletteScroll > palMax THEN m.PaletteScroll = palMax
+        RETURN m, NIL
+    END IF
 
     ' --- Mouse release --------------------------------------------
     ' End an in-progress splitter drag.
@@ -2048,7 +2067,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             ' (formPaletteCount, since INCLUDEd CONSTs aren't visible to this
             ' module). Was hard-capped at 9, which silently ignored clicks on
             ' every kind past ScrollBar (incl. Menubar) — now all kinds add.
-            DIM pKind AS INTEGER = pRelRow
+            DIM pKind AS INTEGER = m.PaletteScroll + pRelRow
             IF pRelRow >= 0 AND pRelRow < pListH - 2 AND pKind < formPaletteCount() THEN
                 ' Safety net: ViewMode might be "form" while the
                 ' active tab is still a code buffer (older sessions,

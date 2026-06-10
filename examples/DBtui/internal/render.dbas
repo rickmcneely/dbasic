@@ -38,6 +38,11 @@ DIM epLastOrigY AS INTEGER
 DIM epLastW     AS INTEGER
 DIM epLastN     AS INTEGER
 
+' Widgets palette — number of kind rows visible this frame, stashed by
+' renderRightPane so the wheel handler clamps PaletteScroll to exactly what
+' the render shows (no geometry guessing).
+DIM palLastVisible AS INTEGER
+
 ' Menu Editor geometry — written by View() each frame it composites the
 ' editor, so the click handler can map a screen click onto a list row or
 ' the OK / Cancel buttons. Coords are RELATIVE to the modal content area
@@ -994,12 +999,21 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             listLines = APPEND(listLines, listRowStyle.Render(toolTxt))
         NEXT li
     ELSEIF m.ViewMode = "form" THEN
-        ' Widgets palette: the alphabetical kind list (one row per kind).
+        ' Widgets palette: the alphabetical kind list, scrolled by
+        ' m.PaletteScroll. listVisible rows shown starting at that offset; a
+        ' leading ↑ / trailing ↓ marks more entries above / below.
+        palLastVisible = listVisible
         FOR li = 0 TO listVisible - 1
+            DIM pki AS INTEGER = m.PaletteScroll + li
             DIM palTxt AS STRING = ""
-            IF li < formPaletteKinds THEN palTxt = " + " + formKindByIdx(li)
+            IF pki >= 0 AND pki < formPaletteKinds THEN
+                DIM palMark AS STRING = " + "
+                IF li = 0 AND m.PaletteScroll > 0 THEN palMark = " ↑ "
+                IF li = listVisible - 1 AND pki < formPaletteKinds - 1 THEN palMark = " ↓ "
+                palTxt = palMark + formKindByIdx(pki)
+            END IF
             DIM prowY AS INTEGER = listFirstY + li
-            IF m.HoverY = prowY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND li < formPaletteKinds THEN
+            IF m.HoverY = prowY AND m.HoverX > xOrigin AND m.HoverX < xOrigin + width - 1 AND pki < formPaletteKinds THEN
                 listLines = APPEND(listLines, listHoverStyle.Render(palTxt))
             ELSE
                 listLines = APPEND(listLines, listRowStyle.Render(palTxt))
