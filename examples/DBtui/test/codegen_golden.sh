@@ -44,6 +44,7 @@ BIN="$WORK/dbtui_test"
 # committed <stem>.dbas is the golden. Add new example projects here.
 PROJECTS=(
   "examples/Widgets/Widgets.dbproj"
+  "examples/radio.dbproj"
   "examples/dialog_demo.dbproj"
   "examples/quit_demo.dbproj"
   "examples/chrome_demo.dbproj"

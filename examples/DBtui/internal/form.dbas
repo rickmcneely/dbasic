@@ -2211,8 +2211,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' on-screen rect.
     ' _currentModel lets no-arg user handlers (_Click / _Change /
     ' _Close / _Select) mutate model state; needed whenever such a
-    ' handler might want to (dialogs, and Menubar _Select).
-    IF hasDialog OR hasMenubar THEN
+    ' handler might want to (dialogs, Menubar _Select, and the
+    ' runtime ListBox/ComboBox item API below).
+    IF hasDialog OR hasMenubar OR hasListW THEN
         s = s + "DIM _currentModel AS POINTER TO Model\n"
     END IF
     IF hasDialog THEN
@@ -2226,7 +2227,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' declared by menubarEmitRuntime — written by View's _mnPaintBoxes,
     ' read by Update's _mnClickHit. No per-form _mb* vars needed now.)
     s = s + "FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)\n"
-    IF hasDialog OR hasMenubar THEN
+    IF hasDialog OR hasMenubar OR hasListW THEN
         s = s + "    _currentModel = @m\n"
     END IF
     s = s + "    DIM sz AS tea.WindowSizeMsg\n"
@@ -2998,6 +2999,51 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "    _ = id\n"
     END IF
     s = s + "END SUB\n"
+
+    ' --- Runtime list API. For each ListBox / ComboBox emit BASIC-friendly
+    '     helpers so user handlers can repopulate or read the live list
+    '     without touching the internal _LItem type or the bubbles list
+    '     model directly. <Name>_SetItems rebuilds the contents from a
+    '     []STRING; <Name>_SelectedIndex / _SelectedText report the
+    '     highlighted row. All route through _currentModel, so they take
+    '     effect inside an Update — which every _Click / _Change handler
+    '     runs within.
+    DIM lwI AS INTEGER
+    FOR lwI = 0 TO n - 1
+        DIM lw AS DesignWidget = f.Widgets[lwI]
+        IF (lw.Kind = "ListBox" OR lw.Kind = "ComboBox") AND lw.Parent = "" THEN
+            DIM lwf AS STRING = lw.Name + compSuffix(lw.Kind)
+            s = s + "' " + lw.Name + "_SetItems — replace the live list contents from a []STRING.\n"
+            s = s + "SUB " + lw.Name + "_SetItems(_items AS []STRING)\n"
+            s = s + "    IF _currentModel = NIL THEN RETURN\n"
+            s = s + "    DIM _lis AS []list.Item\n"
+            s = s + "    DIM _li AS INTEGER\n"
+            s = s + "    DIM _it AS _LItem\n"
+            s = s + "    FOR _li = 0 TO LEN(_items) - 1\n"
+            s = s + "        _it.cap = _items[_li]\n"
+            s = s + "        _lis = APPEND(_lis, _it)\n"
+            s = s + "    NEXT _li\n"
+            s = s + "    _ = _currentModel." + lwf + ".SetItems(_lis)\n"
+            s = s + "END SUB\n"
+            s = s + "' " + lw.Name + "_SelectedIndex — 0-based highlighted row (-1 when empty).\n"
+            s = s + "FUNCTION " + lw.Name + "_SelectedIndex() AS INTEGER\n"
+            s = s + "    IF _currentModel = NIL THEN RETURN 0 - 1\n"
+            s = s + "    RETURN _currentModel." + lwf + ".Index()\n"
+            s = s + "END FUNCTION\n"
+            s = s + "' " + lw.Name + "_SelectedText — caption of the highlighted row (empty when none).\n"
+            s = s + "FUNCTION " + lw.Name + "_SelectedText() AS STRING\n"
+            s = s + "    IF _currentModel = NIL THEN RETURN " + qt + qt + "\n"
+            s = s + "    DIM _si AS list.Item = _currentModel." + lwf + ".SelectedItem()\n"
+            s = s + "    IF _si = NIL THEN RETURN " + qt + qt + "\n"
+            s = s + "    DIM _lit AS _LItem\n"
+            s = s + "    DIM _ok AS BOOLEAN\n"
+            s = s + "    _lit, _ok = _si.(_LItem)\n"
+            s = s + "    IF NOT _ok THEN RETURN " + qt + qt + "\n"
+            s = s + "    RETURN _lit.cap\n"
+            s = s + "END FUNCTION\n"
+            s = s + "\n"
+        END IF
+    NEXT lwI
 
     ' --- Tree widget plumbing. A shared treeVisibleRows() walks the
     '     node depths + per-node collapse flags to produce the list of

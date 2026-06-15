@@ -31,7 +31,13 @@
           "OnClickDialog": "dialog1",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "Label",
@@ -58,7 +64,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "TextInput",
@@ -85,7 +97,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "Checkbox",
@@ -112,7 +130,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "RadioButton",
@@ -139,7 +163,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "ComboBox",
@@ -170,7 +200,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "ListBox",
@@ -201,7 +237,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "ProgressBar",
@@ -228,7 +270,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "ScrollBar",
@@ -255,7 +303,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "TabStrip",
@@ -286,7 +340,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "Tree",
@@ -320,7 +380,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "TextArea",
@@ -347,7 +413,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "PropGrid",
@@ -379,7 +451,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "220",
-          "BgColor": "0"
+          "BgColor": "0",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "ScrollPanel",
@@ -387,7 +465,7 @@
           "Text": "ScrollPanel",
           "X": 30,
           "Y": 14,
-          "W": 26,
+          "W": 16,
           "H": 7,
           "Items": [
             "Content line 1",
@@ -419,7 +497,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "214",
-          "BgColor": "16"
+          "BgColor": "16",
+          "BorderStyle": "normal",
+          "CornerStyle": "rounded",
+          "Caption": "POOP!",
+          "CaptionJust": "right",
+          "HScroll": "auto",
+          "VScroll": "on"
         },
         {
           "Kind": "Dialog",
@@ -449,7 +533,13 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         },
         {
           "Kind": "Label",
@@ -476,11 +566,24 @@
           "OnClickDialog": "",
           "Parent": "",
           "FgColor": "",
-          "BgColor": ""
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": ""
         }
       ],
       "FgColor": "",
-      "BgColor": ""
+      "BgColor": "",
+      "BorderStyle": "normal",
+      "CornerStyle": "rounded",
+      "WExpr": "",
+      "HExpr": "",
+      "ShowMin": true,
+      "ShowMax": true,
+      "ShowClose": true
     }
   ]
 }

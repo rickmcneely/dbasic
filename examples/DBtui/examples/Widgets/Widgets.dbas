@@ -42,6 +42,10 @@ TYPE Model
     DIM Focus  AS INTEGER
     DIM Hover  AS INTEGER
     DIM HoverTab AS INTEGER
+    DIM _formW AS INTEGER
+    DIM _formH AS INTEGER
+    DIM _maximized AS BOOLEAN
+    DIM _minimized AS BOOLEAN
     DIM textinput1_ti AS textinput.Model
     DIM checkbox1_Val AS BOOLEAN
     DIM radiobutton1_Val AS BOOLEAN
@@ -77,6 +81,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     IF szOk THEN
         m.Width = sz.Width
         m.Height = sz.Height
+        _formSize(@m)
         Terminal_Resize(m.Width, m.Height)
         RETURN m, NIL
     END IF
@@ -115,6 +120,25 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mcOk AS BOOLEAN
     mc, mcOk = msg.(tea.MouseClickMsg)
     IF mcOk AND mc.Button = tea.MouseLeft THEN
+        IF mc.Y = 0 THEN
+            DIM gstart AS INTEGER = m._formW - 1 - 6
+            DIM ggi AS INTEGER = (mc.X - gstart) / 2
+            IF mc.X >= gstart AND ggi = 0 THEN
+                m._minimized = NOT m._minimized
+                _formSize(@m)
+                RETURN m, NIL
+            END IF
+            IF mc.X >= gstart AND ggi = 1 THEN
+                m._maximized = NOT m._maximized
+                m._minimized = FALSE
+                _formSize(@m)
+                RETURN m, NIL
+            END IF
+            IF mc.X >= gstart AND ggi = 2 THEN
+                Form_Close()
+                RETURN m, tea.Quit
+            END IF
+        END IF
         IF m.dialog1_Active AND _dlgW > 0 THEN
             DIM lxdialog1 AS INTEGER = mc.X - _dlgX
             DIM lydialog1 AS INTEGER = mc.Y - _dlgY
@@ -164,9 +188,29 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             _ = mc
             RETURN m, NIL
         END IF
-        IF mc.X >= 30 AND mc.X < 30 + 26 AND mc.Y >= 14 AND mc.Y < 14 + 7 THEN
+        IF mc.X >= 30 AND mc.X < 30 + 16 AND mc.Y >= 14 AND mc.Y < 14 + 7 THEN
             m.Focus = 13
             syncFocusComp(@m)
+            IF mc.X - 30 = 14 AND mc.Y - 14 >= 1 AND mc.Y - 14 <= 4 THEN
+                IF mc.Y - 14 = 1 THEN
+                    m.scrollpanel1_vp.ScrollUp(1)
+                ELSEIF mc.Y - 14 = 4 THEN
+                    m.scrollpanel1_vp.ScrollDown(1)
+                ELSE
+                    m.scrollpanel1_vp.SetYOffset(((mc.Y - 14 - 2) * 8) / 1)
+                END IF
+                RETURN m, NIL
+            END IF
+            IF mc.Y - 14 = 5 AND mc.X - 30 >= 1 AND mc.X - 30 <= 13 THEN
+                IF mc.X - 30 = 1 THEN
+                    m.scrollpanel1_vp.ScrollLeft(1)
+                ELSEIF mc.X - 30 = 13 THEN
+                    m.scrollpanel1_vp.ScrollRight(1)
+                ELSE
+                    m.scrollpanel1_vp.SetXOffset(((mc.X - 30 - 2) * 2) / 10)
+                END IF
+                RETURN m, NIL
+            END IF
             _ = mc
             RETURN m, NIL
         END IF
@@ -310,7 +354,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM mmHit AS INTEGER = 0 - 1
         IF mmHit < 0 AND mm.X >= 0 AND mm.X < 0 + 80 AND mm.Y >= 0 AND mm.Y < 0 + 1 THEN mmHit = 15
         IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 22 AND mm.Y >= 14 AND mm.Y < 14 + 1 THEN mmHit = 14
-        IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 26 AND mm.Y >= 14 AND mm.Y < 14 + 7 THEN mmHit = 13
+        IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 16 AND mm.Y >= 14 AND mm.Y < 14 + 7 THEN mmHit = 13
         IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 24 AND mm.Y >= 7 AND mm.Y < 7 + 5 THEN mmHit = 12
         IF mmHit < 0 AND mm.X >= 56 AND mm.X < 56 + 22 AND mm.Y >= 1 AND mm.Y < 1 + 5 THEN mmHit = 11
         IF mmHit < 0 AND mm.X >= 30 AND mm.X < 30 + 24 AND mm.Y >= 7 AND mm.Y < 7 + 6 THEN mmHit = 10
@@ -347,7 +391,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mwOk AS BOOLEAN
     mw, mwOk = msg.(tea.MouseWheelMsg)
     IF mwOk THEN
-        IF mw.X >= 30 AND mw.X < 30 + 26 AND mw.Y >= 14 AND mw.Y < 14 + 7 THEN
+        IF mw.X >= 30 AND mw.X < 30 + 16 AND mw.Y >= 14 AND mw.Y < 14 + 7 THEN
             DIM wwc13 AS tea.Cmd
             m.scrollpanel1_vp, wwc13 = m.scrollpanel1_vp.Update(msg)
             _ = wwc13
@@ -569,6 +613,98 @@ FUNCTION _blankCanvas(w AS INTEGER, h AS INTEGER) AS STRING
     RETURN strings.Join(cr, "\n")
 END FUNCTION
 
+FUNCTION _frame(inner AS []STRING, innerW AS INTEGER, gh AS STRING, gv AS STRING, tl AS STRING, tr AS STRING, bl AS STRING, br AS STRING, caption AS STRING, just AS STRING) AS STRING
+    DIM top AS STRING = tl
+    IF caption = "" THEN
+        top = top + strings.Repeat(gh, innerW)
+    ELSE
+        DIM cap AS STRING = " " + caption + " "
+        IF lipgloss.Width(cap) > innerW THEN cap = Mid(cap, 1, innerW)
+        DIM fill AS INTEGER = innerW - lipgloss.Width(cap)
+        DIM lead AS INTEGER = 0
+        IF just = "center" THEN lead = fill / 2
+        IF just = "right" THEN lead = fill
+        top = top + strings.Repeat(gh, lead) + cap + strings.Repeat(gh, fill - lead)
+    END IF
+    top = top + tr
+    DIM out AS STRING = top
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(inner) - 1
+        DIM ln AS STRING = inner[i]
+        IF lipgloss.Width(ln) < innerW THEN ln = ln + strings.Repeat(" ", innerW - lipgloss.Width(ln))
+        out = out + "\n" + gv + ln + gv
+    NEXT i
+    out = out + "\n" + bl + strings.Repeat(gh, innerW) + br
+    RETURN out
+END FUNCTION
+
+FUNCTION _vgutter(row AS INTEGER, vis AS INTEGER, top AS INTEGER, total AS INTEGER) AS STRING
+    IF row = 0 THEN RETURN "▲"
+    IF row = vis - 1 THEN RETURN "▼"
+    DIM track AS INTEGER = vis - 2
+    IF track < 1 OR total <= vis THEN RETURN "░"
+    DIM maxTop AS INTEGER = total - vis
+    IF maxTop < 1 THEN maxTop = 1
+    DIM thumb AS INTEGER = (top * (track - 1)) / maxTop
+    IF thumb < 0 THEN thumb = 0
+    IF thumb > track - 1 THEN thumb = track - 1
+    IF (row - 1) = thumb THEN RETURN "█"
+    RETURN "░"
+END FUNCTION
+
+FUNCTION _hbar(width AS INTEGER, thumb AS INTEGER) AS STRING
+    IF width < 3 THEN RETURN strings.Repeat("─", width)
+    DIM track AS INTEGER = width - 2
+    DIM out AS STRING = "◀"
+    DIM i AS INTEGER
+    FOR i = 0 TO track - 1
+        IF i = thumb THEN
+            out = out + "█"
+        ELSE
+            out = out + "░"
+        END IF
+    NEXT i
+    out = out + "▶"
+    RETURN out
+END FUNCTION
+
+SUB _formSize(m AS POINTER TO Model)
+    DIM w AS INTEGER = m.Width
+    DIM h AS INTEGER = m.Height
+    IF w < 60 THEN w = 80
+    IF h < 20 THEN h = 24
+    IF m._maximized THEN
+        m._formW = w
+        m._formH = h
+    ELSE
+        m._formW = w
+        m._formH = h
+    END IF
+    IF m._formW < 3 THEN m._formW = 3
+    IF m._formW > w THEN m._formW = w
+    IF m._formH < 2 THEN m._formH = 2
+    IF m._formH > h THEN m._formH = h
+    IF m._minimized THEN m._formH = 1
+END SUB
+
+FUNCTION _formBox(fw AS INTEGER, fh AS INTEGER, gh AS STRING, gv AS STRING, tl AS STRING, tr AS STRING, bl AS STRING, br AS STRING, caption AS STRING, glyphs AS STRING) AS STRING
+    DIM innerW AS INTEGER = fw - 2
+    IF innerW < 0 THEN innerW = 0
+    DIM cap AS STRING = ""
+    IF caption <> "" THEN cap = " " + caption + " "
+    DIM used AS INTEGER = lipgloss.Width(cap) + lipgloss.Width(glyphs)
+    DIM fill AS INTEGER = innerW - used
+    IF fill < 0 THEN fill = 0
+    DIM out AS STRING = tl + cap + strings.Repeat(gh, fill) + glyphs + tr
+    IF fh <= 1 THEN RETURN out
+    DIM r AS INTEGER
+    FOR r = 0 TO fh - 3
+        out = out + "\n" + gv + strings.Repeat(" ", innerW) + gv
+    NEXT r
+    out = out + "\n" + bl + strings.Repeat(gh, innerW) + br
+    RETURN out
+END FUNCTION
+
 FUNCTION (m AS Model) View() AS tea.View
     DIM w AS INTEGER = m.Width
     DIM h AS INTEGER = m.Height
@@ -674,14 +810,38 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM ly11 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw11).X(56).Y(1).Z(21)
     DIM vw12 AS STRING = m.propgrid1_tbl.View()
     DIM ly12 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw12).X(56).Y(7).Z(22)
-    DIM vw13 AS STRING = m.scrollpanel1_vp.View()
+    DIM spv13 AS STRING = m.scrollpanel1_vp.View()
+    DIM spl13 AS []STRING = strings.Split(spv13, "\n")
+    DIM spfin13 AS []STRING
+    DIM spr13 AS INTEGER
+    FOR spr13 = 0 TO 4 - 1
+        DIM spc13 AS STRING = ""
+        IF spr13 < LEN(spl13) THEN spc13 = spl13[spr13]
+        IF lipgloss.Width(spc13) > 13 THEN spc13 = Mid(spc13, 1, 13)
+        IF lipgloss.Width(spc13) < 13 THEN spc13 = spc13 + strings.Repeat(" ", 13 - lipgloss.Width(spc13))
+        spc13 = spc13 + _vgutter(spr13, 4, m.scrollpanel1_vp.YOffset(), 12)
+        spfin13 = APPEND(spfin13, spc13)
+    NEXT spr13
+    DIM sphth13 AS INTEGER = Int(m.scrollpanel1_vp.HorizontalScrollPercent() * 10.0)
+    spfin13 = APPEND(spfin13, _hbar(13, sphth13))
+    DIM vw13 AS STRING = _frame(spfin13, 14, "─", "│", "╭", "╮", "╰", "╯", "POOP!", "right")
     DIM ly13 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw13).X(30).Y(14).Z(23)
     DIM body15 AS STRING
     body15 = "01234567890123456789012345678901234567890123456789012345678901234567890123456789"
     DIM vw15 AS STRING = compFocusView(body15, m.Focus = 15, m.Hover = 15)
     DIM ly15 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw15).X(0).Y(0).Z(25)
+    DIM formBoxStr AS STRING = _formBox(m._formW, m._formH, "─", "│", "╭", "╮", "╰", "╯", "frmStart", "_ ▢ ✕ ")
+    DIM formLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(formBoxStr).X(0).Y(0).Z(1)
+    IF m._minimized THEN
+        DIM mBase AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)
+        DIM mCmp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(mBase, formLy)
+        DIM mvw AS tea.View = tea.NewView(mCmp.Render())
+        mvw.MouseMode = tea.MouseModeAllMotion
+        mvw.AltScreen = TRUE
+        RETURN mvw
+    END IF
     DIM baseLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)
-    DIM cmpLy AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(baseLy, ly0, ly1, ly2, ly3, ly4, ly5, ly6, ly7, ly8, ly9, ly10, ly11, ly12, ly13, ly15)
+    DIM cmpLy AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(baseLy, formLy, ly0, ly1, ly2, ly3, ly4, ly5, ly6, ly7, ly8, ly9, ly10, ly11, ly12, ly13, ly15)
     fullView = cmpLy.Render()
     DIM dlgStr AS STRING = ""
     IF dlgStr = "" AND m.dialog1_Active THEN
@@ -793,10 +953,11 @@ SUB Main()
     rwspropgrid1 = APPEND(rwspropgrid1, rwpropgrid13)
     m.propgrid1_tbl = table.New(table.WithColumns(colspropgrid1), table.WithRows(rwspropgrid1), table.WithHeight(5))
     m.scrollpanel1_vp = viewport.New()
-    m.scrollpanel1_vp.SetWidth(26)
-    m.scrollpanel1_vp.SetHeight(7)
+    m.scrollpanel1_vp.SetWidth(13)
+    m.scrollpanel1_vp.SetHeight(4)
     m.scrollpanel1_vp.SetContent("" + "Content line 1" + "\n" + "Content line 2" + "\n" + "Content line 3" + "\n" + "Content line 4" + "\n" + "Content line 5" + "\n" + "Content line 6" + "\n" + "Content line 7" + "\n" + "Content line 8" + "\n" + "Content line 9" + "\n" + "Content line 10" + "\n" + "Content line 11" + "\n" + "Content line 12")
     syncFocusComp(@m)
+    _formSize(@m)
     Form_Load()
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)
     DIM final AS tea.Model
@@ -853,6 +1014,64 @@ SUB dispatchChange(id AS STRING)
     IF id = "tree1" THEN tree1_Change()
     IF id = "propgrid1" THEN propgrid1_Change()
 END SUB
+' combobox1_SetItems — replace the live list contents from a []STRING.
+SUB combobox1_SetItems(_items AS []STRING)
+    IF _currentModel = NIL THEN RETURN
+    DIM _lis AS []list.Item
+    DIM _li AS INTEGER
+    DIM _it AS _LItem
+    FOR _li = 0 TO LEN(_items) - 1
+        _it.cap = _items[_li]
+        _lis = APPEND(_lis, _it)
+    NEXT _li
+    _ = _currentModel.combobox1_cb.SetItems(_lis)
+END SUB
+' combobox1_SelectedIndex — 0-based highlighted row (-1 when empty).
+FUNCTION combobox1_SelectedIndex() AS INTEGER
+    IF _currentModel = NIL THEN RETURN 0 - 1
+    RETURN _currentModel.combobox1_cb.Index()
+END FUNCTION
+' combobox1_SelectedText — caption of the highlighted row (empty when none).
+FUNCTION combobox1_SelectedText() AS STRING
+    IF _currentModel = NIL THEN RETURN ""
+    DIM _si AS list.Item = _currentModel.combobox1_cb.SelectedItem()
+    IF _si = NIL THEN RETURN ""
+    DIM _lit AS _LItem
+    DIM _ok AS BOOLEAN
+    _lit, _ok = _si.(_LItem)
+    IF NOT _ok THEN RETURN ""
+    RETURN _lit.cap
+END FUNCTION
+
+' listbox1_SetItems — replace the live list contents from a []STRING.
+SUB listbox1_SetItems(_items AS []STRING)
+    IF _currentModel = NIL THEN RETURN
+    DIM _lis AS []list.Item
+    DIM _li AS INTEGER
+    DIM _it AS _LItem
+    FOR _li = 0 TO LEN(_items) - 1
+        _it.cap = _items[_li]
+        _lis = APPEND(_lis, _it)
+    NEXT _li
+    _ = _currentModel.listbox1_lb.SetItems(_lis)
+END SUB
+' listbox1_SelectedIndex — 0-based highlighted row (-1 when empty).
+FUNCTION listbox1_SelectedIndex() AS INTEGER
+    IF _currentModel = NIL THEN RETURN 0 - 1
+    RETURN _currentModel.listbox1_lb.Index()
+END FUNCTION
+' listbox1_SelectedText — caption of the highlighted row (empty when none).
+FUNCTION listbox1_SelectedText() AS STRING
+    IF _currentModel = NIL THEN RETURN ""
+    DIM _si AS list.Item = _currentModel.listbox1_lb.SelectedItem()
+    IF _si = NIL THEN RETURN ""
+    DIM _lit AS _LItem
+    DIM _ok AS BOOLEAN
+    _lit, _ok = _si.(_LItem)
+    IF NOT _ok THEN RETURN ""
+    RETURN _lit.cap
+END FUNCTION
+
 
 FUNCTION treeVisibleRows(depths AS []INTEGER, collapsed AS []BOOLEAN) AS []INTEGER
     DIM out AS []INTEGER
