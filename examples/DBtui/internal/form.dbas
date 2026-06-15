@@ -3049,6 +3049,29 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         END IF
     NEXT lwI
 
+    ' --- Runtime TextInput API. For each TextInput emit <Name>_Text /
+    '     <Name>_SetText so handlers read or set the field's value without
+    '     reaching into the bubbles textinput.Model (_currentModel.<Name>_ti)
+    '     directly — the TextInput counterpart of the list helpers above.
+    DIM twI AS INTEGER
+    FOR twI = 0 TO n - 1
+        DIM tw AS DesignWidget = f.Widgets[twI]
+        IF tw.Kind = "TextInput" AND tw.Parent = "" THEN
+            DIM twf AS STRING = tw.Name + compSuffix(tw.Kind)
+            s = s + "' " + tw.Name + "_Text — the field's current text (empty before the UI is live).\n"
+            s = s + "FUNCTION " + tw.Name + "_Text() AS STRING\n"
+            s = s + "    IF _currentModel = NIL THEN RETURN " + qt + qt + "\n"
+            s = s + "    RETURN _currentModel." + twf + ".Value()\n"
+            s = s + "END FUNCTION\n"
+            s = s + "' " + tw.Name + "_SetText — replace the field's text.\n"
+            s = s + "SUB " + tw.Name + "_SetText(_v AS STRING)\n"
+            s = s + "    IF _currentModel = NIL THEN RETURN\n"
+            s = s + "    _currentModel." + twf + ".SetValue(_v)\n"
+            s = s + "END SUB\n"
+            s = s + "\n"
+        END IF
+    NEXT twI
+
     ' --- Tree widget plumbing. A shared treeVisibleRows() walks the
     '     node depths + per-node collapse flags to produce the list of
     '     visible node indices (descendants of a collapsed parent are

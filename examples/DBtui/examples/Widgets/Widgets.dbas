@@ -1072,6 +1072,17 @@ FUNCTION listbox1_SelectedText() AS STRING
     RETURN _lit.cap
 END FUNCTION
 
+' textinput1_Text — the field's current text (empty before the UI is live).
+FUNCTION textinput1_Text() AS STRING
+    IF _currentModel = NIL THEN RETURN ""
+    RETURN _currentModel.textinput1_ti.Value()
+END FUNCTION
+' textinput1_SetText — replace the field's text.
+SUB textinput1_SetText(_v AS STRING)
+    IF _currentModel = NIL THEN RETURN
+    _currentModel.textinput1_ti.SetValue(_v)
+END SUB
+
 
 FUNCTION treeVisibleRows(depths AS []INTEGER, collapsed AS []BOOLEAN) AS []INTEGER
     DIM out AS []INTEGER

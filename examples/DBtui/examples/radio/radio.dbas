@@ -415,6 +415,17 @@ FUNCTION lstStations_SelectedText() AS STRING
     RETURN _lit.cap
 END FUNCTION
 
+' txtSearch_Text — the field's current text (empty before the UI is live).
+FUNCTION txtSearch_Text() AS STRING
+    IF _currentModel = NIL THEN RETURN ""
+    RETURN _currentModel.txtSearch_ti.Value()
+END FUNCTION
+' txtSearch_SetText — replace the field's text.
+SUB txtSearch_SetText(_v AS STRING)
+    IF _currentModel = NIL THEN RETURN
+    _currentModel.txtSearch_ti.SetValue(_v)
+END SUB
+
 
 ' ===== DBTUI:USER ===== DO NOT EDIT OR DELETE THIS LINE =====
 ' Your code below — DBtui preserves everything here on F5.
@@ -658,8 +669,9 @@ END SUB
 
 ' Search button — look up stations whose name matches the search box.
 SUB btnSearch_Click()
-    DIM q AS STRING = ""
-    IF _currentModel <> NIL THEN q = strings.TrimSpace(_currentModel.txtSearch_ti.Value())
+    ' txtSearch_Text() is the generated accessor for the search box — no
+    ' need to reach into _currentModel.txtSearch_ti directly.
+    DIM q AS STRING = strings.TrimSpace(txtSearch_Text())
     loadStations(q)
 END SUB
 
