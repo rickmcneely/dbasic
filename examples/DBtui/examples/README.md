@@ -29,10 +29,10 @@ correct — the old "different station, wrong sample rate" rough edge is gone.
 
 ```bash
 # Regenerate the partner .dbas (preserves the handlers below the marker).
-./DBtui gen examples/radio.dbproj
+./DBtui gen examples/radio/radio.dbproj
 
 # Build + run.
-dbasic build examples/radio.dbas -o examples/radio && ./examples/radio
+dbasic build examples/radio/radio.dbas -o examples/radio/radio && ./examples/radio/radio
 ```
 
 Controls: type a name and Tab to **Search** (or **Top 100**), Tab into the
@@ -46,13 +46,13 @@ Label and two Buttons (Discard / Cancel). The handler section below the
 
 ```bash
 # Regenerate the partner .dbas without launching the TUI.
-./dbtui gen examples/quit_demo.dbproj
+./dbtui gen examples/quit_demo/quit_demo.dbproj
 
 # Build + run the demo program.
-dbasic run examples/quit_demo.dbas
+dbasic run examples/quit_demo/quit_demo.dbas
 ```
 
-Open `examples/quit_demo.dbas` to see the split between the generated
+Open `examples/quit_demo/quit_demo.dbas` to see the split between the generated
 prelude (above the marker) and your handlers (below). Editing the
 handler bodies and re-running `dbtui gen` preserves your code; only the
 prelude is rewritten.

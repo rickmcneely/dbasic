@@ -312,19 +312,34 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
     ' rebuilds the tree rooted at the new project's directory, and
     ' opens frmStart as a tab.
     IF m.ModalContext = "newproject" THEN
-        DIM npPath AS STRING = strings.TrimSpace(text)
-        IF npPath = "" THEN RETURN FALSE, NIL
-        ' Ensure the path ends in .dbproj so the loader recognises it.
-        IF NOT strings.HasSuffix(npPath, ".dbproj") THEN npPath = npPath + ".dbproj"
-        ' If the file already exists we'd be stomping someone's work.
-        DIM npInfo AS os.FileInfo
-        DIM npStatErr AS ERROR
-        npInfo, npStatErr = os.Stat(npPath)
-        IF npStatErr = NIL THEN
-            _ = npInfo
-            m.Status = "exists, pick a different name: " + npPath
+        DIM npRaw AS STRING = strings.TrimSpace(text)
+        IF npRaw = "" THEN RETURN FALSE, NIL
+        ' Every project lives in its OWN directory: the typed name (with
+        ' any .dbproj suffix or trailing slash stripped) becomes the
+        ' project directory, and the .dbproj is written inside it as
+        ' <name>/<name>.dbproj. e.g. "myproj" -> myproj/myproj.dbproj.
+        DIM npDir AS STRING = strings.TrimSuffix(npRaw, ".dbproj")
+        npDir = strings.TrimSuffix(npDir, "/")
+        IF npDir = "" OR npDir = "." THEN
+            m.Status = "pick a project name"
             RETURN FALSE, NIL
         END IF
+        DIM npName AS STRING = baseName(npDir)
+        ' Refuse to scaffold into a directory that already has files in
+        ' it — keeps "own directory" a real guarantee, never a clobber.
+        DIM npExisting AS []os.DirEntry
+        DIM npReadErr AS ERROR
+        npExisting, npReadErr = os.ReadDir(npDir)
+        IF npReadErr = NIL AND LEN(npExisting) > 0 THEN
+            m.Status = "directory not empty, pick another name: " + npDir
+            RETURN FALSE, NIL
+        END IF
+        DIM npMkErr AS ERROR = os.MkdirAll(npDir, 0755)
+        IF npMkErr <> NIL THEN
+            m.Status = "mkdir " + npDir + ": " + npMkErr.Error()
+            RETURN FALSE, NIL
+        END IF
+        DIM npPath AS STRING = joinPath(npDir, npName + ".dbproj")
         DIM npStart AS DesignForm
         npStart.Name  = "frmStart"
         npStart.Title = "frmStart"
@@ -337,9 +352,9 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
             m.Status = npStatus
             RETURN FALSE, NIL
         END IF
-        ' Re-root the project tree to the new project's directory so
-        ' the old project's files don't linger in the sidebar.
-        m.TreeRoot     = dirName(npPath)
+        ' Re-root + SCOPE the tree to the new project's own directory.
+        m.TreeRoot     = npDir
+        m.ProjPath     = npPath
         m.TreeExpanded = APPEND(m.TreeExpanded, m.TreeRoot)
         buildTreeNodes(m)
         m.TreeSelected = 0

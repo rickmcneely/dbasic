@@ -314,6 +314,9 @@ TYPE Model
 
     ' Project tree state.
     DIM TreeRoot     AS STRING           ' filesystem root for the tree
+    DIM ProjPath     AS STRING           ' open .dbproj ("" = none open yet).
+                                         ' When set, the tree is SCOPED to
+                                         ' that project's source files only.
     DIM TreeExpanded AS []STRING         ' paths the user has opened
     DIM TreeNodes    AS []TreeNode       ' flattened visible-node list
     DIM TreeSelected AS INTEGER          ' cursor index into TreeNodes
@@ -655,6 +658,14 @@ END SUB
 ' buildTreeNodes — rebuild m.TreeNodes from the current expansion set.
 ' Always includes a root node at depth 0 representing the project
 ' directory itself (always "expanded" — it's just a visual anchor).
+'
+' Two modes:
+'   • A project is open (m.ProjPath <> "") → SCOPED: the tree shows only
+'     that project's source files (the .dbproj + its partner .dbas +
+'     anything they INCLUDE), so the sidebar isn't cluttered by sibling
+'     projects, binaries, READMEs, etc. Switch projects via File→Open.
+'   • No project open (startup) → the full directory walk, which doubles
+'     as the project picker.
 SUB buildTreeNodes(m AS POINTER TO Model)
     DIM nodes AS []TreeNode
     ' Root row: always shown, always treated as expanded.
@@ -664,9 +675,49 @@ SUB buildTreeNodes(m AS POINTER TO Model)
     root.Depth = 0
     root.IsDir = TRUE
     nodes = APPEND(nodes, root)
-    walkInto(^m, @nodes, m.TreeRoot, 1)
+
+    IF m.ProjPath <> "" THEN
+        ' Scoped: list the project's associated sources as flat children,
+        ' .dbproj first, then the rest sorted for a stable order.
+        DIM srcs AS []STRING = projectSourceSet(m.ProjPath)
+        DIM rest AS []STRING
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(srcs) - 1
+            IF srcs[i] <> m.ProjPath THEN rest = APPEND(rest, srcs[i])
+        NEXT i
+        sort.Strings(rest)
+        ' The project file itself leads the list.
+        DIM pnode AS TreeNode
+        pnode.Path  = m.ProjPath
+        pnode.Name  = treeRelLabel(m.TreeRoot, m.ProjPath)
+        pnode.Depth = 1
+        pnode.IsDir = FALSE
+        nodes = APPEND(nodes, pnode)
+        DIM j AS INTEGER
+        FOR j = 0 TO LEN(rest) - 1
+            DIM fnode AS TreeNode
+            fnode.Path  = rest[j]
+            fnode.Name  = treeRelLabel(m.TreeRoot, rest[j])
+            fnode.Depth = 1
+            fnode.IsDir = FALSE
+            nodes = APPEND(nodes, fnode)
+        NEXT j
+    ELSE
+        walkInto(^m, @nodes, m.TreeRoot, 1)
+    END IF
     m.TreeNodes = nodes
 END SUB
+
+' treeRelLabel — display name for a scoped-tree row: the path relative to
+' the project root when it sits in a subdirectory, otherwise the bare
+' basename. Keeps INCLUDEd helpers in subfolders legible.
+FUNCTION treeRelLabel(root AS STRING, full AS STRING) AS STRING
+    DIM prefix AS STRING = root + "/"
+    IF strings.HasPrefix(full, prefix) THEN
+        RETURN Mid(full, LEN(prefix) + 1, LEN(full) - LEN(prefix))
+    END IF
+    RETURN baseName(full)
+END FUNCTION
 
 ' treeInnerH — number of rows the tree body has room to draw. View()
 ' uses bodyH = m.Height - 2 for the left pane, and titledBox eats two
@@ -1381,6 +1432,37 @@ SUB completeFileLoad(m AS POINTER TO Model, path AS STRING, data AS BYTES, err A
     m.Status = "opened " + path
 END SUB
 
+' scopeTreeToRestoredProject — after a session restore finishes, scope the
+' sidebar to whichever project the user had open. Restored tabs reopen as
+' plain buffers (not via loadFormFromDisk), so nothing has set m.ProjPath;
+' pick the active tab if it's a .dbproj, else the first open .dbproj, and
+' re-root + rebuild the (now scoped) tree. No-op when nothing's restored or
+' no .dbproj is among the open tabs (tree stays the full project picker).
+SUB scopeTreeToRestoredProject(m AS POINTER TO Model)
+    IF m.ProjPath <> "" THEN RETURN
+    DIM pick AS STRING = ""
+    IF hasActiveTab(^m) THEN
+        DIM ap AS STRING = m.Tabs[m.TabIdx].Path
+        IF strings.HasSuffix(strings.ToLower(ap), ".dbproj") THEN pick = ap
+    END IF
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(m.Tabs) - 1
+        IF pick = "" AND strings.HasSuffix(strings.ToLower(m.Tabs[i].Path), ".dbproj") THEN
+            pick = m.Tabs[i].Path
+        END IF
+    NEXT i
+    IF pick = "" THEN RETURN
+    m.ProjPath = pick
+    DIM nr AS STRING = dirName(pick)
+    IF nr <> "" THEN
+        m.TreeRoot     = nr
+        m.TreeExpanded = APPEND(m.TreeExpanded, nr)
+    END IF
+    buildTreeNodes(m)
+    m.TreeSelected = 0
+    m.TreeOffset   = 0
+END SUB
+
 ' openFile — kick off an async load of `path`. Returns NIL when the
 ' file is already open (instant path) or when path is empty.
 ' Otherwise returns the worker Cmd; the actual tab is built when
@@ -1557,10 +1639,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 m.Loading = m.PendingOpens[0]
                 RETURN m, loadFileWorker
             END IF
-            ' Queue empty — switch to the saved active tab.
+            ' Queue empty — switch to the saved active tab, then scope the
+            ' sidebar to the restored project (matches an explicit open).
             IF m.PendingActive >= 0 AND m.PendingActive < LEN(m.Tabs) THEN
                 switchToTab(@m, m.PendingActive)
             END IF
+            scopeTreeToRestoredProject(@m)
         END IF
         RETURN m, NIL
     END IF

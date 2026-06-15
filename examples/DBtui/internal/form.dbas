@@ -1006,14 +1006,18 @@ SUB loadFormFromDisk(m AS POINTER TO Model, path AS STRING)
         m.Status = "empty project: " + path
         RETURN
     END IF
-    ' Opening a project is a project context switch — re-root the
-    ' tree to the project's directory so the sidebar doesn't keep
-    ' showing the previous project's files. Skip if we're already
-    ' rooted there.
-    DIM newRoot AS STRING = dirName(path)
-    IF newRoot <> "" AND newRoot <> m.TreeRoot THEN
-        m.TreeRoot     = newRoot
-        m.TreeExpanded = APPEND(m.TreeExpanded, newRoot)
+    ' Opening a project is a project context switch — re-root the tree
+    ' to the project's directory and SCOPE it to this project's sources
+    ' (see buildTreeNodes) so the sidebar doesn't keep showing the
+    ' previous project's files. Always rebuild: even within the same
+    ' directory, the open project (m.ProjPath) determines what's shown.
+    IF path <> m.ProjPath THEN
+        DIM newRoot AS STRING = dirName(path)
+        IF newRoot <> "" THEN
+            m.TreeRoot     = newRoot
+            m.TreeExpanded = APPEND(m.TreeExpanded, newRoot)
+        END IF
+        m.ProjPath     = path
         buildTreeNodes(m)
         m.TreeSelected = 0
         m.TreeOffset   = 0
@@ -3423,6 +3427,91 @@ FUNCTION formOutputPath(projectPath AS STRING, formName AS STRING, formCount AS 
         RETURN stem + "_" + formName + ".dbas"
     END IF
     RETURN stem + ".dbas"
+END FUNCTION
+
+' strInList — true when s is already present in xs. Small helper for
+' building dedup'd path lists without a map.
+FUNCTION strInList(xs AS []STRING, s AS STRING) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(xs) - 1
+        IF xs[i] = s THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' fileIsRegular — true when path exists and is a plain file (not a dir).
+FUNCTION fileIsRegular(path AS STRING) AS BOOLEAN
+    DIM fi AS os.FileInfo
+    DIM err AS ERROR
+    fi, err = os.Stat(path)
+    IF err <> NIL THEN RETURN FALSE
+    RETURN NOT fi.IsDir()
+END FUNCTION
+
+' collectIncludes — scan a .dbas for `INCLUDE "x"` directives, resolve
+' each target relative to dir, and append any that exist and live under
+' dir to ^out (recursing once-removed). No example uses INCLUDE today,
+' so this is a correctness safety net for hand-authored multi-file
+' projects rather than something the demos exercise.
+SUB collectIncludes(dbasPath AS STRING, dir AS STRING, out AS POINTER TO []STRING)
+    DIM data AS BYTES
+    DIM err AS ERROR
+    data, err = os.ReadFile(dbasPath)
+    IF err <> NIL THEN RETURN
+    DIM lines AS []STRING = strings.Split(string(data), "\n")
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        DIM ln AS STRING = strings.TrimSpace(lines[i])
+        IF NOT strings.HasPrefix(ln, "INCLUDE ") THEN
+            ' not an include line
+        ELSE
+            ' Pull the quoted path out of INCLUDE "....".
+            DIM q1 AS INTEGER = strings.Index(ln, Chr(34))
+            IF q1 >= 0 THEN
+                DIM rest AS STRING = Mid(ln, q1 + 2, LEN(ln) - q1 - 1)
+                DIM q2 AS INTEGER = strings.Index(rest, Chr(34))
+                IF q2 > 0 THEN
+                    DIM rel AS STRING = Mid(rest, 1, q2)
+                    DIM full AS STRING = rel
+                    IF NOT strings.HasPrefix(rel, "/") THEN full = joinPath(dir, rel)
+                    ' Only follow includes that stay inside the project dir.
+                    IF strings.HasPrefix(full, dir) AND fileIsRegular(full) AND NOT strInList(^out, full) THEN
+                        ^out = APPEND(^out, full)
+                        collectIncludes(full, dir, out)
+                    END IF
+                END IF
+            END IF
+        END IF
+    NEXT i
+END SUB
+
+' projectSourceSet — the files that "belong" to the project at projPath:
+' the .dbproj itself, the generated partner .dbas for each form, and any
+' files those .dbas pull in via INCLUDE (resolved under the project dir).
+' buildTreeNodes uses this to scope the sidebar to the open project.
+FUNCTION projectSourceSet(projPath AS STRING) AS []STRING
+    DIM out AS []STRING
+    out = APPEND(out, projPath)
+    DIM dir AS STRING = dirName(projPath)
+
+    DIM proj AS Project
+    DIM ok AS BOOLEAN
+    DIM why AS STRING
+    proj, ok, why = readProjectFromDisk(projPath)
+    _ = why
+    IF NOT ok THEN RETURN out
+
+    ' One partner .dbas per form (single-form projects keep <stem>.dbas).
+    DIM nForms AS INTEGER = LEN(proj.Forms)
+    DIM i AS INTEGER
+    FOR i = 0 TO nForms - 1
+        DIM partner AS STRING = formOutputPath(projPath, proj.Forms[i].Name, nForms)
+        IF fileIsRegular(partner) AND NOT strInList(out, partner) THEN
+            out = APPEND(out, partner)
+            collectIncludes(partner, dir, @out)
+        END IF
+    NEXT i
+    RETURN out
 END FUNCTION
 
 ' doFormRun — F5 in form mode. Saves the .dbproj, regenerates the

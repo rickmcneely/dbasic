@@ -61,10 +61,10 @@ build_prog() {
 # The three smoke programs. Widgets covers the 14 placeable kinds; chrome_demo
 # adds Menubar + Panel (not in the showcase); dialog_demo covers Dialog.
 SHOW="$WORK/show"; CHROME="$WORK/chrome"; DLG="$WORK/dlg"; MENU="$WORK/menu"
-build_prog examples/Widgets/Widgets.dbas   "$SHOW"
-build_prog examples/chrome_demo.dbas       "$CHROME"
-build_prog examples/dialog_demo.dbas       "$DLG"
-build_prog examples/menu_demo.dbas         "$MENU"
+build_prog examples/Widgets/Widgets.dbas         "$SHOW"
+build_prog examples/chrome_demo/chrome_demo.dbas "$CHROME"
+build_prog examples/dialog_demo/dialog_demo.dbas "$DLG"
+build_prog examples/menu_demo/menu_demo.dbas     "$MENU"
 [ "$fail" -eq 0 ] || { echo "RESULT: FAIL (build)"; exit 1; }
 
 # case <bin> <label> <keys> <assert...>  — assert tokens pass to vtdrive.
