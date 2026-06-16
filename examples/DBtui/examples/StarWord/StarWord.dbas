@@ -377,6 +377,67 @@ SUB clampCursor()
     IF gCol > LEN(gLines[gRow]) THEN gCol = LEN(gLines[gRow])
 END SUB
 
+' --- UTF-8 rune helpers ---------------------------------------------------
+' gCol is a byte offset, but a Unicode glyph can be 1-4 bytes. These keep the
+' cursor on rune boundaries and let edits act on whole runes, so a multibyte
+' character is never split (e.g. backspacing over "é" deletes both its bytes).
+
+' runeLenAt — byte length of the rune that begins at byte offset pos.
+FUNCTION runeLenAt(line AS STRING, pos AS INTEGER) AS INTEGER
+    DIM b AS BYTES = Encode(line)
+    IF pos < 0 OR pos >= LEN(line) THEN RETURN 1
+    DIM lead AS INTEGER = Int(b[pos])
+    IF lead < 128 THEN RETURN 1
+    IF lead < 224 THEN RETURN 2
+    IF lead < 240 THEN RETURN 3
+    RETURN 4
+END FUNCTION
+
+' prevRuneStart — byte offset of the rune ending just before pos (steps back
+' over UTF-8 continuation bytes 0x80..0xBF).
+FUNCTION prevRuneStart(line AS STRING, pos AS INTEGER) AS INTEGER
+    IF pos <= 0 THEN RETURN 0
+    DIM b AS BYTES = Encode(line)
+    DIM k AS INTEGER = pos - 1
+    WHILE k > 0 AND Int(b[k]) >= 128 AND Int(b[k]) < 192
+        k = k - 1
+    WEND
+    RETURN k
+END FUNCTION
+
+' nextRuneStart — byte offset of the rune after the one beginning at pos.
+FUNCTION nextRuneStart(line AS STRING, pos AS INTEGER) AS INTEGER
+    DIM n AS INTEGER = LEN(line)
+    IF pos >= n THEN RETURN n
+    DIM nx AS INTEGER = pos + runeLenAt(line, pos)
+    IF nx > n THEN nx = n
+    RETURN nx
+END FUNCTION
+
+' runeIndexOf — count of runes before byte offset bytePos (for the Col display).
+FUNCTION runeIndexOf(line AS STRING, bytePos AS INTEGER) AS INTEGER
+    DIM cnt AS INTEGER = 0
+    DIM p AS INTEGER = 0
+    WHILE p < bytePos AND p < LEN(line)
+        p = nextRuneStart(line, p)
+        cnt = cnt + 1
+    WEND
+    RETURN cnt
+END FUNCTION
+
+' snapToRune — nudge a byte offset back onto the nearest rune start at or
+' before it (used to keep horizontal scroll on a rune boundary).
+FUNCTION snapToRune(line AS STRING, pos AS INTEGER) AS INTEGER
+    IF pos <= 0 THEN RETURN 0
+    IF pos >= LEN(line) THEN RETURN LEN(line)
+    DIM b AS BYTES = Encode(line)
+    DIM k AS INTEGER = pos
+    WHILE k > 0 AND Int(b[k]) >= 128 AND Int(b[k]) < 192
+        k = k - 1
+    WEND
+    RETURN k
+END FUNCTION
+
 ' isWordCh — alphanumeric or underscore (for ^A / ^F word motion).
 FUNCTION isWordCh(ch AS STRING) AS BOOLEAN
     IF ch = "" THEN RETURN FALSE
@@ -631,17 +692,24 @@ FUNCTION renderTextRow(rowIdx AS INTEGER, w AS INTEGER, baseSt AS lipgloss.Style
     DIM out AS STRING = ""
     DIM buf AS STRING = ""
     DIM bufCls AS INTEGER = 0 - 1     ' 0 base, 1 cursor, 2 block
+    ' Walk one rune per display cell (snapped to a rune boundary) so a
+    ' multibyte glyph occupies a single cell and is highlighted as a unit.
+    DIM pos AS INTEGER = snapToRune(line, gLeft)
     DIM i AS INTEGER
     FOR i = 0 TO w - 1
-        DIM col AS INTEGER = gLeft + i
-        DIM ch AS STRING = Mid(line, col + 1, 1)
-        IF ch = "" THEN ch = " "
+        DIM ch AS STRING = " "
+        DIM rl AS INTEGER = 1
+        IF pos < LEN(line) THEN
+            rl = runeLenAt(line, pos)
+            ch = Mid(line, pos + 1, rl)
+        END IF
         DIM cls AS INTEGER = 0
-        IF rowIdx = gRow AND col = gCol THEN
+        IF rowIdx = gRow AND pos = gCol THEN
             cls = 1
-        ELSEIF isInBlock(rowIdx, col) THEN
+        ELSEIF isInBlock(rowIdx, pos) THEN
             cls = 2
         END IF
+        pos = pos + rl
         IF cls <> bufCls AND buf <> "" THEN
             IF bufCls = 1 THEN
                 out = out + cur.Render(buf)
@@ -706,6 +774,7 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     IF gCol >= gLeft + w THEN gLeft = gCol - w + 1
     IF gTop < 0 THEN gTop = 0
     IF gLeft < 0 THEN gLeft = 0
+    gLeft = snapToRune(curLine(), gLeft)
 
     ' Palette — modernized WordStar blue.
     DIM stStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
@@ -727,7 +796,8 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     IF gIsUnicode THEN encStr = "UTF-8"
     DIM modFlag AS STRING = " "
     IF gModified THEN modFlag = "*"
-    DIM status AS STRING = " StarWord   " + modFlag + gFileName + "    Line " + fmt.Sprintf("%d", gRow + 1) + "  Col " + fmt.Sprintf("%d", gCol + 1) + "    " + modeStr + "    " + encStr
+    DIM colNum AS INTEGER = runeIndexOf(curLine(), gCol) + 1
+    DIM status AS STRING = " StarWord   " + modFlag + gFileName + "    Line " + fmt.Sprintf("%d", gRow + 1) + "  Col " + fmt.Sprintf("%d", colNum) + "    " + modeStr + "    " + encStr
     rows = APPEND(rows, stStyle.Render(swFit(status, w)))
 
     ' --- row 1: ruler line ---
@@ -851,8 +921,10 @@ END FUNCTION
 SUB deleteCharLeft()
     DIM ln AS STRING = curLine()
     IF gCol > 0 THEN
-        gLines[gRow] = Left(ln, gCol - 1) + Right(ln, LEN(ln) - gCol)
-        gCol = gCol - 1
+        ' Delete the whole rune to the left (1-4 bytes), never half of one.
+        DIM ps AS INTEGER = prevRuneStart(ln, gCol)
+        gLines[gRow] = Left(ln, ps) + Right(ln, LEN(ln) - gCol)
+        gCol = ps
     ELSEIF gRow > 0 THEN
         DIM prevLen AS INTEGER = LEN(gLines[gRow - 1])
         gLines[gRow - 1] = gLines[gRow - 1] + ln
@@ -866,7 +938,9 @@ END SUB
 SUB deleteCharAt()
     DIM ln AS STRING = curLine()
     IF gCol < LEN(ln) THEN
-        gLines[gRow] = Left(ln, gCol) + Right(ln, LEN(ln) - gCol - 1)
+        ' Delete the whole rune at the cursor (1-4 bytes).
+        DIM ns AS INTEGER = nextRuneStart(ln, gCol)
+        gLines[gRow] = Left(ln, gCol) + Right(ln, LEN(ln) - ns)
     ELSEIF gRow < lastRow() THEN
         gLines[gRow] = ln + gLines[gRow + 1]
         gLines = lineRemoveAt(gLines, gRow + 1)
@@ -905,7 +979,8 @@ END SUB
 
 SUB moveLeft()
     IF gCol > 0 THEN
-        gCol = gCol - 1
+        ' Move by a whole rune so the cursor never lands inside a glyph.
+        gCol = prevRuneStart(curLine(), gCol)
     ELSEIF gRow > 0 THEN
         gRow = gRow - 1
         gCol = LEN(curLine())
@@ -914,7 +989,7 @@ END SUB
 
 SUB moveRight()
     IF gCol < LEN(curLine()) THEN
-        gCol = gCol + 1
+        gCol = nextRuneStart(curLine(), gCol)
     ELSEIF gRow < lastRow() THEN
         gRow = gRow + 1
         gCol = 0
@@ -924,11 +999,13 @@ END SUB
 SUB moveUp()
     IF gRow > 0 THEN gRow = gRow - 1
     IF gCol > LEN(curLine()) THEN gCol = LEN(curLine())
+    gCol = snapToRune(curLine(), gCol)
 END SUB
 
 SUB moveDown()
     IF gRow < lastRow() THEN gRow = gRow + 1
     IF gCol > LEN(curLine()) THEN gCol = LEN(curLine())
+    gCol = snapToRune(curLine(), gCol)
 END SUB
 
 SUB wordLeft()

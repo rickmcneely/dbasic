@@ -1,3 +1,56 @@
-{ "Name":"StarWord","StartForm":"frmSW","Forms":[{ "Name":"frmSW","Title":"StarWord","WExpr":"MAX_WIDTH","HExpr":"MAX_HEIGHT","BorderStyle":"normal","CornerStyle":"rounded","ShowClose":true,"Widgets":[
-  {"Kind":"Canvas","Name":"sw","Text":"Canvas","X":1,"Y":1,"W":78,"H":22,"Anchors":"T,B,L,R"}
-]}]}
+{
+  "Name": "StarWord",
+  "StartForm": "frmSW",
+  "Forms": [
+    {
+      "Name": "frmSW",
+      "Title": "StarWord",
+      "WinTitle": "",
+      "Widgets": [
+        {
+          "Kind": "Canvas",
+          "Name": "sw",
+          "Text": "Canvas",
+          "X": 1,
+          "Y": 1,
+          "W": 78,
+          "H": 22,
+          "Items": null,
+          "Selected": 0,
+          "Checked": false,
+          "Group": "",
+          "Min": 0,
+          "Max": 0,
+          "Value": 0,
+          "Orient": "",
+          "Menu": null,
+          "DialogKind": "",
+          "DialogMsg": "",
+          "DialogDef": "",
+          "DialogMode": "",
+          "DialogMask": "",
+          "OnClickDialog": "",
+          "Parent": "",
+          "FgColor": "",
+          "BgColor": "",
+          "BorderStyle": "",
+          "CornerStyle": "",
+          "Caption": "",
+          "CaptionJust": "",
+          "HScroll": "",
+          "VScroll": "",
+          "Anchors": "T,B,L,R"
+        }
+      ],
+      "FgColor": "",
+      "BgColor": "",
+      "BorderStyle": "normal",
+      "CornerStyle": "rounded",
+      "WExpr": "MAX_WIDTH",
+      "HExpr": "MAX_HEIGHT",
+      "ShowMin": false,
+      "ShowMax": false,
+      "ShowClose": true
+    }
+  ]
+}
