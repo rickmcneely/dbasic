@@ -1682,6 +1682,157 @@ SUB applyDotCommands()
 END SUB
 
 ' ==========================================================================
+' Paragraph reflow + justification (^B reformat, ^OJ justify, ^OW word-wrap)
+' ==========================================================================
+
+' dispWidth — display columns of s: runes that aren't zero-width print-control
+' toggle markers (^B/^Y/^S).
+FUNCTION dispWidth(s AS STRING) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM p AS INTEGER = 0
+    WHILE p < LEN(s)
+        IF markerLetter(runeAt(s, p)) = "" THEN n = n + 1
+        p = nextRuneStart(s, p)
+    WEND
+    RETURN n
+END FUNCTION
+
+' isTextLine — part of a paragraph? (not blank, not a dot command).
+FUNCTION isTextLine(s AS STRING) AS BOOLEAN
+    IF strings.TrimSpace(s) = "" THEN RETURN FALSE
+    IF Left(s, 1) = "." THEN RETURN FALSE
+    RETURN TRUE
+END FUNCTION
+
+' buildWrapLine — assemble one wrapped line from its words at the left margin.
+' Justifies (pads gaps to the right margin) when gJustify is on and this is
+' neither the paragraph's last line nor a single word.
+FUNCTION buildWrapLine(words AS []STRING, maxW AS INTEGER, isLast AS BOOLEAN) AS STRING
+    DIM leftPad AS STRING = strings.Repeat(" ", gLeftMargin)
+    IF LEN(words) = 0 THEN RETURN leftPad
+    IF NOT gJustify OR isLast OR LEN(words) = 1 THEN
+        RETURN leftPad + strings.Join(words, " ")
+    END IF
+    DIM textW AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(words) - 1
+        textW = textW + dispWidth(words[i])
+    NEXT i
+    DIM gaps AS INTEGER = LEN(words) - 1
+    DIM spaces AS INTEGER = maxW - textW
+    IF spaces < gaps THEN spaces = gaps
+    DIM baseSp AS INTEGER = spaces / gaps
+    DIM extra AS INTEGER = spaces MOD gaps
+    DIM out AS STRING = words[0]
+    FOR i = 1 TO gaps
+        DIM sp AS INTEGER = baseSp
+        IF i <= extra THEN sp = baseSp + 1
+        out = out + strings.Repeat(" ", sp) + words[i]
+    NEXT i
+    RETURN leftPad + out
+END FUNCTION
+
+' replaceLines — splice newLines in for gLines[ps..pe].
+SUB replaceLines(ps AS INTEGER, pe AS INTEGER, newLines AS []STRING)
+    DIM out AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO ps - 1
+        out = APPEND(out, gLines[i])
+    NEXT i
+    FOR i = 0 TO LEN(newLines) - 1
+        out = APPEND(out, newLines[i])
+    NEXT i
+    FOR i = pe + 1 TO lastRow()
+        out = APPEND(out, gLines[i])
+    NEXT i
+    IF LEN(out) = 0 THEN out = APPEND(out, "")
+    gLines = out
+END SUB
+
+' reformatParagraph — ^B: re-wrap the paragraph at the cursor to the current
+' margins, justifying when ^OJ is on. A paragraph is the run of non-blank,
+' non-dot lines around the cursor.
+SUB reformatParagraph()
+    IF NOT isTextLine(gLines[gRow]) THEN
+        gMessage = "Nothing to reformat here"
+        RETURN
+    END IF
+    DIM ps AS INTEGER = gRow
+    WHILE ps > 0 AND isTextLine(gLines[ps - 1])
+        ps = ps - 1
+    WEND
+    DIM pe AS INTEGER = gRow
+    WHILE pe < lastRow() AND isTextLine(gLines[pe + 1])
+        pe = pe + 1
+    WEND
+    ' Gather every word in the paragraph.
+    DIM words AS []STRING
+    DIM i AS INTEGER
+    FOR i = ps TO pe
+        DIM fs AS []STRING = strings.Fields(gLines[i])
+        DIM j AS INTEGER
+        FOR j = 0 TO LEN(fs) - 1
+            words = APPEND(words, fs[j])
+        NEXT j
+    NEXT i
+    DIM maxW AS INTEGER = gRightMargin - gLeftMargin
+    IF maxW < 1 THEN maxW = 1
+    ' Greedy wrap.
+    DIM newLines AS []STRING
+    DIM curWords AS []STRING
+    DIM curW AS INTEGER = 0
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(words) - 1
+        DIM ww AS INTEGER = dispWidth(words[k])
+        DIM add AS INTEGER = ww
+        IF LEN(curWords) > 0 THEN add = add + 1
+        IF LEN(curWords) > 0 AND curW + add > maxW THEN
+            newLines = APPEND(newLines, buildWrapLine(curWords, maxW, FALSE))
+            curWords = nil
+            curW = 0
+            add = ww
+        END IF
+        curWords = APPEND(curWords, words[k])
+        curW = curW + add
+    NEXT k
+    IF LEN(curWords) > 0 THEN newLines = APPEND(newLines, buildWrapLine(curWords, maxW, TRUE))
+    IF LEN(newLines) = 0 THEN newLines = APPEND(newLines, "")
+    replaceLines(ps, pe, newLines)
+    gRow = ps
+    gCol = 0
+    gModified = TRUE
+    gMessage = "Paragraph reformatted"
+END SUB
+
+' wrapInsertIfNeeded — ^OW live word-wrap: after typing pushes the current
+' line past the right margin, break it at the last space so the word in
+' progress falls to a new line (the cursor follows it).
+SUB wrapInsertIfNeeded()
+    IF NOT gWordWrap THEN RETURN
+    DIM ln AS STRING = curLine()
+    IF dispWidth(ln) <= gRightMargin THEN RETURN
+    ' Find the last space at/before the right margin to break at.
+    DIM brk AS INTEGER = 0 - 1
+    DIM p AS INTEGER = 0
+    DIM col AS INTEGER = 0
+    WHILE p < LEN(ln)
+        IF Mid(ln, p + 1, 1) = " " AND col <= gRightMargin THEN brk = p
+        IF markerLetter(runeAt(ln, p)) = "" THEN col = col + 1
+        p = nextRuneStart(ln, p)
+    WEND
+    ' single long word — leave it
+    IF brk < 0 THEN RETURN
+    DIM head AS STRING = Left(ln, brk)
+    DIM tail AS STRING = Right(ln, LEN(ln) - brk - 1)   ' drop the break space
+    gLines[gRow] = head
+    DIM moved AS INTEGER = gCol - brk - 1                ' cursor offset within tail
+    gLines = lineInsertAt(gLines, gRow + 1, strings.Repeat(" ", gLeftMargin) + tail)
+    gRow = gRow + 1
+    gCol = gLeftMargin + moved
+    IF gCol < gLeftMargin THEN gCol = gLeftMargin
+END SUB
+
+' ==========================================================================
 ' Cursor motion
 ' ==========================================================================
 
@@ -2238,6 +2389,10 @@ SUB Form_Key(key AS STRING)
         doFindNext()
         RETURN
     END IF
+    IF key = "ctrl+b" THEN
+        reformatParagraph()
+        RETURN
+    END IF
     IF key = "enter" THEN
         splitLine()
         RETURN
@@ -2259,9 +2414,13 @@ SUB Form_Key(key AS STRING)
     ' --- text entry (printable chars, incl. multibyte Unicode runes) ---
     IF key = "space" THEN
         insertChar(" ")
+        wrapInsertIfNeeded()
         RETURN
     END IF
-    IF isTextKey(key) THEN insertChar(key)
+    IF isTextKey(key) THEN
+        insertChar(key)
+        wrapInsertIfNeeded()
+    END IF
 END SUB
 
 ' Fired once at startup — open a file given on the command line, else start
