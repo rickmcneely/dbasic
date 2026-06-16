@@ -34,9 +34,17 @@ KEYMAP = {"tab": "\t", "up": "\x1b[A", "down": "\x1b[B", "left": "\x1b[D",
           "home": "\x1b[H", "end": "\x1b[F", "delete": "\x1b[3~",
           "del": "\x1b[3~", "pgup": "\x1b[5~", "pgdown": "\x1b[6~",
           "pgdn": "\x1b[6~",
-          # Common Ctrl+<letter> chords (control byte = letter - '@').
-          "ctrl+a": "\x01", "ctrl+d": "\x04", "ctrl+e": "\x05",
-          "ctrl+k": "\x0b", "ctrl+s": "\x13",
+          # Ctrl+<letter> chords (control byte = letter - '@'). Note the
+          # terminal aliases: ^H=BS, ^I=TAB, ^J=LF, ^M=CR.
+          "ctrl+a": "\x01", "ctrl+b": "\x02", "ctrl+c": "\x03",
+          "ctrl+d": "\x04", "ctrl+e": "\x05", "ctrl+f": "\x06",
+          "ctrl+g": "\x07", "ctrl+h": "\x08", "ctrl+i": "\x09",
+          "ctrl+j": "\x0a", "ctrl+k": "\x0b", "ctrl+l": "\x0c",
+          "ctrl+m": "\x0d", "ctrl+n": "\x0e", "ctrl+o": "\x0f",
+          "ctrl+p": "\x10", "ctrl+q": "\x11", "ctrl+r": "\x12",
+          "ctrl+s": "\x13", "ctrl+t": "\x14", "ctrl+u": "\x15",
+          "ctrl+v": "\x16", "ctrl+w": "\x17", "ctrl+x": "\x18",
+          "ctrl+y": "\x19", "ctrl+z": "\x1a",
           # Function keys (xterm). F1-F4 use SS3; F5+ use CSI ~ sequences.
           "f1": "\x1bOP", "f2": "\x1bOQ", "f3": "\x1bOR", "f4": "\x1bOS",
           "f5": "\x1b[15~", "f6": "\x1b[17~", "f7": "\x1b[18~",

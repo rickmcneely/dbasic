@@ -1,0 +1,3 @@
+{ "Name":"StarWord","StartForm":"frmSW","Forms":[{ "Name":"frmSW","Title":"StarWord","WExpr":"MAX_WIDTH","HExpr":"MAX_HEIGHT","BorderStyle":"normal","CornerStyle":"rounded","ShowClose":true,"Widgets":[
+  {"Kind":"Canvas","Name":"sw","Text":"Canvas","X":1,"Y":1,"W":78,"H":22,"Anchors":"T,B,L,R"}
+]}]}

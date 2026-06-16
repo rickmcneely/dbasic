@@ -53,6 +53,7 @@ PROJECTS=(
   "examples/canvas_demo/canvas_demo.dbproj"
   "examples/editor_demo/editor_demo.dbproj"
   "examples/splitpane_demo/splitpane_demo.dbproj"
+  "examples/StarWord/StarWord.dbproj"
 )
 
 fail=0

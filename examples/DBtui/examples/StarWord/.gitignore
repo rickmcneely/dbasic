@@ -1,0 +1,7 @@
+# WordStar 7.0 reference material — local only, not part of the repo.
+WSDocs/
+
+# Compiled StarWord binaries.
+StarWord
+StarWord.exe
+star

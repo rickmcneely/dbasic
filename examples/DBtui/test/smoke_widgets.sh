@@ -61,13 +61,14 @@ build_prog() {
 # The three smoke programs. Widgets covers the 14 placeable kinds; chrome_demo
 # adds Menubar + Panel (not in the showcase); dialog_demo covers Dialog.
 SHOW="$WORK/show"; CHROME="$WORK/chrome"; DLG="$WORK/dlg"; MENU="$WORK/menu"
-EDIT="$WORK/edit"; SPLIT="$WORK/split"
+EDIT="$WORK/edit"; SPLIT="$WORK/split"; SW="$WORK/starword"
 build_prog examples/Widgets/Widgets.dbas         "$SHOW"
 build_prog examples/chrome_demo/chrome_demo.dbas "$CHROME"
 build_prog examples/dialog_demo/dialog_demo.dbas "$DLG"
 build_prog examples/menu_demo/menu_demo.dbas     "$MENU"
 build_prog examples/editor_demo/editor_demo.dbas "$EDIT"
 build_prog examples/splitpane_demo/splitpane_demo.dbas "$SPLIT"
+build_prog examples/StarWord/StarWord.dbas       "$SW"
 [ "$fail" -eq 0 ] || { echo "RESULT: FAIL (build)"; exit 1; }
 
 # case <bin> <label> <keys> <assert...>  — assert tokens pass to vtdrive.
@@ -170,8 +171,27 @@ case_run "$SPLIT" "splitpane vbar live-motion drag" "lclick:26.5,move:13.5,hold:
 # bubbletea's region-shrink repaint — it leaves stale cells that a real
 # terminal clears. The vbar cases above already cover click + motion + clamp.
 
+# --- StarWord: modern WordStar 7.0 clone on a Canvas -----------------------
+# Startup: WordStar edit screen — status line + ruler + new Unicode document.
+case_run "$SW" "starword edit screen renders" "hold:0.4" \
+    --want "StarWord" --want "untitled.WSu" --want "INSERT" --want "UTF-8"
+# Typing inserts text and advances the column counter.
+case_run "$SW" "starword types text" "H,i,hold:0.4" \
+    --want "Hi" --want "Col 3"
+# ^V toggles INSERT <-> OVERTYPE.
+case_run "$SW" "starword ^V toggles overtype" "ctrl+v,hold:0.4" \
+    --want "OVERTYPE"
+# ^K pops the Block & Save menu; ^Q pops the Quick menu (WordStar prefixes).
+case_run "$SW" "starword ^K block menu" "ctrl+k,hold:0.4" \
+    --want "BLOCK & SAVE" --want "Begin"
+case_run "$SW" "starword ^Q quick menu" "ctrl+q,hold:0.4" \
+    --want "QUICK MOVE" --want "Find"
+# Block copy: 'abc' -> mark whole line -> ^KC copies it at the end -> abcabc.
+case_run "$SW" "starword block copy" "a,b,c,ctrl+q,s,ctrl+k,b,ctrl+q,d,ctrl+k,k,ctrl+k,c,hold:0.4" \
+    --want "abcabc"
+
 if [ "$fail" -ne 0 ]; then
     echo "RESULT: FAIL"
     exit 1
 fi
-echo "RESULT: PASS (21 cases, 6 programs)"
+echo "RESULT: PASS (27 cases, 7 programs)"
