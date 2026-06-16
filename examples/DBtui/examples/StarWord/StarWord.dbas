@@ -926,7 +926,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "D|Delete Block|Alt+E D")
         xs = APPEND(xs, "F|Find|Alt+E F")
         xs = APPEND(xs, "R|Find and Replace|Alt+E R")
-        xs = APPEND(xs, "N|Next Find|Alt+E X")
+        xs = APPEND(xs, "N|Next Find|Alt+E N")
     CASE 2
         xs = APPEND(xs, "B|Block Highlighting|Alt+V B")
         xs = APPEND(xs, "C|Command Tags|Alt+V C")
