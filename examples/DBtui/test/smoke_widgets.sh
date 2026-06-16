@@ -172,45 +172,50 @@ case_run "$SPLIT" "splitpane vbar live-motion drag" "lclick:26.5,move:13.5,hold:
 # terminal clears. The vbar cases above already cover click + motion + clamp.
 
 # --- StarWord: modern WordStar 7.0 clone on a Canvas -----------------------
-# Startup: WordStar edit screen — status line + ruler + new Unicode document.
-case_run "$SW" "starword edit screen renders" "hold:0.4" \
+# With no file argument, StarWord starts at the WordStar-style Opening Menu;
+# "N" opens a new document into the editor (so editor cases press N first).
+case_run "$SW" "starword opening menu at startup" "hold:0.4" \
+    --want "Opening Menu" --want "Open document" --want "New document"
+case_run "$SW" "starword N enters the editor" "n,hold:0.4" \
     --want "StarWord" --want "untitled.WSu" --want "INSERT" --want "UTF-8"
+case_run "$SW" "starword D opens the file prompt" "d,hold:0.4" \
+    --want "Open file:"
 # Typing inserts text and advances the column counter.
-case_run "$SW" "starword types text" "H,i,hold:0.4" \
+case_run "$SW" "starword types text" "n,H,i,hold:0.4" \
     --want "Hi" --want "Col 3"
 # ^V toggles INSERT <-> OVERTYPE.
-case_run "$SW" "starword ^V toggles overtype" "ctrl+v,hold:0.4" \
+case_run "$SW" "starword ^V toggles overtype" "n,ctrl+v,hold:0.4" \
     --want "OVERTYPE"
 # ^K pops the Block & Save menu; ^Q pops the Quick menu (WordStar prefixes).
-case_run "$SW" "starword ^K block menu" "ctrl+k,hold:0.4" \
+case_run "$SW" "starword ^K block menu" "n,ctrl+k,hold:0.4" \
     --want "BLOCK & SAVE" --want "Begin"
-case_run "$SW" "starword ^Q quick menu" "ctrl+q,hold:0.4" \
+case_run "$SW" "starword ^Q quick menu" "n,ctrl+q,hold:0.4" \
     --want "QUICK MOVE" --want "Find"
 # Block copy: 'abc' -> mark whole line -> ^KC copies it at the end -> abcabc.
-case_run "$SW" "starword block copy" "a,b,c,ctrl+q,s,ctrl+k,b,ctrl+q,d,ctrl+k,k,ctrl+k,c,hold:0.4" \
+case_run "$SW" "starword block copy" "n,a,b,c,ctrl+q,s,ctrl+k,b,ctrl+q,d,ctrl+k,k,ctrl+k,c,hold:0.4" \
     --want "abcabc"
 # Pull-down menu bar (WordStar 7 Alt+letter keybindings).
-case_run "$SW" "starword menu bar renders" "hold:0.4" \
+case_run "$SW" "starword menu bar renders" "n,hold:0.4" \
     --want "File" --want "Edit" --want "Utilities" --want "Help"
-case_run "$SW" "starword Alt+E opens Edit dropdown" "alt+e,hold:0.4" \
+case_run "$SW" "starword Alt+E opens Edit dropdown" "n,alt+e,hold:0.4" \
     --want "Mark Block Begin" --want "Find and Replace"
-case_run "$SW" "starword Alt+U,W = Word Count" "h,i,space,t,h,e,r,e,alt+u,w,hold:0.4" \
+case_run "$SW" "starword Alt+U,W = Word Count" "n,h,i,space,t,h,e,r,e,alt+u,w,hold:0.4" \
     --want "Words: 2"
 # Hovering a bar title (mouse motion, no click) opens that menu.
-case_run "$SW" "starword hover opens menu" "move:9.2,hold:0.4" \
+case_run "$SW" "starword hover opens menu" "n,move:9.2,hold:0.4" \
     --want "Mark Block Begin" --want "Find and Replace"
 # ^P character formatting: a bold run shows clean with tags hidden ("xHiy");
 # ^OD reveals the print-control tags ("xBHiBy").
-case_run "$SW" "starword ^P bold run (tags hidden)" "x,ctrl+p,b,H,i,ctrl+p,b,y,hold:0.4" \
+case_run "$SW" "starword ^P bold run (tags hidden)" "n,x,ctrl+p,b,H,i,ctrl+p,b,y,hold:0.4" \
     --want "xHiy"
-case_run "$SW" "starword ^OD reveals tags" "x,ctrl+p,b,H,i,ctrl+p,b,y,ctrl+o,d,hold:0.4" \
+case_run "$SW" "starword ^OD reveals tags" "n,x,ctrl+p,b,H,i,ctrl+p,b,y,ctrl+o,d,hold:0.4" \
     --want "xBHiBy"
 # ^OC centers the current line.
-case_run "$SW" "starword ^OC center line" "h,i,ctrl+o,c,hold:0.4" \
+case_run "$SW" "starword ^OC center line" "n,h,i,ctrl+o,c,hold:0.4" \
     --want "Line centered"
 
 if [ "$fail" -ne 0 ]; then
     echo "RESULT: FAIL"
     exit 1
 fi
-echo "RESULT: PASS (34 cases, 7 programs)"
+echo "RESULT: PASS (36 cases, 7 programs)"

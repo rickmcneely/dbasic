@@ -339,6 +339,13 @@ DIM gMessage AS STRING       ' transient status message on the message line
 DIM gMenuOpen AS INTEGER = 0 - 1   ' -1 = closed; else index of the open menu
 DIM gMenuSel AS INTEGER            ' highlighted item in the open menu
 
+' --- screen mode + Opening Menu (WordStar's classic opening screen) --------
+DIM gMode AS STRING = "edit"       ' "edit" | "open" (Opening Menu)
+DIM gOpenDir AS STRING = "."       ' directory the Opening Menu is browsing
+DIM gOpenFiles AS []STRING         ' "..", dirs (with "/"), then files
+DIM gOpenSel AS INTEGER            ' highlighted entry in the file list
+DIM gOpenTop AS INTEGER            ' scroll offset of the file list
+
 ' --- block markers (row/col; -1 = unset) ----------------------------------
 DIM gBBRow AS INTEGER = 0 - 1
 DIM gBBCol AS INTEGER
@@ -839,7 +846,7 @@ FUNCTION prefixMenuLines() AS []STRING
     DIM xs AS []STRING
     IF gPrefix = "K" THEN
         xs = APPEND(xs, "BLOCK & SAVE    ^KB Begin   ^KK End   ^KC Copy   ^KV Move   ^KY Delete   ^KH Hide   ^K< Unmark")
-        xs = APPEND(xs, "                ^KS Save    ^KD Save+Exit   ^KX Save+Exit   ^KQ Abandon   (Esc cancels)")
+        xs = APPEND(xs, "                ^KS Save    ^KD Save+Menu   ^KX Save+Exit   ^KQ Abandon   (Esc cancels)")
     ELSEIF gPrefix = "Q" THEN
         xs = APPEND(xs, "QUICK MOVE      ^QS LineStart  ^QD LineEnd  ^QE ScrTop  ^QX ScrBot  ^QR FileTop  ^QC FileEnd")
         xs = APPEND(xs, "                ^QF Find   ^QA Replace   ^QB BlockStart   ^QK BlockEnd   ^QY Del->EOL")
@@ -1156,9 +1163,188 @@ SUB wordCount()
     gMessage = fmt.Sprintf("Words: %d    Lines: %d    Characters: %d", words, LEN(gLines), chars)
 END SUB
 
+' ==========================================================================
+' Opening Menu (WordStar's classic opening screen) + file management
+' ==========================================================================
+
+FUNCTION joinPath(d AS STRING, n AS STRING) AS STRING
+    IF d = "." OR d = "" THEN RETURN n
+    RETURN d + "/" + n
+END FUNCTION
+
+FUNCTION parentDir(p AS STRING) AS STRING
+    IF p = "." OR p = "" THEN RETURN ".."
+    DIM i AS INTEGER = strings.LastIndex(p, "/")
+    IF i < 0 THEN RETURN "."
+    IF i = 0 THEN RETURN "/"
+    RETURN Left(p, i)
+END FUNCTION
+
+' refreshFileList — read gOpenDir into gOpenFiles ("..", dirs/, then files).
+SUB refreshFileList()
+    gOpenFiles = nil
+    gOpenFiles = APPEND(gOpenFiles, "..")
+    DIM entries AS []os.DirEntry
+    DIM e AS ERROR
+    entries, e = os.ReadDir(gOpenDir)
+    IF e <> NIL THEN
+        gMessage = "Cannot read " + gOpenDir
+        gOpenSel = 0
+        gOpenTop = 0
+        RETURN
+    END IF
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(entries) - 1
+        IF entries[i].IsDir() THEN gOpenFiles = APPEND(gOpenFiles, entries[i].Name() + "/")
+    NEXT i
+    FOR i = 0 TO LEN(entries) - 1
+        IF NOT entries[i].IsDir() THEN gOpenFiles = APPEND(gOpenFiles, entries[i].Name())
+    NEXT i
+    gOpenSel = 0
+    gOpenTop = 0
+END SUB
+
+SUB enterOpeningMenu()
+    gMode = "open"
+    refreshFileList()
+    gMessage = ""
+END SUB
+
+SUB newDoc()
+    gLines = nil
+    gLines = APPEND(gLines, "")
+    gFileName = "untitled.WSu"
+    gIsUnicode = TRUE
+    gRow = 0
+    gCol = 0
+    gTop = 0
+    gLeft = 0
+    gModified = FALSE
+    gMode = "edit"
+    gMessage = "New document"
+END SUB
+
+' openSelected — act on the highlighted Opening-Menu entry: ".." goes up, a
+' "dir/" descends, a file opens into the editor.
+SUB openSelected()
+    IF LEN(gOpenFiles) = 0 THEN RETURN
+    DIM nm AS STRING = gOpenFiles[gOpenSel]
+    IF nm = ".." THEN
+        gOpenDir = parentDir(gOpenDir)
+        refreshFileList()
+        RETURN
+    END IF
+    IF strings.HasSuffix(nm, "/") THEN
+        gOpenDir = joinPath(gOpenDir, Left(nm, LEN(nm) - 1))
+        refreshFileList()
+        RETURN
+    END IF
+    loadFile(joinPath(gOpenDir, nm))
+    gMode = "edit"
+END SUB
+
+' renderOpeningMenu — the full Opening Menu screen.
+FUNCTION renderOpeningMenu(w AS INTEGER, h AS INTEGER) AS STRING
+    DIM bg AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#dbe6ff")).Background(lipgloss.Color("#0f2350"))
+    DIM hdr AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
+    DIM key AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffd166")).Background(lipgloss.Color("#0f2350")).Bold(TRUE)
+    DIM dimSt AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#8aa0d8")).Background(lipgloss.Color("#0f2350"))
+    DIM selSt AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#8ad0ff")).Bold(TRUE)
+    DIM dirSt AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a")).Background(lipgloss.Color("#0f2350"))
+
+    DIM rows AS []STRING
+    rows = APPEND(rows, hdr.Render(swFit(" StarWord  -  Opening Menu", w)))
+    rows = APPEND(rows, bg.Render(swFit("", w)))
+    rows = APPEND(rows, bg.Render("  ") + key.Render("D ") + bg.Render("Open document   ") + key.Render("N ") + bg.Render("New document   ") + key.Render("L ") + bg.Render("Change directory   ") + key.Render("X ") + bg.Render(swFit("Exit", w - 60)))
+    rows = APPEND(rows, dimSt.Render(swFit("  Up/Down select   Enter open   Esc back to editor", w)))
+    rows = APPEND(rows, bg.Render(swFit("", w)))
+    rows = APPEND(rows, bg.Render("  Directory: ") + dirSt.Render(swFit(gOpenDir, w - 13)))
+    DIM sepW AS INTEGER = w - 4
+    IF sepW < 0 THEN sepW = 0
+    rows = APPEND(rows, dimSt.Render("  " + strings.Repeat("-", sepW) + "  "))
+
+    ' File list region: rows 7 .. h-2.
+    DIM listTop AS INTEGER = 7
+    DIM listRows AS INTEGER = h - 1 - listTop
+    IF listRows < 1 THEN listRows = 1
+    IF gOpenSel < gOpenTop THEN gOpenTop = gOpenSel
+    IF gOpenSel >= gOpenTop + listRows THEN gOpenTop = gOpenSel - listRows + 1
+    IF gOpenTop < 0 THEN gOpenTop = 0
+    DIM r AS INTEGER
+    FOR r = 0 TO listRows - 1
+        DIM fi AS INTEGER = gOpenTop + r
+        IF fi < LEN(gOpenFiles) THEN
+            DIM nm AS STRING = gOpenFiles[fi]
+            DIM isDir AS BOOLEAN = (nm = "..") OR strings.HasSuffix(nm, "/")
+            DIM lineTxt AS STRING = "   " + nm
+            IF fi = gOpenSel THEN
+                rows = APPEND(rows, selSt.Render(swFit(" > " + nm, w)))
+            ELSEIF isDir THEN
+                rows = APPEND(rows, dirSt.Render(swFit(lineTxt, w)))
+            ELSE
+                rows = APPEND(rows, bg.Render(swFit(lineTxt, w)))
+            END IF
+        ELSE
+            rows = APPEND(rows, bg.Render(swFit("", w)))
+        END IF
+    NEXT r
+
+    ' Footer / modal prompt.
+    DIM foot AS STRING = "  " + fmt.Sprintf("%d", LEN(gOpenFiles)) + " entries   ^KD from the editor returns here"
+    IF gPromptMode <> "" THEN foot = " " + gPromptLabel + gPromptText + Chr(9617)
+    rows = APPEND(rows, hdr.Render(swFit(foot, w)))
+    RETURN strings.Join(rows, Chr(10))
+END FUNCTION
+
+' handleOpenKey — keyboard for the Opening Menu.
+SUB handleOpenKey(key AS STRING)
+    DIM n AS INTEGER = LEN(gOpenFiles)
+    IF key = "up" THEN
+        IF n > 0 THEN gOpenSel = (gOpenSel - 1 + n) MOD n
+        RETURN
+    END IF
+    IF key = "down" THEN
+        IF n > 0 THEN gOpenSel = (gOpenSel + 1) MOD n
+        RETURN
+    END IF
+    IF key = "pgup" THEN
+        gOpenSel = gOpenSel - 10
+        IF gOpenSel < 0 THEN gOpenSel = 0
+        RETURN
+    END IF
+    IF key = "pgdown" THEN
+        gOpenSel = gOpenSel + 10
+        IF gOpenSel > n - 1 THEN gOpenSel = n - 1
+        RETURN
+    END IF
+    IF key = "enter" THEN
+        openSelected()
+        RETURN
+    END IF
+    IF key = "esc" THEN
+        gMode = "edit"
+        RETURN
+    END IF
+    DIM lk AS STRING = LCase(key)
+    IF lk = "d" THEN
+        gPromptMode = "open"
+        gPromptLabel = "Open file: "
+        gPromptText = ""
+    ELSEIF lk = "n" THEN
+        newDoc()
+    ELSEIF lk = "l" THEN
+        gPromptMode = "opendir"
+        gPromptLabel = "Directory: "
+        gPromptText = ""
+    ELSEIF lk = "x" THEN
+        RequestQuit()
+    END IF
+END SUB
+
 FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     gW = w
     gH = h
+    IF gMode = "open" THEN RETURN renderOpeningMenu(w, h)
     clampCursor()
     applyDotCommands()
 
@@ -1297,6 +1483,15 @@ END FUNCTION
 ' Left-click inside canvas sw — drive the menu bar, an open dropdown, or
 ' (otherwise) drop the cursor at the clicked text cell.
 SUB sw_Click(x AS INTEGER, y AS INTEGER)
+    ' Opening Menu: a click on a file-list row selects and opens it.
+    IF gMode = "open" THEN
+        DIM li AS INTEGER = gOpenTop + (y - 7)
+        IF y >= 7 AND li >= 0 AND li < LEN(gOpenFiles) THEN
+            gOpenSel = li
+            openSelected()
+        END IF
+        RETURN
+    END IF
     ' Click the menu bar (row 0): open / switch to that menu.
     IF y = 0 THEN
         DIM mhit AS INTEGER = menuAtX(x)
@@ -1641,7 +1836,12 @@ SUB handlePrefixK(key AS STRING)
         gMessage = "Block unmarked"
     ELSEIF k = "s" THEN
         saveFile()
-    ELSEIF k = "d" OR k = "x" THEN
+    ELSEIF k = "d" THEN
+        ' ^KD: save and return to the Opening Menu (WordStar behavior).
+        saveFile()
+        enterOpeningMenu()
+    ELSEIF k = "x" THEN
+        ' ^KX: save and exit.
         saveFile()
         RequestQuit()
     ELSEIF k = "q" THEN
@@ -1776,7 +1976,20 @@ SUB handlePrompt(key AS STRING)
             gIsUnicode = detectUnicode(txt)
             saveFile()
         ELSEIF mode = "open" THEN
-            IF txt <> "" THEN loadFile(txt)
+            IF txt <> "" THEN
+                ' From the Opening Menu, resolve against the browsed directory.
+                IF gMode = "open" THEN
+                    loadFile(joinPath(gOpenDir, txt))
+                ELSE
+                    loadFile(txt)
+                END IF
+                gMode = "edit"
+            END IF
+        ELSEIF mode = "opendir" THEN
+            IF txt <> "" THEN
+                gOpenDir = txt
+                refreshFileList()
+            END IF
         ELSEIF mode = "lmargin" THEN
             gLeftMargin = Int(Val(txt))
             gMessage = fmt.Sprintf("Left margin = %d", gLeftMargin)
@@ -1866,6 +2079,19 @@ SUB Form_Key(key AS STRING)
     ConsumeKey()
     gMessage = ""
 
+    ' A modal prompt (find / save-as / open / margin) is answered first, in
+    ' either screen mode.
+    IF gPromptMode <> "" THEN
+        handlePrompt(key)
+        RETURN
+    END IF
+
+    ' The Opening Menu owns the keyboard while it is showing.
+    IF gMode = "open" THEN
+        handleOpenKey(key)
+        RETURN
+    END IF
+
     ' An open pull-down menu is modal — it owns the keyboard.
     IF gMenuOpen >= 0 THEN
         handleMenuKey(key)
@@ -1877,12 +2103,6 @@ SUB Form_Key(key AS STRING)
     IF amOpen >= 0 THEN
         gMenuOpen = amOpen
         gMenuSel = 0
-        RETURN
-    END IF
-
-    ' Modal prompt takes priority.
-    IF gPromptMode <> "" THEN
-        handlePrompt(key)
         RETURN
     END IF
 
@@ -2050,9 +2270,11 @@ SUB Form_Load()
     DIM args AS []STRING = os.Args
     IF LEN(args) > 1 THEN
         loadFile(args[1])
+        gMode = "edit"
     ELSE
+        ' No file given: start at the WordStar-style Opening Menu.
         gLines = APPEND(gLines, "")
-        gMessage = "New document — ^J for help, ^KS to save, ^KX to save & exit"
+        enterOpeningMenu()
     END IF
 END SUB
 
