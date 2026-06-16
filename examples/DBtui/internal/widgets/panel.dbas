@@ -102,8 +102,14 @@ FUNCTION panelEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS S
     IF innerW < 1 THEN innerW = 1
     DIM innerH AS INTEGER = wv.H - 2
     IF innerH < 1 THEN innerH = 1
+    ' A stretched Panel grows its inner canvas with the form (the rounded
+    ' border auto-grows around it, and more children fall inside the clip).
+    ' Constant otherwise (byte-identical). Stretch directions come from the
+    ' Left+Right / Top+Bottom anchor edges.
+    DIM innerWExpr AS STRING = strconv.Itoa(innerW) + anchorWDelta(wv, f)
+    DIM innerHExpr AS STRING = strconv.Itoa(innerH) + anchorHDelta(wv, f)
     DIM s AS STRING = ""
-    s = s + "    DIM pnInner" + sfx + " AS STRING = _blankCanvas(" + strconv.Itoa(innerW) + ", " + strconv.Itoa(innerH) + ")\n"
+    s = s + "    DIM pnInner" + sfx + " AS STRING = _blankCanvas(" + innerWExpr + ", " + innerHExpr + ")\n"
     s = s + "    DIM pnBaseL" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(pnInner" + sfx + ")\n"
     DIM childLayers AS STRING = ""
     DIM zc AS INTEGER = 1
@@ -129,7 +135,12 @@ FUNCTION panelEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS S
     NEXT pnCi
     s = s + "    DIM pnComp" + sfx + " AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(pnBaseL" + sfx + childLayers + ")\n"
     s = s + "    DIM pnIn2" + sfx + " AS STRING = pnComp" + sfx + ".Render()\n"
-    s = s + "    DIM pnBox" + sfx + " AS STRING = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Render(pnIn2" + sfx + ")\n"
+    ' Pin the box to W x H (runtime when stretched). Without it lipgloss sizes
+    ' the border to the content's widest line / tallest column, so a sparse or
+    ' childless panel (an all-spaces canvas) collapses to a tiny box.
+    DIM pnWExpr AS STRING = strconv.Itoa(wv.W) + anchorWDelta(wv, f)
+    DIM pnHExpr AS STRING = strconv.Itoa(wv.H) + anchorHDelta(wv, f)
+    s = s + "    DIM pnBox" + sfx + " AS STRING = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Width(" + pnWExpr + ").Height(" + pnHExpr + ").Render(pnIn2" + sfx + ")\n"
     s = s + "    DIM vw" + sfx + " AS STRING = compFocusView(pnBox" + sfx + ", FALSE, m.Hover = " + sfx + " AND m.Focus <> " + sfx + ")\n"
     s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
     RETURN s

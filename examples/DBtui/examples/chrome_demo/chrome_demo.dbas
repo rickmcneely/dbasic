@@ -231,7 +231,7 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM pnCL1c2 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(pnCv1c2).X(1).Y(0 - m.panel1_Scroll).Z(1)
     DIM pnComp1 AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(pnBaseL1, pnCL1c2)
     DIM pnIn21 AS STRING = pnComp1.Render()
-    DIM pnBox1 AS STRING = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Render(pnIn21)
+    DIM pnBox1 AS STRING = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Width(30).Height(8).Render(pnIn21)
     DIM vw1 AS STRING = compFocusView(pnBox1, FALSE, m.Hover = 1 AND m.Focus <> 1)
     DIM ly1 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw1).X(2).Y(2).Z(11)
     DIM baseLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)

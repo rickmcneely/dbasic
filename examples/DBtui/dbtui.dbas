@@ -1850,6 +1850,14 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             invalidateEditorCache(@m)
             RETURN m, NIL
         END IF
+        ' A modal edge-picker owns the pointer: hovering an edge row
+        ' highlights it, and the motion is swallowed so the property panel
+        ' underneath doesn't also react to the hover (no click-through).
+        IF m.AnchorPickerActive THEN
+            DIM apMov AS INTEGER = anchorEdgeAt(mmMsg.X, mmMsg.Y)
+            IF apMov >= 0 THEN m.APkSel = apMov
+            RETURN m, NIL
+        END IF
         ' Drop identical-cell events early. bubbletea v2 in
         ' MouseModeAllMotion floods us with events as the pointer
         ' moves; deduping makes hover feel snappy.

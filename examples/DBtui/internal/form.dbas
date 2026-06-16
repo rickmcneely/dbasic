@@ -2078,6 +2078,43 @@ FUNCTION anchorPresetName(a AS STRING) AS STRING
     RETURN "top-left"
 END FUNCTION
 
+' anchorWDelta / anchorHDelta — the Go-source suffix that turns a constant
+' width/height into a runtime one for a horizontally / vertically stretched
+' widget (both edges of that axis anchored). Returns " + (fw - refW)" /
+' " + (fh - refH)", or "" when that axis isn't stretched (so non-stretched
+' widgets emit byte-identical constant dimensions). Use only in View-context
+' emitters, where `w`/`h` (non-chromed) or m._formW/_formH (chromed) are live.
+FUNCTION anchorWDelta(wv AS DesignWidget, f AS DesignForm) AS STRING
+    DIM t AS BOOLEAN
+    DIM b AS BOOLEAN
+    DIM l AS BOOLEAN
+    DIM r AS BOOLEAN
+    t, b, l, r = anchorEdges(wv.Anchors)
+    _ = t
+    _ = b
+    IF l AND r THEN
+        DIM fw AS STRING = "w"
+        IF formChromed(f) THEN fw = "m._formW"
+        RETURN " + (" + fw + " - " + strconv.Itoa(formRefW(f)) + ")"
+    END IF
+    RETURN ""
+END FUNCTION
+FUNCTION anchorHDelta(wv AS DesignWidget, f AS DesignForm) AS STRING
+    DIM t AS BOOLEAN
+    DIM b AS BOOLEAN
+    DIM l AS BOOLEAN
+    DIM r AS BOOLEAN
+    t, b, l, r = anchorEdges(wv.Anchors)
+    _ = l
+    _ = r
+    IF t AND b THEN
+        DIM fh AS STRING = "h"
+        IF formChromed(f) THEN fh = "m._formH"
+        RETURN " + (" + fh + " - " + strconv.Itoa(formRefH(f)) + ")"
+    END IF
+    RETURN ""
+END FUNCTION
+
 ' formTermSize — the terminal size (cols, rows) a form wants to launch at.
 ' An explicit integer WExpr/HExpr wins; otherwise it's the bounding box of
 ' the form's top-level widgets plus the form border (a tight fit to the
@@ -2118,7 +2155,7 @@ FUNCTION widgetEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS 
     IF wv.Kind = "TabStrip" THEN RETURN tabStripEmitLayer(wv, sfx, xs, ys, zStr, qt)
     IF wv.Kind = "Tree" THEN RETURN treeEmitLayer(wv, sfx, xs, ys, zStr, qt)
     IF wv.Kind = "ScrollBar" THEN RETURN scrollBarEmitLayer(wv, sfx, xs, ys, zStr, qt)
-    IF wv.Kind = "StatusBar" THEN RETURN statusBarEmitLayer(wv, sfx, xs, ys, zStr, qt)
+    IF wv.Kind = "StatusBar" THEN RETURN statusBarEmitLayer(wv, sfx, xs, ys, zStr, f, qt)
     IF wv.Kind = "Panel" THEN RETURN panelEmitLayer(wv, sfx, xs, ys, zStr, f, n, qt)
     IF wv.Kind = "Menubar" THEN RETURN menubarEmitLayer(wv, sfx, xs, ys, zStr, qt)
     IF wv.Kind = "ProgressBar" THEN
