@@ -161,6 +161,12 @@ SUB applyWidgetEnum(m AS POINTER TO Model, sel AS INTEGER, key AS STRING, val AS
         m.Tabs[m.TabIdx].Form.Widgets[sel].VScroll = val
     ELSEIF key = "wprop:hscroll" THEN
         m.Tabs[m.TabIdx].Form.Widgets[sel].HScroll = val
+    ELSEIF key = "wprop:anchor" THEN
+        ' Store the default (top-left) as "" so unanchored widgets stay
+        ' byte-identical to legacy projects.
+        DIM av AS STRING = val
+        IF av = "top-left" THEN av = ""
+        m.Tabs[m.TabIdx].Form.Widgets[sel].Anchors = av
     END IF
     m.Tabs[m.TabIdx].Dirty = TRUE
 END SUB
@@ -543,6 +549,11 @@ FUNCTION dispatchModalClose(m AS POINTER TO Model, button AS STRING, text AS STR
     ' Form-level chrome text fields (no widget selected).
     IF m.ModalContext = "fprop:title" THEN
         m.Tabs[m.TabIdx].Form.Title = text
+        m.Tabs[m.TabIdx].Dirty = TRUE
+        RETURN FALSE, NIL
+    END IF
+    IF m.ModalContext = "fprop:wintitle" THEN
+        m.Tabs[m.TabIdx].Form.WinTitle = strings.TrimSpace(text)
         m.Tabs[m.TabIdx].Dirty = TRUE
         RETURN FALSE, NIL
     END IF

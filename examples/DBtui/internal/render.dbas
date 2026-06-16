@@ -1229,6 +1229,11 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             IF sw.Kind <> "Panel" THEN
                 propRows = APPEND(propRows, "Parent " + sw.Parent)
             END IF
+            ' Universal anchor row (mirror propRowEditContext). "" shows as
+            ' top-left (the fixed default).
+            DIM ancLbl AS STRING = sw.Anchors
+            IF ancLbl = "" THEN ancLbl = "top-left"
+            propRows = APPEND(propRows, "Anchor " + ancLbl)
             ' Universal color rows (mirror propRowEditContext). Click opens
             ' the 256-color picker. "" shows as (inherit).
             DIM fgLbl AS STRING = "(inherit)"
@@ -1265,6 +1270,12 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             DIM fbgLbl AS STRING = "(default)"
             IF m.Tabs[m.TabIdx].Form.BgColor <> "" THEN fbgLbl = m.Tabs[m.TabIdx].Form.BgColor
             propRows = APPEND(propRows, "Bg     " + fbgLbl)
+            ' OS/terminal window title (row 11) — "(caption)" when blank to
+            ' signal it inherits the Caption above. Order MUST match
+            ' formClickPropAt's no-widget branch.
+            DIM fwtLbl AS STRING = "(caption)"
+            IF m.Tabs[m.TabIdx].Form.WinTitle <> "" THEN fwtLbl = m.Tabs[m.TabIdx].Form.WinTitle
+            propRows = APPEND(propRows, "WinTtl " + fwtLbl)
             propRows = APPEND(propRows, "(click a widget to edit)")
         END IF
     ELSEIF hasActiveTab(m) THEN

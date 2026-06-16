@@ -222,11 +222,30 @@ TYPE DesignWidget
     DIM CaptionJust AS STRING  ' "" | "left" | "center" | "right"
     DIM HScroll     AS STRING  ' "" | "off" | "on" | "auto"
     DIM VScroll     AS STRING  ' "" | "off" | "on" | "auto"
+
+    ' --- VB-style edge anchoring -------------------------------------
+    ' Which form CORNER the widget stays pinned to as the form resizes at
+    ' runtime. "" (or "top-left") = the legacy default: fixed at (X, Y).
+    ' "top-right"/"bottom-left"/"bottom-right" keep the widget's margin to
+    ' that corner constant (its X and/or Y shift with the live form size).
+    ' Resolved in codegen against m._formW/_formH (chromed) or the View's
+    ' w/h, using the form's design reference size (constant WExpr/HExpr or
+    ' the widget bounding box). Defaults to "" so legacy .dbproj files load
+    ' byte-identically. The corner values move the widget; the stretch values
+    ' instead anchor a ListBox to opposite edges so it GROWS with the form (its
+    ' inner size is resized in the WindowSize handler): "stretch-v" = top+bottom
+    ' (height), "stretch-h" = left+right (width), "stretch" = both.
+    DIM Anchors     AS STRING  ' "" | top-left | top-right | bottom-left | bottom-right | stretch-v | stretch-h | stretch
 END TYPE
 
 TYPE DesignForm
     DIM Name    AS STRING                ' identifier within the project (e.g. "frmStart")
     DIM Title   AS STRING                ' window caption shown at runtime
+    ' OS/terminal window title (the Windows Terminal tab/window caption, set
+    ' via `wt --title`). Distinct from Title, which is the form's own visual
+    ' title-bar text. "" = fall back to Title, then to Name. Defaults to ""
+    ' so legacy .dbproj files load byte-identically.
+    DIM WinTitle AS STRING
     DIM Widgets AS []DesignWidget
     ' Form-wide default colors (ANSI-256 index as STRING; "" = terminal
     ' default). A widget whose own FgColor/BgColor is "" inherits these,

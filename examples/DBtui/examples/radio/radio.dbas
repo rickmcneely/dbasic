@@ -86,6 +86,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         m.Width = sz.Width
         m.Height = sz.Height
         _formSize(@m)
+        DIM _lstStationsLH AS INTEGER = 15 + (m._formH - 24)
+        IF _lstStationsLH < 1 THEN _lstStationsLH = 1
+        m.lstStations_lb.SetHeight(_lstStationsLH)
+        DIM _lstStationsLW AS INTEGER = 82 + (m._formW - 87)
+        IF _lstStationsLW < 1 THEN _lstStationsLW = 1
+        m.lstStations_lb.SetWidth(_lstStationsLW)
         Terminal_Resize(m.Width, m.Height)
         RETURN m, NIL
     END IF
@@ -136,7 +142,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             dispatchClick("btnPlay")
             RETURN m, NIL
         END IF
-        IF mc.X >= 2 AND mc.X < 2 + 72 AND mc.Y >= 3 AND mc.Y < 3 + 17 THEN
+        IF mc.X >= 2 AND mc.X < 2 + 84 AND mc.Y >= 3 AND mc.Y < 3 + 17 THEN
             m.Focus = 5
             syncFocusComp(@m)
             DIM lcRel5 AS INTEGER = mc.Y - 4
@@ -215,7 +221,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF mmHit < 0 AND mm.X >= 21 AND mm.X < 21 + 64 AND mm.Y >= 21 AND mm.Y < 21 + 1 THEN mmHit = 8
         IF mmHit < 0 AND mm.X >= 11 AND mm.X < 11 + 8 AND mm.Y >= 21 AND mm.Y < 21 + 1 THEN mmHit = 7
         IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 8 AND mm.Y >= 21 AND mm.Y < 21 + 1 THEN mmHit = 6
-        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 72 AND mm.Y >= 3 AND mm.Y < 3 + 17 THEN mmHit = 5
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 84 AND mm.Y >= 3 AND mm.Y < 3 + 17 THEN mmHit = 5
         IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 72 AND mm.Y >= 2 AND mm.Y < 2 + 1 THEN mmHit = 4
         IF mmHit < 0 AND mm.X >= 57 AND mm.X < 57 + 11 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 3
         IF mmHit < 0 AND mm.X >= 45 AND mm.X < 45 + 10 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 2
@@ -241,7 +247,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mwOk AS BOOLEAN
     mw, mwOk = msg.(tea.MouseWheelMsg)
     IF mwOk THEN
-        IF mw.X >= 2 AND mw.X < 2 + 72 AND mw.Y >= 3 AND mw.Y < 3 + 17 THEN
+        IF mw.X >= 2 AND mw.X < 2 + 84 AND mw.Y >= 3 AND mw.Y < 3 + 17 THEN
             DIM wwPrev5 AS INTEGER = m.lstStations_lb.Index()
             IF mw.Button = tea.MouseWheelUp THEN
                 m.lstStations_lb.CursorUp()
@@ -414,8 +420,8 @@ SUB _formSize(m AS POINTER TO Model)
         m._formW = w
         m._formH = h
     ELSE
-        m._formW = (88)
-        m._formH = (24)
+        m._formW = (w)
+        m._formH = (h)
     END IF
     IF m._formW < 3 THEN m._formW = 3
     IF m._formW > w THEN m._formW = w
@@ -486,25 +492,25 @@ FUNCTION (m AS Model) View() AS tea.View
     DIM vw4 AS STRING = compFocusView(vwraw4, m.Focus = 4, FALSE)
     DIM ly4 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw4).X(2).Y(2).Z(14)
     DIM vw5 AS STRING = m.lstStations_lb.View()
-    vw5 = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3b3d5e")).Width(72).Render(strings.TrimRight(vw5, "\n"))
+    vw5 = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3b3d5e")).Width(84 + (m._formW - 87)).Render(strings.TrimRight(vw5, "\n"))
     DIM ly5 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw5).X(2).Y(3).Z(15)
     DIM body6 AS STRING
     body6 = "[ Play ]"
     DIM vw6 AS STRING = compFocusView(body6, m.Focus = 6, m.Hover = 6)
-    DIM ly6 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw6).X(2).Y(21).Z(16)
+    DIM ly6 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw6).X(2).Y(21 + (m._formH - 24)).Z(16)
     DIM body7 AS STRING
     body7 = "[ Stop ]"
     DIM vw7 AS STRING = compFocusView(body7, m.Focus = 7, m.Hover = 7)
-    DIM ly7 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw7).X(11).Y(21).Z(17)
+    DIM ly7 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw7).X(11).Y(21 + (m._formH - 24)).Z(17)
     DIM body8 AS STRING
     body8 = "Tab=move focus   Enter=activate   Up/Down=pick station   Esc=quit"
     DIM vw8 AS STRING = compFocusView(body8, m.Focus = 8, m.Hover = 8)
-    DIM ly8 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw8).X(21).Y(21).Z(18)
+    DIM ly8 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw8).X(21).Y(21 + (m._formH - 24)).Z(18)
     DIM sbTxt9 AS STRING = m.statusBar_Text
     IF sbTxt9 = "" THEN sbTxt9 = "DBtui Radio │ Ready"
     IF lipgloss.Width(sbTxt9) > 76 THEN sbTxt9 = ansi.Truncate(sbTxt9, 76, "")
     DIM vw9 AS STRING = compFocusView(sbTxt9, m.Focus = 9, m.Hover = 9)
-    DIM ly9 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw9).X(1).Y(22).Z(19)
+    DIM ly9 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw9).X(1).Y(22 + (m._formH - 24)).Z(19)
     DIM formBoxStr AS STRING = _formBox(m._formW, m._formH, "─", "│", "╭", "╮", "╰", "╯", "DBtui Radio", "_ ▢ ✕ ")
     DIM formLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(formBoxStr).X(0).Y(0).Z(1)
     IF m._minimized THEN
@@ -538,7 +544,7 @@ SUB _dbtuiRelaunchInTerminal()
     DIM _self AS STRING
     _self, _e = os.Executable()
     IF _e <> NIL THEN RETURN
-    DIM _c AS POINTER TO exec.Cmd = exec.Command(_wt, "--size", "88,24", "--title", "DBtui Radio", _self)
+    DIM _c AS POINTER TO exec.Cmd = exec.Command(_wt, "--size", "87,24", "--title", "DBtui Radio", _self)
     _c.Env = APPEND(os.Environ(), "DBTUI_IN_TERMINAL=1")
     _e = _c.Start()
     IF _e <> NIL THEN RETURN
@@ -575,7 +581,7 @@ SUB Main()
     DIM itlstStations1 AS _LItem
     itlstStations1.cap = "Then Tab to the list, pick with the arrow keys, Tab to Play."
     itemslstStations = APPEND(itemslstStations, itlstStations1)
-    m.lstStations_lb = list.New(itemslstStations, _newMenuDelegate(), 70, 15)
+    m.lstStations_lb = list.New(itemslstStations, _newMenuDelegate(), 82, 15)
     m.lstStations_lb.SetShowHelp(FALSE)
     m.lstStations_lb.SetShowStatusBar(FALSE)
     m.lstStations_lb.SetShowTitle(FALSE)

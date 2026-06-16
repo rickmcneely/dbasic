@@ -1360,6 +1360,12 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         IF rowIdx = cursor THEN RETURN "Edit Parent", "container Panel name (blank = none):", w.Parent, "wprop:parent"
         cursor = cursor + 1
     END IF
+    ' Universal anchor row: which form corner the widget stays pinned to as
+    ' the form resizes (VB-style edge anchoring). "" = top-left (fixed).
+    DIM ancCur AS STRING = w.Anchors
+    IF ancCur = "" THEN ancCur = "top-left"
+    IF rowIdx = cursor THEN RETURN "Edit Anchor", "corner:", ancCur, "wprop:anchor"
+    cursor = cursor + 1
     ' Universal color rows. These don't use the input modal — formClickPropAt
     ' intercepts the "wprop:fgcolor"/"wprop:bgcolor" keys and opens the
     ' 256-color picker instead.
@@ -1393,6 +1399,7 @@ FUNCTION propRowKind(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, STRING)
     IF k = "wprop:captionjust" THEN RETURN "enum", "left,center,right"
     IF k = "wprop:vscroll" THEN RETURN "enum", "off,on,auto"
     IF k = "wprop:hscroll" THEN RETURN "enum", "off,on,auto"
+    IF k = "wprop:anchor" THEN RETURN "enum", "top-left,top-right,bottom-left,bottom-right,stretch-v,stretch-h,stretch"
     IF k = "wprop:fgcolor" OR k = "wprop:bgcolor" THEN RETURN "color", ""
     RETURN "text", ""
 END FUNCTION
@@ -1425,9 +1432,9 @@ END FUNCTION
 SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
     ' No widget selected → form-level properties (chrome + colors). Rows:
     ' 0 Form name (read-only), 1 Caption, 2 Width, 3 Height, 4 Border,
-    ' 5 Corners, 6 Min, 7 Max, 8 Close, 9 Fg, 10 Bg. Border/Corners cycle
-    ' on click; Min/Max/Close toggle; Caption/Width/Height open the input
-    ' modal; Fg/Bg open the color picker. Order matches renderRightPane.
+    ' 5 Corners, 6 Min, 7 Max, 8 Close, 9 Fg, 10 Bg, 11 WinTtl. Border/Corners
+    ' cycle on click; Min/Max/Close toggle; Caption/Width/Height/WinTtl open the
+    ' input modal; Fg/Bg open the color picker. Order matches renderRightPane.
     IF m.Tabs[m.TabIdx].SelWidget < 0 OR m.Tabs[m.TabIdx].SelWidget >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
         m.PropSel = rowIdx
         IF rowIdx = 1 THEN showInputModal(m, "Form Caption", "Title text:", m.Tabs[m.TabIdx].Form.Title, "fprop:title")
@@ -1464,6 +1471,7 @@ SUB formClickPropAt(m AS POINTER TO Model, rowIdx AS INTEGER)
         END IF
         IF rowIdx = 9 THEN showColorPicker(m, "formfg")
         IF rowIdx = 10 THEN showColorPicker(m, "formbg")
+        IF rowIdx = 11 THEN showInputModal(m, "Window Title", "terminal window title (blank = use Caption):", m.Tabs[m.TabIdx].Form.WinTitle, "fprop:wintitle")
         RETURN
     END IF
     DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[m.Tabs[m.TabIdx].SelWidget]
@@ -1981,6 +1989,36 @@ FUNCTION constSizeExpr(expr AS STRING) AS INTEGER
     RETURN n
 END FUNCTION
 
+' formRefW / formRefH — the DESIGN reference content size used to resolve
+' VB-style edge anchors. A widget anchored to the right/bottom shifts at
+' runtime by (live form size − this reference), keeping its margin to that
+' edge. A constant WExpr/HExpr is the reference directly; otherwise (a
+' responsive/fill form) we use the widget bounding box + 1 so the rightmost
+' / lowest control defines the design edge. Anchoring only visibly shifts a
+' widget when the live form is a different size than this reference.
+FUNCTION formRefW(f AS DesignForm) AS INTEGER
+    DIM c AS INTEGER = constSizeExpr(f.WExpr)
+    IF c > 0 THEN RETURN c
+    DIM mx AS INTEGER = 1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(f.Widgets) - 1
+        DIM rt AS INTEGER = f.Widgets[i].X + f.Widgets[i].W
+        IF rt > mx THEN mx = rt
+    NEXT i
+    RETURN mx + 1
+END FUNCTION
+FUNCTION formRefH(f AS DesignForm) AS INTEGER
+    DIM c AS INTEGER = constSizeExpr(f.HExpr)
+    IF c > 0 THEN RETURN c
+    DIM mx AS INTEGER = 1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(f.Widgets) - 1
+        DIM bt AS INTEGER = f.Widgets[i].Y + f.Widgets[i].H
+        IF bt > mx THEN mx = bt
+    NEXT i
+    RETURN mx + 1
+END FUNCTION
+
 ' formTermSize — the terminal size (cols, rows) a form wants to launch at.
 ' An explicit integer WExpr/HExpr wins; otherwise it's the bounding box of
 ' the form's top-level widgets plus the form border (a tight fit to the
@@ -2043,7 +2081,15 @@ FUNCTION widgetEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS 
             ' always W wide. Without it, lipgloss sizes the border to the widest
             ' content line, so a list of short rows (e.g. a Now Playing panel)
             ' draws a too-narrow box that exposes whatever is painted behind it.
-            s = s + "    vw" + sfx + " = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(" + qt + "#3b3d5e" + qt + ")).Width(" + strconv.Itoa(wv.W) + ").Render(strings.TrimRight(vw" + sfx + ", " + qt + "\\n" + qt + "))\n"
+            ' A stretch-h list grows its width with the form, so the border must
+            ' track the same runtime width the resize handler SetWidth's the list to.
+            DIM lbBW AS STRING = strconv.Itoa(wv.W)
+            IF wv.Anchors = "stretch-h" OR wv.Anchors = "stretch" THEN
+                DIM lbFW AS STRING = "w"
+                IF formChromed(f) THEN lbFW = "m._formW"
+                lbBW = strconv.Itoa(wv.W) + " + (" + lbFW + " - " + strconv.Itoa(formRefW(f)) + ")"
+            END IF
+            s = s + "    vw" + sfx + " = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(" + qt + "#3b3d5e" + qt + ")).Width(" + lbBW + ").Render(strings.TrimRight(vw" + sfx + ", " + qt + "\\n" + qt + "))\n"
         END IF
         s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
         RETURN s
@@ -2448,6 +2494,41 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "        m.Width = sz.Width\n"
     s = s + "        m.Height = sz.Height\n"
     IF formChromed(f) THEN s = s + "        _formSize(@m)\n"
+    ' Stretched ListBoxes grow their inner size with the form so they fill the
+    ' space to the opposite (bottom / right) anchored edge. "stretch-v" grows
+    ' height, "stretch-h" grows width, "stretch" grows both. The framed border
+    ' then auto-grows around the larger view. Reference size is the design size
+    ' (constant WExpr/HExpr, else the widget bounding box).
+    DIM stFW AS STRING = "m.Width"
+    DIM stFH AS STRING = "m.Height"
+    IF formChromed(f) THEN stFW = "m._formW"
+    IF formChromed(f) THEN stFH = "m._formH"
+    DIM stI AS INTEGER
+    FOR stI = 0 TO n - 1
+        DIM stW AS DesignWidget = f.Widgets[stI]
+        IF stW.Parent = "" AND stW.Kind = "ListBox" THEN
+            DIM stVS AS BOOLEAN = (stW.Anchors = "stretch-v" OR stW.Anchors = "stretch")
+            DIM stHS AS BOOLEAN = (stW.Anchors = "stretch-h" OR stW.Anchors = "stretch")
+            IF stVS THEN
+                DIM stIH AS INTEGER = stW.H
+                IF widgetFramed(stW) THEN stIH = stW.H - 2
+                IF stIH < 1 THEN stIH = 1
+                DIM stVH AS STRING = "_" + stW.Name + "LH"
+                s = s + "        DIM " + stVH + " AS INTEGER = " + strconv.Itoa(stIH) + " + (" + stFH + " - " + strconv.Itoa(formRefH(f)) + ")\n"
+                s = s + "        IF " + stVH + " < 1 THEN " + stVH + " = 1\n"
+                s = s + "        m." + stW.Name + compSuffix(stW.Kind) + ".SetHeight(" + stVH + ")\n"
+            END IF
+            IF stHS THEN
+                DIM stIW AS INTEGER = stW.W
+                IF widgetFramed(stW) THEN stIW = stW.W - 2
+                IF stIW < 1 THEN stIW = 1
+                DIM stVW AS STRING = "_" + stW.Name + "LW"
+                s = s + "        DIM " + stVW + " AS INTEGER = " + strconv.Itoa(stIW) + " + (" + stFW + " - " + strconv.Itoa(formRefW(f)) + ")\n"
+                s = s + "        IF " + stVW + " < 1 THEN " + stVW + " = 1\n"
+                s = s + "        m." + stW.Name + compSuffix(stW.Kind) + ".SetWidth(" + stVW + ")\n"
+            END IF
+        END IF
+    NEXT stI
     s = s + "        Terminal_Resize(m.Width, m.Height)\n"
     s = s + "        RETURN m, NIL\n"
     s = s + "    END IF\n"
@@ -3009,10 +3090,28 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' before the View is returned. portedSfx records each layer var suffix.
     DIM layerCode AS STRING = ""
     DIM portedSfx AS []STRING
+    ' VB-style edge anchoring: a right/bottom-anchored widget shifts by how
+    ' much the live form exceeds the design reference, keeping its corner
+    ' margin constant. The form width/height variable is m._formW/_formH for
+    ' chromed forms, else the View's clamped w/h.
+    DIM anchored AS BOOLEAN = formChromed(f)
+    DIM fwVar AS STRING = "w"
+    DIM fhVar AS STRING = "h"
+    IF anchored THEN fwVar = "m._formW"
+    IF anchored THEN fhVar = "m._formH"
+    DIM refW AS INTEGER = formRefW(f)
+    DIM refH AS INTEGER = formRefH(f)
     FOR i = 0 TO n - 1
         DIM wv  AS DesignWidget = f.Widgets[i]
         DIM xs  AS STRING = strconv.Itoa(wv.X)
         DIM ys  AS STRING = strconv.Itoa(wv.Y)
+        ' Anchor to right / bottom: X (or Y) follows the live form edge.
+        IF wv.Anchors = "top-right" OR wv.Anchors = "bottom-right" THEN
+            xs = strconv.Itoa(wv.X) + " + (" + fwVar + " - " + strconv.Itoa(refW) + ")"
+        END IF
+        IF wv.Anchors = "bottom-left" OR wv.Anchors = "bottom-right" THEN
+            ys = strconv.Itoa(wv.Y) + " + (" + fhVar + " - " + strconv.Itoa(refH) + ")"
+        END IF
         DIM sfx AS STRING = strconv.Itoa(i)
 
         _ = xs
@@ -3143,9 +3242,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    IF _e <> NIL THEN RETURN\n"
     ' wt --size c,r --title T <self>  — --size and --title are Windows
     ' Terminal's own options (window size + tab/window title), so they precede
-    ' the program to run. The title is the form's Title (TODO: promote to a
-    ' dedicated form/project property).
-    DIM wtTitle AS STRING = f.Title
+    ' the program to run. The window title is the form's dedicated WinTitle
+    ' property, falling back to the visual Title (caption) and then the Name.
+    DIM wtTitle AS STRING = f.WinTitle
+    IF wtTitle = "" THEN wtTitle = f.Title
     IF wtTitle = "" THEN wtTitle = f.Name
     s = s + "    DIM _c AS POINTER TO exec.Cmd = exec.Command(_wt, " + qt + "--size" + qt + ", " + qt + tSize + qt + ", " + qt + "--title" + qt + ", " + qt + escapeForDBString(wtTitle) + qt + ", _self)\n"
     s = s + "    _c.Env = APPEND(os.Environ(), " + qt + "DBTUI_IN_TERMINAL=1" + qt + ")\n"

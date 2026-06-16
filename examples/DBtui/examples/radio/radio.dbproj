@@ -180,7 +180,7 @@
           "Text": "ListBox",
           "X": 2,
           "Y": 3,
-          "W": 72,
+          "W": 84,
           "H": 17,
           "Items": [
             "Press  Search  (by name) or  Top 100  to load MP3 stations.",
@@ -208,7 +208,8 @@
           "Caption": "",
           "CaptionJust": "",
           "HScroll": "",
-          "VScroll": ""
+          "VScroll": "",
+          "Anchors": "stretch"
         },
         {
           "Kind": "Button",
@@ -241,7 +242,8 @@
           "Caption": "",
           "CaptionJust": "",
           "HScroll": "",
-          "VScroll": ""
+          "VScroll": "",
+          "Anchors": "bottom-left"
         },
         {
           "Kind": "Button",
@@ -274,7 +276,8 @@
           "Caption": "",
           "CaptionJust": "",
           "HScroll": "",
-          "VScroll": ""
+          "VScroll": "",
+          "Anchors": "bottom-left"
         },
         {
           "Kind": "Label",
@@ -307,7 +310,8 @@
           "Caption": "",
           "CaptionJust": "",
           "HScroll": "",
-          "VScroll": ""
+          "VScroll": "",
+          "Anchors": "bottom-left"
         },
         {
           "Kind": "StatusBar",
@@ -343,18 +347,20 @@
           "Caption": "",
           "CaptionJust": "",
           "HScroll": "",
-          "VScroll": ""
+          "VScroll": "",
+          "Anchors": "bottom-left"
         }
       ],
       "FgColor": "",
       "BgColor": "",
       "BorderStyle": "normal",
       "CornerStyle": "rounded",
-      "WExpr": "88",
-      "HExpr": "24",
+      "WExpr": "MAX_WIDTH",
+      "HExpr": "MAX_HEIGHT",
       "ShowMin": true,
       "ShowMax": true,
-      "ShowClose": true
+      "ShowClose": true,
+      "WinTitle": ""
     }
   ]
 }
