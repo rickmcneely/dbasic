@@ -116,6 +116,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         _ = mw
         RETURN m, NIL
     END IF
+    DIM pst AS tea.PasteMsg
+    DIM pstOk AS BOOLEAN
+    pst, pstOk = msg.(tea.PasteMsg)
+    IF pstOk THEN
+        Form_Paste(pst.Content)
+        RETURN m, NIL
+    END IF
     DIM k AS tea.KeyPressMsg
     DIM kOk AS BOOLEAN
     k, kOk = msg.(tea.KeyPressMsg)
@@ -674,6 +681,23 @@ SUB clipCut()
     END IF
 END SUB
 
+' pasteString — splice text in at the cursor (line endings normalized).
+' Shared by clipPaste (^Shift+V) and Form_Paste (bracketed terminal paste).
+SUB pasteString(txt AS STRING)
+    IF txt = "" THEN
+        gMessage = "Nothing to paste"
+        RETURN
+    END IF
+    txt = strings.ReplaceAll(txt, Chr(13) + Chr(10), Chr(10))
+    txt = strings.ReplaceAll(txt, Chr(13), Chr(10))
+    DIM doc AS STRING = strings.Join(gLines, Chr(10))
+    DIM d AS INTEGER = offsetOf(gRow, gCol)
+    setDoc(Left(doc, d) + txt + Right(doc, LEN(doc) - d))
+    cursorFromOffset(d + LEN(txt))
+    gModified = TRUE
+    gMessage = fmt.Sprintf("Pasted %d chars", LEN(txt))
+END SUB
+
 ' clipPaste — Ctrl+Shift+V: OS clipboard -> document at the cursor.
 SUB clipPaste()
     DIM txt AS STRING
@@ -684,15 +708,20 @@ SUB clipPaste()
         gMessage = "Clipboard is empty"
         RETURN
     END IF
-    ' Normalize line endings pasted from other applications.
-    txt = strings.ReplaceAll(txt, Chr(13) + Chr(10), Chr(10))
-    txt = strings.ReplaceAll(txt, Chr(13), Chr(10))
-    DIM doc AS STRING = strings.Join(gLines, Chr(10))
-    DIM d AS INTEGER = offsetOf(gRow, gCol)
-    setDoc(Left(doc, d) + txt + Right(doc, LEN(doc) - d))
-    cursorFromOffset(d + LEN(txt))
-    gModified = TRUE
-    gMessage = fmt.Sprintf("Pasted %d chars", LEN(txt))
+    pasteString(txt)
+END SUB
+
+' Form_Paste — a bracketed paste from the terminal (this is what fires when
+' the terminal handles Ctrl+Shift+V itself and sends the text as a paste
+' event rather than a key). Route it like a paste, or into an open prompt.
+SUB Form_Paste(txt AS STRING)
+    IF gPromptMode <> "" THEN
+        gPromptText = gPromptText + strings.ReplaceAll(strings.ReplaceAll(txt, Chr(13), ""), Chr(10), "")
+        RETURN
+    END IF
+    IF gMode <> "edit" THEN RETURN
+    IF gMenuOpen >= 0 THEN RETURN
+    pasteString(txt)
 END SUB
 
 ' ==========================================================================
