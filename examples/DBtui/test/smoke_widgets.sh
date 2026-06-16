@@ -189,9 +189,16 @@ case_run "$SW" "starword ^Q quick menu" "ctrl+q,hold:0.4" \
 # Block copy: 'abc' -> mark whole line -> ^KC copies it at the end -> abcabc.
 case_run "$SW" "starword block copy" "a,b,c,ctrl+q,s,ctrl+k,b,ctrl+q,d,ctrl+k,k,ctrl+k,c,hold:0.4" \
     --want "abcabc"
+# Pull-down menu bar (WordStar 7 Alt+letter keybindings).
+case_run "$SW" "starword menu bar renders" "hold:0.4" \
+    --want "File" --want "Edit" --want "Utilities" --want "Help"
+case_run "$SW" "starword Alt+E opens Edit dropdown" "alt+e,hold:0.4" \
+    --want "Mark Block Begin" --want "Find and Replace"
+case_run "$SW" "starword Alt+U,W = Word Count" "h,i,space,t,h,e,r,e,alt+u,w,hold:0.4" \
+    --want "Words: 2"
 
 if [ "$fail" -ne 0 ]; then
     echo "RESULT: FAIL"
     exit 1
 fi
-echo "RESULT: PASS (27 cases, 7 programs)"
+echo "RESULT: PASS (30 cases, 7 programs)"

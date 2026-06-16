@@ -335,6 +335,10 @@ DIM gModified AS BOOLEAN
 DIM gPrefix AS STRING        ' pending prefix: "" | "K" | "Q" | "O" | "P" | "J"
 DIM gMessage AS STRING       ' transient status message on the message line
 
+' --- pull-down menu bar (WordStar 7 keybindings: Alt+F/E/V/I/S/L/U/H) ------
+DIM gMenuOpen AS INTEGER = 0 - 1   ' -1 = closed; else index of the open menu
+DIM gMenuSel AS INTEGER            ' highlighted item in the open menu
+
 ' --- block markers (row/col; -1 = unset) ----------------------------------
 DIM gBBRow AS INTEGER = 0 - 1
 DIM gBBCol AS INTEGER
@@ -695,6 +699,12 @@ END FUNCTION
 ' cursor cell and any block cells highlighted. Uses run-length batching so a
 ' plain row costs a single styled Render.
 FUNCTION renderTextRow(rowIdx AS INTEGER, w AS INTEGER, baseSt AS lipgloss.Style, cur AS lipgloss.Style, blk AS lipgloss.Style) AS STRING
+    RETURN renderTextRange(rowIdx, 0, w, baseSt, cur, blk)
+END FUNCTION
+
+' renderTextRange — render display cells [fromCell, fromCell+count) of a
+' document row (used to splice a dropdown box over part of a text row).
+FUNCTION renderTextRange(rowIdx AS INTEGER, fromCell AS INTEGER, count AS INTEGER, baseSt AS lipgloss.Style, cur AS lipgloss.Style, blk AS lipgloss.Style) AS STRING
     DIM line AS STRING = ""
     IF rowIdx >= 0 AND rowIdx <= lastRow() THEN line = gLines[rowIdx]
     DIM out AS STRING = ""
@@ -703,8 +713,12 @@ FUNCTION renderTextRow(rowIdx AS INTEGER, w AS INTEGER, baseSt AS lipgloss.Style
     ' Walk one rune per display cell (snapped to a rune boundary) so a
     ' multibyte glyph occupies a single cell and is highlighted as a unit.
     DIM pos AS INTEGER = snapToRune(line, gLeft)
+    DIM skip AS INTEGER
+    FOR skip = 1 TO fromCell
+        IF pos < LEN(line) THEN pos = nextRuneStart(line, pos)
+    NEXT skip
     DIM i AS INTEGER
-    FOR i = 0 TO w - 1
+    FOR i = 0 TO count - 1
         DIM ch AS STRING = " "
         DIM rl AS INTEGER = 1
         IF pos < LEN(line) THEN
@@ -765,14 +779,289 @@ FUNCTION prefixMenuLines() AS []STRING
     RETURN xs
 END FUNCTION
 
+' ==========================================================================
+' Pull-down menu bar (WordStar 7 keybindings)
+' ==========================================================================
+
+' The eight editing-screen menus, opened with Alt+<first letter>.
+FUNCTION menuCount() AS INTEGER
+    RETURN 8
+END FUNCTION
+
+FUNCTION menuTitle(i AS INTEGER) AS STRING
+    SELECT CASE i
+    CASE 0
+        RETURN "File"
+    CASE 1
+        RETURN "Edit"
+    CASE 2
+        RETURN "View"
+    CASE 3
+        RETURN "Insert"
+    CASE 4
+        RETURN "Style"
+    CASE 5
+        RETURN "Layout"
+    CASE 6
+        RETURN "Utilities"
+    CASE 7
+        RETURN "Help"
+    END SELECT
+    RETURN ""
+END FUNCTION
+
+' menuTitleX — starting column of menu i in the bar (1 leading space, then
+' each title followed by two spaces).
+FUNCTION menuTitleX(i AS INTEGER) AS INTEGER
+    DIM x AS INTEGER = 1
+    DIM j AS INTEGER
+    FOR j = 0 TO i - 1
+        x = x + LEN(menuTitle(j)) + 2
+    NEXT j
+    RETURN x
+END FUNCTION
+
+' menuItems — items for menu i, each encoded "hotkey|label|accelerator".
+FUNCTION menuItems(i AS INTEGER) AS []STRING
+    DIM xs AS []STRING
+    SELECT CASE i
+    CASE 0
+        xs = APPEND(xs, "O|Open/Switch|Alt+F O")
+        xs = APPEND(xs, "S|Save|Alt+F S")
+        xs = APPEND(xs, "A|Save As|Alt+F A")
+        xs = APPEND(xs, "P|Print|Alt+F P")
+        xs = APPEND(xs, "V|Change Dir|Alt+F V")
+        xs = APPEND(xs, "R|Run DOS|Alt+F R")
+        xs = APPEND(xs, "X|Exit StarWord|Alt+F X")
+    CASE 1
+        xs = APPEND(xs, "U|Undo|Alt+E U")
+        xs = APPEND(xs, "B|Mark Block Begin|Alt+E B")
+        xs = APPEND(xs, "E|Mark Block End|Alt+E E")
+        xs = APPEND(xs, "V|Move Block|Alt+E V")
+        xs = APPEND(xs, "C|Copy Block|Alt+E C")
+        xs = APPEND(xs, "D|Delete Block|Alt+E D")
+        xs = APPEND(xs, "F|Find|Alt+E F")
+        xs = APPEND(xs, "R|Find and Replace|Alt+E R")
+        xs = APPEND(xs, "N|Next Find|Alt+E X")
+    CASE 2
+        xs = APPEND(xs, "B|Block Highlighting|Alt+V B")
+        xs = APPEND(xs, "C|Command Tags|Alt+V C")
+        xs = APPEND(xs, "P|Preview|Alt+V P")
+        xs = APPEND(xs, "S|Screen Settings|Alt+V S")
+    CASE 3
+        xs = APPEND(xs, "P|Page Break|Alt+I P")
+        xs = APPEND(xs, "T|Todays Date|Alt+I T")
+        xs = APPEND(xs, "F|File|Alt+I F")
+    CASE 4
+        xs = APPEND(xs, "B|Bold|Alt+S B")
+        xs = APPEND(xs, "I|Italic|Alt+S I")
+        xs = APPEND(xs, "U|Underline|Alt+S U")
+        xs = APPEND(xs, "C|Convert Case|Alt+S C")
+    CASE 5
+        xs = APPEND(xs, "C|Center Line|Alt+L C")
+        xs = APPEND(xs, "R|Ruler Line|Alt+L R")
+        xs = APPEND(xs, "P|Page|Alt+L P")
+    CASE 6
+        xs = APPEND(xs, "W|Word Count|Alt+U W")
+        xs = APPEND(xs, "C|Calculator|Alt+U C")
+        xs = APPEND(xs, "M|Macros|Alt+U M")
+    CASE 7
+        xs = APPEND(xs, "H|Help|Alt+H H")
+        xs = APPEND(xs, "C|Change Help Level|Alt+H C")
+    END SELECT
+    RETURN xs
+END FUNCTION
+
+FUNCTION itemField(item AS STRING, n AS INTEGER) AS STRING
+    DIM parts AS []STRING = strings.Split(item, "|")
+    IF n < LEN(parts) THEN RETURN parts[n]
+    RETURN ""
+END FUNCTION
+
+' menuBoxWidth — inner content width of menu i's dropdown.
+FUNCTION menuBoxWidth(i AS INTEGER) AS INTEGER
+    DIM items AS []STRING = menuItems(i)
+    DIM mw AS INTEGER = 8
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(items) - 1
+        DIM lbl AS STRING = itemField(items[k], 1)
+        DIM acc AS STRING = itemField(items[k], 2)
+        DIM lw AS INTEGER = LEN(lbl) + 3 + LEN(acc)
+        IF lw > mw THEN mw = lw
+    NEXT k
+    RETURN mw
+END FUNCTION
+
+' renderMenuBar — the top row: titles with the Alt hotkey letter tinted, the
+' open menu reverse-highlighted.
+FUNCTION renderMenuBar(w AS INTEGER) AS STRING
+    DIM barStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cfe0ff")).Background(lipgloss.Color("#21305c"))
+    DIM hotStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffd166")).Background(lipgloss.Color("#21305c")).Bold(TRUE)
+    DIM actStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
+    DIM out AS STRING = barStyle.Render(" ")
+    DIM i AS INTEGER
+    FOR i = 0 TO menuCount() - 1
+        DIM t AS STRING = menuTitle(i)
+        IF i = gMenuOpen THEN
+            out = out + actStyle.Render(t)
+        ELSE
+            out = out + hotStyle.Render(Left(t, 1)) + barStyle.Render(Right(t, LEN(t) - 1))
+        END IF
+        out = out + barStyle.Render("  ")
+    NEXT i
+    ' Pad the rest of the bar.
+    DIM used AS INTEGER = menuTitleX(menuCount() - 1) + LEN(menuTitle(menuCount() - 1)) + 2
+    IF used < w THEN out = out + barStyle.Render(strings.Repeat(" ", w - used))
+    RETURN out
+END FUNCTION
+
+' menuBoxLine — one styled line of the open dropdown, width boxW (= inner+4).
+' lineIdx 0 = top border, 1..n = items, n+1 = bottom border.
+FUNCTION menuBoxLine(menuIdx AS INTEGER, lineIdx AS INTEGER, inner AS INTEGER, selIdx AS INTEGER) AS STRING
+    DIM boxStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9cc1ff")).Background(lipgloss.Color("#14336e"))
+    DIM txtStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#e6eeff")).Background(lipgloss.Color("#14336e"))
+    DIM hotStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffd166")).Background(lipgloss.Color("#14336e")).Bold(TRUE)
+    DIM selStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#8ad0ff")).Bold(TRUE)
+    DIM items AS []STRING = menuItems(menuIdx)
+    DIM n AS INTEGER = LEN(items)
+    IF lineIdx = 0 THEN
+        RETURN boxStyle.Render("╭" + strings.Repeat("─", inner + 2) + "╮")
+    END IF
+    IF lineIdx = n + 1 THEN
+        RETURN boxStyle.Render("╰" + strings.Repeat("─", inner + 2) + "╯")
+    END IF
+    DIM it AS STRING = items[lineIdx - 1]
+    DIM lbl AS STRING = itemField(it, 1)
+    DIM acc AS STRING = itemField(it, 2)
+    ' content: label, spaces, accelerator (right-aligned) within `inner`.
+    DIM gap AS INTEGER = inner - LEN(lbl) - LEN(acc)
+    IF gap < 1 THEN gap = 1
+    DIM content AS STRING = lbl + strings.Repeat(" ", gap) + acc
+    content = swFit(content, inner)
+    IF lineIdx - 1 = selIdx THEN
+        RETURN boxStyle.Render("│") + selStyle.Render(" " + content + " ") + boxStyle.Render("│")
+    END IF
+    ' Tint the hotkey (first matching letter of the label) amber.
+    DIM hk AS STRING = itemField(it, 0)
+    DIM hpos AS INTEGER = strings.Index(content, hk)
+    DIM mid AS STRING = txtStyle.Render(content)
+    IF hpos >= 0 THEN
+        mid = txtStyle.Render(Left(content, hpos)) + hotStyle.Render(hk) + txtStyle.Render(Right(content, LEN(content) - hpos - 1))
+    END IF
+    RETURN boxStyle.Render("│") + txtStyle.Render(" ") + mid + txtStyle.Render(" ") + boxStyle.Render("│")
+END FUNCTION
+
+' menuAtX — index of the bar title under column x (-1 if none).
+FUNCTION menuAtX(x AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO menuCount() - 1
+        DIM sx AS INTEGER = menuTitleX(i)
+        IF x >= sx AND x < sx + LEN(menuTitle(i)) THEN RETURN i
+    NEXT i
+    RETURN 0 - 1
+END FUNCTION
+
+' doMenuItem — perform the action for (menuIdx, hotkey). Unimplemented WordStar
+' features report a friendly message; the rest drive StarWord's real commands.
+SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
+    DIM label AS STRING = ""
+    DIM items AS []STRING = menuItems(menuIdx)
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(items) - 1
+        IF itemField(items[k], 0) = hk THEN label = itemField(items[k], 1)
+    NEXT k
+    gMenuOpen = 0 - 1
+    IF menuIdx = 0 THEN
+        IF hk = "S" THEN
+            saveFile()
+        ELSEIF hk = "A" THEN
+            gPromptMode = "saveas"
+            gPromptLabel = "Save as: "
+            gPromptText = ""
+        ELSEIF hk = "O" THEN
+            gPromptMode = "open"
+            gPromptLabel = "Open file: "
+            gPromptText = ""
+        ELSEIF hk = "X" THEN
+            saveFile()
+            RequestQuit()
+        ELSE
+            gMessage = label + " — coming in a later StarWord build"
+        END IF
+    ELSEIF menuIdx = 1 THEN
+        IF hk = "B" THEN
+            gBBRow = gRow
+            gBBCol = gCol
+            gBlockShow = TRUE
+            gMessage = "Block begin marked"
+        ELSEIF hk = "E" THEN
+            gBERow = gRow
+            gBECol = gCol
+            gBlockShow = TRUE
+            gMessage = "Block end marked"
+        ELSEIF hk = "V" THEN
+            blockMoveTo(gRow, gCol)
+        ELSEIF hk = "C" THEN
+            blockCopyTo(gRow, gCol)
+        ELSEIF hk = "D" THEN
+            blockDelete()
+        ELSEIF hk = "F" THEN
+            gPromptMode = "find"
+            gPromptLabel = "Find: "
+            gPromptText = ""
+        ELSEIF hk = "R" THEN
+            gPromptMode = "rfind"
+            gPromptLabel = "Replace - find: "
+            gPromptText = ""
+        ELSEIF hk = "N" THEN
+            doFindNext()
+        ELSE
+            gMessage = label + " — coming in a later StarWord build"
+        END IF
+    ELSEIF menuIdx = 2 THEN
+        IF hk = "B" THEN
+            gBlockShow = NOT gBlockShow
+            gMessage = "Block highlighting toggled"
+        ELSE
+            gMessage = label + " — coming in a later StarWord build"
+        END IF
+    ELSEIF menuIdx = 6 THEN
+        IF hk = "W" THEN
+            wordCount()
+        ELSE
+            gMessage = label + " — coming in a later StarWord build"
+        END IF
+    ELSEIF menuIdx = 7 THEN
+        IF hk = "H" THEN
+            gPrefix = "J"
+        ELSE
+            gMessage = label + " — coming in a later StarWord build"
+        END IF
+    ELSE
+        gMessage = label + " — coming in a later StarWord build"
+    END IF
+END SUB
+
+' wordCount — count words / lines / characters (runes) in the document.
+SUB wordCount()
+    DIM words AS INTEGER = 0
+    DIM chars AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO lastRow()
+        words = words + LEN(strings.Fields(gLines[i]))
+        chars = chars + runeIndexOf(gLines[i], LEN(gLines[i]))
+    NEXT i
+    gMessage = fmt.Sprintf("Words: %d    Lines: %d    Characters: %d", words, LEN(gLines), chars)
+END SUB
+
 FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     gW = w
     gH = h
     clampCursor()
 
-    ' Text-area geometry: rows 2..h-2 (count = h-3); status=0, ruler=1, msg=h-1.
-    DIM txTop AS INTEGER = 2
-    DIM txRows AS INTEGER = h - 3
+    ' Layout: menubar=0, status=1, ruler=2, text=3..h-2, message=h-1.
+    DIM txTop AS INTEGER = 3
+    DIM txRows AS INTEGER = h - 4
     IF txRows < 1 THEN txRows = 1
 
     ' Keep the cursor on screen (both axes).
@@ -797,7 +1086,10 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
 
     DIM rows AS []STRING
 
-    ' --- row 0: status line ---
+    ' --- row 0: pull-down menu bar ---
+    rows = APPEND(rows, renderMenuBar(w))
+
+    ' --- row 1: status line ---
     DIM modeStr AS STRING = "OVERTYPE"
     IF gInsert THEN modeStr = "INSERT"
     DIM encStr AS STRING = "WS/ASCII"
@@ -806,7 +1098,8 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     IF gModified THEN modFlag = "*"
     DIM colNum AS INTEGER = runeIndexOf(curLine(), gCol) + 1
     DIM status AS STRING = " StarWord   " + modFlag + gFileName + "    Line " + fmt.Sprintf("%d", gRow + 1) + "  Col " + fmt.Sprintf("%d", colNum) + "    " + modeStr + "    " + encStr
-    rows = APPEND(rows, stStyle.Render(swFit(status, w)))
+    DIM statusFit AS STRING = swFit(status, w)
+    rows = APPEND(rows, stStyle.Render(statusFit))
 
     ' --- row 1: ruler line ---
     DIM ruler AS STRING = ""
@@ -863,14 +1156,75 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
         NEXT mi
     END IF
 
+    ' --- open pull-down: splice its box over rows 1.. under the menu title ---
+    IF gMenuOpen >= 0 THEN
+        DIM inner AS INTEGER = menuBoxWidth(gMenuOpen)
+        DIM boxW AS INTEGER = inner + 4
+        DIM boxX AS INTEGER = menuTitleX(gMenuOpen)
+        IF boxX + boxW > w THEN boxX = w - boxW
+        IF boxX < 0 THEN boxX = 0
+        DIM nItems AS INTEGER = LEN(menuItems(gMenuOpen))
+        DIM li AS INTEGER
+        FOR li = 0 TO nItems + 1
+            DIM mr AS INTEGER = 1 + li
+            IF mr <= h - 2 THEN
+                DIM boxLine AS STRING = menuBoxLine(gMenuOpen, li, inner, gMenuSel)
+                DIM leftPart AS STRING = ""
+                DIM rightPart AS STRING = ""
+                DIM rEnd AS INTEGER = boxX + boxW
+                IF mr = 1 THEN
+                    leftPart = stStyle.Render(Left(statusFit, boxX))
+                    rightPart = stStyle.Render(Mid(statusFit, rEnd + 1, w - rEnd))
+                ELSEIF mr = 2 THEN
+                    leftPart = ruStyle.Render(Left(ruler, boxX))
+                    rightPart = ruStyle.Render(Mid(ruler, rEnd + 1, w - rEnd))
+                ELSE
+                    DIM docRow AS INTEGER = gTop + (mr - txTop)
+                    leftPart = renderTextRange(docRow, 0, boxX, txStyle, curStyle, blkStyle)
+                    rightPart = renderTextRange(docRow, rEnd, w - rEnd, txStyle, curStyle, blkStyle)
+                END IF
+                rows[mr] = leftPart + boxLine + rightPart
+            END IF
+        NEXT li
+    END IF
+
     RETURN strings.Join(rows, Chr(10))
 END FUNCTION
 
-' Left-click inside canvas sw — drop the cursor at the clicked text cell.
+' Left-click inside canvas sw — drive the menu bar, an open dropdown, or
+' (otherwise) drop the cursor at the clicked text cell.
 SUB sw_Click(x AS INTEGER, y AS INTEGER)
+    ' Click the menu bar (row 0): open / switch to that menu.
+    IF y = 0 THEN
+        DIM mhit AS INTEGER = menuAtX(x)
+        IF mhit >= 0 THEN
+            gMenuOpen = mhit
+            gMenuSel = 0
+        ELSE
+            gMenuOpen = 0 - 1
+        END IF
+        RETURN
+    END IF
+    ' With a dropdown open: a click inside it selects an item; outside closes.
+    IF gMenuOpen >= 0 THEN
+        DIM inner AS INTEGER = menuBoxWidth(gMenuOpen)
+        DIM boxW AS INTEGER = inner + 4
+        DIM boxX AS INTEGER = menuTitleX(gMenuOpen)
+        IF boxX + boxW > gW THEN boxX = gW - boxW
+        IF boxX < 0 THEN boxX = 0
+        DIM nItems AS INTEGER = LEN(menuItems(gMenuOpen))
+        ' Item rows are canvas rows 2 .. 1+nItems (row 1 is the top border).
+        IF x >= boxX AND x < boxX + boxW AND y >= 2 AND y <= 1 + nItems THEN
+            DIM idx AS INTEGER = y - 2
+            doMenuItem(gMenuOpen, itemField(menuItems(gMenuOpen)[idx], 0))
+        ELSE
+            gMenuOpen = 0 - 1
+        END IF
+        RETURN
+    END IF
     IF gPrefix <> "" OR gPromptMode <> "" THEN RETURN
-    IF y < 2 OR y > gH - 2 THEN RETURN
-    gRow = gTop + (y - 2)
+    IF y < 3 OR y > gH - 2 THEN RETURN
+    gRow = gTop + (y - 3)
     IF gRow > lastRow() THEN gRow = lastRow()
     IF gRow < 0 THEN gRow = 0
     ' Map the clicked display cell x to a rune boundary: advance x runes from
@@ -1238,6 +1592,8 @@ SUB handlePrompt(key AS STRING)
             gFileName = txt
             gIsUnicode = detectUnicode(txt)
             saveFile()
+        ELSEIF mode = "open" THEN
+            IF txt <> "" THEN loadFile(txt)
         END IF
         RETURN
     END IF
@@ -1249,14 +1605,90 @@ SUB handlePrompt(key AS STRING)
         gPromptText = gPromptText + " "
         RETURN
     END IF
-    IF LEN(key) = 1 THEN gPromptText = gPromptText + key
+    IF isTextKey(key) THEN gPromptText = gPromptText + key
 END SUB
 
 ' Fired for every key press. StarWord owns the whole keyboard, so we
 ' ConsumeKey() on every key (this also lets ^C be page-down, not quit).
+' altMenuIndex — map "alt+f"/"alt+e"/… to a menu index, else -1.
+FUNCTION altMenuIndex(key AS STRING) AS INTEGER
+    IF NOT strings.HasPrefix(key, "alt+") THEN RETURN 0 - 1
+    DIM letter AS STRING = UCase(Right(key, LEN(key) - 4))
+    DIM i AS INTEGER
+    FOR i = 0 TO menuCount() - 1
+        IF UCase(Left(menuTitle(i), 1)) = letter THEN RETURN i
+    NEXT i
+    RETURN 0 - 1
+END FUNCTION
+
+' handleMenuKey — navigate the open pull-down (arrows, Enter, hotkey letter,
+' Alt+letter to switch menus, Esc to close).
+SUB handleMenuKey(key AS STRING)
+    DIM n AS INTEGER = LEN(menuItems(gMenuOpen))
+    IF key = "esc" THEN
+        gMenuOpen = 0 - 1
+        RETURN
+    END IF
+    IF key = "up" THEN
+        gMenuSel = (gMenuSel - 1 + n) MOD n
+        RETURN
+    END IF
+    IF key = "down" THEN
+        gMenuSel = (gMenuSel + 1) MOD n
+        RETURN
+    END IF
+    IF key = "left" THEN
+        gMenuOpen = (gMenuOpen - 1 + menuCount()) MOD menuCount()
+        gMenuSel = 0
+        RETURN
+    END IF
+    IF key = "right" THEN
+        gMenuOpen = (gMenuOpen + 1) MOD menuCount()
+        gMenuSel = 0
+        RETURN
+    END IF
+    IF key = "enter" THEN
+        doMenuItem(gMenuOpen, itemField(menuItems(gMenuOpen)[gMenuSel], 0))
+        RETURN
+    END IF
+    ' Alt+letter switches directly to another menu.
+    DIM am AS INTEGER = altMenuIndex(key)
+    IF am >= 0 THEN
+        gMenuOpen = am
+        gMenuSel = 0
+        RETURN
+    END IF
+    ' A bare letter selects the item with that hotkey.
+    IF LEN(key) = 1 THEN
+        DIM up AS STRING = UCase(key)
+        DIM items AS []STRING = menuItems(gMenuOpen)
+        DIM k AS INTEGER
+        FOR k = 0 TO LEN(items) - 1
+            IF itemField(items[k], 0) = up THEN
+                doMenuItem(gMenuOpen, up)
+                RETURN
+            END IF
+        NEXT k
+    END IF
+END SUB
+
 SUB Form_Key(key AS STRING)
     ConsumeKey()
     gMessage = ""
+
+    ' An open pull-down menu is modal — it owns the keyboard.
+    IF gMenuOpen >= 0 THEN
+        handleMenuKey(key)
+        RETURN
+    END IF
+
+    ' Alt+<letter> opens the matching pull-down (WordStar keybinding).
+    DIM amOpen AS INTEGER = altMenuIndex(key)
+    IF amOpen >= 0 THEN
+        gMenuOpen = amOpen
+        gMenuSel = 0
+        RETURN
+    END IF
 
     ' Modal prompt takes priority.
     IF gPromptMode <> "" THEN

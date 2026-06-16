@@ -56,6 +56,10 @@ KEYMAP = {"tab": "\t", "up": "\x1b[A", "down": "\x1b[B", "left": "\x1b[D",
           "alt+left": "\x1b[1;3D", "alt+right": "\x1b[1;3C",
           "alt+shift+up": "\x1b[1;4A", "alt+shift+down": "\x1b[1;4B",
           "alt+shift+left": "\x1b[1;4D", "alt+shift+right": "\x1b[1;4C"}
+# Alt+<letter> = ESC + letter (xterm meta). bubbletea reports these as
+# "alt+a".."alt+z" — used by menu-bar mnemonics, etc.
+for _c in "abcdefghijklmnopqrstuvwxyz":
+    KEYMAP.setdefault("alt+" + _c, "\x1b" + _c)
 
 
 def run(prog, keyspec):
