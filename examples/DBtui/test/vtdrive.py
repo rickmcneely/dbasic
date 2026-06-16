@@ -30,6 +30,13 @@ COLS, ROWS = 100, 40
 KEYMAP = {"tab": "\t", "up": "\x1b[A", "down": "\x1b[B", "left": "\x1b[D",
           "right": "\x1b[C", "enter": "\r", "space": " ", "esc": "\x1b",
           "backspace": "\x7f", "bs": "\x7f",
+          # Editing/navigation keys (xterm CSI ~ sequences).
+          "home": "\x1b[H", "end": "\x1b[F", "delete": "\x1b[3~",
+          "del": "\x1b[3~", "pgup": "\x1b[5~", "pgdown": "\x1b[6~",
+          "pgdn": "\x1b[6~",
+          # Common Ctrl+<letter> chords (control byte = letter - '@').
+          "ctrl+a": "\x01", "ctrl+d": "\x04", "ctrl+e": "\x05",
+          "ctrl+k": "\x0b", "ctrl+s": "\x13",
           # Function keys (xterm). F1-F4 use SS3; F5+ use CSI ~ sequences.
           "f1": "\x1bOP", "f2": "\x1bOQ", "f3": "\x1bOR", "f4": "\x1bOS",
           "f5": "\x1b[15~", "f6": "\x1b[17~", "f7": "\x1b[18~",
@@ -49,6 +56,14 @@ def run(prog, keyspec):
     pid, fd = pty.fork()
     if pid == 0:
         os.environ["TERM"] = "xterm-256color"
+        # Disable XON/XOFF flow control so Ctrl+S (\x13) / Ctrl+Q (\x11)
+        # reach the program instead of being swallowed by the tty driver.
+        try:
+            attrs = termios.tcgetattr(0)
+            attrs[0] &= ~(termios.IXON | termios.IXOFF)
+            termios.tcsetattr(0, termios.TCSANOW, attrs)
+        except Exception:
+            pass
         os.execvp(prog, [prog])
         os._exit(127)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))

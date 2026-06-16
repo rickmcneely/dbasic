@@ -10,6 +10,16 @@ generator" and "arbitrary TUI app." This doc is the live plan; pick up here.
 `1e38611`. These were the real framework blockers; #2/#4/#5 are now buildable
 *on* this foundation rather than being separate frameworks.
 
+**#5 done — Editor on a Canvas.** `examples/editor_demo/` is a complete
+multi-line text editor built on ONE Canvas + `Form_Key`/`cv_Click`: a
+line-number gutter, reverse-video cursor, insert/move (arrows/home/end/pgup/
+pgdn), Enter-split / Backspace-join / Delete-pull-up, vertical + horizontal
+scroll that keeps the cursor in view, click-to-place, and a Ctrl+S status
+bar. In both regression suites (golden #9; smoke: 5 editor cases). This proves
+the IDE's own editor (`internal/pad.dbas`) is reproducible in generated code.
+Harness fix: `test/vtdrive.py` gained home/end/delete/pgup/pgdown +
+Ctrl+<letter> keys and disables pty XON/XOFF so Ctrl+S reaches the program.
+
 - **Canvas widget** (`internal/widgets/canvas.dbas` + wiring in `internal/form.dbas`):
   a `W×H` rectangle the program draws via `FUNCTION <Name>_Render(w, h) AS STRING`
   (every frame, ANSI passed through, size-pinned + stretch-aware). Stateless.

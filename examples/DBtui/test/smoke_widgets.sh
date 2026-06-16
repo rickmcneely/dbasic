@@ -61,10 +61,12 @@ build_prog() {
 # The three smoke programs. Widgets covers the 14 placeable kinds; chrome_demo
 # adds Menubar + Panel (not in the showcase); dialog_demo covers Dialog.
 SHOW="$WORK/show"; CHROME="$WORK/chrome"; DLG="$WORK/dlg"; MENU="$WORK/menu"
+EDIT="$WORK/edit"
 build_prog examples/Widgets/Widgets.dbas         "$SHOW"
 build_prog examples/chrome_demo/chrome_demo.dbas "$CHROME"
 build_prog examples/dialog_demo/dialog_demo.dbas "$DLG"
 build_prog examples/menu_demo/menu_demo.dbas     "$MENU"
+build_prog examples/editor_demo/editor_demo.dbas "$EDIT"
 [ "$fail" -eq 0 ] || { echo "RESULT: FAIL (build)"; exit 1; }
 
 # case <bin> <label> <keys> <assert...>  — assert tokens pass to vtdrive.
@@ -132,8 +134,25 @@ case_run "$DLG" "dialog opens on click" "enter,hold:0.4" \
 case_run "$DLG" "dialog closes on Esc" "enter,esc,hold:0.4" \
     --not "Are you sure?"
 
+# --- editor_demo: a full text editor on ONE Canvas + Form_Key (self-host #5) -
+# Startup: line-number gutter + seeded buffer render.
+case_run "$EDIT" "editor renders gutter + buffer" "hold:0.4" \
+    --want " 1 |" --want "FUNCTION greet"
+# Typing inserts at the cursor (starts on the FUNCTION line, col 0).
+case_run "$EDIT" "editor inserts typed text" "X,Y,Z,hold:0.4" \
+    --want "XYZFUNCTION greet"
+# Enter splits the line at the cursor (4 rights into "FUNCTION").
+case_run "$EDIT" "editor Enter splits line" "right,right,right,right,enter,hold:0.4" \
+    --want " 8 | TION greet"
+# Backspace at col 0 joins the line onto the previous one.
+case_run "$EDIT" "editor Backspace joins lines" "down,home,backspace,hold:0.4" \
+    --want "AS STRING    RETURN"
+# Ctrl+S paints the status bar (proves command-key chords reach Form_Key).
+case_run "$EDIT" "editor Ctrl+S shows status" "ctrl+s,hold:0.4" \
+    --want "saved 9 lines"
+
 if [ "$fail" -ne 0 ]; then
     echo "RESULT: FAIL"
     exit 1
 fi
-echo "RESULT: PASS (13 cases, 4 programs)"
+echo "RESULT: PASS (18 cases, 5 programs)"

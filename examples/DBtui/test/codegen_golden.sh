@@ -51,6 +51,7 @@ PROJECTS=(
   "examples/colors_demo/colors_demo.dbproj"
   "examples/menu_demo/menu_demo.dbproj"
   "examples/canvas_demo/canvas_demo.dbproj"
+  "examples/editor_demo/editor_demo.dbproj"
 )
 
 fail=0

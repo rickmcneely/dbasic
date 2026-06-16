@@ -1,0 +1,4 @@
+{ "Name":"editor_demo","StartForm":"frmE","Forms":[{ "Name":"frmE","Title":"Editor Demo","WExpr":"MAX_WIDTH","HExpr":"MAX_HEIGHT","BorderStyle":"normal","CornerStyle":"rounded","ShowClose":true,"Widgets":[
+  {"Kind":"Label","Name":"lblTitle","Text":"arrows/home/end move · enter splits · backspace joins · ^S status","X":2,"Y":1,"W":66,"H":1},
+  {"Kind":"Canvas","Name":"cv","Text":"Canvas","X":2,"Y":2,"W":74,"H":18,"Anchors":"T,B,L,R"}
+]}]}
