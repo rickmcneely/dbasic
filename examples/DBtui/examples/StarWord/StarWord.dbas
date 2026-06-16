@@ -7,6 +7,7 @@ IMPORT "strings"
 IMPORT "runtime"
 IMPORT "os/exec" AS exec
 IMPORT "time"
+IMPORT "github.com/atotto/clipboard" AS clipboard
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 
 SUB _dbtuiKeepFmtAlive()
@@ -353,6 +354,8 @@ DIM gBBCol AS INTEGER
 DIM gBERow AS INTEGER = 0 - 1
 DIM gBECol AS INTEGER
 DIM gBlockShow AS BOOLEAN = TRUE      ' ^KH toggles marker/highlight display
+DIM gClip AS STRING                   ' internal mirror of the OS clipboard
+                                      ' (Ctrl+Shift+X/C/V), used as fallback
 
 ' --- ruler / margins ------------------------------------------------------
 DIM gLeftMargin AS INTEGER = 0
@@ -631,6 +634,65 @@ SUB blockMoveTo(destR AS INTEGER, destC AS INTEGER)
     gBERow = 0 - 1
     gModified = TRUE
     gMessage = "Block moved"
+END SUB
+
+' --- OS clipboard (Ctrl+Shift+X/C/V) --------------------------------------
+' Copy/cut the marked block to, and paste from, the operating-system
+' clipboard via github.com/atotto/clipboard. gClip mirrors the last value we
+' wrote so paste still works on a host with no clipboard utility installed.
+
+' clipCopy — Ctrl+Shift+C: marked block -> OS clipboard.
+SUB clipCopy()
+    IF NOT blockSet() THEN
+        gMessage = "No block marked (^KB begin, ^KK end)"
+        RETURN
+    END IF
+    DIM txt AS STRING = blockText()
+    gClip = txt
+    DIM e AS ERROR = clipboard.WriteAll(txt)
+    IF e <> NIL THEN
+        gMessage = fmt.Sprintf("Copied %d chars (internal — OS clipboard unavailable)", LEN(txt))
+    ELSE
+        gMessage = fmt.Sprintf("Copied %d chars to clipboard", LEN(txt))
+    END IF
+END SUB
+
+' clipCut — Ctrl+Shift+X: marked block -> OS clipboard, then delete it.
+SUB clipCut()
+    IF NOT blockSet() THEN
+        gMessage = "No block marked (^KB begin, ^KK end)"
+        RETURN
+    END IF
+    DIM txt AS STRING = blockText()
+    gClip = txt
+    DIM e AS ERROR = clipboard.WriteAll(txt)
+    blockDelete()
+    IF e <> NIL THEN
+        gMessage = fmt.Sprintf("Cut %d chars (internal — OS clipboard unavailable)", LEN(txt))
+    ELSE
+        gMessage = fmt.Sprintf("Cut %d chars to clipboard", LEN(txt))
+    END IF
+END SUB
+
+' clipPaste — Ctrl+Shift+V: OS clipboard -> document at the cursor.
+SUB clipPaste()
+    DIM txt AS STRING
+    DIM e AS ERROR
+    txt, e = clipboard.ReadAll()
+    IF e <> NIL THEN txt = gClip
+    IF txt = "" THEN
+        gMessage = "Clipboard is empty"
+        RETURN
+    END IF
+    ' Normalize line endings pasted from other applications.
+    txt = strings.ReplaceAll(txt, Chr(13) + Chr(10), Chr(10))
+    txt = strings.ReplaceAll(txt, Chr(13), Chr(10))
+    DIM doc AS STRING = strings.Join(gLines, Chr(10))
+    DIM d AS INTEGER = offsetOf(gRow, gCol)
+    setDoc(Left(doc, d) + txt + Right(doc, LEN(doc) - d))
+    cursorFromOffset(d + LEN(txt))
+    gModified = TRUE
+    gMessage = fmt.Sprintf("Pasted %d chars", LEN(txt))
 END SUB
 
 ' ==========================================================================
@@ -2766,6 +2828,21 @@ SUB Form_Key(key AS STRING)
     IF amOpen >= 0 THEN
         gMenuOpen = amOpen
         gMenuSel = 0
+        RETURN
+    END IF
+
+    ' Modern clipboard chords (the WordStar ^K block ops still apply): cut,
+    ' copy and paste through the OS clipboard.
+    IF key = "ctrl+shift+c" THEN
+        clipCopy()
+        RETURN
+    END IF
+    IF key = "ctrl+shift+x" THEN
+        clipCut()
+        RETURN
+    END IF
+    IF key = "ctrl+shift+v" THEN
+        clipPaste()
         RETURN
     END IF
 
