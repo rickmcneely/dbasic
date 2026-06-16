@@ -2546,9 +2546,12 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' on-screen rect.
     ' _currentModel lets no-arg user handlers (_Click / _Change /
     ' _Close / _Select) mutate model state; needed whenever such a
-    ' handler might want to (dialogs, Menubar _Select, and the
-    ' runtime ListBox/ComboBox item API below).
-    IF hasDialog OR hasMenubar OR hasListW THEN
+    ' handler might want to (dialogs, Menubar _Select, and the runtime
+    ' accessors below — ListBox/ComboBox items, TextInput text, StatusBar
+    ' text). Gate on every kind that emits a _currentModel-using accessor
+    ' so e.g. a StatusBar- or TextInput-only form still compiles.
+    DIM needsCurModel AS BOOLEAN = hasDialog OR hasMenubar OR hasListW OR hasTextInput OR hasStatusBar
+    IF needsCurModel THEN
         s = s + "DIM _currentModel AS POINTER TO Model\n"
     END IF
     ' --- Async refresh: a background goroutine that updates shared state can
@@ -2577,7 +2580,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' declared by menubarEmitRuntime — written by View's _mnPaintBoxes,
     ' read by Update's _mnClickHit. No per-form _mb* vars needed now.)
     s = s + "FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)\n"
-    IF hasDialog OR hasMenubar OR hasListW THEN
+    IF needsCurModel THEN
         s = s + "    _currentModel = @m\n"
     END IF
     ' Async refresh from a background goroutine: run Form_Wake on the UI
