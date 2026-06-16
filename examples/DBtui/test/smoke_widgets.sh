@@ -199,9 +199,18 @@ case_run "$SW" "starword Alt+U,W = Word Count" "h,i,space,t,h,e,r,e,alt+u,w,hold
 # Hovering a bar title (mouse motion, no click) opens that menu.
 case_run "$SW" "starword hover opens menu" "move:9.2,hold:0.4" \
     --want "Mark Block Begin" --want "Find and Replace"
+# ^P character formatting: a bold run shows clean with tags hidden ("xHiy");
+# ^OD reveals the print-control tags ("xBHiBy").
+case_run "$SW" "starword ^P bold run (tags hidden)" "x,ctrl+p,b,H,i,ctrl+p,b,y,hold:0.4" \
+    --want "xHiy"
+case_run "$SW" "starword ^OD reveals tags" "x,ctrl+p,b,H,i,ctrl+p,b,y,ctrl+o,d,hold:0.4" \
+    --want "xBHiBy"
+# ^OC centers the current line.
+case_run "$SW" "starword ^OC center line" "h,i,ctrl+o,c,hold:0.4" \
+    --want "Line centered"
 
 if [ "$fail" -ne 0 ]; then
     echo "RESULT: FAIL"
     exit 1
 fi
-echo "RESULT: PASS (31 cases, 7 programs)"
+echo "RESULT: PASS (34 cases, 7 programs)"

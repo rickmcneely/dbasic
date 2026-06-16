@@ -350,6 +350,15 @@ DIM gBlockShow AS BOOLEAN = TRUE      ' ^KH toggles marker/highlight display
 DIM gLeftMargin AS INTEGER = 0
 DIM gRightMargin AS INTEGER = 65
 
+' --- formatting (^P character attributes, ^O onscreen, dot commands) -------
+' Character attributes are stored in the text as WordStar toggle control bytes
+' that flip an attribute on/off: ^B (Chr 2) bold, ^Y (Chr 25) italic,
+' ^S (Chr 19) underline. gShowTags (^OD) shows those tags instead of applying
+' them. gJustify/gWordWrap are stored layout flags.
+DIM gShowTags AS BOOLEAN          ' ^OD: TRUE = reveal print-control tags
+DIM gJustify AS BOOLEAN = TRUE    ' ^OJ
+DIM gWordWrap AS BOOLEAN = TRUE   ' ^OW
+
 ' --- find / replace -------------------------------------------------------
 DIM gFindStr AS STRING
 DIM gReplaceStr AS STRING
@@ -695,6 +704,46 @@ FUNCTION swFit(s AS STRING, width AS INTEGER) AS STRING
     RETURN s + strings.Repeat(" ", width - LEN(s))
 END FUNCTION
 
+' markerLetter — for a 1-byte print-control toggle, the tag letter; else "".
+FUNCTION markerLetter(ch AS STRING) AS STRING
+    IF LEN(ch) <> 1 THEN RETURN ""
+    DIM a AS INTEGER = Asc(ch)
+    IF a = 2 THEN RETURN "B"
+    IF a = 25 THEN RETURN "Y"
+    IF a = 19 THEN RETURN "S"
+    RETURN ""
+END FUNCTION
+
+' attrsAt — the (bold, italic, underline) state at byte offset pos, found by
+' replaying the toggle markers from the start of the line.
+FUNCTION attrsAt(line AS STRING, pos AS INTEGER) AS (BOOLEAN, BOOLEAN, BOOLEAN)
+    DIM bold AS BOOLEAN = FALSE
+    DIM ital AS BOOLEAN = FALSE
+    DIM undl AS BOOLEAN = FALSE
+    DIM p AS INTEGER = 0
+    WHILE p < pos AND p < LEN(line)
+        DIM a AS INTEGER = Asc(Mid(line, p + 1, 1))
+        IF a = 2 THEN bold = NOT bold
+        IF a = 25 THEN ital = NOT ital
+        IF a = 19 THEN undl = NOT undl
+        p = p + runeLenAt(line, p)
+    WEND
+    RETURN bold, ital, undl
+END FUNCTION
+
+' renderRun — style one buffered run by class (0 base / 1 cursor / 2 block) and
+' the active character attributes.
+FUNCTION renderRun(buf AS STRING, cls AS INTEGER, b AS BOOLEAN, it AS BOOLEAN, u AS BOOLEAN, baseSt AS lipgloss.Style, cur AS lipgloss.Style, blk AS lipgloss.Style) AS STRING
+    IF buf = "" THEN RETURN ""
+    IF cls = 1 THEN RETURN cur.Render(buf)
+    IF cls = 2 THEN RETURN blk.Render(buf)
+    DIM s AS lipgloss.Style = baseSt
+    IF b THEN s = s.Bold(TRUE)
+    IF it THEN s = s.Italic(TRUE)
+    IF u THEN s = s.Underline(TRUE)
+    RETURN s.Render(buf)
+END FUNCTION
+
 ' renderTextRow — one document row, windowed to [gLeft, gLeft+w), with the
 ' cursor cell and any block cells highlighted. Uses run-length batching so a
 ' plain row costs a single styled Render.
@@ -707,9 +756,14 @@ END FUNCTION
 FUNCTION renderTextRange(rowIdx AS INTEGER, fromCell AS INTEGER, count AS INTEGER, baseSt AS lipgloss.Style, cur AS lipgloss.Style, blk AS lipgloss.Style) AS STRING
     DIM line AS STRING = ""
     IF rowIdx >= 0 AND rowIdx <= lastRow() THEN line = gLines[rowIdx]
-    DIM out AS STRING = ""
-    DIM buf AS STRING = ""
-    DIM bufCls AS INTEGER = 0 - 1     ' 0 base, 1 cursor, 2 block
+
+    ' A dot-command line (".lm 8", ".pa", …) is a non-printing format line —
+    ' render it dim, with no attribute/marker processing.
+    DIM isDot AS BOOLEAN = (Left(line, 1) = ".")
+    DIM useBase AS lipgloss.Style = baseSt
+    IF isDot THEN useBase = lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7bb5")).Background(lipgloss.Color("#0f2350")).Italic(TRUE)
+    DIM tagSt AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#e0af68")).Bold(TRUE)
+
     ' Walk one rune per display cell (snapped to a rune boundary) so a
     ' multibyte glyph occupies a single cell and is highlighted as a unit.
     DIM pos AS INTEGER = snapToRune(line, gLeft)
@@ -717,43 +771,66 @@ FUNCTION renderTextRange(rowIdx AS INTEGER, fromCell AS INTEGER, count AS INTEGE
     FOR skip = 1 TO fromCell
         IF pos < LEN(line) THEN pos = nextRuneStart(line, pos)
     NEXT skip
-    DIM i AS INTEGER
-    FOR i = 0 TO count - 1
+
+    ' Character-attribute state at the window start (replay markers from 0).
+    DIM bold AS BOOLEAN = FALSE
+    DIM ital AS BOOLEAN = FALSE
+    DIM undl AS BOOLEAN = FALSE
+    IF NOT isDot THEN bold, ital, undl = attrsAt(line, pos)
+
+    DIM out AS STRING = ""
+    DIM buf AS STRING = ""
+    DIM bufCls AS INTEGER = 0 - 1
+    DIM bufB AS BOOLEAN = FALSE
+    DIM bufI AS BOOLEAN = FALSE
+    DIM bufU AS BOOLEAN = FALSE
+    DIM cell AS INTEGER = 0
+    WHILE cell < count
         DIM ch AS STRING = " "
         DIM rl AS INTEGER = 1
         IF pos < LEN(line) THEN
             rl = runeLenAt(line, pos)
             ch = Mid(line, pos + 1, rl)
         END IF
-        DIM cls AS INTEGER = 0
-        IF rowIdx = gRow AND pos = gCol THEN
-            cls = 1
-        ELSEIF isInBlock(rowIdx, pos) THEN
-            cls = 2
-        END IF
-        pos = pos + rl
-        IF cls <> bufCls AND buf <> "" THEN
-            IF bufCls = 1 THEN
-                out = out + cur.Render(buf)
-            ELSEIF bufCls = 2 THEN
-                out = out + blk.Render(buf)
-            ELSE
-                out = out + baseSt.Render(buf)
+        DIM mk AS STRING = ""
+        IF NOT isDot THEN mk = markerLetter(ch)
+        IF mk <> "" THEN
+            ' Print-control toggle: flip the attribute. When tags are revealed
+            ' (^OD) it shows as a tag cell; otherwise it is zero-width.
+            DIM mc AS INTEGER = Asc(ch)
+            IF mc = 2 THEN bold = NOT bold
+            IF mc = 25 THEN ital = NOT ital
+            IF mc = 19 THEN undl = NOT undl
+            pos = pos + rl
+            IF gShowTags THEN
+                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+                buf = ""
+                bufCls = 0 - 1
+                out = out + tagSt.Render(mk)
+                cell = cell + 1
             END IF
-            buf = ""
-        END IF
-        bufCls = cls
-        buf = buf + ch
-    NEXT i
-    IF buf <> "" THEN
-        IF bufCls = 1 THEN
-            out = out + cur.Render(buf)
-        ELSEIF bufCls = 2 THEN
-            out = out + blk.Render(buf)
         ELSE
-            out = out + baseSt.Render(buf)
+            DIM cls AS INTEGER = 0
+            IF rowIdx = gRow AND pos = gCol THEN
+                cls = 1
+            ELSEIF isInBlock(rowIdx, pos) THEN
+                cls = 2
+            END IF
+            pos = pos + rl
+            DIM diff AS BOOLEAN = cls <> bufCls OR bold <> bufB OR ital <> bufI OR undl <> bufU
+            IF diff AND buf <> "" THEN
+                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+                buf = ""
+            END IF
+            bufCls = cls
+            bufB = bold
+            bufI = ital
+            bufU = undl
+            buf = buf + ch
+            cell = cell + 1
         END IF
-    END IF
+    WEND
+    out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
     RETURN out
 END FUNCTION
 
@@ -767,11 +844,11 @@ FUNCTION prefixMenuLines() AS []STRING
         xs = APPEND(xs, "QUICK MOVE      ^QS LineStart  ^QD LineEnd  ^QE ScrTop  ^QX ScrBot  ^QR FileTop  ^QC FileEnd")
         xs = APPEND(xs, "                ^QF Find   ^QA Replace   ^QB BlockStart   ^QK BlockEnd   ^QY Del->EOL")
     ELSEIF gPrefix = "O" THEN
-        xs = APPEND(xs, "ONSCREEN FORMAT   margins, tabs, justification, word-wrap — coming in a later StarWord build.")
-        xs = APPEND(xs, "                  (Esc cancels)")
+        xs = APPEND(xs, "ONSCREEN FORMAT   ^OC Center line   ^OL Left margin   ^OR Right margin   ^OD Show tags")
+        xs = APPEND(xs, "                  ^OJ Justify   ^OW Word-wrap        (Esc cancels)")
     ELSEIF gPrefix = "P" THEN
-        xs = APPEND(xs, "PRINT CONTROLS    bold/italic/underline tags & dot commands — coming in a later StarWord build.")
-        xs = APPEND(xs, "                  (Esc cancels)")
+        xs = APPEND(xs, "PRINT CONTROLS    ^PB Bold   ^PY Italic   ^PS Underline   (press again to end the run)")
+        xs = APPEND(xs, "                  ^OD reveals the tags in the text.   (Esc cancels)")
     ELSEIF gPrefix = "J" THEN
         xs = APPEND(xs, "HELP   Cursor: ^E up ^X down ^S left ^D right  |  ^A/^F word  |  ^R/^C screen  |  Home/End line")
         xs = APPEND(xs, "       Edit:   ^G del  ^T del-word  ^Y del-line  ^N ins-line  ^V ins/over   Prefixes: ^K ^Q ^O ^P")
@@ -1018,14 +1095,39 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
-    ELSEIF menuIdx = 2 THEN
+    ELSEIF menuIdx = 2 THEN      ' VIEW
         IF hk = "B" THEN
             gBlockShow = NOT gBlockShow
             gMessage = "Block highlighting toggled"
+        ELSEIF hk = "C" THEN
+            gShowTags = NOT gShowTags
+            gMessage = "Command tags display toggled"
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
-    ELSEIF menuIdx = 6 THEN
+    ELSEIF menuIdx = 4 THEN      ' STYLE
+        IF hk = "B" THEN
+            insertMarker(2)
+            gMessage = "Bold toggle inserted (^B)"
+        ELSEIF hk = "I" THEN
+            insertMarker(25)
+            gMessage = "Italic toggle inserted (^Y)"
+        ELSEIF hk = "U" THEN
+            insertMarker(19)
+            gMessage = "Underline toggle inserted (^S)"
+        ELSE
+            gMessage = label + " — coming in a later StarWord build"
+        END IF
+    ELSEIF menuIdx = 5 THEN      ' LAYOUT
+        IF hk = "C" THEN
+            centerLine()
+        ELSEIF hk = "R" THEN
+            gShowTags = NOT gShowTags
+            gMessage = "Ruler/command tags toggled"
+        ELSE
+            gMessage = label + " — coming in a later StarWord build"
+        END IF
+    ELSEIF menuIdx = 6 THEN      ' UTILITIES
         IF hk = "W" THEN
             wordCount()
         ELSE
@@ -1058,6 +1160,7 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     gW = w
     gH = h
     clampCursor()
+    applyDotCommands()
 
     ' Layout: menubar=0, status=1, ruler=2, text=3..h-2, message=h-1.
     DIM txTop AS INTEGER = 3
@@ -1349,6 +1452,40 @@ SUB insertBlankLine()
     gModified = TRUE
 END SUB
 
+' insertMarker — insert a WordStar print-control toggle byte (Chr code) at the
+' cursor. Inserting two (begin/end) makes the text between them bold/italic/etc.
+SUB insertMarker(code AS INTEGER)
+    insertChar(Chr(code))
+END SUB
+
+' centerLine — center the current line's text between the margins (^OC).
+SUB centerLine()
+    DIM t AS STRING = strings.TrimSpace(gLines[gRow])
+    DIM span AS INTEGER = gRightMargin - gLeftMargin
+    DIM pad AS INTEGER = gLeftMargin + (span - runeIndexOf(t, LEN(t))) / 2
+    IF pad < 0 THEN pad = 0
+    gLines[gRow] = strings.Repeat(" ", pad) + t
+    gCol = LEN(gLines[gRow])
+    gModified = TRUE
+    gMessage = "Line centered"
+END SUB
+
+' applyDotCommands — scan the document for ".lm N" / ".rm N" dot commands and
+' set the ruler margins (last one in the file wins). Called each render.
+SUB applyDotCommands()
+    DIM i AS INTEGER
+    FOR i = 0 TO lastRow()
+        DIM ln AS STRING = gLines[i]
+        IF Left(ln, 4) = ".lm " THEN
+            DIM v AS INTEGER = Int(Val(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))))
+            IF v >= 0 THEN gLeftMargin = v
+        ELSEIF Left(ln, 4) = ".rm " THEN
+            DIM v2 AS INTEGER = Int(Val(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))))
+            IF v2 > 0 THEN gRightMargin = v2
+        END IF
+    NEXT i
+END SUB
+
 ' ==========================================================================
 ' Cursor motion
 ' ==========================================================================
@@ -1561,6 +1698,52 @@ SUB handlePrefixQ(key AS STRING)
     gPrefix = ""
 END SUB
 
+' handlePrefixP — the ^P Print Controls menu (character attribute toggles).
+SUB handlePrefixP(key AS STRING)
+    DIM k AS STRING = secondKey(key)
+    IF k = "b" THEN
+        insertMarker(2)
+        gMessage = "Bold toggle inserted (^B)"
+    ELSEIF k = "y" THEN
+        insertMarker(25)
+        gMessage = "Italic toggle inserted (^Y)"
+    ELSEIF k = "s" THEN
+        insertMarker(19)
+        gMessage = "Underline toggle inserted (^S)"
+    ELSE
+        gMessage = "^P" + UCase(k) + " — not in this build"
+    END IF
+    gPrefix = ""
+END SUB
+
+' handlePrefixO — the ^O Onscreen Format menu.
+SUB handlePrefixO(key AS STRING)
+    DIM k AS STRING = secondKey(key)
+    IF k = "d" THEN
+        gShowTags = NOT gShowTags
+        gMessage = "Command tags display toggled"
+    ELSEIF k = "c" THEN
+        centerLine()
+    ELSEIF k = "j" THEN
+        gJustify = NOT gJustify
+        gMessage = "Justification toggled"
+    ELSEIF k = "w" THEN
+        gWordWrap = NOT gWordWrap
+        gMessage = "Word wrap toggled"
+    ELSEIF k = "l" THEN
+        gPromptMode = "lmargin"
+        gPromptLabel = "Left margin: "
+        gPromptText = ""
+    ELSEIF k = "r" THEN
+        gPromptMode = "rmargin"
+        gPromptLabel = "Right margin: "
+        gPromptText = ""
+    ELSE
+        gMessage = "^O" + UCase(k) + " — not in this build"
+    END IF
+    gPrefix = ""
+END SUB
+
 ' handlePrompt — modal text entry on the message line (find / replace / etc).
 SUB handlePrompt(key AS STRING)
     IF key = "esc" THEN
@@ -1594,6 +1777,13 @@ SUB handlePrompt(key AS STRING)
             saveFile()
         ELSEIF mode = "open" THEN
             IF txt <> "" THEN loadFile(txt)
+        ELSEIF mode = "lmargin" THEN
+            gLeftMargin = Int(Val(txt))
+            gMessage = fmt.Sprintf("Left margin = %d", gLeftMargin)
+        ELSEIF mode = "rmargin" THEN
+            DIM rmv AS INTEGER = Int(Val(txt))
+            IF rmv > 0 THEN gRightMargin = rmv
+            gMessage = fmt.Sprintf("Right margin = %d", gRightMargin)
         END IF
         RETURN
     END IF
@@ -1713,8 +1903,24 @@ SUB Form_Key(key AS STRING)
         handlePrefixQ(key)
         RETURN
     END IF
-    IF gPrefix = "O" OR gPrefix = "P" OR gPrefix = "J" THEN
-        ' These menus are informational in v1; any key dismisses them.
+    IF gPrefix = "O" THEN
+        IF key = "esc" THEN
+            gPrefix = ""
+            RETURN
+        END IF
+        handlePrefixO(key)
+        RETURN
+    END IF
+    IF gPrefix = "P" THEN
+        IF key = "esc" THEN
+            gPrefix = ""
+            RETURN
+        END IF
+        handlePrefixP(key)
+        RETURN
+    END IF
+    IF gPrefix = "J" THEN
+        ' Help is informational; any key dismisses it.
         gPrefix = ""
         RETURN
     END IF
