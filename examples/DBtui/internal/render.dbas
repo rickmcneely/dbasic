@@ -38,6 +38,12 @@ DIM epLastOrigY AS INTEGER
 DIM epLastW     AS INTEGER
 DIM epLastN     AS INTEGER
 
+' Anchor edge-picker origin + size — written by View() each frame it
+' composites the picker, so the click handler can map a click to an edge row.
+DIM apkLastOrigX AS INTEGER
+DIM apkLastOrigY AS INTEGER
+DIM apkLastW     AS INTEGER
+
 ' Widgets palette — number of kind rows visible this frame, stashed by
 ' renderRightPane so the wheel handler clamps PaletteScroll to exactly what
 ' the render shows (no geometry guessing).
@@ -520,6 +526,49 @@ FUNCTION renderEnumPicker(m AS Model) AS STRING
     DIM body AS STRING = strings.Join(lines, "\n")
     DIM frame AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cMenuBg))
     RETURN frame.Render(body)
+END FUNCTION
+
+' renderAnchorPicker — the visual edge picker: a checklist of the four form
+' edges (Top/Bottom/Left/Right) the widget is anchored to, highlighted row
+' first. Self-explanatory for beginners; commits to Anchors. Returns "" when
+' closed. Composited at (APkX, APkY) by View().
+FUNCTION renderAnchorPicker(m AS Model) AS STRING
+    IF NOT m.AnchorPickerActive THEN RETURN ""
+    DIM rowBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cMenuBg)).Foreground(lipgloss.Color(cMenuFg))
+    DIM selBase AS lipgloss.Style = lipgloss.NewStyle().Background(lipgloss.Color(cAccent)).Foreground(lipgloss.Color(cBg)).Bold(TRUE)
+    DIM names AS []STRING
+    names = APPEND(names, "Top")
+    names = APPEND(names, "Bottom")
+    names = APPEND(names, "Left")
+    names = APPEND(names, "Right")
+    DIM states AS []BOOLEAN
+    states = APPEND(states, m.APkT)
+    states = APPEND(states, m.APkB)
+    states = APPEND(states, m.APkL)
+    states = APPEND(states, m.APkR)
+    DIM inner AS INTEGER = 22
+    DIM lines AS []STRING
+    lines = APPEND(lines, rowBase.Render(mePad(" Anchor to edges:", inner)))
+    DIM k AS INTEGER
+    FOR k = 0 TO 3
+        DIM bs AS lipgloss.Style = rowBase
+        IF k = m.APkSel THEN bs = selBase
+        lines = APPEND(lines, bs.Render(mePad("  " + meChk(states[k]) + " " + names[k], inner)))
+    NEXT k
+    lines = APPEND(lines, rowBase.Render(mePad(" space=toggle  enter=ok", inner)))
+    DIM body AS STRING = strings.Join(lines, "\n")
+    DIM frame2 AS lipgloss.Style = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(cAccent)).Background(lipgloss.Color(cMenuBg))
+    RETURN frame2.Render(body)
+END FUNCTION
+
+' anchorEdgeAt — map a screen (mx,my) onto an edge row (0=Top 1=Bottom 2=Left
+' 3=Right) in the open anchor picker, or -1 if outside. The header row sits at
+' origin+1, so the four edge rows are origin+2..+5.
+FUNCTION anchorEdgeAt(mx AS INTEGER, my AS INTEGER) AS INTEGER
+    DIM rel AS INTEGER = my - (apkLastOrigY + 2)
+    IF rel < 0 OR rel > 3 THEN RETURN 0 - 1
+    IF mx <= apkLastOrigX OR mx >= apkLastOrigX + apkLastW - 1 THEN RETURN 0 - 1
+    RETURN rel
 END FUNCTION
 
 ' -------------------------------------------------------------------------
@@ -1229,11 +1278,9 @@ FUNCTION renderRightPane(m AS Model, width AS INTEGER, height AS INTEGER, xOrigi
             IF sw.Kind <> "Panel" THEN
                 propRows = APPEND(propRows, "Parent " + sw.Parent)
             END IF
-            ' Universal anchor row (mirror propRowEditContext). "" shows as
-            ' top-left (the fixed default).
-            DIM ancLbl AS STRING = sw.Anchors
-            IF ancLbl = "" THEN ancLbl = "top-left"
-            propRows = APPEND(propRows, "Anchor " + ancLbl)
+            ' Universal anchor row (mirror propRowEditContext). Shows the
+            ' nearest preset name for the widget's edge set.
+            propRows = APPEND(propRows, "Anchor " + anchorPresetName(sw.Anchors))
             ' Universal color rows (mirror propRowEditContext). Click opens
             ' the 256-color picker. "" shows as (inherit).
             DIM fgLbl AS STRING = "(inherit)"

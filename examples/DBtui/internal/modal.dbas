@@ -162,10 +162,11 @@ SUB applyWidgetEnum(m AS POINTER TO Model, sel AS INTEGER, key AS STRING, val AS
     ELSEIF key = "wprop:hscroll" THEN
         m.Tabs[m.TabIdx].Form.Widgets[sel].HScroll = val
     ELSEIF key = "wprop:anchor" THEN
-        ' Store the default (top-left) as "" so unanchored widgets stay
+        ' Map the friendly preset name to a canonical edge CSV; store the
+        ' default (top-left = T,L) as "" so unanchored widgets stay
         ' byte-identical to legacy projects.
-        DIM av AS STRING = val
-        IF av = "top-left" THEN av = ""
+        DIM av AS STRING = anchorPresetEdges(val)
+        IF av = "T,L" THEN av = ""
         m.Tabs[m.TabIdx].Form.Widgets[sel].Anchors = av
     END IF
     m.Tabs[m.TabIdx].Dirty = TRUE
@@ -179,6 +180,57 @@ SUB enumPickerCommit(m AS POINTER TO Model)
         applyWidgetEnum(m, sel, m.EnumKey, m.EnumOpts[m.EnumIdx])
     END IF
     m.EnumActive = FALSE
+END SUB
+
+' showAnchorPicker — open the visual edge picker for the selected widget,
+' seeded with its current anchor edges. Beginner-friendly alternative to the
+' preset enum (which still works via left-click / the dropdown).
+SUB showAnchorPicker(m AS POINTER TO Model, ax AS INTEGER, ay AS INTEGER)
+    DIM sel AS INTEGER = m.Tabs[m.TabIdx].SelWidget
+    IF sel < 0 OR sel >= LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN RETURN
+    DIM w AS DesignWidget = m.Tabs[m.TabIdx].Form.Widgets[sel]
+    DIM eT AS BOOLEAN
+    DIM eB AS BOOLEAN
+    DIM eL AS BOOLEAN
+    DIM eR AS BOOLEAN
+    eT, eB, eL, eR = anchorEdges(w.Anchors)
+    m.APkT = eT
+    m.APkB = eB
+    m.APkL = eL
+    m.APkR = eR
+    m.APkSel = 0
+    m.APkX = ax
+    m.APkY = ay
+    m.AnchorPickerActive = TRUE
+END SUB
+
+' anchorPickerToggle — flip one edge (0=Top 1=Bottom 2=Left 3=Right) in the
+' picker's working set.
+SUB anchorPickerToggle(m AS POINTER TO Model, idx AS INTEGER)
+    IF idx = 0 THEN m.APkT = NOT m.APkT
+    IF idx = 1 THEN m.APkB = NOT m.APkB
+    IF idx = 2 THEN m.APkL = NOT m.APkL
+    IF idx = 3 THEN m.APkR = NOT m.APkR
+END SUB
+
+' anchorPickerCommit — write the picker's working edge set to the widget's
+' Anchors as a canonical CSV (T,B,L,R order), storing the default top-left as
+' "" so unanchored widgets stay byte-identical. An empty pick falls back to
+' top-left.
+SUB anchorPickerCommit(m AS POINTER TO Model)
+    DIM sel AS INTEGER = m.Tabs[m.TabIdx].SelWidget
+    IF sel >= 0 AND sel < LEN(m.Tabs[m.TabIdx].Form.Widgets) THEN
+        DIM csv AS STRING = ""
+        IF m.APkT THEN csv = csv + "T,"
+        IF m.APkB THEN csv = csv + "B,"
+        IF m.APkL THEN csv = csv + "L,"
+        IF m.APkR THEN csv = csv + "R,"
+        IF LEN(csv) > 0 THEN csv = Mid(csv, 1, LEN(csv) - 1)
+        IF csv = "" OR csv = "T,L" THEN csv = ""
+        m.Tabs[m.TabIdx].Form.Widgets[sel].Anchors = csv
+        m.Tabs[m.TabIdx].Dirty = TRUE
+    END IF
+    m.AnchorPickerActive = FALSE
 END SUB
 
 ' formCycleEnum — advance the selected widget's enum row to its next option

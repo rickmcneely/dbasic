@@ -231,11 +231,13 @@ TYPE DesignWidget
     ' Resolved in codegen against m._formW/_formH (chromed) or the View's
     ' w/h, using the form's design reference size (constant WExpr/HExpr or
     ' the widget bounding box). Defaults to "" so legacy .dbproj files load
-    ' byte-identically. The corner values move the widget; the stretch values
-    ' instead anchor a ListBox to opposite edges so it GROWS with the form (its
-    ' inner size is resized in the WindowSize handler): "stretch-v" = top+bottom
-    ' (height), "stretch-h" = left+right (width), "stretch" = both.
-    DIM Anchors     AS STRING  ' "" | top-left | top-right | bottom-left | bottom-right | stretch-v | stretch-h | stretch
+    ' byte-identically. Canonical form is an edge CSV (subset of "T,B,L,R")
+    ' interpreted by anchorEdges(): one side of an axis pins that side (fixed
+    ' size); both sides stretch the widget along that axis (ListBox grows via
+    ' SetWidth/SetHeight in the WindowSize handler). Legacy single-name values
+    ' (top-left, stretch, ...) are still understood. Edited via the preset enum
+    ' row or the visual edge picker (right-click the Anchor row).
+    DIM Anchors     AS STRING  ' "" (=T,L) | edge CSV like "B,L" / "T,L,R" / "T,B,L,R"
 END TYPE
 
 TYPE DesignForm
@@ -571,6 +573,18 @@ TYPE Model
     DIM EnumIdx    AS INTEGER
     DIM EnumX      AS INTEGER
     DIM EnumY      AS INTEGER
+    ' Visual anchor edge-picker (right-click the Anchor row) — a beginner-
+    ' friendly checklist of the four form edges. APkT/B/L/R is the working
+    ' edge set; APkSel is the keyboard-highlighted row (0=Top 1=Bottom 2=Left
+    ' 3=Right); APkX/Y is the on-screen anchor. Commits to the widget's Anchors.
+    DIM AnchorPickerActive AS BOOLEAN
+    DIM APkT AS BOOLEAN
+    DIM APkB AS BOOLEAN
+    DIM APkL AS BOOLEAN
+    DIM APkR AS BOOLEAN
+    DIM APkSel AS INTEGER
+    DIM APkX AS INTEGER
+    DIM APkY AS INTEGER
     ' Inline property editor. A single click on a text/number Properties
     ' row edits its value cell in place (PropEdit = TRUE) via PropEditInput,
     ' a one-line textinput. Enter commits through the shared wprop dispatch;
@@ -2048,6 +2062,18 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             m.EnumActive = FALSE
             RETURN m, NIL
         END IF
+        ' (AP) Anchor edge picker — a click on an edge row toggles it (and
+        ' keeps the picker open); a click anywhere else commits the working set.
+        IF m.AnchorPickerActive THEN
+            DIM apHit AS INTEGER = anchorEdgeAt(mcMsg.X, mcMsg.Y)
+            IF apHit >= 0 THEN
+                m.APkSel = apHit
+                anchorPickerToggle(@m, apHit)
+                RETURN m, NIL
+            END IF
+            anchorPickerCommit(@m)
+            RETURN m, NIL
+        END IF
         ' (C) Widget event context-menu — when open it owns the next
         ' left-click: inside the popup picks an event, anywhere else
         ' dismisses it. Checked before everything so a stray click can't
@@ -2510,7 +2536,21 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                     m.PropSel = reRel
                     DIM reAx AS INTEGER = mcMsg.X
                     DIM reAy AS INTEGER = mcMsg.Y
-                    showEnumPicker(@m, reRel, reAx, reAy)
+                    ' The Anchor row gets the visual edge picker; every other
+                    ' enum row gets the standard preset dropdown.
+                    DIM reCtxT AS STRING
+                    DIM reCtxP AS STRING
+                    DIM reCtxD AS STRING
+                    DIM reCtxK AS STRING
+                    reCtxT, reCtxP, reCtxD, reCtxK = propRowEditContext(reW, reRel)
+                    _ = reCtxT
+                    _ = reCtxP
+                    _ = reCtxD
+                    IF reCtxK = "wprop:anchor" THEN
+                        showAnchorPicker(@m, reAx, reAy)
+                    ELSE
+                        showEnumPicker(@m, reRel, reAx, reAy)
+                    END IF
                     RETURN m, NIL
                 END IF
             END IF
@@ -2726,6 +2766,34 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             IF key = "down" THEN
                 m.EnumIdx = m.EnumIdx + 1
                 IF m.EnumIdx >= LEN(m.EnumOpts) THEN m.EnumIdx = 0
+                RETURN m, NIL
+            END IF
+            RETURN m, NIL
+        END IF
+
+        ' --- Anchor edge picker: when open it owns the keyboard. Up/Down move
+        '     the highlighted edge, Space toggles it, Enter commits, Esc cancels.
+        IF m.AnchorPickerActive THEN
+            IF key = "esc" THEN
+                m.AnchorPickerActive = FALSE
+                RETURN m, NIL
+            END IF
+            IF key = "enter" THEN
+                anchorPickerCommit(@m)
+                RETURN m, NIL
+            END IF
+            IF key = "space" THEN
+                anchorPickerToggle(@m, m.APkSel)
+                RETURN m, NIL
+            END IF
+            IF key = "up" THEN
+                m.APkSel = m.APkSel - 1
+                IF m.APkSel < 0 THEN m.APkSel = 3
+                RETURN m, NIL
+            END IF
+            IF key = "down" THEN
+                m.APkSel = m.APkSel + 1
+                IF m.APkSel > 3 THEN m.APkSel = 0
                 RETURN m, NIL
             END IF
             RETURN m, NIL
@@ -3750,6 +3818,29 @@ FUNCTION (m AS Model) View() AS tea.View
             epLastOrigY = epY
             epLastW = epW
             epLastN = LEN(m.EnumOpts)
+        END IF
+    END IF
+
+    ' --- Anchor edge-picker overlay. Anchored at (APkX, APkY), clamped on-
+    '     screen. Origin + width stashed for anchorEdgeAt().
+    IF m.AnchorPickerActive THEN
+        DIM apStr AS STRING = renderAnchorPicker(m)
+        IF apStr <> "" THEN
+            DIM apW AS INTEGER = lipgloss.Width(apStr)
+            DIM apH AS INTEGER = lipgloss.Height(apStr)
+            DIM apX AS INTEGER = m.APkX
+            DIM apY AS INTEGER = m.APkY
+            IF apX + apW > w THEN apX = w - apW
+            IF apY + apH > h THEN apY = h - apH
+            IF apX < 0 THEN apX = 0
+            IF apY < 0 THEN apY = 0
+            DIM apBgL AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(full)
+            DIM apL   AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(apStr).X(apX).Y(apY).Z(7)
+            DIM apComp AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(apBgL, apL)
+            full = apComp.Render()
+            apkLastOrigX = apX
+            apkLastOrigY = apY
+            apkLastW = apW
         END IF
     END IF
 

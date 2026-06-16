@@ -209,7 +209,7 @@
           "CaptionJust": "",
           "HScroll": "",
           "VScroll": "",
-          "Anchors": "stretch"
+          "Anchors": "T,B,L,R"
         },
         {
           "Kind": "Button",
@@ -243,7 +243,7 @@
           "CaptionJust": "",
           "HScroll": "",
           "VScroll": "",
-          "Anchors": "bottom-left"
+          "Anchors": "B,L"
         },
         {
           "Kind": "Button",
@@ -277,7 +277,7 @@
           "CaptionJust": "",
           "HScroll": "",
           "VScroll": "",
-          "Anchors": "bottom-left"
+          "Anchors": "B,L"
         },
         {
           "Kind": "Label",
@@ -311,7 +311,7 @@
           "CaptionJust": "",
           "HScroll": "",
           "VScroll": "",
-          "Anchors": "bottom-left"
+          "Anchors": "B,L"
         },
         {
           "Kind": "StatusBar",
@@ -348,7 +348,7 @@
           "CaptionJust": "",
           "HScroll": "",
           "VScroll": "",
-          "Anchors": "bottom-left"
+          "Anchors": "B,L"
         }
       ],
       "FgColor": "",

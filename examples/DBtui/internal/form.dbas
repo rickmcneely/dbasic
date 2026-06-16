@@ -1360,11 +1360,11 @@ FUNCTION propRowEditContext(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, ST
         IF rowIdx = cursor THEN RETURN "Edit Parent", "container Panel name (blank = none):", w.Parent, "wprop:parent"
         cursor = cursor + 1
     END IF
-    ' Universal anchor row: which form corner the widget stays pinned to as
-    ' the form resizes (VB-style edge anchoring). "" = top-left (fixed).
-    DIM ancCur AS STRING = w.Anchors
-    IF ancCur = "" THEN ancCur = "top-left"
-    IF rowIdx = cursor THEN RETURN "Edit Anchor", "corner:", ancCur, "wprop:anchor"
+    ' Universal anchor row: which form edges the widget is pinned to as the
+    ' form resizes (VB-style edge anchoring). Shown as a friendly preset name;
+    ' right-click opens the visual edge picker for arbitrary edge sets.
+    DIM ancCur AS STRING = anchorPresetName(w.Anchors)
+    IF rowIdx = cursor THEN RETURN "Edit Anchor", "corner / fill:", ancCur, "wprop:anchor"
     cursor = cursor + 1
     ' Universal color rows. These don't use the input modal — formClickPropAt
     ' intercepts the "wprop:fgcolor"/"wprop:bgcolor" keys and opens the
@@ -1399,7 +1399,7 @@ FUNCTION propRowKind(w AS DesignWidget, rowIdx AS INTEGER) AS (STRING, STRING)
     IF k = "wprop:captionjust" THEN RETURN "enum", "left,center,right"
     IF k = "wprop:vscroll" THEN RETURN "enum", "off,on,auto"
     IF k = "wprop:hscroll" THEN RETURN "enum", "off,on,auto"
-    IF k = "wprop:anchor" THEN RETURN "enum", "top-left,top-right,bottom-left,bottom-right,stretch-v,stretch-h,stretch"
+    IF k = "wprop:anchor" THEN RETURN "enum", "top-left,top-right,bottom-left,bottom-right,fill-width-top,fill-width-bottom,fill-height-left,fill-height-right,fill"
     IF k = "wprop:fgcolor" OR k = "wprop:bgcolor" THEN RETURN "color", ""
     RETURN "text", ""
 END FUNCTION
@@ -2019,6 +2019,65 @@ FUNCTION formRefH(f AS DesignForm) AS INTEGER
     RETURN mx + 1
 END FUNCTION
 
+' anchorEdges — interpret a widget's Anchors string as the set of form edges
+' it is pinned to: (top, bottom, left, right). The canonical storage is an
+' edge CSV ("T,B,L,R" subset), but the legacy single-name values are also
+' understood so old projects keep working. "" / unset = the default top-left
+' (T+L = fixed position, fixed size — byte-identical to pre-anchor output).
+' Edge semantics: one side of an axis = pin that side (fixed size); both
+' sides = stretch along that axis; the opposite-corner / 4-edge case is the
+' full stretch. Single anchored corner (T,L) keeps size; opposing corners
+' (T,L + B,R = all four) resize the widget.
+FUNCTION anchorEdges(a AS STRING) AS (BOOLEAN, BOOLEAN, BOOLEAN, BOOLEAN)
+    IF a = "" OR a = "top-left" THEN RETURN TRUE, FALSE, TRUE, FALSE
+    IF a = "top-right" THEN RETURN TRUE, FALSE, FALSE, TRUE
+    IF a = "bottom-left" THEN RETURN FALSE, TRUE, TRUE, FALSE
+    IF a = "bottom-right" THEN RETURN FALSE, TRUE, FALSE, TRUE
+    IF a = "stretch-v" THEN RETURN TRUE, TRUE, TRUE, FALSE
+    IF a = "stretch-h" THEN RETURN TRUE, FALSE, TRUE, TRUE
+    IF a = "stretch" THEN RETURN TRUE, TRUE, TRUE, TRUE
+    DIM hasT AS BOOLEAN = strings.Contains(a, "T")
+    DIM hasB AS BOOLEAN = strings.Contains(a, "B")
+    DIM hasL AS BOOLEAN = strings.Contains(a, "L")
+    DIM hasR AS BOOLEAN = strings.Contains(a, "R")
+    IF NOT hasT AND NOT hasB AND NOT hasL AND NOT hasR THEN RETURN TRUE, FALSE, TRUE, FALSE
+    RETURN hasT, hasB, hasL, hasR
+END FUNCTION
+
+' anchorPresetEdges — friendly preset name -> canonical edge CSV (what the UI
+' stores). The nine names cover every useful edge combination.
+FUNCTION anchorPresetEdges(name AS STRING) AS STRING
+    IF name = "top-left" THEN RETURN "T,L"
+    IF name = "top-right" THEN RETURN "T,R"
+    IF name = "bottom-left" THEN RETURN "B,L"
+    IF name = "bottom-right" THEN RETURN "B,R"
+    IF name = "fill-width-top" THEN RETURN "T,L,R"
+    IF name = "fill-width-bottom" THEN RETURN "B,L,R"
+    IF name = "fill-height-left" THEN RETURN "T,B,L"
+    IF name = "fill-height-right" THEN RETURN "T,B,R"
+    IF name = "fill" THEN RETURN "T,B,L,R"
+    RETURN "T,L"
+END FUNCTION
+
+' anchorPresetName — canonical edge set -> nearest preset name (for the
+' property-row display and enum cycling). Checks widest sets first.
+FUNCTION anchorPresetName(a AS STRING) AS STRING
+    DIM t AS BOOLEAN
+    DIM b AS BOOLEAN
+    DIM l AS BOOLEAN
+    DIM r AS BOOLEAN
+    t, b, l, r = anchorEdges(a)
+    IF t AND b AND l AND r THEN RETURN "fill"
+    IF t AND b AND l THEN RETURN "fill-height-left"
+    IF t AND b AND r THEN RETURN "fill-height-right"
+    IF t AND l AND r THEN RETURN "fill-width-top"
+    IF b AND l AND r THEN RETURN "fill-width-bottom"
+    IF t AND r THEN RETURN "top-right"
+    IF b AND l THEN RETURN "bottom-left"
+    IF b AND r THEN RETURN "bottom-right"
+    RETURN "top-left"
+END FUNCTION
+
 ' formTermSize — the terminal size (cols, rows) a form wants to launch at.
 ' An explicit integer WExpr/HExpr wins; otherwise it's the bounding box of
 ' the form's top-level widgets plus the form border (a tight fit to the
@@ -2084,7 +2143,14 @@ FUNCTION widgetEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS 
             ' A stretch-h list grows its width with the form, so the border must
             ' track the same runtime width the resize handler SetWidth's the list to.
             DIM lbBW AS STRING = strconv.Itoa(wv.W)
-            IF wv.Anchors = "stretch-h" OR wv.Anchors = "stretch" THEN
+            DIM lbeT AS BOOLEAN
+            DIM lbeB AS BOOLEAN
+            DIM lbeL AS BOOLEAN
+            DIM lbeR AS BOOLEAN
+            lbeT, lbeB, lbeL, lbeR = anchorEdges(wv.Anchors)
+            _ = lbeT
+            _ = lbeB
+            IF lbeL AND lbeR THEN
                 DIM lbFW AS STRING = "w"
                 IF formChromed(f) THEN lbFW = "m._formW"
                 lbBW = strconv.Itoa(wv.W) + " + (" + lbFW + " - " + strconv.Itoa(formRefW(f)) + ")"
@@ -2507,8 +2573,14 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     FOR stI = 0 TO n - 1
         DIM stW AS DesignWidget = f.Widgets[stI]
         IF stW.Parent = "" AND stW.Kind = "ListBox" THEN
-            DIM stVS AS BOOLEAN = (stW.Anchors = "stretch-v" OR stW.Anchors = "stretch")
-            DIM stHS AS BOOLEAN = (stW.Anchors = "stretch-h" OR stW.Anchors = "stretch")
+            ' An axis stretches when BOTH of its edges are anchored.
+            DIM seT AS BOOLEAN
+            DIM seB AS BOOLEAN
+            DIM seL AS BOOLEAN
+            DIM seR AS BOOLEAN
+            seT, seB, seL, seR = anchorEdges(stW.Anchors)
+            DIM stVS AS BOOLEAN = (seT AND seB)
+            DIM stHS AS BOOLEAN = (seL AND seR)
             IF stVS THEN
                 DIM stIH AS INTEGER = stW.H
                 IF widgetFramed(stW) THEN stIH = stW.H - 2
@@ -3105,13 +3177,17 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         DIM wv  AS DesignWidget = f.Widgets[i]
         DIM xs  AS STRING = strconv.Itoa(wv.X)
         DIM ys  AS STRING = strconv.Itoa(wv.Y)
-        ' Anchor to right / bottom: X (or Y) follows the live form edge.
-        IF wv.Anchors = "top-right" OR wv.Anchors = "bottom-right" THEN
-            xs = strconv.Itoa(wv.X) + " + (" + fwVar + " - " + strconv.Itoa(refW) + ")"
-        END IF
-        IF wv.Anchors = "bottom-left" OR wv.Anchors = "bottom-right" THEN
-            ys = strconv.Itoa(wv.Y) + " + (" + fhVar + " - " + strconv.Itoa(refH) + ")"
-        END IF
+        ' Edge anchoring: a widget pinned to the right edge only (not the left)
+        ' tracks the live right edge; same for bottom-only. When BOTH sides of
+        ' an axis are anchored the position stays put and the size stretches
+        ' instead (handled in the WindowSize resize block below).
+        DIM aT AS BOOLEAN
+        DIM aB AS BOOLEAN
+        DIM aL AS BOOLEAN
+        DIM aR AS BOOLEAN
+        aT, aB, aL, aR = anchorEdges(wv.Anchors)
+        IF aR AND NOT aL THEN xs = strconv.Itoa(wv.X) + " + (" + fwVar + " - " + strconv.Itoa(refW) + ")"
+        IF aB AND NOT aT THEN ys = strconv.Itoa(wv.Y) + " + (" + fhVar + " - " + strconv.Itoa(refH) + ")"
         DIM sfx AS STRING = strconv.Itoa(i)
 
         _ = xs
