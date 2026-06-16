@@ -38,6 +38,10 @@ SUB _dbtuiWake()
         _currentProgram.Send(_wm)
     END IF
 END SUB
+DIM _dbtuiKeyConsumed AS BOOLEAN
+SUB ConsumeKey()
+    _dbtuiKeyConsumed = TRUE
+END SUB
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM _wkMsg AS _dbtuiWakeMsg
     DIM _wkOk AS BOOLEAN
@@ -113,7 +117,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     k, kOk = msg.(tea.KeyPressMsg)
     IF kOk THEN
         DIM key AS STRING = k.String()
+        _dbtuiKeyConsumed = FALSE
         Form_Key(key)
+        IF _dbtuiKeyConsumed THEN RETURN m, NIL
         IF key = "ctrl+c" OR key = "esc" THEN
             Form_Close()
             RETURN m, tea.Quit
