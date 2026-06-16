@@ -196,9 +196,12 @@ case_run "$SW" "starword Alt+E opens Edit dropdown" "alt+e,hold:0.4" \
     --want "Mark Block Begin" --want "Find and Replace"
 case_run "$SW" "starword Alt+U,W = Word Count" "h,i,space,t,h,e,r,e,alt+u,w,hold:0.4" \
     --want "Words: 2"
+# Hovering a bar title (mouse motion, no click) opens that menu.
+case_run "$SW" "starword hover opens menu" "move:9.2,hold:0.4" \
+    --want "Mark Block Begin" --want "Find and Replace"
 
 if [ "$fail" -ne 0 ]; then
     echo "RESULT: FAIL"
     exit 1
 fi
-echo "RESULT: PASS (30 cases, 7 programs)"
+echo "RESULT: PASS (31 cases, 7 programs)"

@@ -1866,11 +1866,41 @@ SUB Form_Wake()
     ' StarWord has no background workers in v1.
 END SUB
 
-' Fired for every mouse event; we use clicks (routed via sw_Click) to place
-' the cursor. Motion and wheel are ignored in v1.
+' Fired for every mouse event. Clicks are routed to sw_Click (cursor / menu
+' selection); here we use MOTION to drive the pull-down menus by HOVER:
+' hovering a bar title opens (or switches to) that menu, hovering a dropdown
+' item highlights it, and moving down into the document closes the menu.
 SUB Form_Mouse(kind AS STRING, button AS STRING, x AS INTEGER, y AS INTEGER)
-    _ = kind
     _ = button
-    _ = x
-    _ = y
+    IF kind <> "motion" THEN RETURN
+    ' Terminal cells -> canvas-local (canvas origin is at (1,1)).
+    DIM lx AS INTEGER = x - 1
+    DIM ly AS INTEGER = y - 1
+
+    ' Hovering the menu bar (canvas row 0) opens / switches to that menu.
+    IF ly = 0 THEN
+        DIM mhit AS INTEGER = menuAtX(lx)
+        IF mhit >= 0 THEN
+            gMenuOpen = mhit
+            gMenuSel = 0
+        END IF
+        RETURN
+    END IF
+
+    ' With a menu open: hovering an item highlights it; moving down into the
+    ' document (below the status/ruler, outside the box) closes the menu.
+    IF gMenuOpen >= 0 THEN
+        DIM inner AS INTEGER = menuBoxWidth(gMenuOpen)
+        DIM boxW AS INTEGER = inner + 4
+        DIM boxX AS INTEGER = menuTitleX(gMenuOpen)
+        IF boxX + boxW > gW THEN boxX = gW - boxW
+        IF boxX < 0 THEN boxX = 0
+        DIM nItems AS INTEGER = LEN(menuItems(gMenuOpen))
+        DIM inBox AS BOOLEAN = lx >= boxX AND lx < boxX + boxW AND ly >= 2 AND ly <= 1 + nItems
+        IF inBox THEN
+            gMenuSel = ly - 2
+        ELSEIF ly >= 3 THEN
+            gMenuOpen = 0 - 1
+        END IF
+    END IF
 END SUB
