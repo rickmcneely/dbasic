@@ -20,6 +20,18 @@ the IDE's own editor (`internal/pad.dbas`) is reproducible in generated code.
 Harness fix: `test/vtdrive.py` gained home/end/delete/pgup/pgdown +
 Ctrl+<letter> keys and disables pty XON/XOFF so Ctrl+S reaches the program.
 
+**#2(a) done — split-pane layout on a Canvas.** `examples/splitpane_demo/` is
+an IDE shell (sidebar | editor / output) drawn on ONE full-form Canvas, with a
+vertical + a horizontal splitter dragged through the raw `Form_Mouse` hook.
+Because the hooks deliver click + motion but no release, dragging uses a
+grab/move/drop model: click a bar to grab, slide with motion (or click the new
+spot) to move, click to drop. This is exactly how the IDE's own splitters
+work. Verified: both axes drag + clamp on a real terminal (tmux). NOTE: pyte
+(the smoke harness's VT emulator) cannot emulate bubbletea's region-shrink
+repaint — it leaves stale cells a real terminal clears — so the smoke suite
+asserts the vbar drag (which grows/clips rather than blanks) via both click and
+motion; the hbar shares that code path and is tmux-verified.
+
 - **Canvas widget** (`internal/widgets/canvas.dbas` + wiring in `internal/form.dbas`):
   a `W×H` rectangle the program draws via `FUNCTION <Name>_Render(w, h) AS STRING`
   (every frame, ANSI passed through, size-pinned + stretch-aware). Stateless.

@@ -61,12 +61,13 @@ build_prog() {
 # The three smoke programs. Widgets covers the 14 placeable kinds; chrome_demo
 # adds Menubar + Panel (not in the showcase); dialog_demo covers Dialog.
 SHOW="$WORK/show"; CHROME="$WORK/chrome"; DLG="$WORK/dlg"; MENU="$WORK/menu"
-EDIT="$WORK/edit"
+EDIT="$WORK/edit"; SPLIT="$WORK/split"
 build_prog examples/Widgets/Widgets.dbas         "$SHOW"
 build_prog examples/chrome_demo/chrome_demo.dbas "$CHROME"
 build_prog examples/dialog_demo/dialog_demo.dbas "$DLG"
 build_prog examples/menu_demo/menu_demo.dbas     "$MENU"
 build_prog examples/editor_demo/editor_demo.dbas "$EDIT"
+build_prog examples/splitpane_demo/splitpane_demo.dbas "$SPLIT"
 [ "$fail" -eq 0 ] || { echo "RESULT: FAIL (build)"; exit 1; }
 
 # case <bin> <label> <keys> <assert...>  — assert tokens pass to vtdrive.
@@ -151,8 +152,26 @@ case_run "$EDIT" "editor Backspace joins lines" "down,home,backspace,hold:0.4" \
 case_run "$EDIT" "editor Ctrl+S shows status" "ctrl+s,hold:0.4" \
     --want "saved 9 lines"
 
+# --- splitpane_demo: draggable splitters on ONE Canvas (self-host #2a) ------
+# Startup: the four-region IDE shell (sidebar | editor / output) renders.
+case_run "$SPLIT" "splitpane renders four regions" "hold:0.4" \
+    --want "EXPLORER" --want "main.dbas" --want "OUTPUT" --want "forms.dbas"
+# Vertical bar (canvas col 24 = terminal 1-based col 26): click to grab, click
+# col 13 to jump it left — the narrowed sidebar clips long filenames.
+case_run "$SPLIT" "splitpane vbar drag narrows sidebar" "lclick:26.5,lclick:13.5,hold:0.4" \
+    --want "EXPLORER" --not "forms.dbas"
+# Same drag via a live MOTION event (grab, then mouse-move) — exercises the
+# Form_Mouse motion path, not just clicks.
+case_run "$SPLIT" "splitpane vbar live-motion drag" "lclick:26.5,move:13.5,hold:0.4" \
+    --not "forms.dbas"
+# NOTE: the HORIZONTAL bar shares this exact drag mechanism on the Y axis and
+# works on a real terminal (verified under tmux). It is NOT asserted here
+# because shrinking a pane blanks cells, and pyte cannot faithfully emulate
+# bubbletea's region-shrink repaint — it leaves stale cells that a real
+# terminal clears. The vbar cases above already cover click + motion + clamp.
+
 if [ "$fail" -ne 0 ]; then
     echo "RESULT: FAIL"
     exit 1
 fi
-echo "RESULT: PASS (18 cases, 5 programs)"
+echo "RESULT: PASS (21 cases, 6 programs)"

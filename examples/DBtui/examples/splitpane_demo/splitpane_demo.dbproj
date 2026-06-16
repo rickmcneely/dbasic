@@ -1,0 +1,3 @@
+{ "Name":"splitpane_demo","StartForm":"frmS","Forms":[{ "Name":"frmS","Title":"Split Pane Demo","WExpr":"MAX_WIDTH","HExpr":"MAX_HEIGHT","BorderStyle":"normal","CornerStyle":"rounded","ShowClose":true,"Widgets":[
+  {"Kind":"Canvas","Name":"cv","Text":"Canvas","X":1,"Y":1,"W":78,"H":22,"Anchors":"T,B,L,R"}
+]}]}
