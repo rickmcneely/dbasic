@@ -42,6 +42,10 @@ DIM _dbtuiKeyConsumed AS BOOLEAN
 SUB ConsumeKey()
     _dbtuiKeyConsumed = TRUE
 END SUB
+DIM _dbtuiQuitReq AS BOOLEAN
+SUB RequestQuit()
+    _dbtuiQuitReq = TRUE
+END SUB
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM _wkMsg AS _dbtuiWakeMsg
     DIM _wkOk AS BOOLEAN
@@ -68,6 +72,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM _fmb AS STRING = "left"
         IF mc.Button = tea.MouseRight THEN _fmb = "right"
         Form_Mouse("click", _fmb, mc.X, mc.Y)
+        IF _dbtuiQuitReq THEN
+            Form_Close()
+            RETURN m, tea.Quit
+        END IF
     END IF
     IF mcOk AND mc.Button = tea.MouseLeft THEN
         IF mc.Y = 0 THEN
@@ -113,6 +121,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         DIM key AS STRING = k.String()
         _dbtuiKeyConsumed = FALSE
         Form_Key(key)
+        IF _dbtuiQuitReq THEN
+            Form_Close()
+            RETURN m, tea.Quit
+        END IF
         IF _dbtuiKeyConsumed THEN RETURN m, NIL
         IF key = "ctrl+c" OR key = "esc" THEN
             Form_Close()

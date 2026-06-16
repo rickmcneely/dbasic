@@ -2586,6 +2586,13 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "SUB ConsumeKey()\n"
         s = s + "    _dbtuiKeyConsumed = TRUE\n"
         s = s + "END SUB\n"
+        ' RequestQuit (Canvas forms): Form_Key/Form_Mouse may call it to make
+        ' the program quit cleanly (Form_Close runs, altscreen restored) — for
+        ' raw-key apps whose own commands quit (e.g. WordStar ^KX/^KQ).
+        s = s + "DIM _dbtuiQuitReq AS BOOLEAN\n"
+        s = s + "SUB RequestQuit()\n"
+        s = s + "    _dbtuiQuitReq = TRUE\n"
+        s = s + "END SUB\n"
     END IF
     IF hasDialog THEN
         s = s + "DIM _dlgX AS INTEGER\n"
@@ -2706,6 +2713,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
         s = s + "        DIM _fmb AS STRING = " + qt + "left" + qt + "\n"
         s = s + "        IF mc.Button = tea.MouseRight THEN _fmb = " + qt + "right" + qt + "\n"
         s = s + "        Form_Mouse(" + qt + "click" + qt + ", _fmb, mc.X, mc.Y)\n"
+        s = s + "        IF _dbtuiQuitReq THEN\n"
+        s = s + "            Form_Close()\n"
+        s = s + "            RETURN m, tea.Quit\n"
+        s = s + "        END IF\n"
         s = s + "    END IF\n"
     END IF
     s = s + "    IF mcOk AND mc.Button = tea.MouseLeft THEN\n"
@@ -3055,6 +3066,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     IF hasCanvas THEN
         s = s + "        _dbtuiKeyConsumed = FALSE\n"
         s = s + "        Form_Key(key)\n"
+        s = s + "        IF _dbtuiQuitReq THEN\n"
+        s = s + "            Form_Close()\n"
+        s = s + "            RETURN m, tea.Quit\n"
+        s = s + "        END IF\n"
         s = s + "        IF _dbtuiKeyConsumed THEN RETURN m, NIL\n"
     END IF
     s = s + "        IF key = " + qt + "ctrl+c" + qt + " OR key = " + qt + "esc" + qt + " THEN\n"
