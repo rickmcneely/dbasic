@@ -1,0 +1,64 @@
+' =========================================================================
+' widgets/canvas.dbas — Canvas (custom-draw surface) widget.
+'
+' A Canvas is a blank W x H rectangle the PROGRAM fills itself. Codegen calls
+' a user FUNCTION <Name>_Render(w, h) AS STRING for its contents every frame,
+' and routes raw left-clicks to <Name>_Click(localX, localY) in canvas-local
+' cells. Together with the form-level Form_Key / Form_Mouse hooks (emitted
+' whenever a form has a Canvas) this is the escape hatch for hand-composed
+' surfaces — editors, designers, plots — that the fixed widget set can't
+' express. The user owns every cell, so NO focus/hover restyle is applied and
+' any ANSI/lipgloss styling in the render is passed through untouched.
+'
+' Stateless: no Model field (the program keeps its own state in globals).
+' =========================================================================
+
+' A — defaults: a modest blank surface.
+FUNCTION canvasDefault(w AS DesignWidget) AS DesignWidget
+    w.Text = "Canvas"
+    w.W    = 24
+    w.H    = 8
+    RETURN w
+END FUNCTION
+
+' B — single-line preview.
+FUNCTION canvasVisibleText(w AS DesignWidget) AS STRING
+    RETURN "[Canvas " + w.Name + "]"
+END FUNCTION
+
+' C — design-time render: a dashed placeholder box labelled "Canvas" so it
+' reads clearly as a custom surface on the designer canvas.
+FUNCTION canvasVisibleLines(w AS DesignWidget) AS []STRING
+    DIM lines AS []STRING
+    DIM iw AS INTEGER = w.W - 2
+    IF iw < 0 THEN iw = 0
+    lines = APPEND(lines, "╭" + strings.Repeat("┄", iw) + "╮")
+    DIM label AS STRING = " Canvas "
+    DIM mid AS INTEGER = w.H / 2
+    DIM r AS INTEGER
+    FOR r = 1 TO w.H - 2
+        DIM body AS STRING = strings.Repeat(" ", iw)
+        IF r = mid AND iw >= LEN(label) THEN
+            DIM pad AS INTEGER = (iw - LEN(label)) / 2
+            body = strings.Repeat(" ", pad) + label + strings.Repeat(" ", iw - pad - LEN(label))
+        END IF
+        lines = APPEND(lines, "┆" + body + "┆")
+    NEXT r
+    lines = APPEND(lines, "╰" + strings.Repeat("┄", iw) + "╯")
+    RETURN lines
+END FUNCTION
+
+' H — codegen View layer: hand the user's render output to the compositor at
+' (X, Y, Z). The size is pinned to W x H (runtime when stretched) so a short
+' or all-spaces render still occupies the declared rectangle and clips an
+' over-long one. We pass the live (w, h) to the render fn so it can lay out
+' for the current size. No compFocusView — the program owns the surface.
+FUNCTION canvasEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS STRING, zStr AS STRING, f AS DesignForm, qt AS STRING) AS STRING
+    DIM wExpr AS STRING = strconv.Itoa(wv.W) + anchorWDelta(wv, f)
+    DIM hExpr AS STRING = strconv.Itoa(wv.H) + anchorHDelta(wv, f)
+    DIM s AS STRING = ""
+    s = s + "    DIM cv" + sfx + " AS STRING = " + wv.Name + "_Render(" + wExpr + ", " + hExpr + ")\n"
+    s = s + "    cv" + sfx + " = lipgloss.NewStyle().Width(" + wExpr + ").Height(" + hExpr + ").Render(cv" + sfx + ")\n"
+    s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(cv" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
+    RETURN s
+END FUNCTION

@@ -50,6 +50,7 @@ PROJECTS=(
   "examples/chrome_demo/chrome_demo.dbproj"
   "examples/colors_demo/colors_demo.dbproj"
   "examples/menu_demo/menu_demo.dbproj"
+  "examples/canvas_demo/canvas_demo.dbproj"
 )
 
 fail=0

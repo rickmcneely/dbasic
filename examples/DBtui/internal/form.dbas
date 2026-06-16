@@ -12,12 +12,12 @@
 ' Persistence + codegen come in a follow-up.
 ' =========================================================================
 
-CONST formPaletteKinds AS INTEGER = 18  ' Button, Label, TextInput, Checkbox,
-                                        ' RadioButton, ComboBox, ListBox,
-                                        ' ProgressBar, ScrollBar, Dialog,
-                                        ' TabStrip, Tree, TextArea, PropGrid,
-                                        ' ScrollPanel, Menubar, StatusBar,
-                                        ' Panel
+CONST formPaletteKinds AS INTEGER = 19  ' Button, Canvas, Label, TextInput,
+                                        ' Checkbox, RadioButton, ComboBox,
+                                        ' ListBox, ProgressBar, ScrollBar,
+                                        ' Dialog, TabStrip, Tree, TextArea,
+                                        ' PropGrid, ScrollPanel, Menubar,
+                                        ' StatusBar, Panel
 
 ' formKindByIdx — fixed list of widget kinds in palette display order.
 ' The order is the order entries appear in the right-pane Widgets
@@ -27,23 +27,24 @@ CONST formPaletteKinds AS INTEGER = 18  ' Button, Label, TextInput, Checkbox,
 ' insert it alphabetically and bump formPaletteKinds.
 FUNCTION formKindByIdx(i AS INTEGER) AS STRING
     IF i = 0 THEN RETURN "Button"
-    IF i = 1 THEN RETURN "Checkbox"
-    IF i = 2 THEN RETURN "ComboBox"
-    IF i = 3 THEN RETURN "Dialog"
-    IF i = 4 THEN RETURN "Label"
-    IF i = 5 THEN RETURN "ListBox"
-    IF i = 6 THEN RETURN "Menubar"
-    IF i = 7 THEN RETURN "Panel"
-    IF i = 8 THEN RETURN "ProgressBar"
-    IF i = 9 THEN RETURN "PropGrid"
-    IF i = 10 THEN RETURN "RadioButton"
-    IF i = 11 THEN RETURN "ScrollBar"
-    IF i = 12 THEN RETURN "ScrollPanel"
-    IF i = 13 THEN RETURN "StatusBar"
-    IF i = 14 THEN RETURN "TabStrip"
-    IF i = 15 THEN RETURN "TextArea"
-    IF i = 16 THEN RETURN "TextInput"
-    IF i = 17 THEN RETURN "Tree"
+    IF i = 1 THEN RETURN "Canvas"
+    IF i = 2 THEN RETURN "Checkbox"
+    IF i = 3 THEN RETURN "ComboBox"
+    IF i = 4 THEN RETURN "Dialog"
+    IF i = 5 THEN RETURN "Label"
+    IF i = 6 THEN RETURN "ListBox"
+    IF i = 7 THEN RETURN "Menubar"
+    IF i = 8 THEN RETURN "Panel"
+    IF i = 9 THEN RETURN "ProgressBar"
+    IF i = 10 THEN RETURN "PropGrid"
+    IF i = 11 THEN RETURN "RadioButton"
+    IF i = 12 THEN RETURN "ScrollBar"
+    IF i = 13 THEN RETURN "ScrollPanel"
+    IF i = 14 THEN RETURN "StatusBar"
+    IF i = 15 THEN RETURN "TabStrip"
+    IF i = 16 THEN RETURN "TextArea"
+    IF i = 17 THEN RETURN "TextInput"
+    IF i = 18 THEN RETURN "Tree"
     RETURN ""
 END FUNCTION
 
@@ -62,6 +63,8 @@ FUNCTION defaultWidget(kind AS STRING) AS DesignWidget
     w.H = 1
     IF kind = "Button" THEN
         RETURN buttonDefault(w)
+    ELSEIF kind = "Canvas" THEN
+        RETURN canvasDefault(w)
     ELSEIF kind = "Label" THEN
         RETURN labelDefault(w)
     ELSEIF kind = "TextInput" THEN
@@ -511,6 +514,7 @@ END FUNCTION
 ' generated code and by widgetVisibleLines for simple kinds.
 FUNCTION widgetVisibleText(w AS DesignWidget) AS STRING
     IF w.Kind = "Button"    THEN RETURN buttonVisibleText(w)
+    IF w.Kind = "Canvas"    THEN RETURN canvasVisibleText(w)
     IF w.Kind = "Label"     THEN RETURN labelVisibleText(w)
     IF w.Kind = "TextInput" THEN RETURN textInputVisibleText(w)
     IF w.Kind = "Checkbox"    THEN RETURN checkboxVisibleText(w)
@@ -584,6 +588,8 @@ FUNCTION widgetVisibleLines(w AS DesignWidget) AS []STRING
         NEXT gri
     ELSEIF w.Kind = "Panel" THEN
         lines = panelVisibleLines(w)
+    ELSEIF w.Kind = "Canvas" THEN
+        lines = canvasVisibleLines(w)
     ELSEIF w.Kind = "ScrollPanel" THEN
         ' Framed box: top border, H-2 content rows (each = content text
         ' + a scrollbar cell), bottom border. Design-time shows the top
@@ -2156,6 +2162,7 @@ FUNCTION widgetEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS 
     IF wv.Kind = "Tree" THEN RETURN treeEmitLayer(wv, sfx, xs, ys, zStr, qt)
     IF wv.Kind = "ScrollBar" THEN RETURN scrollBarEmitLayer(wv, sfx, xs, ys, zStr, qt)
     IF wv.Kind = "StatusBar" THEN RETURN statusBarEmitLayer(wv, sfx, xs, ys, zStr, f, qt)
+    IF wv.Kind = "Canvas" THEN RETURN canvasEmitLayer(wv, sfx, xs, ys, zStr, f, qt)
     IF wv.Kind = "Panel" THEN RETURN panelEmitLayer(wv, sfx, xs, ys, zStr, f, n, qt)
     IF wv.Kind = "Menubar" THEN RETURN menubarEmitLayer(wv, sfx, xs, ys, zStr, qt)
     IF wv.Kind = "ProgressBar" THEN
@@ -2394,8 +2401,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     DIM hasProgress AS BOOLEAN = FALSE
     DIM hasFramed AS BOOLEAN = FALSE
     DIM hasStatusBar AS BOOLEAN = FALSE
+    DIM hasCanvas AS BOOLEAN = FALSE
     DIM scanI AS INTEGER
     FOR scanI = 0 TO n - 1
+        IF f.Widgets[scanI].Kind = "Canvas" THEN hasCanvas = TRUE
         IF f.Widgets[scanI].Kind = "StatusBar" THEN hasStatusBar = TRUE
         IF f.Widgets[scanI].Kind = "Dialog" THEN hasDialog = TRUE
         IF f.Widgets[scanI].Kind = "Tree" THEN hasTree = TRUE
@@ -2681,6 +2690,15 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    DIM mc AS tea.MouseClickMsg\n"
     s = s + "    DIM mcOk AS BOOLEAN\n"
     s = s + "    mc, mcOk = msg.(tea.MouseClickMsg)\n"
+    ' Raw mouse-click hook (Canvas forms): fires for any button before the
+    ' built-in left-click hit-test below.
+    IF hasCanvas THEN
+        s = s + "    IF mcOk THEN\n"
+        s = s + "        DIM _fmb AS STRING = " + qt + "left" + qt + "\n"
+        s = s + "        IF mc.Button = tea.MouseRight THEN _fmb = " + qt + "right" + qt + "\n"
+        s = s + "        Form_Mouse(" + qt + "click" + qt + ", _fmb, mc.X, mc.Y)\n"
+        s = s + "    END IF\n"
+    END IF
     s = s + "    IF mcOk AND mc.Button = tea.MouseLeft THEN\n"
     ' Form title-bar window glyphs (chromed forms): a click on the top row
     ' over a glyph minimizes / maximizes / closes. Block is right-aligned,
@@ -2856,6 +2874,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + tabStripEmitMouse(mcw, mcIStr, mcXs, mcYs, qt)
         ELSEIF mcw.Kind = "Panel" THEN
             s = s + panelEmitMouse(mcw, mcIStr, mcYs, f.Widgets, qt)
+        ELSEIF mcw.Kind = "Canvas" THEN
+            ' Hand the click to the user with canvas-local (0-based) coords.
+            s = s + "            " + mcw.Name + "_Click(mc.X - " + mcXs + ", mc.Y - " + mcYs + ")\n"
         ELSE
             ' Label / TextInput / ProgressBar: focus follows the
             ' click but no state change. (TextInput Tier 2.)
@@ -2874,6 +2895,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    DIM mmOk AS BOOLEAN\n"
     s = s + "    mm, mmOk = msg.(tea.MouseMotionMsg)\n"
     s = s + "    IF mmOk THEN\n"
+    IF hasCanvas THEN s = s + "        Form_Mouse(" + qt + "motion" + qt + ", " + qt + qt + ", mm.X, mm.Y)\n"
     s = s + "        DIM mmHit AS INTEGER = 0 - 1\n"
     DIM mmi AS INTEGER
     FOR mmi = n - 1 TO 0 STEP 0 - 1
@@ -2931,6 +2953,11 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    DIM mwOk AS BOOLEAN\n"
     s = s + "    mw, mwOk = msg.(tea.MouseWheelMsg)\n"
     s = s + "    IF mwOk THEN\n"
+    IF hasCanvas THEN
+        s = s + "        DIM _fmw AS STRING = " + qt + "up" + qt + "\n"
+        s = s + "        IF mw.Button = tea.MouseWheelDown THEN _fmw = " + qt + "down" + qt + "\n"
+        s = s + "        Form_Mouse(" + qt + "wheel" + qt + ", _fmw, mw.X, mw.Y)\n"
+    END IF
     DIM mwi AS INTEGER
     FOR mwi = n - 1 TO 0 STEP 0 - 1
         DIM mww AS DesignWidget = f.Widgets[mwi]
@@ -3013,6 +3040,9 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    k, kOk = msg.(tea.KeyPressMsg)\n"
     s = s + "    IF kOk THEN\n"
     s = s + "        DIM key AS STRING = k.String()\n"
+    ' Raw key hook (Canvas forms): the program sees every key. ctrl+c/esc
+    ' still quit and tab still cycles focus below (no consume in v1).
+    IF hasCanvas THEN s = s + "        Form_Key(key)\n"
     s = s + "        IF key = " + qt + "ctrl+c" + qt + " OR key = " + qt + "esc" + qt + " THEN\n"
     s = s + "            Form_Close()\n"
     s = s + "            RETURN m, tea.Quit\n"
@@ -3803,6 +3833,12 @@ FUNCTION subDefined(userCode AS STRING, name AS STRING) AS BOOLEAN
     RETURN strings.Contains(userCode, needle)
 END FUNCTION
 
+' declDefined — like subDefined but also matches a FUNCTION declaration, for
+' stubs that are functions (e.g. a Canvas <Name>_Render).
+FUNCTION declDefined(userCode AS STRING, name AS STRING) AS BOOLEAN
+    RETURN strings.Contains(userCode, "SUB " + name + "(") OR strings.Contains(userCode, "FUNCTION " + name + "(")
+END FUNCTION
+
 ' ensureSubSig — if `userCode` already declares `SUB <name>(...)`,
 ' rewrite ONLY that signature line so its parameter list matches
 ' `wantSig`, leaving the body untouched. Returns the patched code
@@ -3932,6 +3968,31 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
             out = out + "SUB " + w.Name + "_DblClick()\n    ' TODO: your code here.\nEND SUB\n"
             trailing = TRUE
         END IF
+        ' A Canvas needs a render FUNCTION (returns its contents) and a click
+        ' SUB (raw left-clicks in canvas-local cells).
+        IF w.Kind = "Canvas" AND w.Parent = "" THEN
+            IF NOT declDefined(out, w.Name + "_Render") THEN
+                IF NOT trailing THEN out = out + "\n"
+                IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+                out = out + "' Render for canvas " + w.Name + " — return its contents, up to w cols\n"
+                out = out + "' x h rows (ANSI/lipgloss styling passes through). Called every frame.\n"
+                out = out + "FUNCTION " + w.Name + "_Render(w AS INTEGER, h AS INTEGER) AS STRING\n"
+                out = out + "    ' TODO: draw the canvas.\n"
+                out = out + "    _ = w\n"
+                out = out + "    _ = h\n"
+                out = out + "    RETURN " + Chr(34) + Chr(34) + "\n"
+                out = out + "END FUNCTION\n"
+                trailing = TRUE
+            END IF
+            IF NOT subDefined(out, w.Name + "_Click") THEN
+                IF NOT trailing THEN out = out + "\n"
+                IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+                out = out + "' Left-click inside canvas " + w.Name + " — x,y are 0-based cells\n"
+                out = out + "' within the canvas. Edit freely.\n"
+                out = out + "SUB " + w.Name + "_Click(x AS INTEGER, y AS INTEGER)\n    ' TODO: your code here.\n    _ = x\n    _ = y\nEND SUB\n"
+                trailing = TRUE
+            END IF
+        END IF
     NEXT i
     ' Form lifecycle events — always available; the runtime calls these.
     ' Form_Load() once at startup, Terminal_Resize(w,h) on every terminal resize,
@@ -3956,6 +4017,29 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
         out = out + "' Fired on the UI thread after a background goroutine calls _dbtuiWake().\n"
         out = out + "' Use it to push async updates (e.g. fresh data) into widgets. Edit freely.\n"
         out = out + "SUB Form_Wake()\n    ' TODO: your code here.\nEND SUB\n"
+    END IF
+    ' Raw input hooks — emitted only when the form has a Canvas (a hand-drawn
+    ' surface that typically wants raw keyboard/mouse). Form_Key fires for
+    ' every key press; Form_Mouse for every mouse event. Both run before the
+    ' built-in per-widget handling.
+    DIM fHasCanvas AS BOOLEAN = FALSE
+    DIM hcI AS INTEGER
+    FOR hcI = 0 TO LEN(f.Widgets) - 1
+        IF f.Widgets[hcI].Kind = "Canvas" THEN fHasCanvas = TRUE
+    NEXT hcI
+    IF fHasCanvas THEN
+        IF NOT subDefined(out, "Form_Key") THEN
+            IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+            out = out + "' Fired for every key press (the raw key string, e.g. " + Chr(34) + "a" + Chr(34) + ", " + Chr(34) + "enter" + Chr(34) + ",\n"
+            out = out + "' " + Chr(34) + "ctrl+s" + Chr(34) + "), before the built-in widget handling. Edit freely.\n"
+            out = out + "SUB Form_Key(key AS STRING)\n    ' TODO: your code here.\n    _ = key\nEND SUB\n"
+        END IF
+        IF NOT subDefined(out, "Form_Mouse") THEN
+            IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+            out = out + "' Fired for every mouse event. kind = " + Chr(34) + "click" + Chr(34) + " | " + Chr(34) + "motion" + Chr(34) + " | " + Chr(34) + "wheel" + Chr(34) + ";\n"
+            out = out + "' button = " + Chr(34) + "left" + Chr(34) + " / " + Chr(34) + "right" + Chr(34) + " / " + Chr(34) + "up" + Chr(34) + " / " + Chr(34) + "down" + Chr(34) + " / " + Chr(34) + Chr(34) + "; x,y are terminal cells. Edit freely.\n"
+            out = out + "SUB Form_Mouse(kind AS STRING, button AS STRING, x AS INTEGER, y AS INTEGER)\n    ' TODO: your code here.\n    _ = kind\n    _ = button\n    _ = x\n    _ = y\nEND SUB\n"
+        END IF
     END IF
     RETURN out
 END FUNCTION

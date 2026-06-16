@@ -1158,6 +1158,11 @@ func (g *Generator) generateDimStatement(stmt *parser.DimStatement) {
 		g.writeLine(fmt.Sprintf("%s %s = %s", varName, varType, g.exprToGo(stmt.Value)))
 	} else if stmt.ArraySize != nil {
 		g.writeLine(fmt.Sprintf("%s = make([]%s, %s)", varName, varType, g.exprToGo(stmt.ArraySize)))
+	} else if strings.HasPrefix(varType, "map[") {
+		// Auto-initialize package-level maps to an empty map so writes don't
+		// panic on a nil map — matches the auto-init locals already get
+		// (DIM ... AS MAP OF K TO V is documented as ready to write).
+		g.writeLine(fmt.Sprintf("%s = %s{}", varName, varType))
 	} else {
 		g.writeLine(fmt.Sprintf("%s %s", varName, varType))
 	}
