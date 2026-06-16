@@ -441,12 +441,20 @@ END FUNCTION
 ' isWordCh — alphanumeric or underscore (for ^A / ^F word motion).
 FUNCTION isWordCh(ch AS STRING) AS BOOLEAN
     IF ch = "" THEN RETURN FALSE
+    ' A multibyte rune (é, ñ, …) is a word character (accented letters, CJK).
+    IF LEN(ch) > 1 THEN RETURN TRUE
     DIM a AS INTEGER = Asc(ch)
     IF a >= 48 AND a <= 57 THEN RETURN TRUE
     IF a >= 65 AND a <= 90 THEN RETURN TRUE
     IF a >= 97 AND a <= 122 THEN RETURN TRUE
     IF a = 95 THEN RETURN TRUE
     RETURN FALSE
+END FUNCTION
+
+' runeAt — the rune (1-4 byte string) beginning at byte offset pos, or "".
+FUNCTION runeAt(line AS STRING, pos AS INTEGER) AS STRING
+    IF pos < 0 OR pos >= LEN(line) THEN RETURN ""
+    RETURN Mid(line, pos + 1, runeLenAt(line, pos))
 END FUNCTION
 
 ' setDoc / cursorFromOffset — flat-string model used by block operations.
@@ -863,7 +871,21 @@ SUB sw_Click(x AS INTEGER, y AS INTEGER)
     IF gPrefix <> "" OR gPromptMode <> "" THEN RETURN
     IF y < 2 OR y > gH - 2 THEN RETURN
     gRow = gTop + (y - 2)
-    gCol = gLeft + x
+    IF gRow > lastRow() THEN gRow = lastRow()
+    IF gRow < 0 THEN gRow = 0
+    ' Map the clicked display cell x to a rune boundary: advance x runes from
+    ' the (rune-snapped) left scroll offset.
+    DIM ln AS STRING = curLine()
+    DIM pos AS INTEGER = snapToRune(ln, gLeft)
+    DIM cellsX AS INTEGER
+    FOR cellsX = 1 TO x
+        IF pos >= LEN(ln) THEN
+            pos = LEN(ln)
+        ELSE
+            pos = nextRuneStart(ln, pos)
+        END IF
+    NEXT cellsX
+    gCol = pos
     clampCursor()
     gMessage = ""
 END SUB
@@ -951,11 +973,11 @@ END SUB
 SUB deleteWordRight()
     DIM ln AS STRING = curLine()
     DIM c AS INTEGER = gCol
-    WHILE c < LEN(ln) AND isWordCh(Mid(ln, c + 1, 1))
-        c = c + 1
+    WHILE c < LEN(ln) AND isWordCh(runeAt(ln, c))
+        c = nextRuneStart(ln, c)
     WEND
-    WHILE c < LEN(ln) AND NOT isWordCh(Mid(ln, c + 1, 1))
-        c = c + 1
+    WHILE c < LEN(ln) AND NOT isWordCh(runeAt(ln, c))
+        c = nextRuneStart(ln, c)
     WEND
     gLines[gRow] = Left(ln, gCol) + Right(ln, LEN(ln) - c)
     gModified = TRUE
@@ -1017,12 +1039,14 @@ SUB wordLeft()
         END IF
         RETURN
     END IF
+    ' Step left over runes: skip non-word runes, then the word itself. Each
+    ' test inspects the rune immediately left of c (at prevRuneStart(ln,c)).
     DIM c AS INTEGER = gCol
-    WHILE c > 0 AND NOT isWordCh(Mid(ln, c, 1))
-        c = c - 1
+    WHILE c > 0 AND NOT isWordCh(runeAt(ln, prevRuneStart(ln, c)))
+        c = prevRuneStart(ln, c)
     WEND
-    WHILE c > 0 AND isWordCh(Mid(ln, c, 1))
-        c = c - 1
+    WHILE c > 0 AND isWordCh(runeAt(ln, prevRuneStart(ln, c)))
+        c = prevRuneStart(ln, c)
     WEND
     gCol = c
 END SUB
@@ -1030,11 +1054,11 @@ END SUB
 SUB wordRight()
     DIM ln AS STRING = curLine()
     DIM c AS INTEGER = gCol
-    WHILE c < LEN(ln) AND isWordCh(Mid(ln, c + 1, 1))
-        c = c + 1
+    WHILE c < LEN(ln) AND isWordCh(runeAt(ln, c))
+        c = nextRuneStart(ln, c)
     WEND
-    WHILE c < LEN(ln) AND NOT isWordCh(Mid(ln, c + 1, 1))
-        c = c + 1
+    WHILE c < LEN(ln) AND NOT isWordCh(runeAt(ln, c))
+        c = nextRuneStart(ln, c)
     WEND
     IF c >= LEN(ln) AND gRow < lastRow() THEN
         gRow = gRow + 1
