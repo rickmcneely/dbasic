@@ -116,7 +116,25 @@ preview) · `widgetEmitLayer` dispatch · the per-kind emit module under
 key dispatch. Stateless kinds (like Canvas) skip the Model-field loop.
 
 ## Recommended order
-1. **#5 editor_demo** (proves the IDE's hardest surface is reproducible).
-2. **#2(a) splitpane_demo** (proves the IDE shell).
+1. **#5 editor_demo** ✅ (proves the IDE's hardest surface is reproducible).
+2. **#2(a) splitpane_demo** ✅ (proves the IDE shell).
 3. Decide on #2(b) first-class SplitPane and #4 runtime widgets based on what
    self-hosting the property panel / dialogs actually needs.
+
+## Decision on #2(b) + #4 — DEFERRED (Canvas covers it)
+With #5 and #2(a) shipped, the two surfaces that were the actual blockers — a
+multi-line editor and a resizable multi-pane shell — are both reproducible in
+generated DBasic *on the Canvas foundation alone*, with no new framework. That
+covers what self-hosting needs: the IDE already draws its panels, editor, and
+splitters via custom render, and a Canvas + `Form_Key`/`Form_Mouse` reproduces
+exactly that pattern.
+
+So **#2(b)** (a first-class `SplitPane`/`Dock` widget kind) and **#4**
+(runtime widget creation — instantiating real widgets after start) stay
+**deferred**. They are conveniences, not blockers: #2(b) only matters if we
+want splitters to host *design-time-placed child widgets* (vs. custom-drawn
+content), and #4 only matters for UIs whose widget set isn't known until
+runtime. Neither is required to self-host. Revisit only when a concrete app
+surfaces a need that Canvas genuinely can't express — the `StarWord` app
+(WordStar 7.0 clone, `examples/StarWord/`) is a good forcing function: build it
+on Canvas first and let any real gap, if one appears, justify #2(b)/#4.
