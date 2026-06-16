@@ -6,6 +6,7 @@ IMPORT "os"
 IMPORT "strings"
 IMPORT "runtime"
 IMPORT "os/exec" AS exec
+IMPORT "time"
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 
 SUB _dbtuiKeepFmtAlive()
@@ -371,9 +372,32 @@ DIM gFindStr AS STRING
 DIM gReplaceStr AS STRING
 
 ' --- modal prompt on the message line -------------------------------------
-DIM gPromptMode AS STRING    ' "" | "find" | "rfind" | "rwith" | "saveas"
+DIM gPromptMode AS STRING    ' "" | "find" | "rfind" | "rwith" | "saveas" | …
 DIM gPromptText AS STRING
 DIM gPromptLabel AS STRING
+
+' --- undo (whole-document snapshots; one step per changing keystroke) -------
+' Each snapshot is the document joined by LF, with the pre-change cursor.
+DIM gUndoDoc AS []STRING
+DIM gUndoRow AS []INTEGER
+DIM gUndoCol AS []INTEGER
+DIM gLastDoc AS STRING            ' doc as of the end of the previous keystroke
+DIM gLastRow AS INTEGER
+DIM gLastCol AS INTEGER
+
+' --- misc WordStar feature state ------------------------------------------
+DIM gHelpLevel AS INTEGER = 3     ' WordStar help level 0..3 (Help > Change Help Level)
+DIM gShowRuler AS BOOLEAN = TRUE  ' View > Screen Settings toggles the ruler line
+DIM gPageLength AS INTEGER = 66   ' Layout > Page: lines per printed page
+
+' --- single-register keyboard macro (Utilities > Macros) -------------------
+DIM gMacroKeys AS []STRING        ' recorded key names
+DIM gMacroRecording AS BOOLEAN
+DIM gMacroPlaying AS BOOLEAN
+
+' --- calculator expression scanner state (Utilities > Calculator) ----------
+DIM gCalcSrc AS STRING
+DIM gCalcPos AS INTEGER
 
 ' ==========================================================================
 ' Small buffer helpers
@@ -629,6 +653,7 @@ SUB loadFile(path AS STRING)
         gLines = nil
         gLines = APPEND(gLines, "")
         gMessage = "New file: " + path
+        syncUndoBaseline()
         RETURN
     END IF
     DIM text AS STRING = Decode(data)
@@ -637,6 +662,7 @@ SUB loadFile(path AS STRING)
     gLines = strings.Split(text, Chr(10))
     IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
     gMessage = "Opened " + path + "  (" + fmt.Sprintf("%d", LEN(gLines)) + " lines)"
+    syncUndoBaseline()
 END SUB
 
 SUB saveFile()
@@ -1045,6 +1071,417 @@ FUNCTION menuAtX(x AS INTEGER) AS INTEGER
     RETURN 0 - 1
 END FUNCTION
 
+' ==========================================================================
+' WordStar feature implementations (the menu actions that drive them)
+' ==========================================================================
+
+' --- Undo (whole-document snapshots, one step per changing keystroke) ------
+
+' joinDoc — the whole buffer as one string (LF-separated), for snapshots.
+FUNCTION joinDoc() AS STRING
+    RETURN strings.Join(gLines, Chr(10))
+END FUNCTION
+
+' pushUndoState — record one undo step (the document + cursor BEFORE a change).
+SUB pushUndoState(doc AS STRING, r AS INTEGER, c AS INTEGER)
+    gUndoDoc = APPEND(gUndoDoc, doc)
+    gUndoRow = APPEND(gUndoRow, r)
+    gUndoCol = APPEND(gUndoCol, c)
+    ' Cap the history so a long session can't grow without bound.
+    IF LEN(gUndoDoc) > 200 THEN
+        gUndoDoc = gUndoDoc[1:]
+        gUndoRow = gUndoRow[1:]
+        gUndoCol = gUndoCol[1:]
+    END IF
+END SUB
+
+' reconcileUndo — called at the top of every keystroke. If the document
+' changed during the PREVIOUS keystroke, gLastDoc still holds its pre-change
+' state, so push that as an undo point. Then resync the baseline.
+SUB reconcileUndo()
+    DIM cur AS STRING = joinDoc()
+    IF cur <> gLastDoc THEN
+        pushUndoState(gLastDoc, gLastRow, gLastCol)
+        gLastDoc = cur
+    END IF
+    gLastRow = gRow
+    gLastCol = gCol
+END SUB
+
+' syncUndoBaseline — adopt the current document as the baseline WITHOUT making
+' it an undo step (used after load/new, where there's nothing to undo back to).
+SUB syncUndoBaseline()
+    gLastDoc = joinDoc()
+    gLastRow = gRow
+    gLastCol = gCol
+END SUB
+
+' doUndo — restore the most recent undo snapshot (Edit > Undo).
+SUB doUndo()
+    DIM n AS INTEGER = LEN(gUndoDoc)
+    IF n = 0 THEN
+        gMessage = "Nothing to undo"
+        RETURN
+    END IF
+    DIM doc AS STRING = gUndoDoc[n - 1]
+    gRow = gUndoRow[n - 1]
+    gCol = gUndoCol[n - 1]
+    gUndoDoc = gUndoDoc[0:n - 1]
+    gUndoRow = gUndoRow[0:n - 1]
+    gUndoCol = gUndoCol[0:n - 1]
+    gLines = strings.Split(doc, Chr(10))
+    IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
+    clampCursor()
+    syncUndoBaseline()
+    gModified = TRUE
+    gMessage = "Undid last change"
+END SUB
+
+' --- Insert menu: text/date/page-break/file -------------------------------
+
+' insertTextAtCursor — splice a (newline-free) string in at the cursor.
+SUB insertTextAtCursor(s AS STRING)
+    DIM ln AS STRING = curLine()
+    gLines[gRow] = Left(ln, gCol) + s + Right(ln, LEN(ln) - gCol)
+    gCol = gCol + LEN(s)
+    gModified = TRUE
+END SUB
+
+' insertTodaysDate — Insert > Today's Date.
+SUB insertTodaysDate()
+    insertTextAtCursor(time.Now().Format("January 2, 2006"))
+    gMessage = "Date inserted"
+END SUB
+
+' insertPageBreak — Insert > Page Break: WordStar's .pa dot command on its
+' own line, with a fresh line after it for the next page's text.
+SUB insertPageBreak()
+    IF gCol > 0 OR strings.TrimSpace(curLine()) <> "" THEN
+        gLines = lineInsertAt(gLines, gRow + 1, ".pa")
+        gRow = gRow + 1
+    ELSE
+        gLines[gRow] = ".pa"
+    END IF
+    gLines = lineInsertAt(gLines, gRow + 1, "")
+    gRow = gRow + 1
+    gCol = 0
+    gModified = TRUE
+    gMessage = "Page break (.pa) inserted"
+END SUB
+
+' doInsertFile — Insert > File: read a file and splice its lines in at the
+' cursor (the current line is split around the insertion).
+SUB doInsertFile(path AS STRING)
+    DIM data AS BYTES
+    DIM e AS ERROR
+    data, e = os.ReadFile(path)
+    IF e <> NIL THEN
+        gMessage = "Cannot read " + path
+        RETURN
+    END IF
+    DIM text AS STRING = Decode(data)
+    text = strings.ReplaceAll(text, Chr(13) + Chr(10), Chr(10))
+    text = strings.ReplaceAll(text, Chr(13), Chr(10))
+    DIM flines AS []STRING = strings.Split(text, Chr(10))
+    DIM nf AS INTEGER = LEN(flines)
+    IF nf = 0 THEN
+        gMessage = "Empty file: " + path
+        RETURN
+    END IF
+    DIM ln AS STRING = curLine()
+    DIM head AS STRING = Left(ln, gCol)
+    DIM tail AS STRING = Right(ln, LEN(ln) - gCol)
+    DIM out AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO gRow - 1
+        out = APPEND(out, gLines[i])
+    NEXT i
+    IF nf = 1 THEN
+        out = APPEND(out, head + flines[0] + tail)
+    ELSE
+        out = APPEND(out, head + flines[0])
+        FOR i = 1 TO nf - 2
+            out = APPEND(out, flines[i])
+        NEXT i
+        out = APPEND(out, flines[nf - 1] + tail)
+    END IF
+    FOR i = gRow + 1 TO lastRow()
+        out = APPEND(out, gLines[i])
+    NEXT i
+    gLines = out
+    gRow = gRow + nf - 1
+    gCol = LEN(flines[nf - 1])
+    gModified = TRUE
+    gMessage = fmt.Sprintf("Inserted %s (%d line(s))", path, nf)
+END SUB
+
+' --- Style menu: convert case ---------------------------------------------
+
+' convertCaseWord — Style > Convert Case: flip the case of the word at the
+' cursor (all-caps -> lower, otherwise -> upper).
+SUB convertCaseWord()
+    DIM ln AS STRING = curLine()
+    DIM s AS INTEGER = gCol
+    WHILE s > 0 AND isWordCh(runeAt(ln, prevRuneStart(ln, s)))
+        s = prevRuneStart(ln, s)
+    WEND
+    DIM e AS INTEGER = gCol
+    WHILE e < LEN(ln) AND isWordCh(runeAt(ln, e))
+        e = nextRuneStart(ln, e)
+    WEND
+    IF s >= e THEN
+        gMessage = "No word at cursor"
+        RETURN
+    END IF
+    DIM word AS STRING = Mid(ln, s + 1, e - s)
+    DIM newWord AS STRING = UCase(word)
+    IF word = UCase(word) THEN newWord = LCase(word)
+    gLines[gRow] = Left(ln, s) + newWord + Right(ln, LEN(ln) - e)
+    gCol = e
+    gModified = TRUE
+    gMessage = "Case converted"
+END SUB
+
+' --- File menu: change dir / run DOS / print ------------------------------
+
+' doChdir — File > Change Dir.
+SUB doChdir(path AS STRING)
+    DIM e AS ERROR = os.Chdir(path)
+    IF e <> NIL THEN
+        gMessage = "Cannot change to " + path
+        RETURN
+    END IF
+    gOpenDir = "."
+    gMessage = "Working directory: " + path
+END SUB
+
+' doRunDos — File > Run DOS: run a shell command, show its output on the
+' message line (newlines flattened to " | ").
+SUB doRunDos(cmd AS STRING)
+    IF strings.TrimSpace(cmd) = "" THEN RETURN
+    DIM shell AS STRING = "sh"
+    DIM flag AS STRING = "-c"
+    IF runtime.GOOS = "windows" THEN
+        shell = "cmd"
+        flag = "/C"
+    END IF
+    DIM out AS BYTES
+    DIM e AS ERROR
+    out, e = exec.Command(shell, flag, cmd).CombinedOutput()
+    DIM res AS STRING = strings.TrimSpace(Decode(out))
+    res = strings.ReplaceAll(res, Chr(13), "")
+    res = strings.ReplaceAll(res, Chr(10), " | ")
+    IF e <> NIL THEN
+        gMessage = "Run failed: " + res
+    ELSEIF res = "" THEN
+        gMessage = "Ran (no output)"
+    ELSE
+        gMessage = "Run: " + res
+    END IF
+END SUB
+
+' stripMarkers — drop the zero-width ^P print-control toggle bytes from a line.
+FUNCTION stripMarkers(s AS STRING) AS STRING
+    DIM acc AS STRING = ""
+    DIM p AS INTEGER = 0
+    WHILE p < LEN(s)
+        DIM ch AS STRING = runeAt(s, p)
+        IF markerLetter(ch) = "" THEN acc = acc + ch
+        p = nextRuneStart(s, p)
+    WEND
+    RETURN acc
+END FUNCTION
+
+' doPrint — File > Print: write a plain-text print image (<base>.prn) with
+' the print-control toggles removed and dot-command lines dropped.
+SUB doPrint()
+    DIM out AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO lastRow()
+        DIM ln AS STRING = gLines[i]
+        IF Left(ln, 1) <> "." THEN out = APPEND(out, stripMarkers(ln))
+    NEXT i
+    DIM stem AS STRING = gFileName
+    DIM dotPos AS INTEGER = strings.LastIndex(stem, ".")
+    IF dotPos > 0 THEN stem = Left(stem, dotPos)
+    DIM target AS STRING = stem + ".prn"
+    DIM body AS STRING = strings.Join(out, Chr(13) + Chr(10))
+    DIM e AS ERROR = os.WriteFile(target, Encode(body), 420)
+    IF e <> NIL THEN
+        gMessage = "Print failed: " + e.Error()
+        RETURN
+    END IF
+    gMessage = "Printed to " + target
+END SUB
+
+' --- Utilities menu: calculator -------------------------------------------
+' A small recursive-descent evaluator for + - * / and parentheses over
+' gCalcSrc, advanced by gCalcPos (0-based byte index).
+
+SUB calcSkip()
+    WHILE gCalcPos < LEN(gCalcSrc) AND Mid(gCalcSrc, gCalcPos + 1, 1) = " "
+        gCalcPos = gCalcPos + 1
+    WEND
+END SUB
+
+FUNCTION calcPeek() AS STRING
+    IF gCalcPos >= LEN(gCalcSrc) THEN RETURN ""
+    RETURN Mid(gCalcSrc, gCalcPos + 1, 1)
+END FUNCTION
+
+FUNCTION calcNumber() AS DOUBLE
+    DIM startp AS INTEGER = gCalcPos
+    DIM more AS BOOLEAN = TRUE
+    WHILE gCalcPos < LEN(gCalcSrc) AND more
+        DIM c AS STRING = Mid(gCalcSrc, gCalcPos + 1, 1)
+        DIM a AS INTEGER = Asc(c)
+        IF (a >= 48 AND a <= 57) OR c = "." THEN
+            gCalcPos = gCalcPos + 1
+        ELSE
+            more = FALSE
+        END IF
+    WEND
+    RETURN Val(Mid(gCalcSrc, startp + 1, gCalcPos - startp))
+END FUNCTION
+
+FUNCTION calcFactor() AS DOUBLE
+    calcSkip()
+    DIM c AS STRING = calcPeek()
+    IF c = "(" THEN
+        gCalcPos = gCalcPos + 1
+        DIM v AS DOUBLE = calcExpr()
+        calcSkip()
+        IF calcPeek() = ")" THEN gCalcPos = gCalcPos + 1
+        RETURN v
+    END IF
+    IF c = "-" THEN
+        gCalcPos = gCalcPos + 1
+        RETURN 0 - calcFactor()
+    END IF
+    IF c = "+" THEN
+        gCalcPos = gCalcPos + 1
+        RETURN calcFactor()
+    END IF
+    RETURN calcNumber()
+END FUNCTION
+
+FUNCTION calcTerm() AS DOUBLE
+    DIM v AS DOUBLE = calcFactor()
+    DIM more AS BOOLEAN = TRUE
+    WHILE more
+        calcSkip()
+        DIM c AS STRING = calcPeek()
+        IF c = "*" THEN
+            gCalcPos = gCalcPos + 1
+            v = v * calcFactor()
+        ELSEIF c = "/" THEN
+            gCalcPos = gCalcPos + 1
+            DIM d AS DOUBLE = calcFactor()
+            IF d <> 0 THEN
+                v = v / d
+            ELSE
+                v = 0
+            END IF
+        ELSE
+            more = FALSE
+        END IF
+    WEND
+    RETURN v
+END FUNCTION
+
+FUNCTION calcExpr() AS DOUBLE
+    DIM v AS DOUBLE = calcTerm()
+    DIM more AS BOOLEAN = TRUE
+    WHILE more
+        calcSkip()
+        DIM c AS STRING = calcPeek()
+        IF c = "+" THEN
+            gCalcPos = gCalcPos + 1
+            v = v + calcTerm()
+        ELSEIF c = "-" THEN
+            gCalcPos = gCalcPos + 1
+            v = v - calcTerm()
+        ELSE
+            more = FALSE
+        END IF
+    WEND
+    RETURN v
+END FUNCTION
+
+' doCalc — Utilities > Calculator: evaluate and show the result.
+SUB doCalc(expr AS STRING)
+    IF strings.TrimSpace(expr) = "" THEN RETURN
+    gCalcSrc = expr
+    gCalcPos = 0
+    DIM v AS DOUBLE = calcExpr()
+    gMessage = expr + " = " + fmt.Sprintf("%g", v)
+END SUB
+
+' --- Utilities menu: keyboard macro ---------------------------------------
+
+' macroToggle — Utilities > Macros cycles: start recording -> stop -> play.
+SUB macroToggle()
+    IF gMacroRecording THEN
+        gMacroRecording = FALSE
+        ' Trim the trailing Alt+U, M used to reopen the menu and stop.
+        DIM n AS INTEGER = LEN(gMacroKeys)
+        IF n >= 2 AND gMacroKeys[n - 2] = "alt+u" AND gMacroKeys[n - 1] = "m" THEN
+            gMacroKeys = gMacroKeys[0:n - 2]
+        END IF
+        gMessage = fmt.Sprintf("Macro recorded (%d keys) — Utilities>Macros plays it", LEN(gMacroKeys))
+    ELSEIF LEN(gMacroKeys) > 0 THEN
+        macroPlay()
+    ELSE
+        gMacroKeys = nil
+        gMacroRecording = TRUE
+        gMessage = "Recording macro… Utilities>Macros again to stop"
+    END IF
+END SUB
+
+' macroPlay — replay the recorded keys through the normal key handler.
+SUB macroPlay()
+    DIM keys AS []STRING = gMacroKeys
+    gMacroPlaying = TRUE
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(keys) - 1
+        Form_Key(keys[i])
+    NEXT i
+    gMacroPlaying = FALSE
+    gMessage = fmt.Sprintf("Macro played (%d keys)", LEN(keys))
+END SUB
+
+' --- Help menu: help level ------------------------------------------------
+
+' cycleHelpLevel — Help > Change Help Level: WordStar levels 0..3.
+SUB cycleHelpLevel()
+    gHelpLevel = (gHelpLevel + 1) MOD 4
+    gMessage = fmt.Sprintf("Help level = %d", gHelpLevel)
+END SUB
+
+' --- View menu: print preview ---------------------------------------------
+
+' renderPreview — a clean, read-only page image: dot commands hidden and
+' print-control toggles stripped. Any key returns to the editor.
+FUNCTION renderPreview(w AS INTEGER, h AS INTEGER) AS STRING
+    DIM hdr AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
+    DIM pg AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#101010")).Background(lipgloss.Color("#f4f4f4"))
+    DIM rows AS []STRING
+    rows = APPEND(rows, hdr.Render(swFit(" PREVIEW  -  " + gFileName + "    (press any key to return)", w)))
+    DIM shown AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = gTop TO lastRow()
+        DIM ln AS STRING = gLines[i]
+        IF Left(ln, 1) <> "." AND shown < h - 1 THEN
+            rows = APPEND(rows, pg.Render(swFit(stripMarkers(ln), w)))
+            shown = shown + 1
+        END IF
+    NEXT i
+    WHILE LEN(rows) < h
+        rows = APPEND(rows, pg.Render(swFit("", w)))
+    WEND
+    RETURN strings.Join(rows, Chr(10))
+END FUNCTION
+
 ' doMenuItem — perform the action for (menuIdx, hotkey). Unimplemented WordStar
 ' features report a friendly message; the rest drive StarWord's real commands.
 SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
@@ -1069,11 +1506,23 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
         ELSEIF hk = "X" THEN
             saveFile()
             RequestQuit()
+        ELSEIF hk = "P" THEN
+            doPrint()
+        ELSEIF hk = "V" THEN
+            gPromptMode = "chdir"
+            gPromptLabel = "Change to directory: "
+            gPromptText = ""
+        ELSEIF hk = "R" THEN
+            gPromptMode = "rundos"
+            gPromptLabel = "Run command: "
+            gPromptText = ""
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
     ELSEIF menuIdx = 1 THEN
-        IF hk = "B" THEN
+        IF hk = "U" THEN
+            doUndo()
+        ELSEIF hk = "B" THEN
             gBBRow = gRow
             gBBCol = gCol
             gBlockShow = TRUE
@@ -1109,6 +1558,28 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
         ELSEIF hk = "C" THEN
             gShowTags = NOT gShowTags
             gMessage = "Command tags display toggled"
+        ELSEIF hk = "P" THEN
+            gMode = "preview"
+            gMessage = ""
+        ELSEIF hk = "S" THEN
+            gShowRuler = NOT gShowRuler
+            IF gShowRuler THEN
+                gMessage = "Ruler shown"
+            ELSE
+                gMessage = "Ruler hidden"
+            END IF
+        ELSE
+            gMessage = label + " — coming in a later StarWord build"
+        END IF
+    ELSEIF menuIdx = 3 THEN      ' INSERT
+        IF hk = "P" THEN
+            insertPageBreak()
+        ELSEIF hk = "T" THEN
+            insertTodaysDate()
+        ELSEIF hk = "F" THEN
+            gPromptMode = "insfile"
+            gPromptLabel = "Insert file: "
+            gPromptText = ""
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
@@ -1122,6 +1593,8 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
         ELSEIF hk = "U" THEN
             insertMarker(19)
             gMessage = "Underline toggle inserted (^S)"
+        ELSEIF hk = "C" THEN
+            convertCaseWord()
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
@@ -1131,18 +1604,30 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
         ELSEIF hk = "R" THEN
             gShowTags = NOT gShowTags
             gMessage = "Ruler/command tags toggled"
+        ELSEIF hk = "P" THEN
+            gPromptMode = "pagelen"
+            gPromptLabel = "Page length (lines): "
+            gPromptText = ""
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
     ELSEIF menuIdx = 6 THEN      ' UTILITIES
         IF hk = "W" THEN
             wordCount()
+        ELSEIF hk = "C" THEN
+            gPromptMode = "calc"
+            gPromptLabel = "Calculate: "
+            gPromptText = ""
+        ELSEIF hk = "M" THEN
+            macroToggle()
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
     ELSEIF menuIdx = 7 THEN
         IF hk = "H" THEN
             gPrefix = "J"
+        ELSEIF hk = "C" THEN
+            cycleHelpLevel()
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
@@ -1222,6 +1707,7 @@ SUB newDoc()
     gModified = FALSE
     gMode = "edit"
     gMessage = "New document"
+    syncUndoBaseline()
 END SUB
 
 ' openSelected — act on the highlighted Opening-Menu entry: ".." goes up, a
@@ -1345,6 +1831,7 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     gW = w
     gH = h
     IF gMode = "open" THEN RETURN renderOpeningMenu(w, h)
+    IF gMode = "preview" THEN RETURN renderPreview(w, h)
     clampCursor()
     applyDotCommands()
 
@@ -1405,6 +1892,8 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
         END IF
         ruler = ruler + rc
     NEXT rx
+    ' View > Screen Settings can hide the ruler (the row stays, for layout).
+    IF NOT gShowRuler THEN ruler = strings.Repeat(" ", w)
     rows = APPEND(rows, ruStyle.Render(ruler))
     _ = ruMark
 
@@ -2148,6 +2637,18 @@ SUB handlePrompt(key AS STRING)
             DIM rmv AS INTEGER = Int(Val(txt))
             IF rmv > 0 THEN gRightMargin = rmv
             gMessage = fmt.Sprintf("Right margin = %d", gRightMargin)
+        ELSEIF mode = "insfile" THEN
+            IF txt <> "" THEN doInsertFile(txt)
+        ELSEIF mode = "chdir" THEN
+            IF txt <> "" THEN doChdir(txt)
+        ELSEIF mode = "rundos" THEN
+            doRunDos(txt)
+        ELSEIF mode = "pagelen" THEN
+            DIM pl AS INTEGER = Int(Val(txt))
+            IF pl > 0 THEN gPageLength = pl
+            gMessage = fmt.Sprintf("Page length = %d", gPageLength)
+        ELSEIF mode = "calc" THEN
+            doCalc(txt)
         END IF
         RETURN
     END IF
@@ -2228,7 +2729,18 @@ END SUB
 
 SUB Form_Key(key AS STRING)
     ConsumeKey()
+    ' Promote the previous keystroke's edit into an undo step (if any), then
+    ' record the key when a macro is being captured.
+    reconcileUndo()
+    IF gMacroRecording AND NOT gMacroPlaying THEN gMacroKeys = APPEND(gMacroKeys, key)
     gMessage = ""
+
+    ' Print preview is a read-only overlay — any key returns to the editor.
+    IF gMode = "preview" THEN
+        gMode = "edit"
+        gMessage = "Left preview"
+        RETURN
+    END IF
 
     ' A modal prompt (find / save-as / open / margin) is answered first, in
     ' either screen mode.
@@ -2435,6 +2947,7 @@ SUB Form_Load()
         gLines = APPEND(gLines, "")
         enterOpeningMenu()
     END IF
+    syncUndoBaseline()
 END SUB
 
 ' Fired on terminal resize — sw_Render re-clamps against the new size.
