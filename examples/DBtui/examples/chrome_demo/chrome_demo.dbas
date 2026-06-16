@@ -4,6 +4,8 @@ IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
+IMPORT "runtime"
+IMPORT "os/exec" AS exec
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 
 SUB _dbtuiKeepFmtAlive()
@@ -27,8 +29,26 @@ FUNCTION (m AS Model) Init() AS tea.Cmd
 END FUNCTION
 
 DIM _currentModel AS POINTER TO Model
+DIM _currentProgram AS POINTER TO tea.Program
+TYPE _dbtuiWakeMsg
+    DIM n AS INTEGER
+END TYPE
+SUB _dbtuiWake()
+    IF _currentProgram <> NIL THEN
+        DIM _wm AS _dbtuiWakeMsg
+        _currentProgram.Send(_wm)
+    END IF
+END SUB
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     _currentModel = @m
+    DIM _wkMsg AS _dbtuiWakeMsg
+    DIM _wkOk AS BOOLEAN
+    _wkMsg, _wkOk = msg.(_dbtuiWakeMsg)
+    IF _wkOk THEN
+        _ = _wkMsg
+        Form_Wake()
+        RETURN m, NIL
+    END IF
     DIM sz AS tea.WindowSizeMsg
     DIM szOk AS BOOLEAN
     sz, szOk = msg.(tea.WindowSizeMsg)
@@ -224,12 +244,49 @@ FUNCTION (m AS Model) View() AS tea.View
     RETURN vw
 END FUNCTION
 
+' _dbtuiRelaunchInTerminal — on Windows, relaunch this program inside
+' Windows Terminal (wt.exe) at the form size, then exit. No-op when
+' already inside Terminal, when wt.exe is missing, or off Windows.
+SUB _dbtuiRelaunchInTerminal()
+    IF runtime.GOOS <> "windows" THEN RETURN
+    IF os.Getenv("WT_SESSION") <> "" THEN RETURN
+    IF os.Getenv("DBTUI_IN_TERMINAL") <> "" THEN RETURN
+    DIM _wt AS STRING
+    DIM _e AS ERROR
+    _wt, _e = exec.LookPath("wt.exe")
+    IF _e <> NIL THEN RETURN
+    DIM _self AS STRING
+    _self, _e = os.Executable()
+    IF _e <> NIL THEN RETURN
+    DIM _c AS POINTER TO exec.Cmd = exec.Command(_wt, "--size", "45,11", "--title", "Menubar + Panel smoke fixture", _self)
+    _c.Env = APPEND(os.Environ(), "DBTUI_IN_TERMINAL=1")
+    _e = _c.Start()
+    IF _e <> NIL THEN RETURN
+    os.Exit(0)
+END SUB
+
+' _dbtuiApplyRequestedSize — honor a "--size cols,rows" argument by
+' resizing the terminal (CSI 8;rows;cols t) before the UI starts.
+SUB _dbtuiApplyRequestedSize()
+    DIM _args AS []STRING = os.Args
+    DIM _i AS INTEGER
+    FOR _i = 1 TO LEN(_args) - 1
+        IF _args[_i] = "--size" AND _i + 1 <= LEN(_args) - 1 THEN
+            DIM _p AS []STRING = strings.Split(_args[_i + 1], ",")
+            IF LEN(_p) = 2 THEN fmt.Print(Chr(27) + "[8;" + strings.TrimSpace(_p[1]) + ";" + strings.TrimSpace(_p[0]) + "t")
+        END IF
+    NEXT _i
+END SUB
+
 SUB Main()
+    _dbtuiRelaunchInTerminal()
+    _dbtuiApplyRequestedSize()
     DIM m AS Model
     m.Hover = 0 - 1
     m.HoverTab = 0 - 1
     Form_Load()
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)
+    _currentProgram = prog
     DIM final AS tea.Model
     DIM rerr AS ERROR
     final, rerr = prog.Run()
@@ -614,5 +671,11 @@ END SUB
 
 ' Fired just before the program quits. Edit freely.
 SUB Form_Close()
+    ' TODO: your code here.
+END SUB
+
+' Fired on the UI thread after a background goroutine calls _dbtuiWake().
+' Use it to push async updates (e.g. fresh data) into widgets. Edit freely.
+SUB Form_Wake()
     ' TODO: your code here.
 END SUB

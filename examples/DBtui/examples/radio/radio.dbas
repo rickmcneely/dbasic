@@ -4,9 +4,13 @@ IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
+IMPORT "runtime"
+IMPORT "os/exec" AS exec
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 IMPORT "charm.land/bubbles/v2/textinput" AS textinput
 IMPORT "charm.land/bubbles/v2/list" AS list
+IMPORT "time"
+IMPORT "github.com/charmbracelet/x/ansi" AS ansi
 
 TYPE _LItem
     DIM cap AS STRING
@@ -38,12 +42,16 @@ TYPE Model
     DIM Focus  AS INTEGER
     DIM Hover  AS INTEGER
     DIM HoverTab AS INTEGER
+    DIM _lastClkRow AS INTEGER
+    DIM _lastClkMs AS LONG
     DIM _formW AS INTEGER
     DIM _formH AS INTEGER
     DIM _maximized AS BOOLEAN
     DIM _minimized AS BOOLEAN
     DIM txtSearch_ti AS textinput.Model
+    DIM tabsView_Val AS INTEGER
     DIM lstStations_lb AS list.Model
+    DIM statusBar_Text AS STRING
 END TYPE
 
 FUNCTION (m AS Model) Init() AS tea.Cmd
@@ -51,8 +59,26 @@ FUNCTION (m AS Model) Init() AS tea.Cmd
 END FUNCTION
 
 DIM _currentModel AS POINTER TO Model
+DIM _currentProgram AS POINTER TO tea.Program
+TYPE _dbtuiWakeMsg
+    DIM n AS INTEGER
+END TYPE
+SUB _dbtuiWake()
+    IF _currentProgram <> NIL THEN
+        DIM _wm AS _dbtuiWakeMsg
+        _currentProgram.Send(_wm)
+    END IF
+END SUB
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     _currentModel = @m
+    DIM _wkMsg AS _dbtuiWakeMsg
+    DIM _wkOk AS BOOLEAN
+    _wkMsg, _wkOk = msg.(_dbtuiWakeMsg)
+    IF _wkOk THEN
+        _ = _wkMsg
+        Form_Wake()
+        RETURN m, NIL
+    END IF
     DIM sz AS tea.WindowSizeMsg
     DIM szOk AS BOOLEAN
     sz, szOk = msg.(tea.WindowSizeMsg)
@@ -86,28 +112,73 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 RETURN m, tea.Quit
             END IF
         END IF
-        IF mc.X >= 21 AND mc.X < 21 + 64 AND mc.Y >= 19 AND mc.Y < 19 + 1 THEN
-            m.Focus = 7
+        IF mc.X >= 1 AND mc.X < 1 + 76 AND mc.Y >= 22 AND mc.Y < 22 + 1 THEN
+            m.Focus = 9
             syncFocusComp(@m)
             _ = mc
             RETURN m, NIL
         END IF
-        IF mc.X >= 11 AND mc.X < 11 + 8 AND mc.Y >= 19 AND mc.Y < 19 + 1 THEN
-            m.Focus = 6
+        IF mc.X >= 21 AND mc.X < 21 + 64 AND mc.Y >= 21 AND mc.Y < 21 + 1 THEN
+            m.Focus = 8
+            syncFocusComp(@m)
+            _ = mc
+            RETURN m, NIL
+        END IF
+        IF mc.X >= 11 AND mc.X < 11 + 8 AND mc.Y >= 21 AND mc.Y < 21 + 1 THEN
+            m.Focus = 7
             syncFocusComp(@m)
             dispatchClick("btnStop")
             RETURN m, NIL
         END IF
-        IF mc.X >= 2 AND mc.X < 2 + 8 AND mc.Y >= 19 AND mc.Y < 19 + 1 THEN
-            m.Focus = 5
+        IF mc.X >= 2 AND mc.X < 2 + 8 AND mc.Y >= 21 AND mc.Y < 21 + 1 THEN
+            m.Focus = 6
             syncFocusComp(@m)
             dispatchClick("btnPlay")
             RETURN m, NIL
         END IF
-        IF mc.X >= 2 AND mc.X < 2 + 72 AND mc.Y >= 3 AND mc.Y < 3 + 15 THEN
+        IF mc.X >= 2 AND mc.X < 2 + 72 AND mc.Y >= 3 AND mc.Y < 3 + 17 THEN
+            m.Focus = 5
+            syncFocusComp(@m)
+            DIM lcRel5 AS INTEGER = mc.Y - 4
+            DIM lcPP5 AS INTEGER = m.lstStations_lb.Paginator.PerPage
+            IF lcPP5 > 0 AND lcRel5 >= 0 AND lcRel5 < lcPP5 THEN
+                DIM lcTgt5 AS INTEGER = m.lstStations_lb.Paginator.Page * lcPP5 + lcRel5
+                IF lcTgt5 < LEN(m.lstStations_lb.VisibleItems()) THEN
+                    DIM lcPrev5 AS INTEGER = m.lstStations_lb.Index()
+                    m.lstStations_lb.Select(lcTgt5)
+                    IF m.lstStations_lb.Index() <> lcPrev5 THEN dispatchChange("lstStations")
+                    DIM lcNow5 AS LONG = time.Now().UnixMilli()
+                    IF lcTgt5 = m._lastClkRow AND lcNow5 - m._lastClkMs < 500 THEN
+                        lstStations_DblClick()
+                        m._lastClkMs = 0
+                    ELSE
+                        m._lastClkRow = lcTgt5
+                        m._lastClkMs = lcNow5
+                    END IF
+                END IF
+            END IF
+            _ = mc
+            RETURN m, NIL
+        END IF
+        IF mc.X >= 2 AND mc.X < 2 + 72 AND mc.Y >= 2 AND mc.Y < 2 + 1 THEN
             m.Focus = 4
             syncFocusComp(@m)
-            _ = mc
+            DIM mcTsY4 AS INTEGER = mc.Y - 2
+            DIM mcTsX4 AS INTEGER = mc.X - 2
+            IF mcTsY4 = 0 THEN
+                IF mcTsX4 >= 0 AND mcTsX4 < 10 THEN
+                    IF m.tabsView_Val <> 0 THEN
+                        m.tabsView_Val = 0
+                        dispatchChange("tabsView")
+                    END IF
+                END IF
+                IF mcTsX4 >= 11 AND mcTsX4 < 24 THEN
+                    IF m.tabsView_Val <> 1 THEN
+                        m.tabsView_Val = 1
+                        dispatchChange("tabsView")
+                    END IF
+                END IF
+            END IF
             RETURN m, NIL
         END IF
         IF mc.X >= 57 AND mc.X < 57 + 11 AND mc.Y >= 1 AND mc.Y < 1 + 1 THEN
@@ -140,10 +211,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     mm, mmOk = msg.(tea.MouseMotionMsg)
     IF mmOk THEN
         DIM mmHit AS INTEGER = 0 - 1
-        IF mmHit < 0 AND mm.X >= 21 AND mm.X < 21 + 64 AND mm.Y >= 19 AND mm.Y < 19 + 1 THEN mmHit = 7
-        IF mmHit < 0 AND mm.X >= 11 AND mm.X < 11 + 8 AND mm.Y >= 19 AND mm.Y < 19 + 1 THEN mmHit = 6
-        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 8 AND mm.Y >= 19 AND mm.Y < 19 + 1 THEN mmHit = 5
-        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 72 AND mm.Y >= 3 AND mm.Y < 3 + 15 THEN mmHit = 4
+        IF mmHit < 0 AND mm.X >= 1 AND mm.X < 1 + 76 AND mm.Y >= 22 AND mm.Y < 22 + 1 THEN mmHit = 9
+        IF mmHit < 0 AND mm.X >= 21 AND mm.X < 21 + 64 AND mm.Y >= 21 AND mm.Y < 21 + 1 THEN mmHit = 8
+        IF mmHit < 0 AND mm.X >= 11 AND mm.X < 11 + 8 AND mm.Y >= 21 AND mm.Y < 21 + 1 THEN mmHit = 7
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 8 AND mm.Y >= 21 AND mm.Y < 21 + 1 THEN mmHit = 6
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 72 AND mm.Y >= 3 AND mm.Y < 3 + 17 THEN mmHit = 5
+        IF mmHit < 0 AND mm.X >= 2 AND mm.X < 2 + 72 AND mm.Y >= 2 AND mm.Y < 2 + 1 THEN mmHit = 4
         IF mmHit < 0 AND mm.X >= 57 AND mm.X < 57 + 11 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 3
         IF mmHit < 0 AND mm.X >= 45 AND mm.X < 45 + 10 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 2
         IF mmHit < 0 AND mm.X >= 9 AND mm.X < 9 + 34 AND mm.Y >= 1 AND mm.Y < 1 + 1 THEN mmHit = 1
@@ -151,16 +224,31 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         _ = mm
         m.Hover = mmHit
         m.HoverTab = 0 - 1
+        IF mmHit = 4 THEN
+            DIM thCol4 AS INTEGER = mm.X - 2
+            DIM thAcc4 AS INTEGER = 0
+            DIM thW4 AS INTEGER = 0
+            thW4 = lipgloss.Width("Stations") + 2
+            IF thCol4 >= thAcc4 AND thCol4 < thAcc4 + thW4 THEN m.HoverTab = 0
+            thAcc4 = thAcc4 + thW4 + 1
+            thW4 = lipgloss.Width("Now Playing") + 2
+            IF thCol4 >= thAcc4 AND thCol4 < thAcc4 + thW4 THEN m.HoverTab = 1
+            thAcc4 = thAcc4 + thW4 + 1
+        END IF
         RETURN m, NIL
     END IF
     DIM mw AS tea.MouseWheelMsg
     DIM mwOk AS BOOLEAN
     mw, mwOk = msg.(tea.MouseWheelMsg)
     IF mwOk THEN
-        IF mw.X >= 2 AND mw.X < 2 + 72 AND mw.Y >= 3 AND mw.Y < 3 + 15 THEN
-            DIM wwc4 AS tea.Cmd
-            m.lstStations_lb, wwc4 = m.lstStations_lb.Update(msg)
-            _ = wwc4
+        IF mw.X >= 2 AND mw.X < 2 + 72 AND mw.Y >= 3 AND mw.Y < 3 + 17 THEN
+            DIM wwPrev5 AS INTEGER = m.lstStations_lb.Index()
+            IF mw.Button = tea.MouseWheelUp THEN
+                m.lstStations_lb.CursorUp()
+            ELSE
+                m.lstStations_lb.CursorDown()
+            END IF
+            IF m.lstStations_lb.Index() <> wwPrev5 THEN dispatchChange("lstStations")
             RETURN m, NIL
         END IF
         _ = mw
@@ -176,13 +264,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, tea.Quit
         END IF
         IF key = "tab" THEN
-            m.Focus = (m.Focus + 1) MOD 8
+            m.Focus = (m.Focus + 1) MOD 10
             syncFocusComp(@m)
             RETURN m, NIL
         END IF
         IF key = "shift+tab" THEN
             m.Focus = m.Focus - 1
-            IF m.Focus < 0 THEN m.Focus = 7
+            IF m.Focus < 0 THEN m.Focus = 9
             syncFocusComp(@m)
             RETURN m, NIL
         END IF
@@ -192,6 +280,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF m.Focus = 1 THEN
             DIM cCmd1 AS tea.Cmd
+            IF key = "enter" THEN
+                txtSearch_Enter()
+                RETURN m, NIL
+            END IF
             m.txtSearch_ti, cCmd1 = m.txtSearch_ti.Update(msg)
             RETURN m, cCmd1
         END IF
@@ -204,21 +296,44 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF m.Focus = 4 THEN
-            DIM cCmd4 AS tea.Cmd
-            DIM prevI4 AS INTEGER = m.lstStations_lb.Index()
-            m.lstStations_lb, cCmd4 = m.lstStations_lb.Update(msg)
-            IF m.lstStations_lb.Index() <> prevI4 THEN dispatchChange("lstStations")
-            RETURN m, cCmd4
+            IF key = "left" THEN
+                IF m.tabsView_Val > 0 THEN
+                    m.tabsView_Val = m.tabsView_Val - 1
+                    dispatchChange("tabsView")
+                END IF
+            END IF
+            IF key = "right" THEN
+                IF m.tabsView_Val < 2 - 1 THEN
+                    m.tabsView_Val = m.tabsView_Val + 1
+                    dispatchChange("tabsView")
+                END IF
+            END IF
+            RETURN m, NIL
         END IF
         IF m.Focus = 5 THEN
+            DIM cCmd5 AS tea.Cmd
+            IF key = "enter" THEN
+                lstStations_DblClick()
+                RETURN m, NIL
+            END IF
+            DIM prevI5 AS INTEGER = m.lstStations_lb.Index()
+            m.lstStations_lb, cCmd5 = m.lstStations_lb.Update(msg)
+            IF m.lstStations_lb.Index() <> prevI5 THEN dispatchChange("lstStations")
+            RETURN m, cCmd5
+        END IF
+        IF m.Focus = 6 THEN
             IF key = "enter" OR key = "space" THEN dispatchClick("btnPlay")
             RETURN m, NIL
         END IF
-        IF m.Focus = 6 THEN
+        IF m.Focus = 7 THEN
             IF key = "enter" OR key = "space" THEN dispatchClick("btnStop")
             RETURN m, NIL
         END IF
-        IF m.Focus = 7 THEN
+        IF m.Focus = 8 THEN
+            _ = key
+            RETURN m, NIL
+        END IF
+        IF m.Focus = 9 THEN
             _ = key
             RETURN m, NIL
         END IF
@@ -235,6 +350,61 @@ FUNCTION _blankCanvas(w AS INTEGER, h AS INTEGER) AS STRING
     RETURN strings.Join(cr, "\n")
 END FUNCTION
 
+FUNCTION _frame(inner AS []STRING, innerW AS INTEGER, gh AS STRING, gv AS STRING, tl AS STRING, tr AS STRING, bl AS STRING, br AS STRING, caption AS STRING, just AS STRING) AS STRING
+    DIM top AS STRING = tl
+    IF caption = "" THEN
+        top = top + strings.Repeat(gh, innerW)
+    ELSE
+        DIM cap AS STRING = " " + caption + " "
+        IF lipgloss.Width(cap) > innerW THEN cap = Mid(cap, 1, innerW)
+        DIM fill AS INTEGER = innerW - lipgloss.Width(cap)
+        DIM lead AS INTEGER = 0
+        IF just = "center" THEN lead = fill / 2
+        IF just = "right" THEN lead = fill
+        top = top + strings.Repeat(gh, lead) + cap + strings.Repeat(gh, fill - lead)
+    END IF
+    top = top + tr
+    DIM out AS STRING = top
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(inner) - 1
+        DIM ln AS STRING = inner[i]
+        IF lipgloss.Width(ln) < innerW THEN ln = ln + strings.Repeat(" ", innerW - lipgloss.Width(ln))
+        out = out + "\n" + gv + ln + gv
+    NEXT i
+    out = out + "\n" + bl + strings.Repeat(gh, innerW) + br
+    RETURN out
+END FUNCTION
+
+FUNCTION _vgutter(row AS INTEGER, vis AS INTEGER, top AS INTEGER, total AS INTEGER) AS STRING
+    IF row = 0 THEN RETURN "▲"
+    IF row = vis - 1 THEN RETURN "▼"
+    DIM track AS INTEGER = vis - 2
+    IF track < 1 OR total <= vis THEN RETURN "░"
+    DIM maxTop AS INTEGER = total - vis
+    IF maxTop < 1 THEN maxTop = 1
+    DIM thumb AS INTEGER = (top * (track - 1)) / maxTop
+    IF thumb < 0 THEN thumb = 0
+    IF thumb > track - 1 THEN thumb = track - 1
+    IF (row - 1) = thumb THEN RETURN "█"
+    RETURN "░"
+END FUNCTION
+
+FUNCTION _hbar(width AS INTEGER, thumb AS INTEGER) AS STRING
+    IF width < 3 THEN RETURN strings.Repeat("─", width)
+    DIM track AS INTEGER = width - 2
+    DIM out AS STRING = "◀"
+    DIM i AS INTEGER
+    FOR i = 0 TO track - 1
+        IF i = thumb THEN
+            out = out + "█"
+        ELSE
+            out = out + "░"
+        END IF
+    NEXT i
+    out = out + "▶"
+    RETURN out
+END FUNCTION
+
 SUB _formSize(m AS POINTER TO Model)
     DIM w AS INTEGER = m.Width
     DIM h AS INTEGER = m.Height
@@ -244,8 +414,8 @@ SUB _formSize(m AS POINTER TO Model)
         m._formW = w
         m._formH = h
     ELSE
-        m._formW = w
-        m._formH = h
+        m._formW = (88)
+        m._formH = (24)
     END IF
     IF m._formW < 3 THEN m._formW = 3
     IF m._formW > w THEN m._formW = w
@@ -292,20 +462,49 @@ FUNCTION (m AS Model) View() AS tea.View
     body3 = "[ Top 100 ]"
     DIM vw3 AS STRING = compFocusView(body3, m.Focus = 3, m.Hover = 3)
     DIM ly3 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw3).X(57).Y(1).Z(13)
-    DIM vw4 AS STRING = m.lstStations_lb.View()
-    DIM ly4 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw4).X(2).Y(3).Z(14)
-    DIM body5 AS STRING
-    body5 = "[ Play ]"
-    DIM vw5 AS STRING = compFocusView(body5, m.Focus = 5, m.Hover = 5)
-    DIM ly5 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw5).X(2).Y(19).Z(15)
+    DIM tsItems4 AS []STRING
+    tsItems4 = APPEND(tsItems4, "Stations")
+    tsItems4 = APPEND(tsItems4, "Now Playing")
+    DIM tsBar4 AS STRING = ""
+    DIM tsk4 AS INTEGER
+    FOR tsk4 = 0 TO LEN(tsItems4) - 1
+        IF tsk4 > 0 THEN tsBar4 = tsBar4 + "│"
+        DIM tsSeg4 AS STRING
+        IF tsk4 = m.tabsView_Val THEN
+            tsSeg4 = "[" + tsItems4[tsk4] + "]"
+        ELSE
+            tsSeg4 = " " + tsItems4[tsk4] + " "
+        END IF
+        IF m.Hover = 4 AND m.HoverTab = tsk4 AND m.Focus <> 4 THEN tsSeg4 = hoverStyle.Render(tsSeg4)
+        tsBar4 = tsBar4 + tsSeg4
+    NEXT tsk4
+    DIM tsRule4 AS STRING = strings.Repeat("─", 72)
+    DIM tsAct4 AS STRING = ""
+    IF m.tabsView_Val >= 0 AND m.tabsView_Val < LEN(tsItems4) THEN tsAct4 = tsItems4[m.tabsView_Val]
+    DIM tsContent4 AS STRING = " " + tsAct4 + " tab"
+    DIM vwraw4 AS STRING = tsBar4 + "\n" + tsRule4 + "\n" + tsContent4
+    DIM vw4 AS STRING = compFocusView(vwraw4, m.Focus = 4, FALSE)
+    DIM ly4 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw4).X(2).Y(2).Z(14)
+    DIM vw5 AS STRING = m.lstStations_lb.View()
+    vw5 = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3b3d5e")).Width(72).Render(strings.TrimRight(vw5, "\n"))
+    DIM ly5 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw5).X(2).Y(3).Z(15)
     DIM body6 AS STRING
-    body6 = "[ Stop ]"
+    body6 = "[ Play ]"
     DIM vw6 AS STRING = compFocusView(body6, m.Focus = 6, m.Hover = 6)
-    DIM ly6 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw6).X(11).Y(19).Z(16)
+    DIM ly6 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw6).X(2).Y(21).Z(16)
     DIM body7 AS STRING
-    body7 = "Tab=move focus   Enter=activate   Up/Down=pick station   Esc=quit"
+    body7 = "[ Stop ]"
     DIM vw7 AS STRING = compFocusView(body7, m.Focus = 7, m.Hover = 7)
-    DIM ly7 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw7).X(21).Y(19).Z(17)
+    DIM ly7 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw7).X(11).Y(21).Z(17)
+    DIM body8 AS STRING
+    body8 = "Tab=move focus   Enter=activate   Up/Down=pick station   Esc=quit"
+    DIM vw8 AS STRING = compFocusView(body8, m.Focus = 8, m.Hover = 8)
+    DIM ly8 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw8).X(21).Y(21).Z(18)
+    DIM sbTxt9 AS STRING = m.statusBar_Text
+    IF sbTxt9 = "" THEN sbTxt9 = "DBtui Radio │ Ready"
+    IF lipgloss.Width(sbTxt9) > 76 THEN sbTxt9 = ansi.Truncate(sbTxt9, 76, "")
+    DIM vw9 AS STRING = compFocusView(sbTxt9, m.Focus = 9, m.Hover = 9)
+    DIM ly9 AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw9).X(1).Y(22).Z(19)
     DIM formBoxStr AS STRING = _formBox(m._formW, m._formH, "─", "│", "╭", "╮", "╰", "╯", "DBtui Radio", "_ ▢ ✕ ")
     DIM formLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(formBoxStr).X(0).Y(0).Z(1)
     IF m._minimized THEN
@@ -317,7 +516,7 @@ FUNCTION (m AS Model) View() AS tea.View
         RETURN mvw
     END IF
     DIM baseLy AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(fullView)
-    DIM cmpLy AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(baseLy, formLy, ly0, ly1, ly2, ly3, ly4, ly5, ly6, ly7)
+    DIM cmpLy AS POINTER TO lipgloss.Compositor = lipgloss.NewCompositor(baseLy, formLy, ly0, ly1, ly2, ly3, ly4, ly5, ly6, ly7, ly8, ly9)
     fullView = cmpLy.Render()
     DIM vw AS tea.View = tea.NewView(fullView)
     vw.MouseMode = tea.MouseModeAllMotion
@@ -325,13 +524,50 @@ FUNCTION (m AS Model) View() AS tea.View
     RETURN vw
 END FUNCTION
 
+' _dbtuiRelaunchInTerminal — on Windows, relaunch this program inside
+' Windows Terminal (wt.exe) at the form size, then exit. No-op when
+' already inside Terminal, when wt.exe is missing, or off Windows.
+SUB _dbtuiRelaunchInTerminal()
+    IF runtime.GOOS <> "windows" THEN RETURN
+    IF os.Getenv("WT_SESSION") <> "" THEN RETURN
+    IF os.Getenv("DBTUI_IN_TERMINAL") <> "" THEN RETURN
+    DIM _wt AS STRING
+    DIM _e AS ERROR
+    _wt, _e = exec.LookPath("wt.exe")
+    IF _e <> NIL THEN RETURN
+    DIM _self AS STRING
+    _self, _e = os.Executable()
+    IF _e <> NIL THEN RETURN
+    DIM _c AS POINTER TO exec.Cmd = exec.Command(_wt, "--size", "88,24", "--title", "DBtui Radio", _self)
+    _c.Env = APPEND(os.Environ(), "DBTUI_IN_TERMINAL=1")
+    _e = _c.Start()
+    IF _e <> NIL THEN RETURN
+    os.Exit(0)
+END SUB
+
+' _dbtuiApplyRequestedSize — honor a "--size cols,rows" argument by
+' resizing the terminal (CSI 8;rows;cols t) before the UI starts.
+SUB _dbtuiApplyRequestedSize()
+    DIM _args AS []STRING = os.Args
+    DIM _i AS INTEGER
+    FOR _i = 1 TO LEN(_args) - 1
+        IF _args[_i] = "--size" AND _i + 1 <= LEN(_args) - 1 THEN
+            DIM _p AS []STRING = strings.Split(_args[_i + 1], ",")
+            IF LEN(_p) = 2 THEN fmt.Print(Chr(27) + "[8;" + strings.TrimSpace(_p[1]) + ";" + strings.TrimSpace(_p[0]) + "t")
+        END IF
+    NEXT _i
+END SUB
+
 SUB Main()
+    _dbtuiRelaunchInTerminal()
+    _dbtuiApplyRequestedSize()
     DIM m AS Model
     m.Hover = 0 - 1
     m.HoverTab = 0 - 1
     m.txtSearch_ti = textinput.New()
     m.txtSearch_ti.Prompt = ""
     m.txtSearch_ti.SetWidth(33)
+    m.tabsView_Val = 0
     DIM itemslstStations AS []list.Item
     DIM itlstStations0 AS _LItem
     itlstStations0.cap = "Press  Search  (by name) or  Top 100  to load MP3 stations."
@@ -339,7 +575,7 @@ SUB Main()
     DIM itlstStations1 AS _LItem
     itlstStations1.cap = "Then Tab to the list, pick with the arrow keys, Tab to Play."
     itemslstStations = APPEND(itemslstStations, itlstStations1)
-    m.lstStations_lb = list.New(itemslstStations, _newMenuDelegate(), 72, 15)
+    m.lstStations_lb = list.New(itemslstStations, _newMenuDelegate(), 70, 15)
     m.lstStations_lb.SetShowHelp(FALSE)
     m.lstStations_lb.SetShowStatusBar(FALSE)
     m.lstStations_lb.SetShowTitle(FALSE)
@@ -348,6 +584,7 @@ SUB Main()
     _formSize(@m)
     Form_Load()
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)
+    _currentProgram = prog
     DIM final AS tea.Model
     DIM rerr AS ERROR
     final, rerr = prog.Run()
@@ -384,6 +621,7 @@ END SUB
 
 ' Generated dispatcher — routes a value change to its _Change handler.
 SUB dispatchChange(id AS STRING)
+    IF id = "tabsView" THEN tabsView_Change()
     IF id = "lstStations" THEN lstStations_Change()
 END SUB
 ' lstStations_SetItems — replace the live list contents from a []STRING.
@@ -426,6 +664,12 @@ SUB txtSearch_SetText(_v AS STRING)
     _currentModel.txtSearch_ti.SetValue(_v)
 END SUB
 
+' statusBar_SetText — set the status line (empty reverts to the designed segments).
+SUB statusBar_SetText(_v AS STRING)
+    IF _currentModel = NIL THEN RETURN
+    _currentModel.statusBar_Text = _v
+END SUB
+
 
 ' ===== DBTUI:USER ===== DO NOT EDIT OR DELETE THIS LINE =====
 ' Your code below — DBtui preserves everything here on F5.
@@ -433,11 +677,23 @@ END SUB
 ' ----------------------------------------------------------------------
 ' DBtui Radio — a tiny internet-radio player for the terminal.
 '
+' ELI5 (the whole program in one breath): the internet has thousands of
+' radio stations. This program asks a free website for a list of them,
+' shows that list on the screen, and when you pick one and press Play it
+' opens the station like a water pipe and pours the music into your
+' speakers. Press Stop and it turns the pipe off.
+'
 ' Stations come from the free radio-browser.info directory; audio plays
 ' by piping the stream through ffmpeg (run as a child process) and into
 ' oto/v3:
 '
 '     stream URL  ->  ffmpeg (decode + resample)  ->  oto/v3  ->  speakers
+'
+' ELI5 of that arrow picture: the station sends us squished-up sound
+' (different stations squish it in different ways). "ffmpeg" is a helper
+' program that un-squishes ANY of them back into plain numbers that
+' describe the sound wave. "oto" is the part that hands those numbers to
+' your speakers so you actually hear it.
 '
 ' ffmpeg does the demux/decode, so EVERY codec works (MP3, AAC, AAC+/HE-
 ' AAC, Opus...). We ask it for a fixed 44.1 kHz / stereo / s16le output,
@@ -457,11 +713,21 @@ END SUB
 IMPORT "net/http"
 IMPORT "net/url" AS neturl
 IMPORT "io"
+IMPORT "strconv"
 IMPORT "time"
+IMPORT "sync"
+IMPORT "runtime"
+IMPORT "path/filepath" AS filepath
 IMPORT "os/exec" AS exec
 IMPORT "encoding/json" AS encjson
+IMPORT "github.com/charmbracelet/x/ansi" AS ansi
 IMPORT "github.com/ebitengine/oto/v3" AS oto
 
+' ELI5: a Station is one radio station's "ID card" — its name, where its
+' sound comes from (Url_resolved), what country it's in, and so on. The
+' website sends us a big list of these cards as text (called JSON) and
+' DBasic fills in one Station box per card automatically.
+'
 ' One row of the radio-browser JSON response. Go's JSON decoder matches
 ' keys to field names case-insensitively, so "url_resolved" lands in
 ' Url_resolved and "stationuuid" in Stationuuid — no struct tags needed.
@@ -475,13 +741,59 @@ TYPE Station
     DIM Votes AS INTEGER
 END TYPE
 
-' radio-browser mirror + the User-Agent the service asks every app to send.
-' (A production app would discover a server via all.api.radio-browser.info;
-' one fixed mirror is plenty for a demo.)
+' otoShield — an io.Reader that wraps ffmpeg's stdout and NEVER returns an
+' error to oto. On any read error or EOF (which HLS streams produce between
+' segments, and which oto's Windows backend can turn into a memory-corrupting
+' crash), it returns a buffer of silence instead. oto therefore sees an
+' unbroken, never-failing PCM stream and keeps playing; we stop it explicitly
+' via stopPlayback, so masking EOF forever is fine.
+TYPE otoShield
+    DIM src AS io.Reader
+END TYPE
+FUNCTION (r AS otoShield) Read(p AS BYTES) AS (INTEGER, ERROR)
+    DIM n AS INTEGER
+    DIM e AS ERROR
+    n, e = r.src.Read(p)
+    IF e <> NIL THEN
+        ' Replace the (possibly partial) read with a full buffer of silence
+        ' and report success, so oto never sees the error.
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(p) - 1
+            p[i] = 0
+        NEXT i
+        RETURN LEN(p), NIL
+    END IF
+    RETURN n, NIL
+END FUNCTION
+
+' radio-browser host used for the fire-and-forget play counter. The
+' station list itself tries several mirrors (see apiMirrors / loadStations)
+' so one down or network-blocked server doesn't sink the whole app.
 CONST apiBase AS STRING = "https://de1.api.radio-browser.info"
 CONST userAgent AS STRING = "dbtui-radio/0.1"
 
+' ELI5: the station list lives on several identical computers around the
+' world (called "mirrors"). If the first one is asleep, we just try the
+' next one, like phoning a friend's home, then cell, then work number
+' until somebody picks up.
+'
+' apiMirrors — the radio-browser servers to try, in order, when loading
+' the station list. "all" is the project's round-robin entry point; the
+' named mirrors are concrete fallbacks. Returned as a fresh slice each
+' call (no slice-typed CONST in DBasic).
+FUNCTION apiMirrors() AS []STRING
+    DIM ms AS []STRING
+    ms = APPEND(ms, "https://de1.api.radio-browser.info")
+    ms = APPEND(ms, "https://nl1.api.radio-browser.info")
+    ms = APPEND(ms, "https://all.api.radio-browser.info")
+    RETURN ms
+END FUNCTION
+
 ' --- run-time state, shared across the event handlers -----------------
+' ELI5: these "g" variables are the program's memory sticky-notes that
+' every button can read and write — which stations are on screen, which
+' one is playing, and the bits and pieces of the currently-playing sound
+' pipe. The "g" just means "global" (everybody can see them).
 DIM gStations AS []Station             ' the stations currently shown in the list
 DIM gPlaying  AS INTEGER               ' index of the playing station (-1 = none)
 DIM gPlayer   AS POINTER TO oto.Player ' the active player (NIL when stopped)
@@ -489,32 +801,92 @@ DIM gCmd      AS POINTER TO exec.Cmd   ' the running ffmpeg process (killed on S
 DIM gBody     AS io.ReadCloser         ' ffmpeg's stdout (PCM); closed on Stop
 DIM gCtx      AS POINTER TO oto.Context ' the audio device — created once, reused
 DIM gLoaded   AS BOOLEAN               ' has the first station load happened yet?
+DIM gTab      AS INTEGER               ' active tab: 0 = Stations, 1 = Now Playing
 
-' httpGet — GET a URL with our User-Agent and return the whole body.
-' Returns (body, TRUE) on success or (empty, FALSE) on any failure.
-FUNCTION httpGet(u AS STRING) AS (BYTES, BOOLEAN)
+' --- debug log ---------------------------------------------------------
+' ELI5: a notebook on disk where the program writes down every step with
+' a timestamp, so you can watch it live with `tail -f radio-debug.log`
+' (on Windows: `Get-Content radio-debug.log -Wait`). Because pressing Play
+' all happens in one quick burst, the on-screen status bar can only show
+' the FINAL result — but this log records every step AND the things that
+' happen later on a background thread (like ffmpeg quitting), which the
+' status bar can never catch.
+DIM gLogPath AS STRING                 ' where the log file lives (shown at startup)
+DIM gLogFile AS POINTER TO os.File     ' the open log handle (NIL = logging off)
+DIM gLogBytes AS INTEGER               ' bytes written so far (for the 100k cap)
+DIM gLogMu AS sync.Mutex               ' serialises writes/rotation (watcher goroutine logs too)
+
+' --- now-playing metadata ---------------------------------------------
+' A background goroutine reads the stream's ICY in-band "StreamTitle" (the
+' Artist - Song line Shoutcast/Icecast servers send) and stores it here;
+' Form_Wake repaints the colored bar from it. gPlayGen is bumped on every
+' play/stop so a poller for an old station quietly exits.
+DIM gNowPlaying AS STRING               ' current track ("" = nothing / no metadata)
+DIM gPlayGen AS INTEGER                 ' generation; pollers stop when it changes
+DIM gNpMu AS sync.Mutex                 ' guards gNowPlaying (poller writes, UI reads)
+
+' How big the log may grow before it's trimmed, and how much of the most
+' recent tail we keep when trimming. Caps the file near 100k while never
+' losing the latest activity.
+CONST logCapBytes  AS INTEGER = 100 * 1024
+CONST logKeepBytes AS INTEGER = 50 * 1024
+
+' ELI5: httpGet is "go fetch the text at this web address and bring it
+' back." It returns two things: the text it fetched, and an error message.
+' If the error message is empty (""), everything went fine; if not, the
+' message says which step broke so we can tell the user something useful.
+'
+' httpGet — GET a URL with our User-Agent and return (body, errmsg).
+' errmsg is "" on success; otherwise it names the failing stage
+' (request/connect/read) or a non-200 HTTP status, so callers can show
+' the user something actionable instead of a generic "failed".
+FUNCTION httpGet(u AS STRING) AS (BYTES, STRING)
     DIM empty AS BYTES
     DIM req AS POINTER TO http.Request
     DIM err AS ERROR
     req, err = http.NewRequest("GET", u, NIL)
-    IF err <> NIL THEN RETURN empty, FALSE
+    IF err <> NIL THEN RETURN empty, "request: " + err.Error()
     req.Header.Set("User-Agent", userAgent)
+    req.Header.Set("Accept", "application/json")
     DIM resp AS POINTER TO http.Response
     resp, err = http.DefaultClient.Do(req)
-    IF err <> NIL THEN RETURN empty, FALSE
+    IF err <> NIL THEN RETURN empty, "connect: " + err.Error()
     DIM body AS BYTES
     body, err = io.ReadAll(resp.Body)
     _ = resp.Body.Close()
-    IF err <> NIL THEN RETURN empty, FALSE
-    RETURN body, TRUE
+    IF err <> NIL THEN RETURN empty, "read: " + err.Error()
+    IF resp.StatusCode <> 200 THEN RETURN body, fmt.Sprintf("HTTP %d", resp.StatusCode)
+    RETURN body, ""
 END FUNCTION
 
+' ELI5: if the website sends us gibberish instead of a station list,
+' bodySnippet grabs just the first little bit of it to show in the error,
+' so the user gets a clue (like seeing "<html>" means a login/blocking
+' page got in the way) instead of a wall of nonsense.
+'
+' bodySnippet — first ~80 chars of a response on one line, for error
+' messages. An HTML proxy/AV interception page shows up as "<html>...",
+' which is the giveaway when JSON parsing fails on a locked-down network.
+FUNCTION bodySnippet(b AS BYTES) AS STRING
+    DIM s AS STRING = strings.TrimSpace(string(b))
+    s = strings.ReplaceAll(s, "\n", " ")
+    s = strings.ReplaceAll(s, "\r", " ")
+    IF LEN(s) > 80 THEN s = Mid(s, 1, 80) + "…"
+    RETURN s
+END FUNCTION
+
+' ELI5: turns one station's ID card into the single line of text you see
+' in the list, like writing a name tag.
+'
 ' stationLine — the one-line label shown in the list for a station, e.g.
 ' "France Info — France  (128k MP3)".
 FUNCTION stationLine(s AS Station) AS STRING
     RETURN fmt.Sprintf("%s — %s  (%dk %s)", s.Name, s.Country, s.Bitrate, s.Codec)
 END FUNCTION
 
+' ELI5: empties the list and puts a single message in it instead — handy
+' for showing "Loading..." or an error where the stations would go.
+'
 ' setListLine — show a single status line in the list (loading, errors...).
 SUB setListLine(msg AS STRING)
     DIM one AS []STRING
@@ -522,10 +894,36 @@ SUB setListLine(msg AS STRING)
     lstStations_SetItems(one)
 END SUB
 
+' ELI5: writes a short message onto the bar at the very bottom of the
+' screen (the "status bar"), like "▶ Playing: ..." or "■ Stopped".
+'
+' setStatus — drive the bottom status bar. statusBar_SetText is the
+' generated accessor for the StatusBar widget; passing "" would revert it
+' to its designed segments. Routes through _currentModel, so it only does
+' anything from inside an Update (every event handler runs within one).
+SUB setStatus(msg AS STRING)
+    statusBar_SetText(msg)
+    ' Mirror every status message into the log in full — the StatusBar widget
+    ' clips to its width on screen, but the log keeps the whole line.
+    logLine("STATUS: " + msg)
+END SUB
+
+' ELI5: redraws the whole on-screen list from our list of stations, and
+' puts a little "> " arrow in front of the one that is playing right now
+' so you can see which is which.
+'
 ' refreshList — repaint the ListBox from gStations, marking the playing
 ' row with "> ". This is where the new generated helper earns its keep:
 ' lstStations_SetItems() pushes live data straight into the widget.
 SUB refreshList()
+    ' The single list widget is shared by both tabs. On the Now Playing tab
+    ' it shows the current track + station details instead of the station
+    ' list, so there are never two competing panes (or an empty layer) on
+    ' screen at once.
+    IF gTab = 1 THEN
+        showNowPlaying()
+        RETURN
+    END IF
     DIM rows AS []STRING
     DIM i AS INTEGER
     FOR i = 0 TO LEN(gStations) - 1
@@ -537,51 +935,327 @@ SUB refreshList()
     lstStations_SetItems(rows)
 END SUB
 
+' ELI5: this is what the "Now Playing" tab shows. Instead of the big list of
+' stations, it shows a little card about what you're listening to right now —
+' which station, what country it's from, how good the sound is, and the name
+' of the song if the station bothers to tell us. If nothing is playing, it
+' just says so and points you back to the Stations tab.
+'
+' showNowPlaying — fill the list with the Now Playing tab's read-only view:
+' which station is playing, its stream details, and the live ICY track title
+' the metadata poller last fetched (or a friendly note when there's none).
+SUB showNowPlaying()
+    DIM rows AS []STRING
+    IF gPlaying < 0 OR gPlaying >= LEN(gStations) THEN
+        rows = APPEND(rows, "")
+        rows = APPEND(rows, "  Nothing is playing right now.")
+        rows = APPEND(rows, "")
+        rows = APPEND(rows, "  Switch to the Stations tab, pick a station with")
+        rows = APPEND(rows, "  the arrow keys, and press Play to start listening.")
+        lstStations_SetItems(rows)
+        RETURN
+    END IF
+    DIM s AS Station = gStations[gPlaying]
+    gNpMu.Lock()
+    DIM track AS STRING = gNowPlaying
+    gNpMu.Unlock()
+    rows = APPEND(rows, "")
+    rows = APPEND(rows, "  Station    " + s.Name)
+    IF s.Country <> "" THEN rows = APPEND(rows, "  Country    " + s.Country)
+    rows = APPEND(rows, "  Stream     " + fmt.Sprintf("%dk %s", s.Bitrate, s.Codec))
+    rows = APPEND(rows, "")
+    IF track <> "" THEN
+        rows = APPEND(rows, "  ♪ Now Playing")
+        rows = APPEND(rows, "    " + track)
+    ELSE
+        rows = APPEND(rows, "  (this stream doesn't broadcast track metadata)")
+    END IF
+    lstStations_SetItems(rows)
+END SUB
+
+' ELI5: this is the "go get the stations" job. It asks the website for up
+' to 100 stations (either ones matching what you typed, or the most
+' popular ones), and puts them in the list. If every server is grumpy, it
+' shows why. Think of it as ordering a pizza list and trying the next
+' pizza place if the first doesn't answer the phone.
+'
 ' loadStations — fetch up to 100 stations and show them. An empty
 ' nameQuery means "most-clicked worldwide" (the Top 100 button).
 SUB loadStations(nameQuery AS STRING)
     gPlaying = 0 - 1
     setListLine("Loading stations...")
+    setStatus("Loading stations…")
+    IF nameQuery = "" THEN
+        logLine("loadStations: Top 100")
+    ELSE
+        logLine("loadStations: search '" + nameQuery + "'")
+    END IF
 
     ' No codec filter — ffmpeg decodes everything, so MP3, AAC and AAC+
     ' streams are all fair game. hidebroken drops dead links; order by
     ' clickcount, most popular first.
-    DIM u AS STRING = apiBase + "/json/stations/search?hidebroken=true&order=clickcount&reverse=true&limit=100"
-    IF nameQuery <> "" THEN u = u + "&name=" + neturl.QueryEscape(nameQuery)
+    DIM path AS STRING = "/json/stations/search?hidebroken=true&order=clickcount&reverse=true&limit=100"
+    IF nameQuery <> "" THEN path = path + "&name=" + neturl.QueryEscape(nameQuery)
 
-    DIM body AS BYTES
-    DIM ok AS BOOLEAN
-    body, ok = httpGet(u)
-    IF NOT ok THEN
-        setListLine("Network error — could not reach radio-browser.info")
-        RETURN
-    END IF
-    DIM err AS ERROR = encjson.Unmarshal(body, @gStations)
-    IF err <> NIL THEN
-        setListLine("Could not read the station list.")
-        RETURN
-    END IF
-    refreshList()
+    ' Try each mirror until one returns a parseable JSON array. Keep the
+    ' last detailed failure so a total miss tells the user WHY (a bad
+    ' status, a TLS/connect error, or a non-JSON body such as a corporate
+    ' proxy/AV interception page).
+    DIM mirrors AS []STRING = apiMirrors()
+    DIM lastErr AS STRING = "no servers reachable"
+    DIM mi AS INTEGER
+    FOR mi = 0 TO LEN(mirrors) - 1
+        DIM body AS BYTES
+        DIM herr AS STRING
+        body, herr = httpGet(mirrors[mi] + path)
+        IF herr <> "" THEN
+            lastErr = mirrors[mi] + " — " + herr
+            logLine("  mirror " + mirrors[mi] + " failed: " + herr)
+        ELSE
+            DIM parsed AS []Station
+            DIM jerr AS ERROR = encjson.Unmarshal(body, @parsed)
+            IF jerr <> NIL THEN
+                lastErr = "bad data from " + mirrors[mi] + " — " + bodySnippet(body)
+                logLine("  mirror " + mirrors[mi] + " bad JSON: " + bodySnippet(body))
+            ELSE
+                logLine("  loaded " + fmt.Sprintf("%d", LEN(parsed)) + " stations from " + mirrors[mi])
+                gStations = parsed
+                refreshList()
+                IF LEN(gStations) = 0 THEN
+                    setStatus("No stations found — try another search")
+                ELSE
+                    setStatus(fmt.Sprintf("%d stations — Tab to the list, pick one, then Play", LEN(gStations)))
+                END IF
+                RETURN
+            END IF
+        END IF
+    NEXT mi
+    setListLine("Could not load stations: " + lastErr)
+    setStatus("Load failed — see the list for details")
 END SUB
 
+' initLog — open (truncate) the debug log next to the executable, falling
+' back to the working directory if that's read-only. Called once at
+' startup. A single kept-open handle means every logLine flushes straight
+' to disk, so `tail -f` shows lines the instant they're written.
+SUB initLog()
+    DIM dir AS STRING = "."
+    DIM exe AS STRING
+    DIM e AS ERROR
+    exe, e = os.Executable()
+    IF e = NIL THEN dir = filepath.Dir(exe)
+    gLogPath = filepath.Join(dir, "radio-debug.log")
+    gLogFile, e = os.Create(gLogPath)
+    IF e <> NIL THEN
+        gLogPath = "radio-debug.log"
+        gLogFile, e = os.Create(gLogPath)
+        IF e <> NIL THEN gLogFile = NIL
+    END IF
+    logLine("=== DBtui Radio debug log — tail this file to watch playback ===")
+    logLine("platform " + runtime.GOOS + "/" + runtime.GOARCH + ", log at " + gLogPath)
+END SUB
+
+' logLine — append one timestamped line to the debug log, then trim the
+' file if it has grown past the cap. A mutex serialises this because the
+' ffmpeg-watcher goroutine logs too, and trimming closes/reopens the handle
+' (which must not race with a concurrent write). No-op when logging is off.
+SUB logLine(msg AS STRING)
+    IF gLogFile = NIL THEN RETURN
+    gLogMu.Lock()
+    DIM line AS STRING = time.Now().Format("15:04:05.000") + "  " + msg + "\n"
+    _, _ = gLogFile.WriteString(line)
+    gLogBytes = gLogBytes + LEN(line)
+    IF gLogBytes > logCapBytes THEN logRotate()
+    gLogMu.Unlock()
+END SUB
+
+' logRotate — called with gLogMu held when the log passes the cap. Reads
+' the file back, keeps the most recent ~logKeepBytes (trimmed to a whole
+' line), and rewrites it so the log stays bounded without losing the latest
+' activity. On any error it leaves the (now-closed) handle in place, so
+' later writes fail harmlessly rather than crashing.
+SUB logRotate()
+    IF gLogFile = NIL THEN RETURN
+    _ = gLogFile.Close()
+    DIM data AS BYTES
+    DIM e AS ERROR
+    data, e = os.ReadFile(gLogPath)
+    DIM tail AS STRING = ""
+    IF e = NIL THEN
+        tail = string(data)
+        IF LEN(tail) > logKeepBytes THEN
+            tail = Mid(tail, LEN(tail) - logKeepBytes + 1, logKeepBytes)
+            ' Drop the partial first line so we start on a clean boundary.
+            DIM nl AS INTEGER = strings.Index(tail, "\n")
+            IF nl >= 0 THEN tail = Mid(tail, nl + 2, LEN(tail) - nl - 1)
+        END IF
+    END IF
+    DIM nf AS POINTER TO os.File
+    nf, e = os.Create(gLogPath)
+    IF e <> NIL THEN RETURN
+    gLogFile = nf
+    DIM hdr AS STRING = "=== log trimmed to most recent ~50k ===\n"
+    _, _ = gLogFile.WriteString(hdr + tail)
+    gLogBytes = LEN(hdr) + LEN(tail)
+END SUB
+
+' lastLine — the final non-blank line of some text (used to pull the one
+' useful sentence out of ffmpeg's multi-line error output).
+FUNCTION lastLine(s AS STRING) AS STRING
+    DIM t AS STRING = strings.TrimSpace(s)
+    IF t = "" THEN RETURN ""
+    t = strings.ReplaceAll(t, "\r", "\n")
+    DIM parts AS []STRING = strings.Split(t, "\n")
+    DIM i AS INTEGER
+    FOR i = LEN(parts) - 1 TO 0 STEP 0 - 1
+        DIM ln AS STRING = strings.TrimSpace(parts[i])
+        IF ln <> "" THEN RETURN ln
+    NEXT i
+    RETURN ""
+END FUNCTION
+
+' watchFfmpeg — runs on a background goroutine for the lifetime of one
+' playback. Waits for the ffmpeg process to exit and writes WHY to the log
+' (clean stream-end, killed by Stop, or a real error with its stderr). This
+' is the moment-to-moment info the status bar can't show, because ffmpeg
+' usually exits long after the Play click's Update finished. errBuf is read
+' only after Wait() returns, so there's no data race with ffmpeg's writer.
+SUB watchFfmpeg(c AS POINTER TO exec.Cmd, errBuf AS POINTER TO strings.Builder, name AS STRING)
+    DIM e AS ERROR = c.Wait()
+    DIM tail AS STRING = lastLine(errBuf.String())
+    IF e <> NIL THEN
+        DIM why AS STRING = e.Error()
+        IF tail <> "" THEN why = why + " | ffmpeg: " + tail
+        logLine("ffmpeg EXITED for '" + name + "': " + why)
+    ELSE
+        logLine("ffmpeg finished for '" + name + "' (stream closed)")
+        IF tail <> "" THEN logLine("ffmpeg note for '" + name + "': " + tail)
+    END IF
+END SUB
+
+' parseStreamTitle — pull the song out of an ICY metadata block, which
+' looks like  StreamTitle='Artist - Song';StreamUrl='...';
+FUNCTION parseStreamTitle(meta AS STRING) AS STRING
+    DIM key AS STRING = "StreamTitle='"
+    DIM i AS INTEGER = strings.Index(meta, key)
+    IF i < 0 THEN RETURN ""
+    DIM rest AS STRING = Mid(meta, i + LEN(key) + 1, LEN(meta) - i - LEN(key))
+    DIM j AS INTEGER = strings.Index(rest, "'")
+    IF j < 0 THEN RETURN ""
+    RETURN strings.TrimSpace(Mid(rest, 1, j))
+END FUNCTION
+
+' fetchIcyTitle — connect to a stream asking for ICY metadata, skip one
+' audio block, and read the first metadata block to get the current track.
+' Returns "" when the stream carries no ICY metadata (e.g. HLS .m3u8) or on
+' any error. Reads ~one metaint of audio then disconnects, so it's cheap.
+FUNCTION fetchIcyTitle(streamURL AS STRING) AS STRING
+    DIM req AS POINTER TO http.Request
+    DIM err AS ERROR
+    req, err = http.NewRequest("GET", streamURL, NIL)
+    IF err <> NIL THEN RETURN ""
+    req.Header.Set("Icy-MetaData", "1")
+    ' A browser-ish User-Agent and forcing HTTP/1.1 matter here: Icecast /
+    ' Shoutcast servers EOF the default Go client (it tries HTTP/2, which the
+    ' ICY streaming protocol doesn't speak).
+    req.Header.Set("User-Agent", "Mozilla/5.0 (DBtui Radio)")
+    DIM tr AS POINTER TO http.Transport = @http.Transport{}
+    tr.ForceAttemptHTTP2 = FALSE
+    DIM client AS http.Client
+    client.Transport = tr
+    DIM resp AS POINTER TO http.Response
+    resp, err = client.Do(req)
+    IF err <> NIL THEN RETURN ""
+    DIM metaIntStr AS STRING = resp.Header.Get("icy-metaint")
+    IF metaIntStr = "" THEN
+        _ = resp.Body.Close()
+        RETURN ""
+    END IF
+    DIM metaInt AS INTEGER
+    metaInt, err = strconv.Atoi(metaIntStr)
+    IF err <> NIL OR metaInt <= 0 THEN
+        _ = resp.Body.Close()
+        RETURN ""
+    END IF
+    ' Read one audio block plus the metadata block that follows it (a track
+    ' title is at most 255*16 = 4080 bytes) as a single bounded chunk, then
+    ' search it for StreamTitle. Reading a chunk instead of parsing byte by
+    ' byte keeps this simple; the binary audio prefix never contains the
+    ' literal "StreamTitle='" by chance.
+    DIM data AS BYTES
+    data, err = io.ReadAll(io.LimitReader(resp.Body, Lng(metaInt + 4096)))
+    _ = resp.Body.Close()
+    IF err <> NIL THEN RETURN ""
+    RETURN parseStreamTitle(string(data))
+END FUNCTION
+
+' recoverPoller — DEFER'd in the metadata goroutine so a panic there is
+' logged (for diagnosis) instead of crashing the program.
+SUB recoverPoller()
+    DIM r AS ANY = recover()
+    IF r <> NIL THEN logLine("now-playing poller PANIC (recovered): " + fmt.Sprintf("%v", r))
+END SUB
+
+' pollNowPlaying — background loop: re-read the stream's track title every
+' few seconds and publish it (waking the UI) until a new play/stop changes
+' the generation. Runs off the UI thread, so its network reads never freeze
+' the interface.
+SUB pollNowPlaying(streamURL AS STRING, myGen AS INTEGER)
+    ' A panic in this background goroutine would otherwise take down the whole
+    ' program (and the UI) silently. Recover it, log why, and just stop polling.
+    DEFER recoverPoller()
+    WHILE myGen = gPlayGen
+        DIM title AS STRING = fetchIcyTitle(streamURL)
+        IF myGen = gPlayGen THEN
+            gNpMu.Lock()
+            DIM changed AS BOOLEAN = (title <> gNowPlaying)
+            IF changed THEN gNowPlaying = title
+            gNpMu.Unlock()
+            IF changed THEN
+                IF title <> "" THEN logLine("now playing: " + title)
+                ' Nudge the UI thread to repaint, but only when the Now Playing
+                ' tab is actually visible (no point re-rendering otherwise).
+                IF gTab = 1 THEN _dbtuiWake()
+            END IF
+        END IF
+        time.Sleep(12 * time.Second)
+    WEND
+END SUB
+
+' ELI5: turns the music off and cleans up. It stops the speakers, kills the
+' ffmpeg helper, and lets the pipe close itself. Order matters: turn off the
+' tap before you unplug the hose, or water sprays everywhere.
+'
 ' stopPlayback — silence the current stream and release its resources.
-' Order matters: stop the player pulling samples first, then close the
-' pipe and kill ffmpeg so it does not linger writing to a dead pipe.
+' Stop the player first so oto's reader goroutine winds down, then kill
+' ffmpeg. We do NOT Close() gBody (ffmpeg's StdoutPipe): Go's exec closes it
+' inside Wait() (owned by watchFfmpeg). Closing it here — while oto may still
+' be reading it AND Wait() will also close it — double-closes the fd, which
+' can be reused concurrently and corrupt memory (intermittent
+' "fatal error: index out of range" on stop/restart).
 SUB stopPlayback()
+    IF gPlaying >= 0 THEN logLine("stopPlayback: tearing down current stream")
     IF gPlayer <> NIL THEN
         _ = gPlayer.Close()
         gPlayer = NIL
     END IF
-    IF gBody <> NIL THEN
-        _ = gBody.Close()
-        gBody = NIL
-    END IF
     IF gCmd <> NIL THEN
         IF gCmd.Process <> NIL THEN _ = gCmd.Process.Kill()
-        _ = gCmd.Wait()
+        ' Don't Wait() here — the watchFfmpeg goroutine owns the single
+        ' Wait() for this process (a second Wait would error). Killing it
+        ' makes that goroutine's Wait() return, which reaps the process AND
+        ' closes the StdoutPipe.
         gCmd = NIL
     END IF
+    ' Drop our reference to the pipe without closing it (Wait() owns the close).
+    gBody = NIL
     gPlaying = 0 - 1
+    ' Stop the metadata poller (bump the generation) and clear/hide the
+    ' now-playing bar.
+    gPlayGen = gPlayGen + 1
+    gNpMu.Lock()
+    gNowPlaying = ""
+    gNpMu.Unlock()
 END SUB
 
 ' The fixed output format we ask ffmpeg for and hand to oto. ffmpeg
@@ -589,32 +1263,51 @@ END SUB
 ' device setup is always correct.
 CONST pcmRate AS INTEGER = 44100
 
+' ELI5: this is the "press Play" job. Steps: (1) stop whatever was
+' playing, (2) make sure the ffmpeg helper is installed, (3) start ffmpeg
+' pointed at the station so it pours un-squished sound out, (4) hand that
+' sound to the speakers, (5) update the screen. If ffmpeg isn't installed
+' it politely says so instead of doing nothing.
+'
 ' startPlayback — stream + decode + play station s (row idx in the list).
 ' We hand the stream URL straight to ffmpeg and let it demux, decode and
 ' resample to raw PCM on its stdout; oto plays that PCM.
 SUB startPlayback(s AS Station, idx AS INTEGER)
     stopPlayback()
+    logLine("--- Play '" + s.Name + "' (" + fmt.Sprintf("%dk %s", s.Bitrate, s.Codec) + ") ---")
+    logLine("stream url: " + s.Url_resolved)
 
-    ' ffmpeg must be on PATH. Check first so we can show a friendly hint
-    ' instead of a silent no-op when it is missing.
+    ' STEP 1 — ffmpeg must be on PATH. Check first so we can show a friendly
+    ' hint instead of a silent no-op when it is missing.
     DIM err AS ERROR
-    _, err = exec.LookPath("ffmpeg")
+    DIM ffPath AS STRING
+    ffPath, err = exec.LookPath("ffmpeg")
     IF err <> NIL THEN
+        logLine("STEP1 ffmpeg NOT FOUND on PATH: " + err.Error())
         setListLine("ffmpeg not found on PATH — install ffmpeg to play stations.")
+        setStatus("✖ ffmpeg not found on PATH — install it (see " + gLogPath + ")")
         RETURN
     END IF
+    logLine("STEP1 ffmpeg found at: " + ffPath)
 
-    ' Spawn ffmpeg reading the stream and writing 44.1 kHz / stereo /
-    ' signed-16-LE PCM to stdout ("-" output). -loglevel quiet keeps its
-    ' chatter off our terminal UI.
-    gCmd = exec.Command("ffmpeg", "-hide_banner", "-loglevel", "quiet", _
+    ' STEP 2 — spawn ffmpeg reading the stream and writing 44.1 kHz / stereo
+    ' / signed-16-LE PCM to stdout ("-" output). -loglevel error (not quiet)
+    ' so real problems land in errBuf, which the watcher logs on exit.
+    ' -rw_timeout 8s makes ffmpeg give up (and exit) on a dead/stalled
+    ' connection instead of hanging forever, so the watcher can report it.
+    DIM errBuf AS strings.Builder
+    gCmd = exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", _
+        "-rw_timeout", "8000000", _
         "-i", s.Url_resolved, _
         "-f", "s16le", "-acodec", "pcm_s16le", _
         "-ar", fmt.Sprintf("%d", pcmRate), "-ac", "2", "-")
+    gCmd.Stderr = @errBuf
 
     DIM out AS io.ReadCloser
     out, err = gCmd.StdoutPipe()
     IF err <> NIL THEN
+        logLine("STEP2 StdoutPipe error: " + err.Error())
+        setStatus("✖ Could not open ffmpeg pipe — see " + gLogPath)
         stopPlayback()
         RETURN
     END IF
@@ -622,50 +1315,89 @@ SUB startPlayback(s AS Station, idx AS INTEGER)
 
     err = gCmd.Start()
     IF err <> NIL THEN
+        logLine("STEP2 ffmpeg failed to start: " + err.Error())
+        setStatus("✖ ffmpeg failed to start — see " + gLogPath)
         stopPlayback()
         RETURN
     END IF
+    logLine("STEP2 ffmpeg process started")
+    ' Watch the process for its whole life — when it exits (stream ended,
+    ' killed by Stop, or a real error) the watcher logs WHY. That async log
+    ' line is the key diagnostic: if you hear nothing and the log shows an
+    ' "ffmpeg EXITED" line, the stream/network/codec is the problem; if it
+    ' shows NO exit and you still hear nothing, ffmpeg is feeding audio fine
+    ' and the fault is the audio OUTPUT (Windows volume / device / oto).
+    SPAWN watchFfmpeg(gCmd, @errBuf, s.Name)
 
-    ' The audio device may be created only once per program, so build it
-    ' lazily on the first Play and reuse it forever after. ffmpeg always
-    ' feeds it pcmRate/stereo/s16le, so the locked-in format is always right.
+    ' STEP 3 — the audio device may be created only once per program, so
+    ' build it lazily on the first Play and reuse it forever after. ffmpeg
+    ' always feeds pcmRate/stereo/s16le, so the locked-in format is right.
     IF gCtx = NIL THEN
+        logLine("STEP3 opening audio output device (oto)…")
         DIM op AS oto.NewContextOptions
         op.SampleRate = pcmRate
         op.ChannelCount = 2
         op.Format = oto.FormatSignedInt16LE
         gCtx, _, err = oto.NewContext(@op)
         IF err <> NIL THEN
+            logLine("STEP3 AUDIO DEVICE error (oto.NewContext): " + err.Error())
+            setStatus("✖ Audio output device error: " + err.Error() + " (see " + gLogPath + ")")
             stopPlayback()
             RETURN
         END IF
         ' Let the device come up before the first samples arrive.
         time.Sleep(300 * time.Millisecond)
+        logLine("STEP3 audio device ready")
+    ELSE
+        logLine("STEP3 reusing existing audio device")
     END IF
 
-    ' oto pulls from ffmpeg's stdout on its own background goroutine, so
-    ' once Play() returns the music keeps going while the UI stays responsive.
-    gPlayer = gCtx.NewPlayer(out)
+    ' STEP 4 — oto pulls from ffmpeg's stdout on its own background
+    ' goroutine; the UI is NOT blocked waiting for the first audio (HLS/AAC
+    ' streams can take several seconds to start). Watch the log for the
+    ' ffmpeg outcome.
+    ' Feed oto through a shield reader instead of ffmpeg's pipe directly.
+    ' HLS streams arrive in gappy bursts and ffmpeg's stdout can return a
+    ' transient EOF/error between segments; handing that straight to oto's
+    ' Windows backend can corrupt memory. The shield turns any read error
+    ' into silence so oto only ever sees a clean, never-failing stream.
+    DIM shield AS otoShield
+    shield.src = out
+    gPlayer = gCtx.NewPlayer(shield)
     gPlayer.Play()
     gPlaying = idx
     refreshList()
+    logLine("STEP4 player started for '" + s.Name + "' — waiting on ffmpeg to feed audio (watch for an 'ffmpeg EXITED' line if it goes silent)")
+    setStatus(fmt.Sprintf("▶ Playing: %s (%dk %s)", s.Name, s.Bitrate, s.Codec))
 
     ' Be a good citizen: tell radio-browser this station was played. Fire
     ' and forget on a background goroutine so the UI never waits on it.
     SPAWN registerClick(s.Stationuuid)
+
+    ' Start watching this stream's ICY metadata for the now-playing bar.
+    ' (stopPlayback at the top already bumped gPlayGen, so this poller owns
+    ' the current generation until the next play/stop.)
+    SPAWN pollNowPlaying(s.Url_resolved, gPlayGen)
 END SUB
 
+' ELI5: politely tells the website "hey, someone played this station" so
+' its popularity count goes up. We don't care if it fails — it's like
+' clapping; nice to do, but the show goes on either way.
+'
 ' registerClick — best-effort popularity ping; any error is ignored.
 SUB registerClick(uuid AS STRING)
     IF uuid = "" THEN RETURN
     DIM b AS BYTES
-    DIM ok AS BOOLEAN
-    b, ok = httpGet(apiBase + "/json/url/" + uuid)
+    DIM e AS STRING
+    b, e = httpGet(apiBase + "/json/url/" + uuid)
     _ = b
-    _ = ok
+    _ = e
 END SUB
 
 ' === Form events ======================================================
+' ELI5: everything below here runs WHEN YOU DO SOMETHING. Click a button
+' or the screen resizes, and DBtui calls the matching SUB. The names are
+' wired up automatically: a button named "btnPlay" calls "btnPlay_Click".
 
 ' Search button — look up stations whose name matches the search box.
 SUB btnSearch_Click()
@@ -685,26 +1417,54 @@ END SUB
 SUB lstStations_Change()
 END SUB
 
+' ELI5: when you click Play, find which row is highlighted and play that
+' station. If nothing sensible is highlighted, do nothing.
+'
 ' Play button — start streaming the highlighted station.
 SUB btnPlay_Click()
+    ' Play only makes sense on the Stations tab — the Now Playing tab's rows
+    ' are read-only info, not selectable stations.
+    IF gTab <> 0 THEN RETURN
     DIM idx AS INTEGER = lstStations_SelectedIndex()
     IF idx < 0 OR idx >= LEN(gStations) THEN RETURN
     startPlayback(gStations[idx], idx)
+END SUB
+
+' ELI5: the two little tabs at the top ("Stations" and "Now Playing") are like
+' dividers in a binder. When you click one, this remembers which divider you
+' picked and redraws the page underneath to match.
+'
+' tabsView_Change — the user clicked a tab (or arrowed across the tab bar).
+' Remember which tab is active and repaint the shared list for it.
+SUB tabsView_Change()
+    gTab = _currentModel.tabsView_Val
+    refreshList()
 END SUB
 
 ' Stop button — silence playback and drop the "> " marker.
 SUB btnStop_Click()
     stopPlayback()
     refreshList()
+    setStatus("■ Stopped")
 END SUB
 
 ' Startup — runs BEFORE the UI loop starts, so _currentModel is still NIL
 ' here and the list cannot be touched yet. We just prime the state; the
 ' first real load happens in Terminal_Resize below.
+'
+' (The Windows "relaunch inside Windows Terminal at the form size" bootstrap
+' now lives in DBtui's generated Main — see _dbtuiRelaunchInTerminal above
+' the marker — so it isn't hand-written here any more.)
 SUB Form_Load()
     gPlaying = 0 - 1
+    initLog()
 END SUB
 
+' ELI5: this runs whenever the window changes size — AND, handily, once
+' right at the start. We use that very first call as our cue to load the
+' Top 100 stations, but only the first time (the gLoaded flag is our
+' "have we done this yet?" checkbox so we don't reload on every resize).
+'
 ' Terminal resized — bubbletea sends an initial size message the moment
 ' the program starts, and by then _currentModel is live, so this is the
 ' earliest safe place to fill the list. Load the Top 100 exactly once.
@@ -719,5 +1479,31 @@ END SUB
 
 ' Quitting — make sure the speakers go quiet.
 SUB Form_Close()
+    logLine("=== session closing ===")
     stopPlayback()
+    IF gLogFile <> NIL THEN _ = gLogFile.Close()
+END SUB
+
+' Enter handler for txtSearch — pressing Enter in the search box is the
+' same as clicking the Search button.
+SUB txtSearch_Enter()
+    btnSearch_Click()
+END SUB
+
+' ELI5: a helper working in the background (listening for the song name) taps
+' us on the shoulder when it learns something new. If the Now Playing tab is
+' the one you're looking at, we redraw it so the fresh track name pops up.
+'
+' Fired on the UI thread after a background goroutine calls _dbtuiWake().
+' Use it to push async updates (e.g. fresh data) into widgets. Edit freely.
+SUB Form_Wake()
+    ' The metadata poller found a fresh track. If the Now Playing tab is the
+    ' one on screen, repaint it; otherwise nothing visible needs updating.
+    IF gTab = 1 THEN refreshList()
+END SUB
+
+' DblClick handler for lstStations — Enter or a double-click on a station
+' is the same as clicking Play.
+SUB lstStations_DblClick()
+    btnPlay_Click()
 END SUB

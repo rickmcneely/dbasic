@@ -1069,6 +1069,88 @@ SUB openFormTab(m AS POINTER TO Model, path AS STRING, proj AS Project, formName
     m.Status = "loaded " + formName + " from " + path
 END SUB
 
+' partnerDbasForForm — the generated .dbas path for the active FORM tab
+' (e.g. radio.dbproj's frmRadio → radio.dbas). "" when the form tab is
+' untitled (no on-disk .dbproj), so there's nothing yet to pair with.
+FUNCTION partnerDbasForForm(m AS POINTER TO Model) AS STRING
+    IF NOT hasActiveTab(^m) THEN RETURN ""
+    IF m.Tabs[m.TabIdx].Kind <> "form" THEN RETURN ""
+    IF m.Tabs[m.TabIdx].Path = "" THEN RETURN ""
+    DIM proj AS Project
+    DIM pok AS BOOLEAN
+    DIM preason AS STRING
+    proj, pok, preason = readProjectFromDisk(m.Tabs[m.TabIdx].Path)
+    _ = preason
+    DIM nForms AS INTEGER = 1
+    IF pok THEN nForms = LEN(proj.Forms)
+    RETURN formOutputPath(m.Tabs[m.TabIdx].Path, m.Tabs[m.TabIdx].FormName, nForms)
+END FUNCTION
+
+' siblingProjForDbas — the .dbproj a code file was generated from, if any.
+' First matches an OPEN form tab whose partner .dbas equals `path` (exact,
+' so multi-form projects pair correctly); otherwise falls back to the
+' same-stem <file>.dbproj on disk (the single-form convention). "" when no
+' pairing is found (a standalone, hand-written .dbas).
+FUNCTION siblingProjForDbas(m AS POINTER TO Model, path AS STRING) AS STRING
+    IF path = "" THEN RETURN ""
+    DIM ti AS INTEGER
+    FOR ti = 0 TO LEN(m.Tabs) - 1
+        IF m.Tabs[ti].Kind = "form" AND m.Tabs[ti].Path <> "" THEN
+            DIM proj AS Project
+            DIM pok AS BOOLEAN
+            DIM preason AS STRING
+            proj, pok, preason = readProjectFromDisk(m.Tabs[ti].Path)
+            _ = preason
+            DIM nForms AS INTEGER = 1
+            IF pok THEN nForms = LEN(proj.Forms)
+            IF formOutputPath(m.Tabs[ti].Path, m.Tabs[ti].FormName, nForms) = path THEN RETURN m.Tabs[ti].Path
+        END IF
+    NEXT ti
+    IF strings.HasSuffix(strings.ToLower(path), ".dbas") THEN
+        DIM cand AS STRING = strings.TrimSuffix(path, ".dbas") + ".dbproj"
+        IF fileIsRegular(cand) THEN RETURN cand
+    END IF
+    RETURN ""
+END FUNCTION
+
+' toggleFormCode — F7's action: switch between a form's DESIGNER and its
+' partner .dbas CODE, pairing the two within a project:
+'   • on a form tab → open (or switch to) the .dbas it generates
+'   • on a code tab → open (or switch to) the .dbproj it came from
+' Falls back to the generic form/code ViewMode flip when there's nothing to
+' pair with (an untitled form, a standalone .dbas, or no tabs open).
+FUNCTION toggleFormCode(m AS POINTER TO Model) AS tea.Cmd
+    IF hasActiveTab(^m) THEN
+        IF m.Tabs[m.TabIdx].Kind = "form" THEN
+            DIM partner AS STRING = partnerDbasForForm(m)
+            IF partner <> "" AND fileIsRegular(partner) THEN
+                RETURN openFile(m, partner)
+            END IF
+        ELSE
+            DIM projPath AS STRING = siblingProjForDbas(m, m.Tabs[m.TabIdx].Path)
+            IF projPath <> "" THEN
+                loadFormFromDisk(m, projPath)
+                invalidateEditorCache(m)
+                RETURN NIL
+            END IF
+        END IF
+    END IF
+    ' No pairing — the original generic toggle: code → fresh/active form
+    ' canvas; form → the code editor for the active tab.
+    IF m.ViewMode = "code" THEN
+        newUntitledForm(m)
+    ELSE
+        m.ViewMode = "code"
+        IF hasActiveTab(^m) THEN
+            setFocus(m, "editor")
+        ELSE
+            setFocus(m, "tree")
+        END IF
+    END IF
+    invalidateEditorCache(m)
+    RETURN NIL
+END FUNCTION
+
 ' saveForm — write the active form back to its .dbproj. For multi-
 ' form projects this re-reads disk first so other forms aren't
 ' clobbered; the active form replaces its slot in proj.Forms.
@@ -1882,6 +1964,50 @@ FUNCTION translateSizeExpr(expr AS STRING, fallback AS STRING) AS STRING
     RETURN "(" + e + ")"
 END FUNCTION
 
+' constSizeExpr — if a size expression is a plain positive integer, return
+' it; otherwise 0 (blank, or an expression over MAX_WIDTH/MAX_HEIGHT). Used
+' to decide whether a form has an EXPLICIT fixed dimension.
+FUNCTION constSizeExpr(expr AS STRING) AS INTEGER
+    DIM e AS STRING = strings.TrimSpace(expr)
+    IF e = "" THEN RETURN 0
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(e)
+        IF NOT strings.Contains("0123456789", Mid(e, i, 1)) THEN RETURN 0
+    NEXT i
+    DIM n AS INTEGER
+    DIM err AS ERROR
+    n, err = strconv.Atoi(e)
+    IF err <> NIL THEN RETURN 0
+    RETURN n
+END FUNCTION
+
+' formTermSize — the terminal size (cols, rows) a form wants to launch at.
+' An explicit integer WExpr/HExpr wins; otherwise it's the bounding box of
+' the form's top-level widgets plus the form border (a tight fit to the
+' controls). Used to size the Windows-Terminal relaunch.
+FUNCTION formTermSize(f AS DesignForm) AS (INTEGER, INTEGER)
+    DIM cols AS INTEGER = constSizeExpr(f.WExpr)
+    DIM rows AS INTEGER = constSizeExpr(f.HExpr)
+    IF cols <= 0 OR rows <= 0 THEN
+        DIM maxR AS INTEGER = 0
+        DIM maxB AS INTEGER = 0
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(f.Widgets) - 1
+            IF f.Widgets[i].Parent = "" THEN
+                DIM r AS INTEGER = f.Widgets[i].X + f.Widgets[i].W
+                DIM b AS INTEGER = f.Widgets[i].Y + f.Widgets[i].H
+                IF r > maxR THEN maxR = r
+                IF b > maxB THEN maxB = b
+            END IF
+        NEXT i
+        IF cols <= 0 THEN cols = maxR + 1
+        IF rows <= 0 THEN rows = maxB + 1
+    END IF
+    IF cols < 20 THEN cols = 20
+    IF rows < 6 THEN rows = 6
+    RETURN cols, rows
+END FUNCTION
+
 ' widgetEmitLayer — emit View code building widget `wv`'s Charm view string +
 ' a lipgloss layer at its (X,Y,Z). Component kinds render via .View();
 ' lipgloss-composed kinds reuse their body builder wrapped in compFocusView.
@@ -1908,6 +2034,17 @@ FUNCTION widgetEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys AS 
     END IF
     IF widgetComponent(wv.Kind) THEN
         s = s + "    DIM vw" + sfx + " AS STRING = m." + wv.Name + compSuffix(wv.Kind) + ".View()\n"
+        ' A framed ListBox gets a rounded border (DBtui-muted line) around its
+        ' view; the list was sized W-2 x H-2 at init so the box is W x H.
+        IF wv.Kind = "ListBox" AND widgetFramed(wv) THEN
+            ' Trim list.View()'s trailing newline first, else the border wraps
+            ' an extra blank row and the box ends up H+1 tall.
+            ' Pin the content width to the list's inner size (W-2) so the box is
+            ' always W wide. Without it, lipgloss sizes the border to the widest
+            ' content line, so a list of short rows (e.g. a Now Playing panel)
+            ' draws a too-narrow box that exposes whatever is painted behind it.
+            s = s + "    vw" + sfx + " = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(" + qt + "#3b3d5e" + qt + ")).Width(" + strconv.Itoa(wv.W) + ").Render(strings.TrimRight(vw" + sfx + ", " + qt + "\\n" + qt + "))\n"
+        END IF
         s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
         RETURN s
     END IF
@@ -1961,10 +2098,18 @@ FUNCTION compEmitInit(w AS DesignWidget, qt AS STRING) AS STRING
             s = s + "    it" + w.Name + strconv.Itoa(li) + ".cap = " + qt + escapeForDBString(w.Items[li]) + qt + "\n"
             s = s + "    items" + w.Name + " = APPEND(items" + w.Name + ", it" + w.Name + strconv.Itoa(li) + ")\n"
         NEXT li
+        DIM lw AS INTEGER = w.W
         DIM lh AS INTEGER = w.H
         IF w.Kind = "ComboBox" THEN lh = 6
+        ' A framed ListBox loses a row+col of inner space to the border, so
+        ' size the list to W-2 x H-2 (the bordered box is then exactly W x H).
+        IF w.Kind = "ListBox" AND widgetFramed(w) THEN
+            lw = w.W - 2
+            lh = w.H - 2
+        END IF
+        IF lw < 1 THEN lw = 1
         IF lh < 1 THEN lh = 1
-        s = s + "    m." + nm + " = list.New(items" + w.Name + ", _newMenuDelegate(), " + strconv.Itoa(w.W) + ", " + strconv.Itoa(lh) + ")\n"
+        s = s + "    m." + nm + " = list.New(items" + w.Name + ", _newMenuDelegate(), " + strconv.Itoa(lw) + ", " + strconv.Itoa(lh) + ")\n"
         s = s + "    m." + nm + ".SetShowHelp(FALSE)\n"
         s = s + "    m." + nm + ".SetShowStatusBar(FALSE)\n"
         s = s + "    m." + nm + ".SetShowTitle(FALSE)\n"
@@ -2043,6 +2188,14 @@ FUNCTION compEmitForward(w AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRI
     DIM s AS STRING = ""
     s = s + "            DIM cCmd" + sfx + " AS tea.Cmd\n"
     IF w.Kind = "ListBox" OR w.Kind = "ComboBox" THEN
+        IF w.Kind = "ListBox" THEN
+            ' Enter on the focused list activates the selected item (same as a
+            ' double-click) instead of being swallowed by the list's Update.
+            s = s + "            IF key = " + qt + "enter" + qt + " THEN\n"
+            s = s + "                " + w.Name + "_DblClick()\n"
+            s = s + "                RETURN m, NIL\n"
+            s = s + "            END IF\n"
+        END IF
         s = s + "            DIM prevI" + sfx + " AS INTEGER = m." + nm + ".Index()\n"
         s = s + "            m." + nm + ", cCmd" + sfx + " = m." + nm + ".Update(msg)\n"
         s = s + "            IF m." + nm + ".Index() <> prevI" + sfx + " THEN dispatchChange(" + qt + w.Name + qt + ")\n"
@@ -2050,6 +2203,14 @@ FUNCTION compEmitForward(w AS DesignWidget, sfx AS STRING, qt AS STRING) AS STRI
         s = s + "            DIM prevC" + sfx + " AS INTEGER = m." + nm + ".Cursor()\n"
         s = s + "            m." + nm + ", cCmd" + sfx + " = m." + nm + ".Update(msg)\n"
         s = s + "            IF m." + nm + ".Cursor() <> prevC" + sfx + " THEN dispatchChange(" + qt + w.Name + qt + ")\n"
+    ELSEIF w.Kind = "TextInput" THEN
+        ' Enter in a text field fires its _Enter handler (e.g. wire it to a
+        ' Search button's _Click) instead of being swallowed by the field.
+        s = s + "            IF key = " + qt + "enter" + qt + " THEN\n"
+        s = s + "                " + w.Name + "_Enter()\n"
+        s = s + "                RETURN m, NIL\n"
+        s = s + "            END IF\n"
+        s = s + "            m." + nm + ", cCmd" + sfx + " = m." + nm + ".Update(msg)\n"
     ELSE
         s = s + "            m." + nm + ", cCmd" + sfx + " = m." + nm + ".Update(msg)\n"
     END IF
@@ -2083,8 +2244,10 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     DIM hasViewport AS BOOLEAN = FALSE
     DIM hasProgress AS BOOLEAN = FALSE
     DIM hasFramed AS BOOLEAN = FALSE
+    DIM hasStatusBar AS BOOLEAN = FALSE
     DIM scanI AS INTEGER
     FOR scanI = 0 TO n - 1
+        IF f.Widgets[scanI].Kind = "StatusBar" THEN hasStatusBar = TRUE
         IF f.Widgets[scanI].Kind = "Dialog" THEN hasDialog = TRUE
         IF f.Widgets[scanI].Kind = "Tree" THEN hasTree = TRUE
         IF f.Widgets[scanI].Kind = "TextArea" THEN hasTextArea = TRUE
@@ -2102,6 +2265,12 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "IMPORT " + qt + "fmt" + qt + "\n"
     s = s + "IMPORT " + qt + "os" + qt + "\n"
     s = s + "IMPORT " + qt + "strings" + qt + "\n"
+    ' runtime + os/exec power the Windows-Terminal bootstrap emitted before
+    ' Main (relaunch into wt.exe at the form size). Always imported; the
+    ' bootstrap always references them, and DBasic dedupes if a user section
+    ' imports them too.
+    s = s + "IMPORT " + qt + "runtime" + qt + "\n"
+    s = s + "IMPORT " + qt + "os/exec" + qt + " AS exec\n"
     ' lipgloss is now always imported: the focus highlight (focusStyle,
     ' emitted unconditionally below) styles the focused widget's cells, so
     ' every generated form references lipgloss. (Previously gated on the
@@ -2111,6 +2280,13 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     IF hasTextInput THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/textinput" + qt + " AS textinput\n"
     IF hasTextArea THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/textarea" + qt + " AS textarea\n"
     IF hasListW THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/list" + qt + " AS list\n"
+    ' time powers ListBox double-click timing (and is harmless/deduped if a
+    ' user section imports it too).
+    IF hasListW THEN s = s + "IMPORT " + qt + "time" + qt + "\n"
+    ' ansi.Truncate gives the StatusBar a UTF-8/ANSI-safe width clip (a
+    ' byte-based cut could split a multi-byte char and feed invalid UTF-8 to
+    ' the renderer).
+    IF hasStatusBar THEN s = s + "IMPORT " + qt + "github.com/charmbracelet/x/ansi" + qt + " AS ansi\n"
     IF hasTable THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/table" + qt + " AS table\n"
     IF hasViewport THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/viewport" + qt + " AS viewport\n"
     IF hasProgress THEN s = s + "IMPORT " + qt + "charm.land/bubbles/v2/progress" + qt + " AS progress\n"
@@ -2162,6 +2338,12 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     ' time instead of the whole bar. Only meaningful while Hover names a
     ' TabStrip; one field suffices since one widget is hovered at a time.
     s = s + "    DIM HoverTab AS INTEGER\n"
+    ' Double-click tracking for ListBoxes (terminals don't report a click
+    ' count, so we time successive clicks on the same row ourselves).
+    IF hasListW THEN
+        s = s + "    DIM _lastClkRow AS INTEGER\n"
+        s = s + "    DIM _lastClkMs AS LONG\n"
+    END IF
     ' Form-chrome state (chromed forms only): the evaluated box size + the
     ' maximize / minimize toggles driven by the title-bar glyphs.
     IF formChromed(f) THEN
@@ -2220,6 +2402,21 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     IF hasDialog OR hasMenubar OR hasListW THEN
         s = s + "DIM _currentModel AS POINTER TO Model\n"
     END IF
+    ' --- Async refresh: a background goroutine that updates shared state can
+    '     call _dbtuiWake() to make the UI repaint. The wake message is
+    '     handled inside Update (on the UI thread), where it calls Form_Wake()
+    '     — so any model writes done there (e.g. setting a widget's text) take
+    '     effect, unlike a raw write from the goroutine.
+    s = s + "DIM _currentProgram AS POINTER TO tea.Program\n"
+    s = s + "TYPE _dbtuiWakeMsg\n"
+    s = s + "    DIM n AS INTEGER\n"
+    s = s + "END TYPE\n"
+    s = s + "SUB _dbtuiWake()\n"
+    s = s + "    IF _currentProgram <> NIL THEN\n"
+    s = s + "        DIM _wm AS _dbtuiWakeMsg\n"
+    s = s + "        _currentProgram.Send(_wm)\n"
+    s = s + "    END IF\n"
+    s = s + "END SUB\n"
     IF hasDialog THEN
         s = s + "DIM _dlgX AS INTEGER\n"
         s = s + "DIM _dlgY AS INTEGER\n"
@@ -2234,6 +2431,16 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     IF hasDialog OR hasMenubar OR hasListW THEN
         s = s + "    _currentModel = @m\n"
     END IF
+    ' Async refresh from a background goroutine: run Form_Wake on the UI
+    ' thread so its model writes (e.g. updating a widget's text) take effect.
+    s = s + "    DIM _wkMsg AS _dbtuiWakeMsg\n"
+    s = s + "    DIM _wkOk AS BOOLEAN\n"
+    s = s + "    _wkMsg, _wkOk = msg.(_dbtuiWakeMsg)\n"
+    s = s + "    IF _wkOk THEN\n"
+    s = s + "        _ = _wkMsg\n"
+    s = s + "        Form_Wake()\n"
+    s = s + "        RETURN m, NIL\n"
+    s = s + "    END IF\n"
     s = s + "    DIM sz AS tea.WindowSizeMsg\n"
     s = s + "    DIM szOk AS BOOLEAN\n"
     s = s + "    sz, szOk = msg.(tea.WindowSizeMsg)\n"
@@ -2369,6 +2576,38 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             ' clickable and scroll its viewport.
             IF mcw.Kind = "ScrollPanel" AND widgetFramed(mcw) THEN
                 s = s + scrollPanelEmitGutterClick(mcw, mcXs, mcYs, qt)
+            END IF
+            ' ListBox: a click selects the row under the cursor (the list has
+            ' no title/status/help/filter, so items start at the widget's Y —
+            ' relative row maps straight to the on-page item). Paginator math
+            ' turns that into a global index; mirror the keyboard path's
+            ' _Change fire when the selection actually moves.
+            IF mcw.Kind = "ListBox" THEN
+                DIM lbf AS STRING = mcw.Name + compSuffix(mcw.Kind)
+                ' Items start one row down inside a framed list (below the top
+                ' border); clicks on the border rows then map out of range.
+                DIM lbOriginY AS STRING = mcYs
+                IF widgetFramed(mcw) THEN lbOriginY = strconv.Itoa(mcw.Y + 1)
+                s = s + "            DIM lcRel" + mcIStr + " AS INTEGER = mc.Y - " + lbOriginY + "\n"
+                s = s + "            DIM lcPP" + mcIStr + " AS INTEGER = m." + lbf + ".Paginator.PerPage\n"
+                s = s + "            IF lcPP" + mcIStr + " > 0 AND lcRel" + mcIStr + " >= 0 AND lcRel" + mcIStr + " < lcPP" + mcIStr + " THEN\n"
+                s = s + "                DIM lcTgt" + mcIStr + " AS INTEGER = m." + lbf + ".Paginator.Page * lcPP" + mcIStr + " + lcRel" + mcIStr + "\n"
+                s = s + "                IF lcTgt" + mcIStr + " < LEN(m." + lbf + ".VisibleItems()) THEN\n"
+                s = s + "                    DIM lcPrev" + mcIStr + " AS INTEGER = m." + lbf + ".Index()\n"
+                s = s + "                    m." + lbf + ".Select(lcTgt" + mcIStr + ")\n"
+                s = s + "                    IF m." + lbf + ".Index() <> lcPrev" + mcIStr + " THEN dispatchChange(" + qt + mcw.Name + qt + ")\n"
+                ' Second click on the same row within 400ms = double-click →
+                ' fire the list's _DblClick (activate the item).
+                s = s + "                    DIM lcNow" + mcIStr + " AS LONG = time.Now().UnixMilli()\n"
+                s = s + "                    IF lcTgt" + mcIStr + " = m._lastClkRow AND lcNow" + mcIStr + " - m._lastClkMs < 500 THEN\n"
+                s = s + "                        " + mcw.Name + "_DblClick()\n"
+                s = s + "                        m._lastClkMs = 0\n"
+                s = s + "                    ELSE\n"
+                s = s + "                        m._lastClkRow = lcTgt" + mcIStr + "\n"
+                s = s + "                        m._lastClkMs = lcNow" + mcIStr + "\n"
+                s = s + "                    END IF\n"
+                s = s + "                END IF\n"
+                s = s + "            END IF\n"
             END IF
             s = s + "            _ = mc\n"
         ELSEIF mcw.Kind = "Button" THEN
@@ -2514,9 +2753,21 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             DIM mwSpMax AS INTEGER = LEN(mww.Items) - mwVis
             IF mwSpMax < 0 THEN mwSpMax = 0
             s = s + "        IF mw.X >= " + mwXs + " AND mw.X < " + mwXs + " + " + mwWs + " AND mw.Y >= " + mwYs + " AND mw.Y < " + mwYs + " + " + mwHs + " THEN\n"
-            IF widgetForwards(mww.Kind) THEN
-                ' Component-backed: forward the wheel to the hovered
-                ' component's Update (it scrolls / moves selection itself).
+            IF mww.Kind = "ListBox" OR mww.Kind = "ComboBox" THEN
+                ' bubbles/list ignores MouseWheelMsg, so move its cursor
+                ' explicitly (CursorUp/Down page automatically) and fire
+                ' _Change when the selection actually moves.
+                DIM mwlf AS STRING = mwNm + compSuffix(mww.Kind)
+                s = s + "            DIM wwPrev" + strconv.Itoa(mwi) + " AS INTEGER = m." + mwlf + ".Index()\n"
+                s = s + "            IF mw.Button = tea.MouseWheelUp THEN\n"
+                s = s + "                m." + mwlf + ".CursorUp()\n"
+                s = s + "            ELSE\n"
+                s = s + "                m." + mwlf + ".CursorDown()\n"
+                s = s + "            END IF\n"
+                s = s + "            IF m." + mwlf + ".Index() <> wwPrev" + strconv.Itoa(mwi) + " THEN dispatchChange(" + qt + mwNm + qt + ")\n"
+            ELSEIF widgetForwards(mww.Kind) THEN
+                ' Other component-backed kinds (PropGrid): forward the wheel
+                ' to the component's Update (it scrolls / moves itself).
                 s = s + "            DIM wwc" + strconv.Itoa(mwi) + " AS tea.Cmd\n"
                 s = s + "            m." + mwNm + compSuffix(mww.Kind) + ", wwc" + strconv.Itoa(mwi) + " = m." + mwNm + compSuffix(mww.Kind) + ".Update(msg)\n"
                 s = s + "            _ = wwc" + strconv.Itoa(mwi) + "\n"
@@ -2865,7 +3116,60 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     s = s + "    RETURN vw\n"
     s = s + "END FUNCTION\n"
     s = s + "\n"
+    ' --- Windows-Terminal bootstrap. On Windows, a freshly double-clicked
+    '     console program lands in the legacy console host; relaunch it
+    '     inside Windows Terminal (wt.exe) sized to the form so it looks
+    '     right. Size comes from the form (explicit WExpr/HExpr, else the
+    '     widget bounding box). A --size arg also resizes the terminal for
+    '     direct (non-wt) launches. Both are no-ops off Windows / without
+    '     the arg, so non-Windows behavior is unchanged.
+    DIM tCols AS INTEGER
+    DIM tRows AS INTEGER
+    tCols, tRows = formTermSize(f)
+    DIM tSize AS STRING = strconv.Itoa(tCols) + "," + strconv.Itoa(tRows)
+    s = s + "' _dbtuiRelaunchInTerminal — on Windows, relaunch this program inside\n"
+    s = s + "' Windows Terminal (wt.exe) at the form size, then exit. No-op when\n"
+    s = s + "' already inside Terminal, when wt.exe is missing, or off Windows.\n"
+    s = s + "SUB _dbtuiRelaunchInTerminal()\n"
+    s = s + "    IF runtime.GOOS <> " + qt + "windows" + qt + " THEN RETURN\n"
+    s = s + "    IF os.Getenv(" + qt + "WT_SESSION" + qt + ") <> " + qt + qt + " THEN RETURN\n"
+    s = s + "    IF os.Getenv(" + qt + "DBTUI_IN_TERMINAL" + qt + ") <> " + qt + qt + " THEN RETURN\n"
+    s = s + "    DIM _wt AS STRING\n"
+    s = s + "    DIM _e AS ERROR\n"
+    s = s + "    _wt, _e = exec.LookPath(" + qt + "wt.exe" + qt + ")\n"
+    s = s + "    IF _e <> NIL THEN RETURN\n"
+    s = s + "    DIM _self AS STRING\n"
+    s = s + "    _self, _e = os.Executable()\n"
+    s = s + "    IF _e <> NIL THEN RETURN\n"
+    ' wt --size c,r --title T <self>  — --size and --title are Windows
+    ' Terminal's own options (window size + tab/window title), so they precede
+    ' the program to run. The title is the form's Title (TODO: promote to a
+    ' dedicated form/project property).
+    DIM wtTitle AS STRING = f.Title
+    IF wtTitle = "" THEN wtTitle = f.Name
+    s = s + "    DIM _c AS POINTER TO exec.Cmd = exec.Command(_wt, " + qt + "--size" + qt + ", " + qt + tSize + qt + ", " + qt + "--title" + qt + ", " + qt + escapeForDBString(wtTitle) + qt + ", _self)\n"
+    s = s + "    _c.Env = APPEND(os.Environ(), " + qt + "DBTUI_IN_TERMINAL=1" + qt + ")\n"
+    s = s + "    _e = _c.Start()\n"
+    s = s + "    IF _e <> NIL THEN RETURN\n"
+    s = s + "    os.Exit(0)\n"
+    s = s + "END SUB\n"
+    s = s + "\n"
+    s = s + "' _dbtuiApplyRequestedSize — honor a " + qt + "--size cols,rows" + qt + " argument by\n"
+    s = s + "' resizing the terminal (CSI 8;rows;cols t) before the UI starts.\n"
+    s = s + "SUB _dbtuiApplyRequestedSize()\n"
+    s = s + "    DIM _args AS []STRING = os.Args\n"
+    s = s + "    DIM _i AS INTEGER\n"
+    s = s + "    FOR _i = 1 TO LEN(_args) - 1\n"
+    s = s + "        IF _args[_i] = " + qt + "--size" + qt + " AND _i + 1 <= LEN(_args) - 1 THEN\n"
+    s = s + "            DIM _p AS []STRING = strings.Split(_args[_i + 1], " + qt + "," + qt + ")\n"
+    s = s + "            IF LEN(_p) = 2 THEN fmt.Print(Chr(27) + " + qt + "[8;" + qt + " + strings.TrimSpace(_p[1]) + " + qt + ";" + qt + " + strings.TrimSpace(_p[0]) + " + qt + "t" + qt + ")\n"
+    s = s + "        END IF\n"
+    s = s + "    NEXT _i\n"
+    s = s + "END SUB\n"
+    s = s + "\n"
     s = s + "SUB Main()\n"
+    s = s + "    _dbtuiRelaunchInTerminal()\n"
+    s = s + "    _dbtuiApplyRequestedSize()\n"
     s = s + "    DIM m AS Model\n"
     ' Nothing is hovered until the mouse moves over a widget.
     s = s + "    m.Hover = 0 - 1\n"
@@ -2900,6 +3204,7 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
     IF formChromed(f) THEN s = s + "    _formSize(@m)\n"
     s = s + "    Form_Load()\n"
     s = s + "    DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)\n"
+    s = s + "    _currentProgram = prog\n"
     s = s + "    DIM final AS tea.Model\n"
     s = s + "    DIM rerr AS ERROR\n"
     s = s + "    final, rerr = prog.Run()\n"
@@ -3071,6 +3376,24 @@ FUNCTION generateFormPrelude(f AS DesignForm) AS STRING
             s = s + "\n"
         END IF
     NEXT twI
+
+    ' --- Runtime StatusBar API. For each StatusBar emit <Name>_SetText so
+    '     handlers can drive the live status line; passing "" reverts it to
+    '     the designed segments. The override lives in the <Name>_Text model
+    '     field, so this just writes it through _currentModel — the StatusBar
+    '     counterpart of the list / TextInput helpers above.
+    DIM sbI AS INTEGER
+    FOR sbI = 0 TO n - 1
+        DIM sbw AS DesignWidget = f.Widgets[sbI]
+        IF sbw.Kind = "StatusBar" AND sbw.Parent = "" THEN
+            s = s + "' " + sbw.Name + "_SetText — set the status line (empty reverts to the designed segments).\n"
+            s = s + "SUB " + sbw.Name + "_SetText(_v AS STRING)\n"
+            s = s + "    IF _currentModel = NIL THEN RETURN\n"
+            s = s + "    _currentModel." + sbw.Name + "_Text = _v\n"
+            s = s + "END SUB\n"
+            s = s + "\n"
+        END IF
+    NEXT sbI
 
     ' --- Tree widget plumbing. A shared treeVisibleRows() walks the
     '     node depths + per-node collapse flags to produce the list of
@@ -3317,6 +3640,11 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
         IF w.Kind = "Button" THEN
             stubName = w.Name + "_Click"
             stubLabel = "Click"
+        ELSEIF w.Kind = "TextInput" THEN
+            ' Fired on Enter in the field. Wire it to a button's _Click to make
+            ' Enter submit (e.g. a search box → Search button).
+            stubName = w.Name + "_Enter"
+            stubLabel = "Enter"
         ELSEIF w.Kind = "Checkbox" OR w.Kind = "RadioButton" OR w.Kind = "ComboBox" OR w.Kind = "ListBox" OR w.Kind = "ScrollBar" OR w.Kind = "TabStrip" OR w.Kind = "Tree" OR w.Kind = "PropGrid" THEN
             stubName = w.Name + "_Change"
             stubLabel = "Change"
@@ -3378,6 +3706,16 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
             out = out + "END SUB\n"
             trailing = TRUE
         END IF
+        ' ListBox also gets a _DblClick handler (fired on Enter or a double-
+        ' click on a row) in addition to its _Change.
+        IF w.Kind = "ListBox" AND w.Parent = "" AND NOT subDefined(out, w.Name + "_DblClick") THEN
+            IF NOT trailing THEN out = out + "\n"
+            IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+            out = out + "' DblClick handler for " + w.Name + " — fired on Enter or a\n"
+            out = out + "' double-click on a row. Edit freely.\n"
+            out = out + "SUB " + w.Name + "_DblClick()\n    ' TODO: your code here.\nEND SUB\n"
+            trailing = TRUE
+        END IF
     NEXT i
     ' Form lifecycle events — always available; the runtime calls these.
     ' Form_Load() once at startup, Terminal_Resize(w,h) on every terminal resize,
@@ -3396,6 +3734,12 @@ FUNCTION generateUserStubs(f AS DesignForm, existingUser AS STRING) AS STRING
         IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
         out = out + "' Fired just before the program quits. Edit freely.\n"
         out = out + "SUB Form_Close()\n    ' TODO: your code here.\nEND SUB\n"
+    END IF
+    IF NOT subDefined(out, "Form_Wake") THEN
+        IF NOT strings.HasSuffix(out, "\n\n") THEN out = out + "\n"
+        out = out + "' Fired on the UI thread after a background goroutine calls _dbtuiWake().\n"
+        out = out + "' Use it to push async updates (e.g. fresh data) into widgets. Edit freely.\n"
+        out = out + "SUB Form_Wake()\n    ' TODO: your code here.\nEND SUB\n"
     END IF
     RETURN out
 END FUNCTION

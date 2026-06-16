@@ -4,10 +4,13 @@ IMPORT "charm.land/bubbletea/v2" AS tea
 IMPORT "fmt"
 IMPORT "os"
 IMPORT "strings"
+IMPORT "runtime"
+IMPORT "os/exec" AS exec
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 IMPORT "charm.land/bubbles/v2/textinput" AS textinput
 IMPORT "charm.land/bubbles/v2/textarea" AS textarea
 IMPORT "charm.land/bubbles/v2/list" AS list
+IMPORT "time"
 IMPORT "charm.land/bubbles/v2/table" AS table
 IMPORT "charm.land/bubbles/v2/viewport" AS viewport
 IMPORT "charm.land/bubbles/v2/progress" AS progress
@@ -42,6 +45,8 @@ TYPE Model
     DIM Focus  AS INTEGER
     DIM Hover  AS INTEGER
     DIM HoverTab AS INTEGER
+    DIM _lastClkRow AS INTEGER
+    DIM _lastClkMs AS LONG
     DIM _formW AS INTEGER
     DIM _formH AS INTEGER
     DIM _maximized AS BOOLEAN
@@ -68,6 +73,16 @@ FUNCTION (m AS Model) Init() AS tea.Cmd
 END FUNCTION
 
 DIM _currentModel AS POINTER TO Model
+DIM _currentProgram AS POINTER TO tea.Program
+TYPE _dbtuiWakeMsg
+    DIM n AS INTEGER
+END TYPE
+SUB _dbtuiWake()
+    IF _currentProgram <> NIL THEN
+        DIM _wm AS _dbtuiWakeMsg
+        _currentProgram.Send(_wm)
+    END IF
+END SUB
 DIM _dlgX AS INTEGER
 DIM _dlgY AS INTEGER
 DIM _dlgW AS INTEGER
@@ -75,6 +90,14 @@ DIM _dlgH AS INTEGER
 
 FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     _currentModel = @m
+    DIM _wkMsg AS _dbtuiWakeMsg
+    DIM _wkOk AS BOOLEAN
+    _wkMsg, _wkOk = msg.(_dbtuiWakeMsg)
+    IF _wkOk THEN
+        _ = _wkMsg
+        Form_Wake()
+        RETURN m, NIL
+    END IF
     DIM sz AS tea.WindowSizeMsg
     DIM szOk AS BOOLEAN
     sz, szOk = msg.(tea.WindowSizeMsg)
@@ -305,6 +328,24 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF mc.X >= 2 AND mc.X < 2 + 18 AND mc.Y >= 7 AND mc.Y < 7 + 5 THEN
             m.Focus = 6
             syncFocusComp(@m)
+            DIM lcRel6 AS INTEGER = mc.Y - 7
+            DIM lcPP6 AS INTEGER = m.listbox1_lb.Paginator.PerPage
+            IF lcPP6 > 0 AND lcRel6 >= 0 AND lcRel6 < lcPP6 THEN
+                DIM lcTgt6 AS INTEGER = m.listbox1_lb.Paginator.Page * lcPP6 + lcRel6
+                IF lcTgt6 < LEN(m.listbox1_lb.VisibleItems()) THEN
+                    DIM lcPrev6 AS INTEGER = m.listbox1_lb.Index()
+                    m.listbox1_lb.Select(lcTgt6)
+                    IF m.listbox1_lb.Index() <> lcPrev6 THEN dispatchChange("listbox1")
+                    DIM lcNow6 AS LONG = time.Now().UnixMilli()
+                    IF lcTgt6 = m._lastClkRow AND lcNow6 - m._lastClkMs < 500 THEN
+                        listbox1_DblClick()
+                        m._lastClkMs = 0
+                    ELSE
+                        m._lastClkRow = lcTgt6
+                        m._lastClkMs = lcNow6
+                    END IF
+                END IF
+            END IF
             _ = mc
             RETURN m, NIL
         END IF
@@ -438,15 +479,23 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             RETURN m, NIL
         END IF
         IF mw.X >= 2 AND mw.X < 2 + 18 AND mw.Y >= 7 AND mw.Y < 7 + 5 THEN
-            DIM wwc6 AS tea.Cmd
-            m.listbox1_lb, wwc6 = m.listbox1_lb.Update(msg)
-            _ = wwc6
+            DIM wwPrev6 AS INTEGER = m.listbox1_lb.Index()
+            IF mw.Button = tea.MouseWheelUp THEN
+                m.listbox1_lb.CursorUp()
+            ELSE
+                m.listbox1_lb.CursorDown()
+            END IF
+            IF m.listbox1_lb.Index() <> wwPrev6 THEN dispatchChange("listbox1")
             RETURN m, NIL
         END IF
         IF mw.X >= 2 AND mw.X < 2 + 16 AND mw.Y >= 6 AND mw.Y < 6 + 1 THEN
-            DIM wwc5 AS tea.Cmd
-            m.combobox1_cb, wwc5 = m.combobox1_cb.Update(msg)
-            _ = wwc5
+            DIM wwPrev5 AS INTEGER = m.combobox1_cb.Index()
+            IF mw.Button = tea.MouseWheelUp THEN
+                m.combobox1_cb.CursorUp()
+            ELSE
+                m.combobox1_cb.CursorDown()
+            END IF
+            IF m.combobox1_cb.Index() <> wwPrev5 THEN dispatchChange("combobox1")
             RETURN m, NIL
         END IF
         _ = mw
@@ -482,6 +531,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF m.Focus = 2 THEN
             DIM cCmd2 AS tea.Cmd
+            IF key = "enter" THEN
+                textinput1_Enter()
+                RETURN m, NIL
+            END IF
             m.textinput1_ti, cCmd2 = m.textinput1_ti.Update(msg)
             RETURN m, cCmd2
         END IF
@@ -508,6 +561,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF m.Focus = 6 THEN
             DIM cCmd6 AS tea.Cmd
+            IF key = "enter" THEN
+                listbox1_DblClick()
+                RETURN m, NIL
+            END IF
             DIM prevI6 AS INTEGER = m.listbox1_lb.Index()
             m.listbox1_lb, cCmd6 = m.listbox1_lb.Update(msg)
             IF m.listbox1_lb.Index() <> prevI6 THEN dispatchChange("listbox1")
@@ -875,7 +932,43 @@ FUNCTION (m AS Model) View() AS tea.View
     RETURN vw
 END FUNCTION
 
+' _dbtuiRelaunchInTerminal — on Windows, relaunch this program inside
+' Windows Terminal (wt.exe) at the form size, then exit. No-op when
+' already inside Terminal, when wt.exe is missing, or off Windows.
+SUB _dbtuiRelaunchInTerminal()
+    IF runtime.GOOS <> "windows" THEN RETURN
+    IF os.Getenv("WT_SESSION") <> "" THEN RETURN
+    IF os.Getenv("DBTUI_IN_TERMINAL") <> "" THEN RETURN
+    DIM _wt AS STRING
+    DIM _e AS ERROR
+    _wt, _e = exec.LookPath("wt.exe")
+    IF _e <> NIL THEN RETURN
+    DIM _self AS STRING
+    _self, _e = os.Executable()
+    IF _e <> NIL THEN RETURN
+    DIM _c AS POINTER TO exec.Cmd = exec.Command(_wt, "--size", "81,22", "--title", "frmStart", _self)
+    _c.Env = APPEND(os.Environ(), "DBTUI_IN_TERMINAL=1")
+    _e = _c.Start()
+    IF _e <> NIL THEN RETURN
+    os.Exit(0)
+END SUB
+
+' _dbtuiApplyRequestedSize — honor a "--size cols,rows" argument by
+' resizing the terminal (CSI 8;rows;cols t) before the UI starts.
+SUB _dbtuiApplyRequestedSize()
+    DIM _args AS []STRING = os.Args
+    DIM _i AS INTEGER
+    FOR _i = 1 TO LEN(_args) - 1
+        IF _args[_i] = "--size" AND _i + 1 <= LEN(_args) - 1 THEN
+            DIM _p AS []STRING = strings.Split(_args[_i + 1], ",")
+            IF LEN(_p) = 2 THEN fmt.Print(Chr(27) + "[8;" + strings.TrimSpace(_p[1]) + ";" + strings.TrimSpace(_p[0]) + "t")
+        END IF
+    NEXT _i
+END SUB
+
 SUB Main()
+    _dbtuiRelaunchInTerminal()
+    _dbtuiApplyRequestedSize()
     DIM m AS Model
     m.Hover = 0 - 1
     m.HoverTab = 0 - 1
@@ -960,6 +1053,7 @@ SUB Main()
     _formSize(@m)
     Form_Load()
     DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)
+    _currentProgram = prog
     DIM final AS tea.Model
     DIM rerr AS ERROR
     final, rerr = prog.Run()
@@ -1390,5 +1484,22 @@ END SUB
 
 ' Fired just before the program quits. Edit freely.
 SUB Form_Close()
+    ' TODO: your code here.
+END SUB
+
+' Enter handler for textinput1 — edit freely.
+SUB textinput1_Enter()
+    ' TODO: your code here.
+END SUB
+
+' Fired on the UI thread after a background goroutine calls _dbtuiWake().
+' Use it to push async updates (e.g. fresh data) into widgets. Edit freely.
+SUB Form_Wake()
+    ' TODO: your code here.
+END SUB
+
+' DblClick handler for listbox1 — fired on Enter or a
+' double-click on a row. Edit freely.
+SUB listbox1_DblClick()
     ' TODO: your code here.
 END SUB

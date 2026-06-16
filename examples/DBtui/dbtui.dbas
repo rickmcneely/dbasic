@@ -299,6 +299,7 @@ TYPE PersistedState
     DIM LeftW         AS INTEGER
     DIM RightW        AS INTEGER
     DIM BottomVisible AS BOOLEAN
+    DIM BottomH       AS INTEGER
     DIM Recent        AS []STRING
     DIM ClosedTabs    AS []STRING
 END TYPE
@@ -449,6 +450,10 @@ TYPE Model
     DIM BottomVisible AS BOOLEAN
     DIM BottomTitle   AS STRING
     DIM BottomBody    AS STRING
+    ' Output-pane height (rows). 0 = use the default; otherwise the
+    ' user's chosen size, adjustable via Alt+Shift+↑/↓ or by dragging
+    ' the pane's top border. Clamped to the window in the layout.
+    DIM BottomH       AS INTEGER
 
     ' Splitter widths — left tree column and right widgets column,
     ' both resizable via mouse drag on the splitter column or via
@@ -1108,6 +1113,7 @@ FUNCTION helpText() AS STRING
     s = s + "  Drag pane border   Resize splitter\n"
     s = s + "  Alt+← / →          Resize left pane\n"
     s = s + "  Alt+Shift+← / →    Resize right pane\n"
+    s = s + "  Alt+Shift+↑ / ↓    Resize Output pane\n"
     RETURN s
 END FUNCTION
 
@@ -1141,6 +1147,32 @@ SUB clampSplitters(m AS POINTER TO Model)
     END IF
     invalidateEditorCache(m)
 END SUB
+
+' effBottomH — the output pane's effective height: the user's chosen
+' BottomH (or the default 10) clamped so the main body keeps at least a
+' few rows. Shared by the layout and the mouse-drag hit-test so the pane
+' and its draggable border always agree on where the border sits.
+FUNCTION effBottomH(m AS Model) AS INTEGER
+    DIM bh AS INTEGER = m.BottomH
+    IF bh <= 0 THEN bh = 10
+    DIM maxH AS INTEGER = m.Height - 6
+    IF bh > maxH THEN bh = maxH
+    IF bh < 3 THEN bh = 3
+    RETURN bh
+END FUNCTION
+
+' newBottomH — the output pane's height after growing (+) or shrinking (-)
+' it by `delta` rows from its current effective height, clamped to the
+' window. Returned (not assigned through a pointer) so the caller can do a
+' direct `m.BottomH = newBottomH(...)` — the assignment the View actually
+' sees on the next frame.
+FUNCTION newBottomH(m AS Model, delta AS INTEGER) AS INTEGER
+    DIM cur AS INTEGER = effBottomH(m) + delta
+    DIM maxH AS INTEGER = m.Height - 6
+    IF cur > maxH THEN cur = maxH
+    IF cur < 3 THEN cur = 3
+    RETURN cur
+END FUNCTION
 
 ' isMutatingKey — TRUE for keys that can change the editor buffer.
 ' Lets the editor dispatch flip the Dirty flag without a costly
@@ -1550,6 +1582,7 @@ FUNCTION newModel() AS Model
     IF saved.LeftW  >= 15 THEN m.LeftW  = saved.LeftW
     IF saved.RightW >= 15 THEN m.RightW = saved.RightW
     m.BottomVisible = saved.BottomVisible
+    IF saved.BottomH >= 3 THEN m.BottomH = saved.BottomH
     m.PendingOpens  = saved.Open
     m.PendingActive = saved.Active
     ' Menubar definitions (uses Recent we just loaded) + closed-state.
@@ -1710,6 +1743,15 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF m.DragMode = "splitR" THEN
             m.RightW = m.Width - mmMsg.X
             clampSplitters(@m)
+            RETURN m, NIL
+        END IF
+        ' Output-pane border drag: the top border sits at row
+        ' Height-1-bottomH, so a higher cursor → a taller pane.
+        IF m.DragMode = "splitB" THEN
+            m.BottomH = m.Height - 1 - mmMsg.Y
+            DIM bMax AS INTEGER = m.Height - 6
+            IF m.BottomH > bMax THEN m.BottomH = bMax
+            IF m.BottomH < 3 THEN m.BottomH = 3
             RETURN m, NIL
         END IF
         IF m.DragMode = "modalMove" THEN
@@ -2090,6 +2132,15 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM rsX AS INTEGER = m.Width - m.RightW
             IF mcMsg.X = rsX OR mcMsg.X = rsX - 1 THEN
                 m.DragMode = "splitR"
+                RETURN m, NIL
+            END IF
+        END IF
+        ' Output-pane top border — full-width horizontal splitter. Grab
+        ' it (1-row tolerance) to drag the pane taller / shorter.
+        IF m.BottomVisible THEN
+            DIM bTopY AS INTEGER = m.Height - 1 - effBottomH(m)
+            IF mcMsg.Y = bTopY OR mcMsg.Y = bTopY - 1 THEN
+                m.DragMode = "splitB"
                 RETURN m, NIL
             END IF
         END IF
@@ -3101,6 +3152,23 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             clampSplitters(@m)
             RETURN m, NIL
         END IF
+        ' Alt+Shift+↑/↓ resize the bottom Output pane (taller / shorter).
+        ' No-op while it's hidden — F12 shows it first. (bubbletea orders
+        ' modifiers ctrl+alt+shift, so the key string is "alt+shift+up".)
+        IF key = "alt+shift+up" THEN
+            IF m.BottomVisible THEN
+                m.BottomH = newBottomH(m, 2)
+                invalidateEditorCache(@m)
+            END IF
+            RETURN m, NIL
+        END IF
+        IF key = "alt+shift+down" THEN
+            IF m.BottomVisible THEN
+                m.BottomH = newBottomH(m, 0 - 2)
+                invalidateEditorCache(@m)
+            END IF
+            RETURN m, NIL
+        END IF
 
         ' --- Menubar handling -----------------------------------------
         ' Menubar takes priority when active: arrows navigate, Enter
@@ -3261,24 +3329,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
 
         IF key = "f7" THEN
-            ' Toggle between form-design view and code editor view.
-            ' Route the "enter form mode" half through newUntitledForm
-            ' so palette clicks always have an actual form tab to land
-            ' on. (If we only flipped ViewMode, widgets would end up
-            ' appended to the active CODE tab's invisible Form field
-            ' and never paint on the canvas.)
-            IF m.ViewMode = "code" THEN
-                newUntitledForm(@m)
-            ELSE
-                m.ViewMode = "code"
-                IF hasActiveTab(m) THEN
-                    setFocus(@m, "editor")
-                ELSE
-                    setFocus(@m, "tree")
-                END IF
-            END IF
-            invalidateEditorCache(@m)
-            RETURN m, NIL
+            ' Switch between a form's DESIGNER and its partner .dbas CODE,
+            ' pairing the two within a project: from the radio.dbproj canvas
+            ' F7 jumps to radio.dbas and back. toggleFormCode falls back to
+            ' the old generic form/code flip when there's nothing to pair
+            ' (an untitled form, a standalone .dbas, or no tabs open).
+            DIM f7cmd AS tea.Cmd = toggleFormCode(@m)
+            RETURN m, f7cmd
         END IF
 
         ' --- Focus cycle ----------------------------------------------
@@ -3472,11 +3529,7 @@ FUNCTION (m AS Model) View() AS tea.View
     ' Reserve a fixed slice of the screen for the bottom output
     ' pane when it's visible. The main body shrinks to compensate.
     DIM bottomH AS INTEGER = 0
-    IF m.BottomVisible THEN
-        bottomH = 10
-        IF bottomH > h - 6 THEN bottomH = h - 6
-        IF bottomH < 3 THEN bottomH = 3
-    END IF
+    IF m.BottomVisible THEN bottomH = effBottomH(m)
     ' Body height = total minus menu (1), statusbar (1), bottom pane.
     DIM bodyH AS INTEGER = h - 2 - bottomH
     IF bodyH < 4 THEN bodyH = 4

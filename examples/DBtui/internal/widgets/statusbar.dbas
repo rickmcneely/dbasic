@@ -42,7 +42,7 @@ FUNCTION statusBarEmitLayer(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys 
     DIM s AS STRING = ""
     s = s + "    DIM sbTxt" + sfx + " AS STRING = m." + wv.Name + "_Text\n"
     s = s + "    IF sbTxt" + sfx + " = " + qt + qt + " THEN sbTxt" + sfx + " = " + qt + escapeForDBString(statusBarText(wv.Items)) + qt + "\n"
-    s = s + "    IF lipgloss.Width(sbTxt" + sfx + ") > " + sbWStr + " THEN sbTxt" + sfx + " = Mid(sbTxt" + sfx + ", 1, " + sbWStr + ")\n"
+    s = s + "    IF lipgloss.Width(sbTxt" + sfx + ") > " + sbWStr + " THEN sbTxt" + sfx + " = ansi.Truncate(sbTxt" + sfx + ", " + sbWStr + ", " + qt + qt + ")\n"
     s = s + "    DIM vw" + sfx + " AS STRING = compFocusView(sbTxt" + sfx + ", m.Focus = " + sfx + ", m.Hover = " + sfx + ")\n"
     s = s + "    DIM ly" + sfx + " AS POINTER TO lipgloss.Layer = lipgloss.NewLayer(vw" + sfx + ").X(" + xs + ").Y(" + ys + ").Z(" + zStr + ")\n"
     RETURN s
@@ -55,7 +55,7 @@ FUNCTION statusBarEmitView(wv AS DesignWidget, sfx AS STRING, xs AS STRING, ys A
     DIM s AS STRING = ""
     s = s + "    DIM sbTxt" + sfx + " AS STRING = m." + wv.Name + "_Text\n"
     s = s + "    IF sbTxt" + sfx + " = " + qt + qt + " THEN sbTxt" + sfx + " = " + qt + escapeForDBString(statusBarText(wv.Items)) + qt + "\n"
-    s = s + "    IF lipgloss.Width(sbTxt" + sfx + ") > " + sbWStr + " THEN sbTxt" + sfx + " = Mid(sbTxt" + sfx + ", 1, " + sbWStr + ")\n"
+    s = s + "    IF lipgloss.Width(sbTxt" + sfx + ") > " + sbWStr + " THEN sbTxt" + sfx + " = ansi.Truncate(sbTxt" + sfx + ", " + sbWStr + ", " + qt + qt + ")\n"
     s = s + "    IF " + ys + " >= 0 AND " + ys + " < LEN(rows) THEN rows[" + ys + "] = overlayRow(rows[" + ys + "], " + xs + ", sbTxt" + sfx + ")\n"
     RETURN s
 END FUNCTION

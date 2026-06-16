@@ -29,7 +29,18 @@ except ImportError:
 COLS, ROWS = 100, 40
 KEYMAP = {"tab": "\t", "up": "\x1b[A", "down": "\x1b[B", "left": "\x1b[D",
           "right": "\x1b[C", "enter": "\r", "space": " ", "esc": "\x1b",
-          "backspace": "\x7f", "bs": "\x7f"}
+          "backspace": "\x7f", "bs": "\x7f",
+          # Function keys (xterm). F1-F4 use SS3; F5+ use CSI ~ sequences.
+          "f1": "\x1bOP", "f2": "\x1bOQ", "f3": "\x1bOR", "f4": "\x1bOS",
+          "f5": "\x1b[15~", "f6": "\x1b[17~", "f7": "\x1b[18~",
+          "f8": "\x1b[19~", "f9": "\x1b[20~", "f10": "\x1b[21~",
+          "f11": "\x1b[23~", "f12": "\x1b[24~",
+          # Modified arrows (xterm CSI with modifier param; 3 = Alt,
+          # 4 = Shift+Alt).
+          "alt+up": "\x1b[1;3A", "alt+down": "\x1b[1;3B",
+          "alt+left": "\x1b[1;3D", "alt+right": "\x1b[1;3C",
+          "alt+shift+up": "\x1b[1;4A", "alt+shift+down": "\x1b[1;4B",
+          "alt+shift+left": "\x1b[1;4D", "alt+shift+right": "\x1b[1;4C"}
 
 
 def run(prog, keyspec):
