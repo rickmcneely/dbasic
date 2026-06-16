@@ -2724,8 +2724,13 @@ func (g *Generator) toGoIdent(name string) string {
 		"var":         "var_",
 	}
 
-	lower := strings.ToLower(name)
-	if replacement, ok := reserved[lower]; ok {
+	// Case-SENSITIVE check: Go keywords are all lowercase, so only an
+	// identifier written exactly as a keyword (e.g. a DBasic var named
+	// `select`) needs the `_` suffix. A capitalized member that merely
+	// shares a keyword's spelling — like the foreign Go methods .Select(),
+	// .Type(), .Map(), .Range() — is exported and must be emitted verbatim.
+	// (Lowercasing first wrongly mangled those into .select_, .type_, etc.)
+	if replacement, ok := reserved[name]; ok {
 		return replacement
 	}
 
