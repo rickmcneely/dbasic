@@ -1,5 +1,5 @@
-StarWord - a modern WordStar 7.0 clone
-======================================
+StarWord 0.9.01b - a modern WordStar 7.0 clone (beta)
+=====================================================
 
 Copyright Rick McNeely 2026  -  rickmcneely@gmail.com
 Created by Rick McNeely and my dear friend, Claude Code.

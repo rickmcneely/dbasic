@@ -13,6 +13,11 @@ IMPORT "github.com/atotto/clipboard" AS clipboard
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 IMPORT "path/filepath" AS filepath
 
+' StarWord version. Scheme: 0.9.NNb — bump NN by one each release (next is
+' 0.9.02b); the trailing "b" marks beta. Switches to 1.0 once all features are
+' complete and tested.
+CONST AppVersion AS STRING = "0.9.01b"
+
 SUB _dbtuiKeepFmtAlive()
     _ = fmt.Sprintf("")
 END SUB
@@ -1430,6 +1435,7 @@ FUNCTION renderAboutDialog(w AS INTEGER, h AS INTEGER) AS STRING
     ' Content lines (centered).
     DIM lines AS []STRING
     lines = APPEND(lines, "A modern WordStar 7.0 clone")
+    lines = APPEND(lines, "Version " + AppVersion)
     lines = APPEND(lines, "")
     lines = APPEND(lines, "Copyright Rick McNeely 2026")
     lines = APPEND(lines, "rickmcneely@gmail.com")
@@ -6287,7 +6293,7 @@ END SUB
 
 ' printUsage — the command-line help shown by -h / /? (WordStar-style).
 SUB printUsage()
-    fmt.Println("StarWord — a modern WordStar 7.0 clone")
+    fmt.Println("StarWord " + AppVersion + " — a modern WordStar 7.0 clone")
     fmt.Println("")
     fmt.Println("Usage: starword [options] [file]")
     fmt.Println("")
