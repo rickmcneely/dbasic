@@ -2490,6 +2490,12 @@ SUB doPrintPdf()
     DIM dp AS INTEGER = strings.LastIndex(stem, ".")
     IF dp > 0 THEN stem = Left(stem, dp)
     DIM target AS STRING = stem + ".pdf"
+    ' Use an absolute path so the OS "open" step finds the file regardless of
+    ' the launcher's working directory (a relative name fails under cmd start).
+    DIM absPath AS STRING
+    DIM ae AS ERROR
+    absPath, ae = filepath.Abs(target)
+    IF ae = NIL THEN target = absPath
     DIM e AS ERROR = renderPdf(target)
     IF e <> NIL THEN
         gMessage = "PDF failed: " + e.Error()
