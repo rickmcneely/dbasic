@@ -464,6 +464,9 @@ DIM gThesStart AS INTEGER
 DIM gThesEnd AS INTEGER
 DIM gThesSyn AS []STRING
 
+' --- MailMerge -------------------------------------------------------------
+DIM gMergeRecords AS INTEGER       ' records merged by the last merge
+
 ' --- transient "size" popup shown while the terminal is being resized ------
 DIM gResizeShow AS BOOLEAN
 DIM gResizeGen AS INTEGER          ' bumped per resize; the timer clears only the latest
@@ -1265,6 +1268,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "W|Word Count|Alt+U W")
         xs = APPEND(xs, "S|Spell Check|Alt+U S")
         xs = APPEND(xs, "T|Thesaurus|Alt+U T")
+        xs = APPEND(xs, "G|Mail Merge|Alt+U G")
         xs = APPEND(xs, "C|Calculator|Alt+U C")
         xs = APPEND(xs, "M|Macros|Alt+U M")
     CASE 7
@@ -1614,6 +1618,142 @@ SUB doPrint()
         RETURN
     END IF
     gMessage = fmt.Sprintf("Printed %d pages to %s", LEN(paginate()), target)
+END SUB
+
+' ==========================================================================
+' MailMerge — form-letter printing from a data file
+'   .df <file>        the comma-delimited data file (one record per line)
+'   .rv v1,v2,...     bind the current record's fields to these variables
+'   &name&            substituted with the variable's value
+' The document is merge-printed once per record, separated by page breaks.
+' ==========================================================================
+
+' splitCSV — split a data record into trimmed fields, honoring double quotes
+' so a quoted field may contain commas (the quotes themselves are dropped).
+FUNCTION splitCSV(line AS STRING) AS []STRING
+    DIM out AS []STRING
+    DIM cur AS STRING = ""
+    DIM inq AS BOOLEAN = FALSE
+    DIM p AS INTEGER = 0
+    WHILE p < LEN(line)
+        DIM ch AS STRING = Mid(line, p + 1, 1)
+        IF ch = Chr(34) THEN
+            inq = NOT inq
+        ELSEIF ch = "," AND NOT inq THEN
+            out = APPEND(out, strings.TrimSpace(cur))
+            cur = ""
+        ELSE
+            cur = cur + ch
+        END IF
+        p = p + 1
+    WEND
+    out = APPEND(out, strings.TrimSpace(cur))
+    RETURN out
+END FUNCTION
+
+' substVars — replace every &name& in a line with the variable's value.
+FUNCTION substVars(line AS STRING, vars AS MAP OF STRING TO STRING) AS STRING
+    DIM out AS STRING = ""
+    DIM p AS INTEGER = 0
+    WHILE p < LEN(line)
+        IF Mid(line, p + 1, 1) = "&" THEN
+            DIM rest AS STRING = Mid(line, p + 2, LEN(line) - p - 1)
+            DIM e AS INTEGER = strings.Index(rest, "&")
+            IF e >= 0 THEN
+                DIM nm AS STRING = strings.TrimSpace(Mid(line, p + 2, e))
+                out = out + vars[nm]
+                p = p + 2 + e
+            ELSE
+                out = out + "&"
+                p = p + 1
+            END IF
+        ELSE
+            out = out + Mid(line, p + 1, 1)
+            p = p + 1
+        END IF
+    WEND
+    RETURN out
+END FUNCTION
+
+' mergeExpand — expand the template once per data record (vars substituted),
+' separated by page breaks. Empty if there is no .df or no records.
+FUNCTION mergeExpand() AS []STRING
+    DIM out AS []STRING
+    gMergeRecords = 0
+    DIM dfPath AS STRING = ""
+    DIM i AS INTEGER
+    FOR i = 0 TO lastRow()
+        IF Left(gLines[i], 4) = ".df " THEN dfPath = strings.TrimSpace(Mid(gLines[i], 5, LEN(gLines[i]) - 4))
+    NEXT i
+    IF dfPath = "" THEN RETURN out
+    DIM data AS BYTES
+    DIM e AS ERROR
+    data, e = os.ReadFile(dfPath)
+    IF e <> NIL THEN RETURN out
+    DIM text AS STRING = Decode(data)
+    text = strings.ReplaceAll(text, Chr(13) + Chr(10), Chr(10))
+    text = strings.ReplaceAll(text, Chr(13), Chr(10))
+    DIM rawlines AS []STRING = strings.Split(text, Chr(10))
+    DIM records AS []STRING
+    FOR i = 0 TO LEN(rawlines) - 1
+        IF strings.TrimSpace(rawlines[i]) <> "" THEN records = APPEND(records, rawlines[i])
+    NEXT i
+    gMergeRecords = LEN(records)
+    DIM r AS INTEGER
+    FOR r = 0 TO LEN(records) - 1
+        DIM fields AS []STRING = splitCSV(records[r])
+        DIM vars AS MAP OF STRING TO STRING
+        DIM j AS INTEGER
+        FOR j = 0 TO lastRow()
+            DIM ln AS STRING = gLines[j]
+            IF Left(ln, 4) = ".rv " THEN
+                DIM names AS []STRING = strings.Split(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4)), ",")
+                DIM k AS INTEGER
+                FOR k = 0 TO LEN(names) - 1
+                    DIM v AS STRING = ""
+                    IF k < LEN(fields) THEN v = fields[k]
+                    vars[strings.TrimSpace(names[k])] = v
+                NEXT k
+            ELSEIF Left(ln, 4) <> ".df " THEN
+                out = APPEND(out, substVars(ln, vars))
+            END IF
+        NEXT j
+        IF r < LEN(records) - 1 THEN out = APPEND(out, ".pa")
+    NEXT r
+    RETURN out
+END FUNCTION
+
+' mergePrintLines — the merged document, paginated for printing (empty if no
+' merge data). Temporarily swaps the merged lines in for buildPaginated.
+FUNCTION mergePrintLines() AS []STRING
+    DIM merged AS []STRING = mergeExpand()
+    IF LEN(merged) = 0 THEN RETURN merged
+    DIM saveLines AS []STRING = gLines
+    gLines = merged
+    applyDotCommands()
+    DIM outp AS []STRING = buildPaginated(FALSE)
+    gLines = saveLines
+    applyDotCommands()
+    RETURN outp
+END FUNCTION
+
+' doMailMerge — Utilities > Mail Merge: write the merged result to <stem>.mrg.
+SUB doMailMerge()
+    DIM outp AS []STRING = mergePrintLines()
+    IF LEN(outp) = 0 THEN
+        gMessage = "MailMerge needs a readable .df data file (and records)"
+        RETURN
+    END IF
+    DIM stem AS STRING = gFileName
+    DIM dotPos AS INTEGER = strings.LastIndex(stem, ".")
+    IF dotPos > 0 THEN stem = Left(stem, dotPos)
+    DIM target AS STRING = stem + ".mrg"
+    DIM e AS ERROR = os.WriteFile(target, Encode(strings.Join(outp, Chr(13) + Chr(10))), 420)
+    IF e <> NIL THEN
+        gMessage = "Merge failed: " + e.Error()
+        RETURN
+    END IF
+    gMessage = fmt.Sprintf("Merged %d records to %s", gMergeRecords, target)
 END SUB
 
 ' --- Utilities menu: calculator -------------------------------------------
@@ -2571,6 +2711,8 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             startSpell()
         ELSEIF hk = "T" THEN
             startThesaurus()
+        ELSEIF hk = "G" THEN
+            doMailMerge()
         ELSEIF hk = "C" THEN
             gPromptMode = "calc"
             gPromptLabel = "Calculate: "
@@ -4568,6 +4710,7 @@ SUB printUsage()
     fmt.Println("  /N  -n  --nondocument   open in non-document mode (plain text: no wrap,")
     fmt.Println("                          no justify, dot commands left as literal text)")
     fmt.Println("  /P  -p  --print         print a clean copy of the file to stdout and exit")
+    fmt.Println("  /M  -m  --merge         MailMerge the file (.df/.rv/&var&) to stdout and exit")
     fmt.Println("  /C  -c  --config        open the configuration (WSCHANGE) screen")
     fmt.Println("  /?  -h  --help          show this help and exit")
 END SUB
@@ -4604,6 +4747,7 @@ SUB Form_Load()
     DIM fileArg AS STRING = ""
     DIM wantHelp AS BOOLEAN = FALSE
     DIM wantPrint AS BOOLEAN = FALSE
+    DIM wantMerge AS BOOLEAN = FALSE
     DIM wantConfig AS BOOLEAN = FALSE
     DIM i AS INTEGER
     FOR i = 1 TO LEN(args) - 1
@@ -4617,6 +4761,8 @@ SUB Form_Load()
             gNonDocument = FALSE
         ELSEIF lo = "-p" OR lo = "/p" OR lo = "--print" THEN
             wantPrint = TRUE
+        ELSEIF lo = "-m" OR lo = "/m" OR lo = "--merge" THEN
+            wantMerge = TRUE
         ELSEIF lo = "-c" OR lo = "/c" OR lo = "--config" THEN
             wantConfig = TRUE
         ELSEIF Left(a, 1) = "-" OR (Left(a, 1) = "/" AND LEN(a) = 2) THEN
@@ -4646,6 +4792,24 @@ SUB Form_Load()
         END IF
         loadFile(fileArg)
         printDocToStdout()
+        os.Exit(0)
+    END IF
+
+    IF wantMerge THEN
+        IF fileArg = "" THEN
+            fmt.Println("starword: -m/--merge needs a filename")
+            os.Exit(2)
+        END IF
+        loadFile(fileArg)
+        DIM mlines AS []STRING = mergePrintLines()
+        IF LEN(mlines) = 0 THEN
+            fmt.Println("starword: no .df data file / no records to merge")
+            os.Exit(2)
+        END IF
+        DIM mi2 AS INTEGER
+        FOR mi2 = 0 TO LEN(mlines) - 1
+            fmt.Println(mlines[mi2])
+        NEXT mi2
         os.Exit(0)
     END IF
 
