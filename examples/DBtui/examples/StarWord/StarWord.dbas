@@ -86,8 +86,12 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
             DIM gstart AS INTEGER = m._formW - 1 - 2
             DIM ggi AS INTEGER = (mc.X - gstart) / 2
             IF mc.X >= gstart AND ggi = 0 THEN
-                Form_Close()
-                RETURN m, tea.Quit
+                requestExit()
+                IF _dbtuiQuitReq THEN
+                    Form_Close()
+                    RETURN m, tea.Quit
+                END IF
+                RETURN m, NIL
             END IF
         END IF
         IF mc.X >= 1 AND mc.X < 1 + 78 AND mc.Y >= 1 AND mc.Y < 1 + 22 THEN
@@ -391,6 +395,13 @@ DIM gMenuSel AS INTEGER            ' highlighted item in the open menu
 
 ' --- screen mode + Opening Menu (WordStar's classic opening screen) --------
 DIM gMode AS STRING = "edit"       ' "edit" | "open" (Opening Menu)
+
+' --- modal exit-confirmation dialog (unsaved changes) ---------------------
+DIM gDialog AS STRING              ' "" | "exit"
+DIM gDialogSel AS INTEGER          ' highlighted button: 0 Save, 1 Abandon, 2 Cancel
+DIM gDlgBtnRow AS INTEGER          ' canvas row of the buttons (for mouse hit-test)
+DIM gDlgBtnLo AS []INTEGER         ' canvas col ranges of each button
+DIM gDlgBtnHi AS []INTEGER
 DIM gOpenDir AS STRING = "."       ' directory the Opening Menu is browsing
 DIM gOpenFiles AS []STRING         ' "..", dirs (with "/"), then files
 DIM gOpenSel AS INTEGER            ' highlighted entry in the file list
@@ -1153,6 +1164,183 @@ SUB saveFile()
     gModified = FALSE
     gMessage = "Saved " + gFileName
 END SUB
+
+' ==========================================================================
+' Exit confirmation (unsaved changes) — keyboard + mouse, WordStar-style box
+' ==========================================================================
+
+' requestExit — quit if clean; otherwise raise the confirmation dialog.
+SUB requestExit()
+    IF gModified THEN
+        gDialog = "exit"
+        gDialogSel = 0
+    ELSE
+        RequestQuit()
+    END IF
+END SUB
+
+SUB dlgSaveExit()
+    gDialog = ""
+    saveFile()
+    RequestQuit()
+END SUB
+
+SUB dlgAbandon()
+    gDialog = ""
+    RequestQuit()
+END SUB
+
+SUB dlgCancel()
+    gDialog = ""
+    gMessage = "Exit cancelled"
+END SUB
+
+' dlgActivate — perform the highlighted button's action.
+SUB dlgActivate()
+    IF gDialogSel = 0 THEN
+        dlgSaveExit()
+    ELSEIF gDialogSel = 1 THEN
+        dlgAbandon()
+    ELSE
+        dlgCancel()
+    END IF
+END SUB
+
+' handleDialogKey — keyboard for the exit dialog (mnemonics, arrows, Enter).
+SUB handleDialogKey(key AS STRING)
+    DIM k AS STRING = LCase(key)
+    IF key = "esc" OR k = "c" THEN
+        dlgCancel()
+        RETURN
+    END IF
+    IF k = "s" OR k = "y" THEN
+        dlgSaveExit()
+        RETURN
+    END IF
+    IF k = "a" OR k = "n" THEN
+        dlgAbandon()
+        RETURN
+    END IF
+    IF key = "left" OR key = "shift+tab" THEN
+        gDialogSel = (gDialogSel - 1 + 3) MOD 3
+        RETURN
+    END IF
+    IF key = "right" OR key = "tab" THEN
+        gDialogSel = (gDialogSel + 1) MOD 3
+        RETURN
+    END IF
+    IF key = "enter" THEN dlgActivate()
+END SUB
+
+' dialogClick — a click at canvas (x,y); activate a button if it was hit.
+SUB dialogClick(x AS INTEGER, y AS INTEGER)
+    IF y <> gDlgBtnRow THEN RETURN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gDlgBtnLo) - 1
+        IF x >= gDlgBtnLo[i] AND x < gDlgBtnHi[i] THEN
+            gDialogSel = i
+            dlgActivate()
+            RETURN
+        END IF
+    NEXT i
+END SUB
+
+' renderExitDialog — a centered WordStar-blue confirmation box over a backdrop.
+FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
+    DIM bg AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#8aa0d8")).Background(lipgloss.Color("#0f2350"))
+    DIM box AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cfe0ff")).Background(lipgloss.Color("#14336e"))
+    DIM ttl AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
+    DIM btn AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cfe0ff")).Background(lipgloss.Color("#14336e"))
+    DIM sel AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
+
+    DIM inner AS INTEGER = 44
+    DIM boxW AS INTEGER = inner + 2
+    ' Center within the mouse-clickable region (the form's 78x22 area).
+    DIM wc AS INTEGER = 78
+    IF w < wc THEN wc = w
+    DIM hc AS INTEGER = 22
+    IF h < hc THEN hc = h
+    DIM boxX AS INTEGER = (wc - boxW) / 2
+    IF boxX < 0 THEN boxX = 0
+
+    ' Content lines (text, padded to inner later).
+    DIM nm AS STRING = gFileName
+    DIM msg1 AS STRING = "  \"" + nm + "\" has unsaved changes."
+    DIM msg2 AS STRING = "  Save before leaving StarWord?"
+
+    ' Button layout (record canvas hit-test ranges).
+    DIM lbl0 AS STRING = "[ Save ]"
+    DIM lbl1 AS STRING = "[ Abandon ]"
+    DIM lbl2 AS STRING = "[ Cancel ]"
+    DIM off0 AS INTEGER = 3
+    DIM off1 AS INTEGER = off0 + LEN(lbl0) + 3
+    DIM off2 AS INTEGER = off1 + LEN(lbl1) + 3
+    gDlgBtnLo = nil
+    gDlgBtnHi = nil
+    gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off0)
+    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off0 + LEN(lbl0))
+    gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off1)
+    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off1 + LEN(lbl1))
+    gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off2)
+    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off2 + LEN(lbl2))
+
+    ' The styled button row (selected one highlighted), padded to inner.
+    DIM b0 AS STRING = btn.Render(lbl0)
+    DIM b1 AS STRING = btn.Render(lbl1)
+    DIM b2 AS STRING = btn.Render(lbl2)
+    IF gDialogSel = 0 THEN b0 = sel.Render(lbl0)
+    IF gDialogSel = 1 THEN b1 = sel.Render(lbl1)
+    IF gDialogSel = 2 THEN b2 = sel.Render(lbl2)
+    DIM btnPlainLen AS INTEGER = off2 + LEN(lbl2)
+    DIM btnPad AS STRING = ""
+    IF inner > btnPlainLen THEN btnPad = strings.Repeat(" ", inner - btnPlainLen)
+    DIM btnRow AS STRING = box.Render(strings.Repeat(" ", off0)) + b0 + box.Render("   ") + b1 + box.Render("   ") + b2 + box.Render(btnPad)
+
+    ' Assemble the box rows. The button row is index 4 below.
+    DIM bodyRows AS []STRING
+    bodyRows = APPEND(bodyRows, box.Render(swFit(msg1, inner)))
+    bodyRows = APPEND(bodyRows, box.Render(swFit("", inner)))
+    bodyRows = APPEND(bodyRows, box.Render(swFit(msg2, inner)))
+    bodyRows = APPEND(bodyRows, box.Render(swFit("", inner)))
+    ' (button row spliced in specially)
+    DIM hintRow AS STRING = box.Render(swFit("  S Save   A Abandon   Esc Cancel  (arrows/click)", inner))
+    DIM boxH AS INTEGER = 4 + 1 + 1 + 3   ' top + 4 body + button + hint + blank + bottom
+    DIM boxY AS INTEGER = (hc - boxH) / 2
+    IF boxY < 1 THEN boxY = 1
+    gDlgBtnRow = boxY + 1 + 4              ' top border + 4 body rows
+
+    DIM rows AS []STRING
+    DIM r AS INTEGER
+    FOR r = 0 TO h - 1
+        DIM rel AS INTEGER = r - boxY
+        DIM lead AS STRING = bg.Render(strings.Repeat(" ", boxX))
+        DIM mid AS STRING = ""
+        DIM done AS BOOLEAN = TRUE
+        IF rel = 0 THEN
+            mid = ttl.Render(swFit("  StarWord  -  Exit", boxW))
+        ELSEIF rel >= 1 AND rel <= 4 THEN
+            mid = box.Render("│") + bodyRows[rel - 1] + box.Render("│")
+        ELSEIF rel = 5 THEN
+            mid = box.Render("│") + btnRow + box.Render("│")
+        ELSEIF rel = 6 THEN
+            mid = box.Render("│") + box.Render(swFit("", inner)) + box.Render("│")
+        ELSEIF rel = 7 THEN
+            mid = box.Render("│") + hintRow + box.Render("│")
+        ELSEIF rel = 8 THEN
+            mid = box.Render("╰" + strings.Repeat("─", inner) + "╯")
+        ELSE
+            done = FALSE
+        END IF
+        IF done THEN
+            DIM tail AS INTEGER = w - boxX - boxW
+            IF tail < 0 THEN tail = 0
+            rows = APPEND(rows, lead + mid + bg.Render(strings.Repeat(" ", tail)))
+        ELSE
+            rows = APPEND(rows, bg.Render(swFit("", w)))
+        END IF
+    NEXT r
+    RETURN strings.Join(rows, Chr(10))
+END FUNCTION
 
 ' ==========================================================================
 ' Find
@@ -3306,8 +3494,7 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             gPromptLabel = "Open file: "
             gPromptText = ""
         ELSEIF hk = "X" THEN
-            saveFile()
-            RequestQuit()
+            requestExit()
         ELSEIF hk = "P" THEN
             doPrint()
         ELSEIF hk = "V" THEN
@@ -3686,7 +3873,7 @@ SUB handleOpenKey(key AS STRING)
             gMessage = "Select a file first"
         END IF
     ELSEIF lk = "x" THEN
-        RequestQuit()
+        requestExit()
     END IF
 END SUB
 
@@ -3755,6 +3942,7 @@ END SUB
 FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     gW = w
     gH = h
+    IF gDialog <> "" THEN RETURN renderExitDialog(w, h)
     IF gMode = "open" THEN RETURN renderOpeningMenu(w, h)
     IF gMode = "preview" THEN RETURN renderPreview(w, h)
     IF gMode = "config" THEN RETURN renderConfig(w, h)
@@ -4001,6 +4189,11 @@ END FUNCTION
 ' Left-click inside canvas sw — drive the menu bar, an open dropdown, or
 ' (otherwise) drop the cursor at the clicked text cell.
 SUB sw_Click(x AS INTEGER, y AS INTEGER)
+    ' The exit-confirmation dialog owns the click before anything else.
+    IF gDialog <> "" THEN
+        dialogClick(x, y)
+        RETURN
+    END IF
     ' Opening Menu: a click on a file-list row selects and opens it.
     IF gMode = "open" THEN
         DIM li AS INTEGER = gOpenTop + (y - 7)
@@ -5152,7 +5345,7 @@ SUB handlePrefixK(key AS STRING)
         saveFile()
         RequestQuit()
     ELSEIF k = "q" THEN
-        RequestQuit()
+        requestExit()
     ELSEIF k = "n" THEN
         gColumnMode = NOT gColumnMode
         IF gColumnMode THEN
@@ -5603,6 +5796,13 @@ SUB Form_Key(key AS STRING)
     reconcileUndo()
     IF gMacroRecording AND NOT gMacroPlaying THEN gMacroKeys = APPEND(gMacroKeys, key)
     gMessage = ""
+
+    ' The exit-confirmation dialog is the most modal overlay — it owns the
+    ' keyboard before anything else.
+    IF gDialog <> "" THEN
+        handleDialogKey(key)
+        RETURN
+    END IF
 
     ' Any key stops continuous auto-scroll (^QW/^QZ).
     IF gAutoScroll <> 0 THEN
@@ -6103,7 +6303,7 @@ END SUB
 
 ' handleMousePress — left press in the text (cursor already positioned).
 SUB handleMousePress()
-    IF gMode <> "edit" OR gPromptMode <> "" OR gPrefix <> "" OR gMenuOpen >= 0 THEN
+    IF gDialog <> "" OR gMode <> "edit" OR gPromptMode <> "" OR gPrefix <> "" OR gMenuOpen >= 0 THEN
         gMouseDown = FALSE
         RETURN
     END IF
