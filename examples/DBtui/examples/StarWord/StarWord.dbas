@@ -1252,18 +1252,17 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     DIM ttl AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
     DIM sel AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
     DIM nameSty AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#14336e")).Bold(TRUE)
+    DIM keySty AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffd166")).Background(lipgloss.Color("#14336e")).Bold(TRUE)
 
     ' Content lines. The document name gets its own line so long (non-DOS)
-    ' names fit; the box grows wide enough to hold the name and the hint.
+    ' names fit; the box grows wide enough to hold the name.
     DIM nm AS STRING = gFileName
     DIM nameLine AS STRING = "    " + nm
-    DIM hintLine AS STRING = "  Click a word, press its letter, or arrows + Enter."
     DIM msg1 AS STRING = "  This document has unsaved changes:"
     DIM msg2 AS STRING = "  Save before leaving StarWord?"
 
     DIM inner AS INTEGER = 52
     IF LEN(nameLine) + 2 > inner THEN inner = LEN(nameLine) + 2
-    IF LEN(hintLine) + 2 > inner THEN inner = LEN(hintLine) + 2
     ' Center within the mouse-clickable region (the form's 78x22 area).
     DIM wc AS INTEGER = 78
     IF w < wc THEN wc = w
@@ -1274,37 +1273,44 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     DIM boxX AS INTEGER = (wc - boxW) / 2
     IF boxX < 0 THEN boxX = 0
 
-    ' Action words (no buttons): click the word or press its first letter.
-    ' Record canvas hit-test ranges so a click on a word activates it.
-    DIM lbl0 AS STRING = "Save"
-    DIM lbl1 AS STRING = "Abandon"
-    DIM lbl2 AS STRING = "Cancel"
-    DIM gapW AS INTEGER = 6
-    DIM off0 AS INTEGER = 6
-    DIM off1 AS INTEGER = off0 + LEN(lbl0) + gapW
-    DIM off2 AS INTEGER = off1 + LEN(lbl1) + gapW
+    ' WordStar-style command line: "S Save   A Abandon   Esc Cancel". Each
+    ' token (key + word) is clickable; pressing the key works too. Record
+    ' canvas hit-test ranges covering the whole token.
+    DIM key0 AS STRING = "S"
+    DIM key1 AS STRING = "A"
+    DIM key2 AS STRING = "Esc"
+    DIM wrd0 AS STRING = " Save"
+    DIM wrd1 AS STRING = " Abandon"
+    DIM wrd2 AS STRING = " Cancel"
+    DIM tok0 AS STRING = key0 + wrd0
+    DIM tok1 AS STRING = key1 + wrd1
+    DIM tok2 AS STRING = key2 + wrd2
+    DIM gapW AS INTEGER = 5
+    DIM off0 AS INTEGER = 2
+    DIM off1 AS INTEGER = off0 + LEN(tok0) + gapW
+    DIM off2 AS INTEGER = off1 + LEN(tok1) + gapW
     gDlgBtnLo = nil
     gDlgBtnHi = nil
     gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off0)
-    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off0 + LEN(lbl0))
+    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off0 + LEN(tok0))
     gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off1)
-    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off1 + LEN(lbl1))
+    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off1 + LEN(tok1))
     gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off2)
-    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off2 + LEN(lbl2))
+    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off2 + LEN(tok2))
 
-    ' The styled action row (selected word highlighted), padded to inner.
-    DIM act AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#14336e")).Bold(TRUE)
-    DIM b0 AS STRING = act.Render(lbl0)
-    DIM b1 AS STRING = act.Render(lbl1)
-    DIM b2 AS STRING = act.Render(lbl2)
-    IF gDialogSel = 0 THEN b0 = sel.Render(lbl0)
-    IF gDialogSel = 1 THEN b1 = sel.Render(lbl1)
-    IF gDialogSel = 2 THEN b2 = sel.Render(lbl2)
+    ' Render each token: mnemonic key highlighted, word in normal text; the
+    ' selected token is reverse-highlighted whole.
+    DIM t0 AS STRING = keySty.Render(key0) + box.Render(wrd0)
+    DIM t1 AS STRING = keySty.Render(key1) + box.Render(wrd1)
+    DIM t2 AS STRING = keySty.Render(key2) + box.Render(wrd2)
+    IF gDialogSel = 0 THEN t0 = sel.Render(tok0)
+    IF gDialogSel = 1 THEN t1 = sel.Render(tok1)
+    IF gDialogSel = 2 THEN t2 = sel.Render(tok2)
     DIM gapS AS STRING = strings.Repeat(" ", gapW)
-    DIM btnPlainLen AS INTEGER = off2 + LEN(lbl2)
+    DIM btnPlainLen AS INTEGER = off2 + LEN(tok2)
     DIM btnPad AS STRING = ""
     IF inner > btnPlainLen THEN btnPad = strings.Repeat(" ", inner - btnPlainLen)
-    DIM btnRow AS STRING = box.Render(strings.Repeat(" ", off0)) + b0 + box.Render(gapS) + b1 + box.Render(gapS) + b2 + box.Render(btnPad)
+    DIM btnRow AS STRING = box.Render(strings.Repeat(" ", off0)) + t0 + box.Render(gapS) + t1 + box.Render(gapS) + t2 + box.Render(btnPad)
 
     ' Assemble the box rows. The document name is on its own (bold) line.
     DIM bodyRows AS []STRING
@@ -1313,9 +1319,8 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     bodyRows = APPEND(bodyRows, box.Render(swFit("", inner)))
     bodyRows = APPEND(bodyRows, box.Render(swFit(msg2, inner)))
     bodyRows = APPEND(bodyRows, box.Render(swFit("", inner)))
-    ' (button row spliced in specially)
-    DIM hintRow AS STRING = box.Render(swFit(hintLine, inner))
-    DIM boxH AS INTEGER = 5 + 1 + 1 + 3   ' title + 5 body + button + blank + hint + bottom
+    ' (command line spliced in specially)
+    DIM boxH AS INTEGER = 1 + 5 + 1 + 1   ' title + 5 body + command line + bottom
     DIM boxY AS INTEGER = (hc - boxH) / 2
     IF boxY < 1 THEN boxY = 1
     gDlgBtnRow = boxY + 1 + 5              ' title + 5 body rows
@@ -1334,10 +1339,6 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
         ELSEIF rel = 6 THEN
             mid = box.Render("│") + btnRow + box.Render("│")
         ELSEIF rel = 7 THEN
-            mid = box.Render("│") + box.Render(swFit("", inner)) + box.Render("│")
-        ELSEIF rel = 8 THEN
-            mid = box.Render("│") + hintRow + box.Render("│")
-        ELSEIF rel = 9 THEN
             mid = box.Render("╰" + strings.Repeat("─", inner) + "╯")
         ELSE
             done = FALSE
