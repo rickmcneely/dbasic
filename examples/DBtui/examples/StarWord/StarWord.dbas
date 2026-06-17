@@ -445,6 +445,10 @@ DIM gDefaultUnicode AS BOOLEAN = TRUE  ' new documents default to UTF-8 (.WSu)
 DIM gCfgReturn AS STRING = "edit"      ' screen mode to return to after config
 DIM gCfgSnapshot AS STRING             ' settings serialized on config entry (for Abandon)
 
+' --- transient "size" popup shown while the terminal is being resized ------
+DIM gResizeShow AS BOOLEAN
+DIM gResizeGen AS INTEGER          ' bumped per resize; the timer clears only the latest
+
 ' --- place markers 0..9 (^K0..^K9 set, ^Q0..^Q9 jump) ---------------------
 DIM gMarkRow AS []INTEGER         ' 10 entries; row = -1 means unset
 DIM gMarkCol AS []INTEGER
@@ -2488,6 +2492,36 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
         NEXT li
     END IF
 
+    ' --- transient size popup (shown while the terminal is being resized) ---
+    IF gResizeShow THEN
+        DIM popSt AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
+        DIM c1 AS STRING = fmt.Sprintf("  Columns: %d  ", w)
+        DIM c2 AS STRING = fmt.Sprintf("  Rows:    %d  ", h)
+        DIM innerW AS INTEGER = LEN(c1)
+        IF LEN(c2) > innerW THEN innerW = LEN(c2)
+        DIM pbox AS []STRING
+        pbox = APPEND(pbox, "╭" + strings.Repeat("─", innerW) + "╮")
+        pbox = APPEND(pbox, "│" + swFit(c1, innerW) + "│")
+        pbox = APPEND(pbox, "│" + swFit(c2, innerW) + "│")
+        pbox = APPEND(pbox, "╰" + strings.Repeat("─", innerW) + "╯")
+        DIM pboxW AS INTEGER = innerW + 2
+        DIM pboxX AS INTEGER = (w - pboxW) / 2
+        IF pboxX < 0 THEN pboxX = 0
+        DIM pboxY AS INTEGER = txTop + (txRows - LEN(pbox)) / 2
+        IF pboxY < txTop THEN pboxY = txTop
+        DIM pi AS INTEGER
+        FOR pi = 0 TO LEN(pbox) - 1
+            DIM pmr AS INTEGER = pboxY + pi
+            IF pmr >= txTop AND pmr <= h - 2 THEN
+                DIM pEnd AS INTEGER = pboxX + pboxW
+                DIM pdoc AS INTEGER = gTop + (pmr - txTop)
+                DIM pleft AS STRING = renderTextRange(pdoc, 0, pboxX, txStyle, curStyle, blkStyle)
+                DIM pright AS STRING = renderTextRange(pdoc, pEnd, w - pEnd, txStyle, curStyle, blkStyle)
+                rows[pmr] = pleft + popSt.Render(pbox[pi]) + pright
+            END IF
+        NEXT pi
+    END IF
+
     RETURN strings.Join(rows, Chr(10))
 END FUNCTION
 
@@ -3751,10 +3785,24 @@ SUB Form_Load()
     syncUndoBaseline()
 END SUB
 
-' Fired on terminal resize — sw_Render re-clamps against the new size.
+' Fired on terminal resize — show the size popup and (re)arm the timer that
+' hides it shortly after resizing stops. sw_Render re-clamps to the new size.
 SUB Terminal_Resize(w AS INTEGER, h AS INTEGER)
     _ = w
     _ = h
+    gResizeShow = TRUE
+    gResizeGen = gResizeGen + 1
+    SPAWN resizePopupTimer(gResizeGen)
+END SUB
+
+' resizePopupTimer — hide the size popup ~1.2s after the last resize. Each
+' resize bumps gResizeGen, so only the most recent timer actually hides it.
+SUB resizePopupTimer(gen AS INTEGER)
+    time.Sleep(1200 * time.Millisecond)
+    IF gen = gResizeGen THEN
+        gResizeShow = FALSE
+        _dbtuiWake()
+    END IF
 END SUB
 
 ' Fired just before the program quits.
