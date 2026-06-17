@@ -4549,11 +4549,52 @@ SUB Form_Wake()
     ' StarWord has no background workers in v1.
 END SUB
 
+' scrollView — mouse-wheel scroll by `delta` rows. The view is coupled to the
+' cursor, so we move the cursor just enough to stay in the new viewport (the
+' text scrolls, the cursor rides the edge). Works in soft and hard/off modes.
+SUB scrollView(delta AS INTEGER)
+    DIM txRows AS INTEGER = gH - 4
+    IF txRows < 1 THEN txRows = 1
+    IF softWrapOn() THEN
+        gTopVis = gTopVis + delta
+        IF gTopVis < 0 THEN gTopVis = 0
+        DIM maxv AS INTEGER = LEN(gVisLine) - 1
+        IF maxv < 0 THEN maxv = 0
+        IF gTopVis > maxv THEN gTopVis = maxv
+        DIM cvr AS INTEGER = cursorVisRow()
+        IF (cvr < gTopVis OR cvr >= gTopVis + txRows) AND gTopVis < LEN(gVisLine) THEN
+            gRow = gVisLine[gTopVis]
+            gCol = gVisStart[gTopVis]
+        END IF
+    ELSE
+        gTop = gTop + delta
+        IF gTop < 0 THEN gTop = 0
+        IF gTop > lastRow() THEN gTop = lastRow()
+        IF gRow < gTop THEN gRow = gTop
+        IF gRow >= gTop + txRows THEN gRow = gTop + txRows - 1
+        IF gRow > lastRow() THEN gRow = lastRow()
+    END IF
+END SUB
+
 ' Fired for every mouse event. Clicks are routed to sw_Click (cursor / menu
-' selection); here we use MOTION to drive the pull-down menus by HOVER:
-' hovering a bar title opens (or switches to) that menu, hovering a dropdown
-' item highlights it, and moving down into the document closes the menu.
+' selection); MOTION drives the pull-down menus by HOVER; WHEEL scrolls.
 SUB Form_Mouse(kind AS STRING, button AS STRING, x AS INTEGER, y AS INTEGER)
+    ' Mouse wheel: scroll the text (3 rows), the preview, or the file list.
+    IF kind = "wheel" THEN
+        DIM dir AS INTEGER = 3
+        IF button = "up" THEN dir = 0 - 3
+        IF gMode = "preview" THEN
+            gPrevTop = gPrevTop + dir
+            IF gPrevTop < 0 THEN gPrevTop = 0
+        ELSEIF gMode = "open" THEN
+            gOpenSel = gOpenSel + dir
+            IF gOpenSel < 0 THEN gOpenSel = 0
+            IF gOpenSel > LEN(gOpenFiles) - 1 THEN gOpenSel = LEN(gOpenFiles) - 1
+        ELSEIF gMode = "edit" AND gPromptMode = "" AND gMenuOpen < 0 THEN
+            scrollView(dir)
+        END IF
+        RETURN
+    END IF
     _ = button
     IF kind <> "motion" THEN RETURN
     ' Terminal cells -> canvas-local (canvas origin is at (1,1)).
