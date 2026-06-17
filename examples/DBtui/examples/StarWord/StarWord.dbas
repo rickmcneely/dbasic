@@ -1245,6 +1245,15 @@ SUB dialogClick(x AS INTEGER, y AS INTEGER)
     NEXT i
 END SUB
 
+' dlgCenter — center s within width (padding both sides); truncate if longer.
+FUNCTION dlgCenter(s AS STRING, width AS INTEGER) AS STRING
+    DIM n AS INTEGER = LEN(s)
+    IF n >= width THEN RETURN swFit(s, width)
+    DIM leftPad AS INTEGER = (width - n) / 2
+    DIM rightPad AS INTEGER = width - n - leftPad
+    RETURN strings.Repeat(" ", leftPad) + s + strings.Repeat(" ", rightPad)
+END FUNCTION
+
 ' renderExitDialog — a centered WordStar-blue confirmation box over a backdrop.
 FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     DIM bg AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#8aa0d8")).Background(lipgloss.Color("#0f2350"))
@@ -1257,12 +1266,11 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     ' Content lines. The document name gets its own line so long (non-DOS)
     ' names fit; the box grows wide enough to hold the name.
     DIM nm AS STRING = gFileName
-    DIM nameLine AS STRING = "    " + nm
-    DIM msg1 AS STRING = "  This document has unsaved changes:"
-    DIM msg2 AS STRING = "  Save before leaving StarWord?"
+    DIM msg1 AS STRING = "This document has unsaved changes:"
+    DIM msg2 AS STRING = "Save before leaving StarWord?"
 
     DIM inner AS INTEGER = 52
-    IF LEN(nameLine) + 2 > inner THEN inner = LEN(nameLine) + 2
+    IF LEN(nm) + 4 > inner THEN inner = LEN(nm) + 4
     ' Center within the mouse-clickable region (the form's 78x22 area).
     DIM wc AS INTEGER = 78
     IF w < wc THEN wc = w
@@ -1286,7 +1294,10 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     DIM tok1 AS STRING = key1 + wrd1
     DIM tok2 AS STRING = key2 + wrd2
     DIM gapW AS INTEGER = 5
-    DIM off0 AS INTEGER = 2
+    ' Center the command line within the box.
+    DIM cmdTextW AS INTEGER = LEN(tok0) + gapW + LEN(tok1) + gapW + LEN(tok2)
+    DIM off0 AS INTEGER = (inner - cmdTextW) / 2
+    IF off0 < 1 THEN off0 = 1
     DIM off1 AS INTEGER = off0 + LEN(tok0) + gapW
     DIM off2 AS INTEGER = off1 + LEN(tok1) + gapW
     gDlgBtnLo = nil
@@ -1312,12 +1323,13 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     IF inner > btnPlainLen THEN btnPad = strings.Repeat(" ", inner - btnPlainLen)
     DIM btnRow AS STRING = box.Render(strings.Repeat(" ", off0)) + t0 + box.Render(gapS) + t1 + box.Render(gapS) + t2 + box.Render(btnPad)
 
-    ' Assemble the box rows. The document name is on its own (bold) line.
+    ' Assemble the box rows — text centered. The document name is on its own
+    ' (bold) line.
     DIM bodyRows AS []STRING
-    bodyRows = APPEND(bodyRows, box.Render(swFit(msg1, inner)))
-    bodyRows = APPEND(bodyRows, nameSty.Render(swFit(nameLine, inner)))
+    bodyRows = APPEND(bodyRows, box.Render(dlgCenter(msg1, inner)))
+    bodyRows = APPEND(bodyRows, nameSty.Render(dlgCenter(nm, inner)))
     bodyRows = APPEND(bodyRows, box.Render(swFit("", inner)))
-    bodyRows = APPEND(bodyRows, box.Render(swFit(msg2, inner)))
+    bodyRows = APPEND(bodyRows, box.Render(dlgCenter(msg2, inner)))
     bodyRows = APPEND(bodyRows, box.Render(swFit("", inner)))
     ' (command line spliced in specially)
     DIM boxH AS INTEGER = 1 + 5 + 1 + 1   ' title + 5 body + command line + bottom
