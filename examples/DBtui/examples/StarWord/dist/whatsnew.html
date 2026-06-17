@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StarWord &mdash; What's New vs WordStar 7</title>
+<style>
+  :root { --ws-blue:#0f2350; --ws-blue2:#14336e; --ws-accent:#3b6fe0; --ws-gold:#ffd166; --ink:#dbe6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Segoe UI",system-ui,Arial,sans-serif; background:var(--ws-blue); color:var(--ink); line-height:1.55; }
+  header { background:var(--ws-accent); color:#fff; padding:1.4rem 2rem; box-shadow:0 2px 8px rgba(0,0,0,.4); }
+  header h1 { margin:0; font-size:1.8rem; letter-spacing:.5px; }
+  header p { margin:.3rem 0 0; color:#dce6ff; }
+  main { max-width:880px; margin:0 auto; padding:1.5rem 2rem 4rem; }
+  h2 { color:var(--ws-gold); border-bottom:2px solid #2a4a8a; padding-bottom:.3rem; margin-top:2.4rem; }
+  h3 { color:#bcd0ff; margin-top:1.4rem; }
+  ul { padding-left:1.3rem; }
+  li { margin:.35rem 0; }
+  .lead { background:var(--ws-blue2); border:1px solid #2a4a8a; border-radius:8px; padding:1rem 1.3rem; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin:1rem 0; }
+  .card { background:var(--ws-blue2); border:1px solid #2a4a8a; border-radius:8px; padding:1rem 1.2rem; }
+  .card h3 { margin-top:0; }
+  .yes { color:#9ff0b0; } .no { color:#ff9a9a; }
+  table { border-collapse:collapse; width:100%; margin:.8rem 0 1.4rem; background:var(--ws-blue2); border-radius:6px; overflow:hidden; }
+  th,td { text-align:left; padding:.5rem .8rem; border-bottom:1px solid #24407a; vertical-align:top; }
+  th { background:#1c3f86; color:#fff; }
+  tr:last-child td { border-bottom:none; }
+  code { font-family:Consolas,"Courier New",monospace; color:#ffd9a0; }
+  .note { background:#1a2f5e; border-left:4px solid var(--ws-gold); padding:.7rem 1rem; border-radius:0 6px 6px 0; margin:1rem 0; }
+  footer { text-align:center; color:#7e96cf; padding:2rem; font-size:.85rem; }
+  @media (max-width:640px){ .grid{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>What's New in StarWord</h1>
+  <p>How StarWord differs from, and adds to, WordStar&nbsp;7.0.</p>
+</header>
+<main>
+
+<p class="lead">StarWord is a faithful re-creation of WordStar&nbsp;7.0's editing experience &mdash; the same
+control-key commands, pull-down menus, dot commands, and blue screen &mdash; rebuilt as a modern,
+cross-platform terminal application. If you knew WordStar, you already know StarWord. This page lists
+what's <strong>new</strong>, what's <strong>different</strong>, and the few WordStar features that were
+intentionally left in 1992.</p>
+
+<h2>Brand-new in StarWord</h2>
+<div class="grid">
+  <div class="card">
+    <h3>Cross-platform</h3>
+    <p>One program runs on Windows, Linux and macOS. On Windows it can relaunch itself inside Windows
+    Terminal at a configurable startup size.</p>
+  </div>
+  <div class="card">
+    <h3>Unicode documents</h3>
+    <p>Full UTF-8 editing. Files saved with the <code>.WSu</code> extension are Unicode; word, character
+    and cursor handling are rune-accurate.</p>
+  </div>
+  <div class="card">
+    <h3>OS clipboard</h3>
+    <p>Alongside WordStar's internal blocks, <code>Ctrl+Shift+X / C / V</code> cut, copy and paste through
+    your system clipboard, and bracketed paste from the terminal is supported.</p>
+  </div>
+  <div class="card">
+    <h3>Mouse support</h3>
+    <p>Click and hover the pull-down menus, click to place the cursor, double-click to select a word,
+    drag to select, and drag-and-drop a selection to move it. The wheel scrolls.</p>
+  </div>
+  <div class="card">
+    <h3>Open dictionaries</h3>
+    <p>Spell-check uses Hunspell <code>.dic</code>/<code>.aff</code> files (with affix expansion); the
+    thesaurus uses MyThes data. Either may be a local file or an http(s) URL that StarWord downloads and caches.</p>
+  </div>
+  <div class="card">
+    <h3>Redo + safer exit</h3>
+    <p>An undo <em>and redo</em> history, plus a confirmation dialog whenever you try to leave with unsaved
+    changes (keyboard and mouse friendly).</p>
+  </div>
+  <div class="card">
+    <h3>Soft / hard returns</h3>
+    <p>StarWord distinguishes wrap (soft) breaks from <kbd>Enter</kbd> (hard) breaks; reformatting respects
+    your hard breaks, and a flag column can show them.</p>
+  </div>
+  <div class="card">
+    <h3>This help system</h3>
+    <p>HTML Help and this What's-New page open in your browser from the Help menu, plus an About box.</p>
+  </div>
+</div>
+
+<h2>Classic WordStar features, faithfully kept</h2>
+<ul>
+  <li>The control diamond (<code>^E ^X ^S ^D</code>) and the <code>^K</code>/<code>^Q</code>/<code>^O</code>/<code>^P</code>/<code>^J</code> command menus.</li>
+  <li>WordStar&nbsp;7 pull-down menu bar with the original Alt-key bindings.</li>
+  <li>Block operations, place markers 0&ndash;9, find &amp; replace with options.</li>
+  <li>Dot commands and real pagination (<code>.pa .pl .mt .mb .he .fo .pn .po .ls .cp</code>).</li>
+  <li>Footnotes, index and table-of-contents entries.</li>
+  <li>MailMerge (<code>.df</code> / <code>.rv</code> / <code>&amp;variable&amp;</code>).</li>
+  <li>Column (rectangular) block mode and block math.</li>
+  <li>On-screen calculator and keystroke macros.</li>
+  <li>Document vs non-document modes, and the WSCHANGE-style configuration screen.</li>
+  <li>Print preview and print-to-printer.</li>
+</ul>
+
+<h2>Things that work a little differently</h2>
+<table>
+<tr><th>Area</th><th>WordStar 7</th><th>StarWord</th></tr>
+<tr><td>Help</td><td>In-program help screens</td><td>The Help <em>menu</em> opens HTML help in your browser (the classic <code>^J</code> on-screen help is still there too)</td></tr>
+<tr><td>Clipboard</td><td>Internal blocks only</td><td>Internal blocks <em>plus</em> the OS clipboard via <code>Ctrl+Shift+X/C/V</code></td></tr>
+<tr><td>Files</td><td>8.3 DOS names, CP437</td><td>Long file names and UTF-8 (<code>.WSu</code>)</td></tr>
+<tr><td>Print styles</td><td>Driven by printer-specific codes</td><td>Bold/italic/underline etc. are kept as on-screen markers and rendered logically when printing</td></tr>
+</table>
+
+<h2>WordStar features intentionally left behind</h2>
+<p>These were tied to 1990s dot-matrix and daisy-wheel printers and have no modern equivalent, so they are
+deliberately <span class="no">not</span> implemented:</p>
+<ul>
+  <li>Printer pitch changes and raw printer escape sequences.</li>
+  <li>Double-strike, overprint and &ldquo;phantom&rdquo; character mechanics.</li>
+  <li>Micro-justification for fixed-pitch printers.</li>
+  <li>Paper-bin / sheet-feeder selection.</li>
+</ul>
+<div class="note">Everything that defines the WordStar <em>writing</em> experience is here; only the
+obsolete printer-hardware plumbing was dropped.</div>
+
+</main>
+<footer>
+  StarWord &mdash; Copyright Rick McNeely 2026 &middot; rickmcneely@gmail.com<br>
+  Created by Rick McNeely and my dear friend, Claude Code.
+</footer>
+</body>
+</html>

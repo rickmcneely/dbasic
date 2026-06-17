@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StarWord Help</title>
+<style>
+  :root { --ws-blue:#0f2350; --ws-blue2:#14336e; --ws-accent:#3b6fe0; --ws-gold:#ffd166; --ink:#dbe6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Segoe UI",system-ui,Arial,sans-serif; background:var(--ws-blue); color:var(--ink); line-height:1.5; }
+  header { background:var(--ws-accent); color:#fff; padding:1.4rem 2rem; box-shadow:0 2px 8px rgba(0,0,0,.4); }
+  header h1 { margin:0; font-size:1.8rem; letter-spacing:.5px; }
+  header p { margin:.3rem 0 0; color:#dce6ff; }
+  main { max-width:920px; margin:0 auto; padding:1.5rem 2rem 4rem; }
+  nav.toc { background:var(--ws-blue2); border:1px solid #2a4a8a; border-radius:8px; padding:1rem 1.4rem; margin:1.5rem 0; }
+  nav.toc h2 { margin:.2rem 0 .6rem; font-size:1rem; color:var(--ws-gold); text-transform:uppercase; letter-spacing:1px; }
+  nav.toc ul { columns:2; margin:0; padding-left:1.2rem; }
+  nav.toc a { color:#a9c4ff; text-decoration:none; }
+  nav.toc a:hover { color:#fff; text-decoration:underline; }
+  h2.sec { color:var(--ws-gold); border-bottom:2px solid #2a4a8a; padding-bottom:.3rem; margin-top:2.4rem; }
+  h3 { color:#bcd0ff; margin-top:1.6rem; }
+  table { border-collapse:collapse; width:100%; margin:.8rem 0 1.4rem; background:var(--ws-blue2); border-radius:6px; overflow:hidden; }
+  th,td { text-align:left; padding:.5rem .8rem; border-bottom:1px solid #24407a; vertical-align:top; }
+  th { background:#1c3f86; color:#fff; }
+  tr:last-child td { border-bottom:none; }
+  kbd { background:#0b1c40; border:1px solid #3a5aa0; border-bottom-width:2px; border-radius:4px; padding:.05rem .4rem; font-family:Consolas,"Courier New",monospace; color:var(--ws-gold); white-space:nowrap; font-size:.92em; }
+  code { font-family:Consolas,"Courier New",monospace; color:#ffd9a0; }
+  .note { background:#1a2f5e; border-left:4px solid var(--ws-gold); padding:.7rem 1rem; border-radius:0 6px 6px 0; margin:1rem 0; }
+  footer { text-align:center; color:#7e96cf; padding:2rem; font-size:.85rem; }
+  a.top { color:#7e96cf; font-size:.8rem; text-decoration:none; float:right; }
+</style>
+</head>
+<body>
+<header>
+  <h1>StarWord Help</h1>
+  <p>A modern WordStar&nbsp;7.0 clone &mdash; classic commands, modern conveniences.</p>
+</header>
+<main>
+
+<p>StarWord keeps WordStar's classic two-key command language (the <strong>control&nbsp;diamond</strong>,
+the <kbd>^K</kbd>/<kbd>^Q</kbd>/<kbd>^O</kbd>/<kbd>^P</kbd> menus, and dot commands) while adding pull-down
+menus, mouse support, Unicode, the OS clipboard, and cross-platform output. Notation: <kbd>^K</kbd> means
+hold <kbd>Ctrl</kbd> and press <kbd>K</kbd>; <kbd>^K&nbsp;S</kbd> means press <kbd>^K</kbd>, release, then press <kbd>S</kbd>.</p>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ul>
+    <li><a href="#start">Getting started</a></li>
+    <li><a href="#cursor">Cursor &amp; scrolling</a></li>
+    <li><a href="#edit">Editing</a></li>
+    <li><a href="#block">Blocks &amp; files (^K)</a></li>
+    <li><a href="#quick">Quick moves (^Q)</a></li>
+    <li><a href="#onscreen">On-screen format (^O)</a></li>
+    <li><a href="#print">Print controls (^P)</a></li>
+    <li><a href="#dot">Dot commands</a></li>
+    <li><a href="#tools">Tools</a></li>
+    <li><a href="#mouse">Mouse</a></li>
+    <li><a href="#clip">Clipboard</a></li>
+    <li><a href="#cli">Command line</a></li>
+  </ul>
+</nav>
+
+<h2 class="sec" id="start">Getting started <a class="top" href="#">top</a></h2>
+<p>StarWord opens at the WordStar <strong>Opening Menu</strong>. Press <kbd>D</kbd> to open a document,
+<kbd>N</kbd> for a new one, <kbd>L</kbd> to change directory, <kbd>C</kbd> to configure, or <kbd>X</kbd> to exit.
+Inside the editor, press <kbd>Alt</kbd>+a highlighted letter (e.g. <kbd>Alt</kbd>+<kbd>F</kbd>) to open a pull-down menu,
+or use the classic control commands below. If you have unsaved changes, leaving the program raises a
+confirmation dialog (<kbd>S</kbd>&nbsp;Save&nbsp;/ <kbd>A</kbd>&nbsp;Abandon&nbsp;/ <kbd>Esc</kbd>&nbsp;Cancel).</p>
+
+<h2 class="sec" id="cursor">Cursor &amp; scrolling <a class="top" href="#">top</a></h2>
+<table>
+<tr><th>Command</th><th>Action</th><th>Command</th><th>Action</th></tr>
+<tr><td><kbd>^E</kbd> / <kbd>&uarr;</kbd></td><td>Up a line</td><td><kbd>^X</kbd> / <kbd>&darr;</kbd></td><td>Down a line</td></tr>
+<tr><td><kbd>^S</kbd> / <kbd>&larr;</kbd></td><td>Left a character</td><td><kbd>^D</kbd> / <kbd>&rarr;</kbd></td><td>Right a character</td></tr>
+<tr><td><kbd>^A</kbd></td><td>Word left</td><td><kbd>^F</kbd></td><td>Word right</td></tr>
+<tr><td><kbd>^R</kbd> / <kbd>PgUp</kbd></td><td>Page up</td><td><kbd>^C</kbd> / <kbd>PgDn</kbd></td><td>Page down</td></tr>
+<tr><td><kbd>^W</kbd></td><td>Scroll up a line</td><td><kbd>^Z</kbd></td><td>Scroll down a line</td></tr>
+<tr><td><kbd>Home</kbd></td><td>Start of line</td><td><kbd>End</kbd></td><td>End of line</td></tr>
+</table>
+
+<h2 class="sec" id="edit">Editing <a class="top" href="#">top</a></h2>
+<table>
+<tr><th>Command</th><th>Action</th></tr>
+<tr><td><kbd>^V</kbd></td><td>Toggle Insert / Overtype</td></tr>
+<tr><td><kbd>^G</kbd> / <kbd>Del</kbd></td><td>Delete character at cursor</td></tr>
+<tr><td><kbd>Backspace</kbd> / <kbd>^H</kbd></td><td>Delete character left</td></tr>
+<tr><td><kbd>^T</kbd></td><td>Delete word right</td></tr>
+<tr><td><kbd>^Y</kbd></td><td>Delete line</td></tr>
+<tr><td><kbd>^N</kbd></td><td>Insert blank line</td></tr>
+<tr><td><kbd>^B</kbd></td><td>Reformat (re-wrap) paragraph</td></tr>
+<tr><td><kbd>^L</kbd></td><td>Find next / repeat find</td></tr>
+<tr><td>Edit&nbsp;&rsaquo;&nbsp;Undo / Redo</td><td>Undo and redo edits</td></tr>
+</table>
+
+<h2 class="sec" id="block">Blocks &amp; files &mdash; <kbd>^K</kbd> menu <a class="top" href="#">top</a></h2>
+<table>
+<tr><th>Command</th><th>Action</th><th>Command</th><th>Action</th></tr>
+<tr><td><kbd>^K B</kbd></td><td>Mark block begin</td><td><kbd>^K K</kbd></td><td>Mark block end</td></tr>
+<tr><td><kbd>^K C</kbd></td><td>Copy block</td><td><kbd>^K V</kbd></td><td>Move block</td></tr>
+<tr><td><kbd>^K Y</kbd></td><td>Delete block</td><td><kbd>^K H</kbd></td><td>Hide / show block</td></tr>
+<tr><td><kbd>^K N</kbd></td><td>Column (rectangular) block mode</td><td><kbd>^K M</kbd></td><td>Block math (sum a column)</td></tr>
+<tr><td><kbd>^K W</kbd></td><td>Write block to file</td><td><kbd>^K R</kbd></td><td>Read file into document</td></tr>
+<tr><td><kbd>^K S</kbd></td><td>Save</td><td><kbd>^K D</kbd></td><td>Save &amp; return to menu</td></tr>
+<tr><td><kbd>^K X</kbd></td><td>Save &amp; exit</td><td><kbd>^K Q</kbd></td><td>Abandon / quit (prompts if unsaved)</td></tr>
+<tr><td><kbd>^K 0</kbd>&hellip;<kbd>9</kbd></td><td>Set place marker 0&ndash;9</td><td></td><td></td></tr>
+</table>
+
+<h2 class="sec" id="quick">Quick moves &mdash; <kbd>^Q</kbd> menu <a class="top" href="#">top</a></h2>
+<table>
+<tr><th>Command</th><th>Action</th><th>Command</th><th>Action</th></tr>
+<tr><td><kbd>^Q S</kbd></td><td>Start of line</td><td><kbd>^Q D</kbd></td><td>End of line</td></tr>
+<tr><td><kbd>^Q E</kbd></td><td>Top of screen</td><td><kbd>^Q X</kbd></td><td>Bottom of screen</td></tr>
+<tr><td><kbd>^Q R</kbd></td><td>Top of document</td><td><kbd>^Q C</kbd></td><td>End of document</td></tr>
+<tr><td><kbd>^Q F</kbd></td><td>Find</td><td><kbd>^Q A</kbd></td><td>Find &amp; replace</td></tr>
+<tr><td><kbd>^Q 0</kbd>&hellip;<kbd>9</kbd></td><td>Go to place marker</td><td><kbd>^Q W</kbd>/<kbd>Z</kbd></td><td>Continuous scroll up/down</td></tr>
+<tr><td><kbd>^Q P</kbd></td><td>Previous cursor position</td><td><kbd>^Q V</kbd></td><td>Last find position</td></tr>
+<tr><td><kbd>^Q Q</kbd></td><td>Repeat next command</td><td><kbd>^Q Del</kbd></td><td>Delete to start of line</td></tr>
+</table>
+
+<h2 class="sec" id="onscreen">On-screen format &mdash; <kbd>^O</kbd> menu <a class="top" href="#">top</a></h2>
+<table>
+<tr><th>Command</th><th>Action</th></tr>
+<tr><td><kbd>^O L</kbd> / <kbd>^O R</kbd></td><td>Set left / right margin</td></tr>
+<tr><td><kbd>^O I</kbd> / <kbd>^O N</kbd></td><td>Set / clear a tab stop</td></tr>
+<tr><td><kbd>^O C</kbd></td><td>Center the current line</td></tr>
+<tr><td><kbd>^O J</kbd></td><td>Toggle justification</td></tr>
+<tr><td><kbd>^O W</kbd></td><td>Toggle word wrap</td></tr>
+<tr><td><kbd>^O S</kbd></td><td>Line spacing</td></tr>
+</table>
+
+<h2 class="sec" id="print">Print controls &mdash; <kbd>^P</kbd> menu <a class="top" href="#">top</a></h2>
+<p>Print toggles insert formatting markers into the text (shown on screen, applied when printing/previewing).</p>
+<table>
+<tr><th>Command</th><th>Action</th><th>Command</th><th>Action</th></tr>
+<tr><td><kbd>^P B</kbd></td><td>Bold</td><td><kbd>^P S</kbd></td><td>Underline</td></tr>
+<tr><td><kbd>^P Y</kbd></td><td>Italic</td><td><kbd>^P X</kbd></td><td>Strikethrough</td></tr>
+<tr><td><kbd>^P T</kbd></td><td>Superscript</td><td><kbd>^P V</kbd></td><td>Subscript</td></tr>
+</table>
+
+<h2 class="sec" id="dot">Dot commands <a class="top" href="#">top</a></h2>
+<p>A line beginning with a period in column&nbsp;1 is a formatting command (document mode only).</p>
+<table>
+<tr><th>Dot command</th><th>Meaning</th></tr>
+<tr><td><code>.pa</code></td><td>Force a new page</td></tr>
+<tr><td><code>.pl n</code></td><td>Page length (lines)</td></tr>
+<tr><td><code>.mt n</code> / <code>.mb n</code></td><td>Top / bottom margin</td></tr>
+<tr><td><code>.he text</code> / <code>.fo text</code></td><td>Header / footer text</td></tr>
+<tr><td><code>.pn n</code></td><td>Set starting page number</td></tr>
+<tr><td><code>.po n</code></td><td>Page offset (left indent)</td></tr>
+<tr><td><code>.ls n</code></td><td>Line spacing</td></tr>
+<tr><td><code>.cp n</code></td><td>Conditional page (keep n lines together)</td></tr>
+<tr><td><code>.fn</code>, <code>.ix</code>, <code>.tc</code></td><td>Footnote, index entry, table-of-contents entry</td></tr>
+<tr><td><code>.df</code>, <code>.rv</code>, <code>&amp;var&amp;</code></td><td>MailMerge: data file, read variables, field</td></tr>
+</table>
+
+<h2 class="sec" id="tools">Tools <a class="top" href="#">top</a></h2>
+<table>
+<tr><th>Menu</th><th>Tool</th></tr>
+<tr><td>Utilities&nbsp;&rsaquo;&nbsp;Word Count</td><td>Words, lines and characters</td></tr>
+<tr><td>Utilities&nbsp;&rsaquo;&nbsp;Spell Check</td><td>Hunspell dictionaries (with affix expansion)</td></tr>
+<tr><td>Utilities&nbsp;&rsaquo;&nbsp;Thesaurus</td><td>MyThes synonym data</td></tr>
+<tr><td>Utilities&nbsp;&rsaquo;&nbsp;Mail Merge</td><td>Merge a data file into a form letter</td></tr>
+<tr><td>Utilities&nbsp;&rsaquo;&nbsp;Calculator</td><td>On-screen calculator</td></tr>
+<tr><td>Utilities&nbsp;&rsaquo;&nbsp;Macros</td><td>Record / play keystroke macros</td></tr>
+<tr><td>Layout&nbsp;&rsaquo;&nbsp;Print&nbsp;Preview / Print</td><td>Paginated preview and print-to-printer</td></tr>
+</table>
+<div class="note">Spell-check and thesaurus data files are configurable (local hunspell/MyThes files
+or an http(s) URL that StarWord downloads and caches). See the configuration screen
+(Opening Menu&nbsp;&rsaquo;&nbsp;<kbd>C</kbd>, or <code>--config</code>).</div>
+
+<h2 class="sec" id="mouse">Mouse <a class="top" href="#">top</a></h2>
+<ul>
+  <li>Click the menu bar (or hover) to open pull-down menus; click an item to run it.</li>
+  <li>Click in the text to position the cursor.</li>
+  <li><strong>Double-click</strong> selects a word.</li>
+  <li><strong>Drag</strong> selects text; drag a selection to move it (drag &amp; drop).</li>
+  <li>The mouse wheel scrolls the document, preview, or file list.</li>
+</ul>
+
+<h2 class="sec" id="clip">OS clipboard <a class="top" href="#">top</a></h2>
+<p>In addition to WordStar's internal block commands, StarWord talks to your system clipboard:</p>
+<table>
+<tr><th>Command</th><th>Action</th></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd></td><td>Cut to OS clipboard</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></td><td>Copy to OS clipboard</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></td><td>Paste from OS clipboard</td></tr>
+</table>
+
+<h2 class="sec" id="cli">Command line <a class="top" href="#">top</a></h2>
+<p>Both DOS-style <code>/X</code> switches and <code>-</code>/<code>--</code> flags are accepted:</p>
+<table>
+<tr><th>Option</th><th>Effect</th></tr>
+<tr><td><code>/D</code> <code>-d</code> <code>--document</code></td><td>Document mode (word-wrap, justify) &mdash; default</td></tr>
+<tr><td><code>/N</code> <code>-n</code> <code>--nondocument</code></td><td>Non-document mode (plain text)</td></tr>
+<tr><td><code>/P</code> <code>-p</code> <code>--print</code></td><td>Print a clean copy to stdout and exit</td></tr>
+<tr><td><code>/M</code> <code>-m</code> <code>--merge</code></td><td>MailMerge to stdout and exit</td></tr>
+<tr><td><code>/C</code> <code>-c</code> <code>--config</code></td><td>Open the configuration screen</td></tr>
+<tr><td><code>/?</code> <code>-h</code> <code>--help</code></td><td>Show command-line help</td></tr>
+</table>
+
+</main>
+<footer>
+  StarWord &mdash; Copyright Rick McNeely 2026 &middot; rickmcneely@gmail.com<br>
+  Created by Rick McNeely and my dear friend, Claude Code.
+</footer>
+</body>
+</html>

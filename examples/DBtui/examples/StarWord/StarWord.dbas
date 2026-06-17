@@ -11,6 +11,7 @@ IMPORT "net/http" AS http
 IMPORT "io"
 IMPORT "github.com/atotto/clipboard" AS clipboard
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
+IMPORT "path/filepath" AS filepath
 
 SUB _dbtuiKeepFmtAlive()
     _ = fmt.Sprintf("")
@@ -1229,8 +1230,13 @@ SUB dlgActivate()
     END IF
 END SUB
 
-' handleDialogKey — keyboard for the exit dialog (mnemonics, arrows, Enter).
+' handleDialogKey — keyboard for the modal dialogs (exit / about).
 SUB handleDialogKey(key AS STRING)
+    ' The About box is informational — any key dismisses it.
+    IF gDialog = "about" THEN
+        gDialog = ""
+        RETURN
+    END IF
     DIM k AS STRING = LCase(key)
     IF key = "esc" OR k = "c" THEN
         dlgCancel()
@@ -1257,6 +1263,11 @@ END SUB
 
 ' dialogClick — a click at canvas (x,y); activate a button if it was hit.
 SUB dialogClick(x AS INTEGER, y AS INTEGER)
+    ' The About box dismisses on any click (its OK button included).
+    IF gDialog = "about" THEN
+        gDialog = ""
+        RETURN
+    END IF
     IF y <> gDlgBtnRow THEN RETURN
     DIM i AS INTEGER
     FOR i = 0 TO LEN(gDlgBtnLo) - 1
@@ -1374,6 +1385,91 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
         ELSEIF rel = 6 THEN
             mid = box.Render("│") + btnRow + box.Render("│")
         ELSEIF rel = 7 THEN
+            mid = box.Render("╰" + strings.Repeat("─", inner) + "╯")
+        ELSE
+            done = FALSE
+        END IF
+        IF done THEN
+            DIM tail AS INTEGER = w - boxX - boxW
+            IF tail < 0 THEN tail = 0
+            rows = APPEND(rows, lead + mid + bg.Render(strings.Repeat(" ", tail)))
+        ELSE
+            rows = APPEND(rows, bg.Render(swFit("", w)))
+        END IF
+    NEXT r
+    RETURN strings.Join(rows, Chr(10))
+END FUNCTION
+
+' renderAboutDialog — a centered WordStar-blue "About" box (mouse + keyboard
+' friendly: any key or click dismisses; an OK button is shown and clickable).
+FUNCTION renderAboutDialog(w AS INTEGER, h AS INTEGER) AS STRING
+    DIM bg AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#8aa0d8")).Background(lipgloss.Color("#0f2350"))
+    DIM box AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cfe0ff")).Background(lipgloss.Color("#14336e"))
+    DIM ttl AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
+    DIM sel AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
+    DIM nameSty AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#14336e")).Bold(TRUE)
+
+    ' Content lines (centered).
+    DIM lines AS []STRING
+    lines = APPEND(lines, "A modern WordStar 7.0 clone")
+    lines = APPEND(lines, "")
+    lines = APPEND(lines, "Copyright Rick McNeely 2026")
+    lines = APPEND(lines, "rickmcneely@gmail.com")
+    lines = APPEND(lines, "")
+    lines = APPEND(lines, "Created by Rick McNeely")
+    lines = APPEND(lines, "and my dear friend, Claude Code")
+    lines = APPEND(lines, "")
+
+    DIM inner AS INTEGER = 52
+    DIM wc AS INTEGER = 78
+    IF w < wc THEN wc = w
+    DIM hc AS INTEGER = 22
+    IF h < hc THEN hc = h
+    IF inner > wc - 2 THEN inner = wc - 2
+    DIM boxW AS INTEGER = inner + 2
+    DIM boxX AS INTEGER = (wc - boxW) / 2
+    IF boxX < 0 THEN boxX = 0
+
+    ' Body rows: bold app name, then the centered text lines, then OK.
+    DIM bodyRows AS []STRING
+    bodyRows = APPEND(bodyRows, nameSty.Render(dlgCenter("StarWord", inner)))
+    DIM li AS INTEGER
+    FOR li = 0 TO LEN(lines) - 1
+        bodyRows = APPEND(bodyRows, box.Render(dlgCenter(lines[li], inner)))
+    NEXT li
+
+    ' OK button (clickable) — centered on its own row; record the hit range.
+    DIM okLbl AS STRING = "[ OK ]"
+    DIM okLead AS INTEGER = (inner - LEN(okLbl)) / 2
+    IF okLead < 0 THEN okLead = 0
+    DIM okRight AS INTEGER = inner - LEN(okLbl) - okLead
+    IF okRight < 0 THEN okRight = 0
+    DIM okRow AS STRING = box.Render(strings.Repeat(" ", okLead)) + sel.Render(okLbl) + box.Render(strings.Repeat(" ", okRight))
+
+    DIM nBody AS INTEGER = LEN(bodyRows)        ' app name + lines
+    DIM boxH AS INTEGER = 1 + nBody + 1 + 1     ' title + body + OK + bottom
+    DIM boxY AS INTEGER = (hc - boxH) / 2
+    IF boxY < 1 THEN boxY = 1
+    gDlgBtnRow = boxY + 1 + nBody               ' title + body rows
+    gDlgBtnLo = nil
+    gDlgBtnHi = nil
+    gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + okLead)
+    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + okLead + LEN(okLbl))
+
+    DIM rows AS []STRING
+    DIM r AS INTEGER
+    FOR r = 0 TO h - 1
+        DIM rel AS INTEGER = r - boxY
+        DIM lead AS STRING = bg.Render(strings.Repeat(" ", boxX))
+        DIM mid AS STRING = ""
+        DIM done AS BOOLEAN = TRUE
+        IF rel = 0 THEN
+            mid = ttl.Render(dlgCenter("About StarWord", boxW))
+        ELSEIF rel >= 1 AND rel <= nBody THEN
+            mid = box.Render("│") + bodyRows[rel - 1] + box.Render("│")
+        ELSEIF rel = nBody + 1 THEN
+            mid = box.Render("│") + okRow + box.Render("│")
+        ELSEIF rel = nBody + 2 THEN
             mid = box.Render("╰" + strings.Repeat("─", inner) + "╯")
         ELSE
             done = FALSE
@@ -1838,6 +1934,8 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "M|Macros|Alt+U M")
     CASE 7
         xs = APPEND(xs, "H|Help|Alt+H H")
+        xs = APPEND(xs, "W|Whats New?|Alt+H W")
+        xs = APPEND(xs, "A|About|Alt+H A")
         xs = APPEND(xs, "C|Change Help Level|Alt+H C")
     END SELECT
     RETURN xs
@@ -3706,7 +3804,12 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
         END IF
     ELSEIF menuIdx = 7 THEN
         IF hk = "H" THEN
-            gPrefix = "J"
+            openDocInBrowser("help.html", "Help")
+        ELSEIF hk = "W" THEN
+            openDocInBrowser("whatsnew.html", "What's New")
+        ELSEIF hk = "A" THEN
+            gDialog = "about"
+            gDialogSel = 0
         ELSEIF hk = "C" THEN
             cycleHelpLevel()
         ELSE
@@ -3714,6 +3817,30 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
         END IF
     ELSE
         gMessage = label + " — coming in a later StarWord build"
+    END IF
+END SUB
+
+' openDocInBrowser — open a distribution HTML doc (help.html / whatsnew.html)
+' in the OS default browser. The file ships next to the executable.
+SUB openDocInBrowser(name AS STRING, friendly AS STRING)
+    DIM exe AS STRING
+    DIM e AS ERROR
+    exe, e = os.Executable()
+    DIM target AS STRING = name
+    IF e = NIL THEN target = filepath.Join(filepath.Dir(exe), name)
+    DIM c AS POINTER TO exec.Cmd
+    IF runtime.GOOS = "windows" THEN
+        c = exec.Command("cmd", "/c", "start", "", target)
+    ELSEIF runtime.GOOS = "darwin" THEN
+        c = exec.Command("open", target)
+    ELSE
+        c = exec.Command("xdg-open", target)
+    END IF
+    e = c.Start()
+    IF e <> NIL THEN
+        gMessage = "Could not open " + friendly + " (" + target + ")"
+    ELSE
+        gMessage = "Opened " + friendly + " in your browser"
     END IF
 END SUB
 
@@ -3989,6 +4116,7 @@ END SUB
 FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     gW = w
     gH = h
+    IF gDialog = "about" THEN RETURN renderAboutDialog(w, h)
     IF gDialog <> "" THEN RETURN renderExitDialog(w, h)
     IF gMode = "open" THEN RETURN renderOpeningMenu(w, h)
     IF gMode = "preview" THEN RETURN renderPreview(w, h)
