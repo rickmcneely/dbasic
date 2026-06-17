@@ -403,6 +403,7 @@ DIM gLastCol AS INTEGER
 DIM gHelpLevel AS INTEGER = 3     ' WordStar help level 0..3 (Help > Change Help Level)
 DIM gShowRuler AS BOOLEAN = TRUE  ' View > Screen Settings toggles the ruler line
 DIM gPageLength AS INTEGER = 66   ' Layout > Page: lines per printed page
+DIM gNonDocument AS BOOLEAN       ' non-document mode (WS /N): no wrap/justify/dot cmds
 
 ' --- single-register keyboard macro (Utilities > Macros) -------------------
 DIM gMacroKeys AS []STRING        ' recorded key names
@@ -1928,7 +1929,8 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     IF gMode = "open" THEN RETURN renderOpeningMenu(w, h)
     IF gMode = "preview" THEN RETURN renderPreview(w, h)
     clampCursor()
-    applyDotCommands()
+    ' Non-document mode treats dot commands as literal text (no margin reflow).
+    IF NOT gNonDocument THEN applyDotCommands()
 
     ' Layout: menubar=0, status=1, ruler=2, text=3..h-2, message=h-1.
     DIM txTop AS INTEGER = 3
@@ -1968,7 +1970,9 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     DIM modFlag AS STRING = " "
     IF gModified THEN modFlag = "*"
     DIM colNum AS INTEGER = runeIndexOf(curLine(), gCol) + 1
-    DIM status AS STRING = " StarWord   " + modFlag + gFileName + "    Line " + fmt.Sprintf("%d", gRow + 1) + "  Col " + fmt.Sprintf("%d", colNum) + "    " + modeStr + "    " + encStr
+    DIM docFlag AS STRING = ""
+    IF gNonDocument THEN docFlag = "    NON-DOCUMENT"
+    DIM status AS STRING = " StarWord   " + modFlag + gFileName + "    Line " + fmt.Sprintf("%d", gRow + 1) + "  Col " + fmt.Sprintf("%d", colNum) + "    " + modeStr + "    " + encStr + docFlag
     DIM statusFit AS STRING = swFit(status, w)
     rows = APPEND(rows, stStyle.Render(statusFit))
 
@@ -3045,12 +3049,88 @@ SUB Form_Key(key AS STRING)
     END IF
 END SUB
 
-' Fired once at startup — open a file given on the command line, else start
-' with an empty Unicode document.
+' printUsage — the command-line help shown by -h / /? (WordStar-style).
+SUB printUsage()
+    fmt.Println("StarWord — a modern WordStar 7.0 clone")
+    fmt.Println("")
+    fmt.Println("Usage: starword [options] [file]")
+    fmt.Println("")
+    fmt.Println("  With no file, StarWord opens at the WordStar Opening Menu.")
+    fmt.Println("")
+    fmt.Println("Options (DOS /X switches and -/-- flags both accepted):")
+    fmt.Println("  /D  -d  --document      open in document mode (word-wrap, justify) [default]")
+    fmt.Println("  /N  -n  --nondocument   open in non-document mode (plain text: no wrap,")
+    fmt.Println("                          no justify, dot commands left as literal text)")
+    fmt.Println("  /P  -p  --print         print a clean copy of the file to stdout and exit")
+    fmt.Println("  /?  -h  --help          show this help and exit")
+END SUB
+
+' printDocToStdout — emit a plain-text copy of the loaded file (for -p): in
+' document mode, drop dot commands and strip print-control toggles; in
+' non-document mode, every line is literal.
+SUB printDocToStdout()
+    DIM i AS INTEGER
+    FOR i = 0 TO lastRow()
+        DIM ln AS STRING = gLines[i]
+        IF gNonDocument THEN
+            fmt.Println(ln)
+        ELSEIF Left(ln, 1) <> "." THEN
+            fmt.Println(stripMarkers(ln))
+        END IF
+    NEXT i
+END SUB
+
+' Fired once at startup — parse WordStar-style command-line arguments, then
+' open the named file (or the Opening Menu when none is given).
 SUB Form_Load()
     DIM args AS []STRING = os.Args
-    IF LEN(args) > 1 THEN
-        loadFile(args[1])
+    DIM fileArg AS STRING = ""
+    DIM wantHelp AS BOOLEAN = FALSE
+    DIM wantPrint AS BOOLEAN = FALSE
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(args) - 1
+        DIM a AS STRING = args[i]
+        DIM lo AS STRING = LCase(a)
+        IF a = "/?" OR lo = "-h" OR lo = "/h" OR lo = "--help" THEN
+            wantHelp = TRUE
+        ELSEIF lo = "-n" OR lo = "/n" OR lo = "--nondocument" OR lo = "--nondoc" THEN
+            gNonDocument = TRUE
+        ELSEIF lo = "-d" OR lo = "/d" OR lo = "--document" OR lo = "--doc" THEN
+            gNonDocument = FALSE
+        ELSEIF lo = "-p" OR lo = "/p" OR lo = "--print" THEN
+            wantPrint = TRUE
+        ELSEIF Left(a, 1) = "-" OR (Left(a, 1) = "/" AND LEN(a) = 2) THEN
+            ' Unknown switch — ignore so a stray flag can't block startup.
+            ' (A "/" token longer than 2 chars is a Unix absolute path, below.)
+        ELSEIF fileArg = "" THEN
+            fileArg = a
+        END IF
+    NEXT i
+
+    IF wantHelp THEN
+        printUsage()
+        os.Exit(0)
+    END IF
+
+    ' Non-document mode turns off the document-formatting machinery.
+    IF gNonDocument THEN
+        gWordWrap = FALSE
+        gJustify = FALSE
+        gLeftMargin = 0
+    END IF
+
+    IF wantPrint THEN
+        IF fileArg = "" THEN
+            fmt.Println("starword: -p/--print needs a filename")
+            os.Exit(2)
+        END IF
+        loadFile(fileArg)
+        printDocToStdout()
+        os.Exit(0)
+    END IF
+
+    IF fileArg <> "" THEN
+        loadFile(fileArg)
         gMode = "edit"
     ELSE
         ' No file given: start at the WordStar-style Opening Menu.
