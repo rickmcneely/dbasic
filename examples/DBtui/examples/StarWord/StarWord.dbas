@@ -5212,8 +5212,8 @@ END SUB
 SUB Form_Mouse(kind AS STRING, button AS STRING, x AS INTEGER, y AS INTEGER)
     ' Mouse wheel: scroll the text (3 rows), the preview, or the file list.
     IF kind = "wheel" THEN
-        DIM dir AS INTEGER = 3
-        IF button = "up" THEN dir = 0 - 3
+        DIM dir AS INTEGER = 1
+        IF button = "up" THEN dir = 0 - 1
         IF gMode = "preview" THEN
             gPrevTop = gPrevTop + dir
             IF gPrevTop < 0 THEN gPrevTop = 0
