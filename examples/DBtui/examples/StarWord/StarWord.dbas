@@ -459,8 +459,10 @@ DIM gAffRules AS MAP OF STRING TO STRING  ' hunspell affix flag -> "TYPE|strip|a
 DIM gSpellWord AS STRING                ' word currently flagged
 DIM gSpellEnd AS INTEGER               ' byte offset just past the flagged word
 DIM gSpellSugg AS []STRING             ' suggested corrections
-DIM gThes AS MAP OF STRING TO STRING   ' built-in synonyms (comma-separated)
+DIM gThes AS MAP OF STRING TO STRING   ' synonyms (comma-separated)
 DIM gThesInit AS BOOLEAN
+DIM gThesPath AS STRING = "/usr/share/mythes/th_en_US_v2.dat"  ' MyThes data file
+DIM gThesLoaded AS BOOLEAN
 DIM gThesWord AS STRING
 DIM gThesStart AS INTEGER
 DIM gThesEnd AS INTEGER
@@ -2248,6 +2250,8 @@ SUB applySetting(k AS STRING, v AS STRING)
         gDefaultUnicode = (lv = "on" OR lv = "true" OR lv = "1")
     ELSEIF k = "dictionary" THEN
         IF v <> "" THEN gDictPath = v
+    ELSEIF k = "thesaurus" THEN
+        IF v <> "" THEN gThesPath = v
     END IF
 END SUB
 
@@ -2265,6 +2269,7 @@ FUNCTION serializeConfig() AS STRING
     b = b + "helplevel = " + fmt.Sprintf("%d", gHelpLevel) + Chr(10)
     b = b + "unicode = " + onoff(gDefaultUnicode) + Chr(10)
     b = b + "dictionary = " + gDictPath + Chr(10)
+    b = b + "thesaurus = " + gThesPath + Chr(10)
     RETURN b
 END FUNCTION
 
@@ -2334,6 +2339,7 @@ FUNCTION renderConfig(w AS INTEGER, h AS INTEGER) AS STRING
     rows = APPEND(rows, cfgRow("I", "Startup columns", fmt.Sprintf("%d", gStartCols), val, bg, w))
     rows = APPEND(rows, cfgRow("J", "Startup rows", fmt.Sprintf("%d", gStartRows), val, bg, w))
     rows = APPEND(rows, cfgRow("K", "Dictionary", gDictPath, val, bg, w))
+    rows = APPEND(rows, cfgRow("L", "Thesaurus", gThesPath, val, bg, w))
     rows = APPEND(rows, bg.Render(swFit("", w)))
     rows = APPEND(rows, bg.Render(swFit("  Press a letter to change a setting.", w)))
     WHILE LEN(rows) < h - 1
@@ -2400,6 +2406,10 @@ SUB handleConfigKey(key AS STRING)
     ELSEIF k = "k" THEN
         gPromptMode = "cfg_dict"
         gPromptLabel = "Dictionary path: "
+        gPromptText = ""
+    ELSEIF k = "l" THEN
+        gPromptMode = "cfg_thes"
+        gPromptLabel = "Thesaurus path: "
         gPromptText = ""
     ELSEIF k = "s" THEN
         saveConfig()
@@ -2854,9 +2864,57 @@ SUB initThesaurus()
     gThes["nice"] = "pleasant,agreeable,kind,lovely,delightful"
 END SUB
 
+' loadThesaurus — load a MyThes .dat thesaurus into gThes, or fall back to the
+' built-in table. MyThes format: an encoding line, then for each headword a
+' "word|N" line followed by N sense lines "(pos)|synonym|synonym|...".
+SUB loadThesaurus()
+    IF gThesLoaded THEN RETURN
+    gThesLoaded = TRUE
+    DIM data AS BYTES
+    DIM e AS ERROR
+    data, e = os.ReadFile(gThesPath)
+    IF e <> NIL THEN
+        initThesaurus()
+        RETURN
+    END IF
+    DIM tm AS MAP OF STRING TO STRING
+    gThes = tm
+    DIM lines AS []STRING = strings.Split(Decode(data), Chr(10))
+    DIM i AS INTEGER = 1
+    WHILE i < LEN(lines)
+        DIM hdr AS []STRING = strings.Split(lines[i], "|")
+        IF LEN(hdr) >= 2 AND isAllDigits(strings.TrimSpace(hdr[1])) THEN
+            DIM word AS STRING = LCase(strings.TrimSpace(hdr[0]))
+            DIM n AS INTEGER = Int(Val(hdr[1]))
+            DIM syns AS STRING = ""
+            DIM s AS INTEGER
+            FOR s = 1 TO n
+                IF i + s < LEN(lines) THEN
+                    DIM sp AS []STRING = strings.Split(lines[i + s], "|")
+                    DIM k AS INTEGER
+                    FOR k = 1 TO LEN(sp) - 1
+                        DIM syn AS STRING = strings.TrimSpace(sp[k])
+                        IF syn <> "" AND Left(syn, 1) <> "(" THEN
+                            IF syns = "" THEN
+                                syns = syn
+                            ELSE
+                                syns = syns + "," + syn
+                            END IF
+                        END IF
+                    NEXT k
+                END IF
+            NEXT s
+            IF word <> "" AND syns <> "" THEN gThes[word] = syns
+            i = i + n + 1
+        ELSE
+            i = i + 1
+        END IF
+    WEND
+END SUB
+
 ' startThesaurus — Utilities > Thesaurus: synonyms for the word at the cursor.
 SUB startThesaurus()
-    initThesaurus()
+    loadThesaurus()
     DIM ln AS STRING = curLine()
     DIM s AS INTEGER = gCol
     WHILE s > 0 AND isWordCh(runeAt(ln, prevRuneStart(ln, s)))
@@ -4828,6 +4886,8 @@ SUB handlePrompt(key AS STRING)
             IF csr > 0 THEN gStartRows = csr
         ELSEIF mode = "cfg_dict" THEN
             IF txt <> "" THEN gDictPath = txt
+        ELSEIF mode = "cfg_thes" THEN
+            IF txt <> "" THEN gThesPath = txt
         ELSEIF mode = "spellrepl" THEN
             replaceSpellWord(txt)
         END IF
