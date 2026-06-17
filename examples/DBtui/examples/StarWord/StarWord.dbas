@@ -1100,6 +1100,16 @@ SUB clipCut()
     END IF
 END SUB
 
+' toggleInsert — flip Insert/Overtype (^V or the Insert key) with a status hint.
+SUB toggleInsert()
+    gInsert = NOT gInsert
+    IF gInsert THEN
+        gMessage = "Insert ON"
+    ELSE
+        gMessage = "Overtype ON (Insert off)"
+    END IF
+END SUB
+
 ' pasteString — splice text in at the cursor (line endings normalized).
 ' Shared by clipPaste (^Shift+V) and Form_Paste (bracketed terminal paste).
 SUB pasteString(txt AS STRING)
@@ -1140,6 +1150,14 @@ SUB Form_Paste(txt AS STRING)
     END IF
     IF gMode <> "edit" THEN RETURN
     IF gMenuOpen >= 0 THEN RETURN
+    ' An empty bracketed paste almost always means the terminal grabbed Ctrl+V
+    ' (its "paste" binding) while the clipboard was empty. In WordStar Ctrl+V
+    ' toggles Insert/Overtype, so honor that intent rather than reporting an
+    ' empty paste.
+    IF txt = "" THEN
+        toggleInsert()
+        RETURN
+    END IF
     pasteString(txt)
 END SUB
 
@@ -5505,7 +5523,9 @@ SUB handlePrefixK(key AS STRING)
     ELSEIF k = "h" THEN
         gBlockShow = NOT gBlockShow
         gMessage = "Block display toggled"
-    ELSEIF k = "<" THEN
+    ELSEIF k = "<" OR k = "," THEN
+        ' Unmark block. Real WordStar accepts both the shifted "<" and the
+        ' unshifted "," on that key.
         gBBRow = 0 - 1
         gBERow = 0 - 1
         gMessage = "Block unmarked"
@@ -6219,8 +6239,10 @@ SUB Form_Key(key AS STRING)
         insertBlankLine()
         RETURN
     END IF
-    IF key = "ctrl+v" THEN
-        gInsert = NOT gInsert
+    ' ^V toggles Insert/Overtype (WordStar). The Insert key does the same, as a
+    ' fallback for terminals that grab Ctrl+V for "paste" (e.g. Windows Terminal).
+    IF key = "ctrl+v" OR key = "insert" THEN
+        toggleInsert()
         RETURN
     END IF
     IF key = "ctrl+l" THEN
