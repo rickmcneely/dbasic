@@ -1247,6 +1247,11 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "P|Page Break|Alt+I P")
         xs = APPEND(xs, "T|Todays Date|Alt+I T")
         xs = APPEND(xs, "F|File|Alt+I F")
+        xs = APPEND(xs, "N|Footnote|Alt+I N")
+        xs = APPEND(xs, "X|Index Entry|Alt+I X")
+        xs = APPEND(xs, "C|Contents Entry|Alt+I C")
+        xs = APPEND(xs, "I|Make Index|Alt+I I")
+        xs = APPEND(xs, "G|Make Contents|Alt+I G")
     CASE 4
         xs = APPEND(xs, "B|Bold|Alt+S B")
         xs = APPEND(xs, "I|Italic|Alt+S I")
@@ -1454,6 +1459,20 @@ SUB insertPageBreak()
     gCol = 0
     gModified = TRUE
     gMessage = "Page break (.pa) inserted"
+END SUB
+
+' insertDotLine — drop a dot-command line (footnote / index / TOC mark or a
+' .index/.toc generator) on its own line after the cursor.
+SUB insertDotLine(content AS STRING, note AS STRING)
+    IF strings.TrimSpace(curLine()) = "" THEN
+        gLines[gRow] = content
+    ELSE
+        gLines = lineInsertAt(gLines, gRow + 1, content)
+        gRow = gRow + 1
+    END IF
+    gCol = 0
+    gModified = TRUE
+    gMessage = note
 END SUB
 
 ' doInsertFile — Insert > File: read a file and splice its lines in at the
@@ -2498,6 +2517,22 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             gPromptMode = "insfile"
             gPromptLabel = "Insert file: "
             gPromptText = ""
+        ELSEIF hk = "N" THEN
+            gPromptMode = "insfn"
+            gPromptLabel = "Footnote text: "
+            gPromptText = ""
+        ELSEIF hk = "X" THEN
+            gPromptMode = "insix"
+            gPromptLabel = "Index entry: "
+            gPromptText = ""
+        ELSEIF hk = "C" THEN
+            gPromptMode = "instc"
+            gPromptLabel = "Contents entry: "
+            gPromptText = ""
+        ELSEIF hk = "I" THEN
+            insertDotLine(".index", "Index will be generated here on print/preview")
+        ELSEIF hk = "G" THEN
+            insertDotLine(".toc", "Contents will be generated here on print/preview")
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
@@ -3234,9 +3269,75 @@ END FUNCTION
 ' buildPaginated — the document laid out into pages: header, body (markers
 ' stripped, dot commands dropped), footer/page number. forScreen inserts a
 ' visible separator between pages; otherwise a form-feed (Chr 12) for printing.
+' pageOfLine — the 1-based page number that document line lineIdx prints on.
+FUNCTION pageOfLine(starts AS []INTEGER, lineIdx AS INTEGER) AS INTEGER
+    DIM p AS INTEGER = LEN(starts) - 1
+    WHILE p > 0 AND starts[p] > lineIdx
+        p = p - 1
+    WEND
+    RETURN p + 1
+END FUNCTION
+
+' sortStrings — in-place case-insensitive insertion sort (for the index).
+SUB sortStrings(xs AS []STRING)
+    DIM i AS INTEGER
+    FOR i = 1 TO LEN(xs) - 1
+        DIM keyv AS STRING = xs[i]
+        DIM j AS INTEGER = i - 1
+        WHILE j >= 0 AND strings.Compare(LCase(xs[j]), LCase(keyv)) > 0
+            xs[j + 1] = xs[j]
+            j = j - 1
+        WEND
+        xs[j + 1] = keyv
+    NEXT i
+END SUB
+
+' refLine — "  entry ......... tail" for an index/TOC line.
+FUNCTION refLine(entry AS STRING, tail AS STRING) AS STRING
+    DIM lead AS STRING = "  " + entry + " "
+    DIM dots AS INTEGER = 44 - LEN(lead) - LEN(tail)
+    IF dots < 2 THEN dots = 2
+    RETURN lead + strings.Repeat(".", dots) + " " + tail
+END FUNCTION
+
+' buildPaginated — lay the document into pages: header, body (markers stripped,
+' dot commands dropped), per-page footnotes (.fn), expanded index (.index) and
+' table of contents (.toc), and a footer/page number. forScreen inserts a
+' visible separator between pages; otherwise a form-feed for printing.
 FUNCTION buildPaginated(forScreen AS BOOLEAN) AS []STRING
     DIM starts AS []INTEGER = paginate()
+
+    ' Pre-scan .ix index marks and .tc contents marks with their page numbers.
+    DIM ixKeys AS []STRING
+    DIM ixMap AS MAP OF STRING TO STRING
+    DIM tcEntry AS []STRING
+    DIM tcPage AS []INTEGER
+    DIM li AS INTEGER
+    FOR li = 0 TO lastRow()
+        DIM ln AS STRING = gLines[li]
+        IF Left(ln, 4) = ".ix " THEN
+            DIM ent AS STRING = strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))
+            IF ent <> "" THEN
+                DIM tag AS STRING = fmt.Sprintf("%d", pageOfLine(starts, li))
+                IF ixMap[ent] = "" THEN
+                    ixKeys = APPEND(ixKeys, ent)
+                    ixMap[ent] = tag
+                ELSEIF NOT strings.Contains(" " + ixMap[ent] + " ", " " + tag + " ") THEN
+                    ixMap[ent] = ixMap[ent] + " " + tag
+                END IF
+            END IF
+        ELSEIF Left(ln, 4) = ".tc " THEN
+            DIM tent AS STRING = strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))
+            IF tent <> "" THEN
+                tcEntry = APPEND(tcEntry, tent)
+                tcPage = APPEND(tcPage, pageOfLine(starts, li))
+            END IF
+        END IF
+    NEXT li
+    sortStrings(ixKeys)
+
     DIM out AS []STRING
+    DIM fnNum AS INTEGER = 0
     DIM p AS INTEGER
     FOR p = 0 TO LEN(starts) - 1
         DIM firstLine AS INTEGER = starts[p]
@@ -3246,10 +3347,50 @@ FUNCTION buildPaginated(forScreen AS BOOLEAN) AS []STRING
             out = APPEND(out, subPageNum(gHeader, p + 1))
             out = APPEND(out, "")
         END IF
+        DIM pageNotes AS []STRING
+        DIM lastBodyIdx AS INTEGER = 0 - 1
         DIM i AS INTEGER
         FOR i = firstLine TO lastLine
-            IF NOT isDotCmd(gLines[i]) THEN out = APPEND(out, stripMarkers(gLines[i]))
+            DIM bl AS STRING = gLines[i]
+            DIM tb AS STRING = strings.TrimSpace(bl)
+            IF Left(bl, 4) = ".fn " THEN
+                fnNum = fnNum + 1
+                DIM mk AS STRING = fmt.Sprintf("[%d]", fnNum)
+                IF lastBodyIdx >= 0 THEN
+                    out[lastBodyIdx] = out[lastBodyIdx] + mk
+                ELSE
+                    out = APPEND(out, mk)
+                    lastBodyIdx = LEN(out) - 1
+                END IF
+                pageNotes = APPEND(pageNotes, mk + " " + strings.TrimSpace(Mid(bl, 5, LEN(bl) - 4)))
+            ELSEIF tb = ".index" THEN
+                out = APPEND(out, "")
+                out = APPEND(out, centerText("INDEX"))
+                DIM k AS INTEGER
+                FOR k = 0 TO LEN(ixKeys) - 1
+                    out = APPEND(out, refLine(ixKeys[k], ixMap[ixKeys[k]]))
+                NEXT k
+                lastBodyIdx = LEN(out) - 1
+            ELSEIF tb = ".toc" THEN
+                out = APPEND(out, "")
+                out = APPEND(out, centerText("TABLE OF CONTENTS"))
+                DIM t AS INTEGER
+                FOR t = 0 TO LEN(tcEntry) - 1
+                    out = APPEND(out, refLine(tcEntry[t], fmt.Sprintf("%d", tcPage[t])))
+                NEXT t
+                lastBodyIdx = LEN(out) - 1
+            ELSEIF NOT isDotCmd(bl) THEN
+                out = APPEND(out, stripMarkers(bl))
+                lastBodyIdx = LEN(out) - 1
+            END IF
         NEXT i
+        IF LEN(pageNotes) > 0 THEN
+            out = APPEND(out, strings.Repeat("─", 20))
+            DIM fi AS INTEGER
+            FOR fi = 0 TO LEN(pageNotes) - 1
+                out = APPEND(out, pageNotes[fi])
+            NEXT fi
+        END IF
         DIM foot AS STRING = ""
         IF gFooter <> "" THEN
             foot = subPageNum(gFooter, p + 1)
@@ -4039,6 +4180,12 @@ SUB handlePrompt(key AS STRING)
             gMessage = fmt.Sprintf("Right margin = %d", gRightMargin)
         ELSEIF mode = "insfile" THEN
             IF txt <> "" THEN doInsertFile(txt)
+        ELSEIF mode = "insfn" THEN
+            IF txt <> "" THEN insertDotLine(".fn " + txt, "Footnote inserted")
+        ELSEIF mode = "insix" THEN
+            IF txt <> "" THEN insertDotLine(".ix " + txt, "Index entry inserted")
+        ELSEIF mode = "instc" THEN
+            IF txt <> "" THEN insertDotLine(".tc " + txt, "Contents entry inserted")
         ELSEIF mode = "chdir" THEN
             IF txt <> "" THEN doChdir(txt)
         ELSEIF mode = "rundos" THEN
