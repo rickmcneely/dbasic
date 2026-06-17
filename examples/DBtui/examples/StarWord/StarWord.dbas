@@ -92,7 +92,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         END IF
         IF mc.X >= 1 AND mc.X < 1 + 78 AND mc.Y >= 1 AND mc.Y < 1 + 22 THEN
             m.Focus = 0
+            DIM _wasMenu AS BOOLEAN = gMenuOpen >= 0
             sw_Click(mc.X - 1, mc.Y - 1)
+            IF NOT _wasMenu AND mc.Y - 1 >= 3 THEN Form_Mouse("press", "left", mc.X, mc.Y)
             IF _dbtuiQuitReq THEN
                 Form_Close()
                 RETURN m, tea.Quit
@@ -104,7 +106,9 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
     DIM mmOk AS BOOLEAN
     mm, mmOk = msg.(tea.MouseMotionMsg)
     IF mmOk THEN
-        Form_Mouse("motion", "", mm.X, mm.Y)
+        DIM _mmb AS STRING = ""
+        IF mm.Button = tea.MouseLeft THEN _mmb = "left"
+        Form_Mouse("motion", _mmb, mm.X, mm.Y)
         DIM mmHit AS INTEGER = 0 - 1
         IF mmHit < 0 AND mm.X >= 1 AND mm.X < 1 + 78 AND mm.Y >= 1 AND mm.Y < 1 + 22 THEN mmHit = 0
         _ = mm
@@ -120,6 +124,13 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF mw.Button = tea.MouseWheelDown THEN _fmw = "down"
         Form_Mouse("wheel", _fmw, mw.X, mw.Y)
         _ = mw
+        RETURN m, NIL
+    END IF
+    DIM mrl AS tea.MouseReleaseMsg
+    DIM mrlOk AS BOOLEAN
+    mrl, mrlOk = msg.(tea.MouseReleaseMsg)
+    IF mrlOk THEN
+        Form_Mouse("release", "left", mrl.X, mrl.Y)
         RETURN m, NIL
     END IF
     DIM pst AS tea.PasteMsg
@@ -395,6 +406,16 @@ DIM gBlockShow AS BOOLEAN = TRUE      ' ^KH toggles marker/highlight display
 DIM gClip AS STRING                   ' internal mirror of the OS clipboard
                                       ' (Ctrl+Shift+X/C/V), used as fallback
 DIM gColumnMode AS BOOLEAN            ' ^KN: rectangular (column) block mode
+
+' --- mouse selection / drag-and-drop --------------------------------------
+DIM gMouseDown AS BOOLEAN          ' left button is currently held
+DIM gMouseMoved AS BOOLEAN         ' moved since the press (drag, not a click)
+DIM gDragDrop AS BOOLEAN           ' pressed on the selection -> dragging it
+DIM gDragAnchorRow AS INTEGER      ' selection anchor (the press point)
+DIM gDragAnchorCol AS INTEGER
+DIM gLastClickRow AS INTEGER = 0 - 1  ' for double-click detection
+DIM gLastClickCol AS INTEGER
+DIM gLastClickTime AS time.Time
 DIM gRepeatNext AS INTEGER            ' ^QQ: repeat the next keystroke N times
 DIM gTabStops AS []INTEGER            ' ^OI/^ON: explicit ruler tab stops (display cols)
 DIM gPrevRow AS INTEGER = 0 - 1       ' ^QP: previous cursor position before a jump
@@ -4018,16 +4039,26 @@ SUB sw_Click(x AS INTEGER, y AS INTEGER)
         RETURN
     END IF
     IF gPrefix <> "" OR gPromptMode <> "" THEN RETURN
-    IF y < 3 OR y > gH - 2 THEN RETURN
+    IF NOT inTextArea(y) THEN RETURN
+    setCursorFromCanvas(x, y)
+    gMessage = ""
+END SUB
+
+' inTextArea — is canvas-local row y inside the editable text rows?
+FUNCTION inTextArea(y AS INTEGER) AS BOOLEAN
+    RETURN y >= 3 AND y <= gH - 2
+END FUNCTION
+
+' setCursorFromCanvas — place the cursor at canvas-local cell (x,y) in the
+' text area (soft-wrap aware). Shared by clicks and mouse drag.
+SUB setCursorFromCanvas(x AS INTEGER, y AS INTEGER)
     IF softWrapOn() THEN
-        ' Map the click to a visual row, then to a byte within its segment.
         DIM vr AS INTEGER = gTopVis + (y - 3)
         IF vr >= 0 AND vr < LEN(gVisLine) THEN
             gRow = gVisLine[vr]
             gCol = byteAtCol(gLines[gRow], gVisStart[vr], gVisEnd[vr], x)
         END IF
         clampCursor()
-        gMessage = ""
         RETURN
     END IF
     gRow = gTop + (y - 3)
@@ -4047,7 +4078,6 @@ SUB sw_Click(x AS INTEGER, y AS INTEGER)
     NEXT cellsX
     gCol = pos
     clampCursor()
-    gMessage = ""
 END SUB
 
 ' ==========================================================================
@@ -6049,8 +6079,89 @@ SUB scrollView(delta AS INTEGER)
     END IF
 END SUB
 
+' selectWordAtCursor — double-click: select the word under the cursor.
+SUB selectWordAtCursor()
+    DIM ln AS STRING = curLine()
+    DIM s AS INTEGER = gCol
+    WHILE s > 0 AND isWordCh(runeAt(ln, prevRuneStart(ln, s)))
+        s = prevRuneStart(ln, s)
+    WEND
+    DIM e AS INTEGER = gCol
+    WHILE e < LEN(ln) AND isWordCh(runeAt(ln, e))
+        e = nextRuneStart(ln, e)
+    WEND
+    IF s >= e THEN RETURN
+    gColumnMode = FALSE
+    gBBRow = gRow
+    gBBCol = s
+    gBERow = gRow
+    gBECol = e
+    gBlockShow = TRUE
+    gCol = e
+    gMessage = "Word selected"
+END SUB
+
+' handleMousePress — left press in the text (cursor already positioned).
+SUB handleMousePress()
+    IF gMode <> "edit" OR gPromptMode <> "" OR gPrefix <> "" OR gMenuOpen >= 0 THEN
+        gMouseDown = FALSE
+        RETURN
+    END IF
+    DIM dbl AS BOOLEAN = FALSE
+    IF gLastClickRow = gRow AND gLastClickCol = gCol AND time.Since(gLastClickTime) < 400 * time.Millisecond THEN dbl = TRUE
+    gLastClickRow = gRow
+    gLastClickCol = gCol
+    gLastClickTime = time.Now()
+    IF dbl THEN
+        selectWordAtCursor()
+        gMouseDown = FALSE
+        gMouseMoved = FALSE
+        gDragDrop = FALSE
+        RETURN
+    END IF
+    gMouseDown = TRUE
+    gMouseMoved = FALSE
+    IF blockSet() AND gBlockShow AND isInBlock(gRow, gCol) THEN
+        ' Pressing inside the selection begins a drag-and-drop move.
+        gDragDrop = TRUE
+    ELSE
+        ' Fresh selection: clear the old one and anchor here.
+        gDragDrop = FALSE
+        gBBRow = 0 - 1
+        gBERow = 0 - 1
+        gDragAnchorRow = gRow
+        gDragAnchorCol = gCol
+    END IF
+END SUB
+
+' handleMouseDrag — left-drag: extend the selection, or preview a drop point.
+SUB handleMouseDrag(lx AS INTEGER, ly AS INTEGER)
+    IF NOT inTextArea(ly) THEN RETURN
+    gMouseMoved = TRUE
+    setCursorFromCanvas(lx, ly)
+    IF NOT gDragDrop THEN
+        gBBRow = gDragAnchorRow
+        gBBCol = gDragAnchorCol
+        gBERow = gRow
+        gBECol = gCol
+        gBlockShow = TRUE
+    END IF
+END SUB
+
+' handleMouseRelease — drop a dragged selection at the cursor, or finish.
+SUB handleMouseRelease()
+    IF NOT gMouseDown THEN RETURN
+    gMouseDown = FALSE
+    IF gDragDrop AND gMouseMoved THEN
+        IF NOT isInBlock(gRow, gCol) THEN blockMoveTo(gRow, gCol)
+        gDragDrop = FALSE
+    END IF
+    gMouseMoved = FALSE
+END SUB
+
 ' Fired for every mouse event. Clicks are routed to sw_Click (cursor / menu
-' selection); MOTION drives the pull-down menus by HOVER; WHEEL scrolls.
+' selection); MOTION drives the pull-down menus by HOVER; WHEEL scrolls;
+' press/drag/release drive text selection and drag-and-drop.
 SUB Form_Mouse(kind AS STRING, button AS STRING, x AS INTEGER, y AS INTEGER)
     ' Mouse wheel: scroll the text (3 rows), the preview, or the file list.
     IF kind = "wheel" THEN
@@ -6068,11 +6179,27 @@ SUB Form_Mouse(kind AS STRING, button AS STRING, x AS INTEGER, y AS INTEGER)
         END IF
         RETURN
     END IF
-    _ = button
-    IF kind <> "motion" THEN RETURN
     ' Terminal cells -> canvas-local (canvas origin is at (1,1)).
     DIM lx AS INTEGER = x - 1
     DIM ly AS INTEGER = y - 1
+
+    ' Left-button press (the cursor was already positioned by sw_Click):
+    ' start a selection drag, a drag-and-drop, or detect a double-click.
+    IF kind = "press" THEN
+        handleMousePress()
+        RETURN
+    END IF
+    IF kind = "release" THEN
+        handleMouseRelease()
+        RETURN
+    END IF
+    IF kind <> "motion" THEN RETURN
+
+    ' Motion with the left button held = drag (select, or move a selection).
+    IF button = "left" AND gMouseDown THEN
+        handleMouseDrag(lx, ly)
+        RETURN
+    END IF
 
     ' Hovering the menu bar (canvas row 0) opens / switches to that menu.
     IF ly = 0 THEN
