@@ -391,6 +391,7 @@ DIM gBECol AS INTEGER
 DIM gBlockShow AS BOOLEAN = TRUE      ' ^KH toggles marker/highlight display
 DIM gClip AS STRING                   ' internal mirror of the OS clipboard
                                       ' (Ctrl+Shift+X/C/V), used as fallback
+DIM gColumnMode AS BOOLEAN            ' ^KN: rectangular (column) block mode
 
 ' --- ruler / margins ------------------------------------------------------
 DIM gLeftMargin AS INTEGER = 0
@@ -644,6 +645,16 @@ END FUNCTION
 FUNCTION isInBlock(r AS INTEGER, c AS INTEGER) AS BOOLEAN
     IF NOT gBlockShow THEN RETURN FALSE
     IF NOT blockSet() THEN RETURN FALSE
+    IF gColumnMode THEN
+        DIM cr1 AS INTEGER
+        DIM cr2 AS INTEGER
+        DIM cd1 AS INTEGER
+        DIM cd2 AS INTEGER
+        cr1, cr2, cd1, cd2 = columnBounds()
+        IF r < cr1 OR r > cr2 THEN RETURN FALSE
+        DIM dc AS INTEGER = runeIndexOf(gLines[r], c)
+        RETURN dc >= cd1 AND dc < cd2
+    END IF
     DIM sR AS INTEGER
     DIM sC AS INTEGER
     DIM eR AS INTEGER
@@ -653,6 +664,172 @@ FUNCTION isInBlock(r AS INTEGER, c AS INTEGER) AS BOOLEAN
     DIM beforeEnd AS BOOLEAN = (r < eR) OR (r = eR AND c < eC)
     RETURN afterStart AND beforeEnd
 END FUNCTION
+
+' --- column (rectangular) block mode --------------------------------------
+
+' columnBounds — the rectangle (rowtop, rowbot, leftDispCol, rightDispCol).
+FUNCTION columnBounds() AS (INTEGER, INTEGER, INTEGER, INTEGER)
+    DIM r1 AS INTEGER = gBBRow
+    DIM r2 AS INTEGER = gBERow
+    IF r2 < r1 THEN
+        r1 = gBERow
+        r2 = gBBRow
+    END IF
+    DIM d1 AS INTEGER = runeIndexOf(gLines[gBBRow], gBBCol)
+    DIM d2 AS INTEGER = runeIndexOf(gLines[gBERow], gBECol)
+    IF d2 < d1 THEN
+        DIM t AS INTEGER = d1
+        d1 = d2
+        d2 = t
+    END IF
+    RETURN r1, r2, d1, d2
+END FUNCTION
+
+' byteAtDispCol — byte offset of display column dc in line (clamped to end).
+FUNCTION byteAtDispCol(line AS STRING, dc AS INTEGER) AS INTEGER
+    DIM p AS INTEGER = 0
+    DIM n AS INTEGER = 0
+    WHILE n < dc AND p < LEN(line)
+        p = nextRuneStart(line, p)
+        n = n + 1
+    WEND
+    RETURN p
+END FUNCTION
+
+' columnText — the rectangle's text, one (space-padded) string per row.
+FUNCTION columnText() AS []STRING
+    DIM r1 AS INTEGER
+    DIM r2 AS INTEGER
+    DIM c1 AS INTEGER
+    DIM c2 AS INTEGER
+    r1, r2, c1, c2 = columnBounds()
+    DIM width AS INTEGER = c2 - c1
+    DIM out AS []STRING
+    DIM r AS INTEGER
+    FOR r = r1 TO r2
+        DIM line AS STRING = gLines[r]
+        DIM sB AS INTEGER = byteAtDispCol(line, c1)
+        DIM eB AS INTEGER = byteAtDispCol(line, c2)
+        DIM seg AS STRING = Mid(line, sB + 1, eB - sB)
+        DIM have AS INTEGER = runeIndexOf(line, eB) - runeIndexOf(line, sB)
+        IF have < width THEN seg = seg + strings.Repeat(" ", width - have)
+        out = APPEND(out, seg)
+    NEXT r
+    RETURN out
+END FUNCTION
+
+' columnDeleteRange — remove display columns [c1,c2) from rows r1..r2.
+SUB columnDeleteRange(r1 AS INTEGER, r2 AS INTEGER, c1 AS INTEGER, c2 AS INTEGER)
+    DIM r AS INTEGER
+    FOR r = r1 TO r2
+        DIM line AS STRING = gLines[r]
+        DIM sB AS INTEGER = byteAtDispCol(line, c1)
+        DIM eB AS INTEGER = byteAtDispCol(line, c2)
+        gLines[r] = Left(line, sB) + Right(line, LEN(line) - eB)
+    NEXT r
+END SUB
+
+' columnInsertAt — splice the rectangle `rect` in at (destR, destDispCol),
+' creating rows and padding short lines with spaces as needed.
+SUB columnInsertAt(rect AS []STRING, destR AS INTEGER, destDisp AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(rect) - 1
+        DIM tr AS INTEGER = destR + i
+        WHILE tr > lastRow()
+            gLines = APPEND(gLines, "")
+        WEND
+        DIM line AS STRING = gLines[tr]
+        DIM curDisp AS INTEGER = runeIndexOf(line, LEN(line))
+        IF curDisp < destDisp THEN line = line + strings.Repeat(" ", destDisp - curDisp)
+        DIM insB AS INTEGER = byteAtDispCol(line, destDisp)
+        gLines[tr] = Left(line, insB) + rect[i] + Right(line, LEN(line) - insB)
+    NEXT i
+END SUB
+
+SUB columnDelete()
+    DIM r1 AS INTEGER
+    DIM r2 AS INTEGER
+    DIM c1 AS INTEGER
+    DIM c2 AS INTEGER
+    r1, r2, c1, c2 = columnBounds()
+    columnDeleteRange(r1, r2, c1, c2)
+    gRow = r1
+    gCol = byteAtDispCol(gLines[r1], c1)
+    gBBRow = 0 - 1
+    gBERow = 0 - 1
+    gModified = TRUE
+    gMessage = "Column block deleted"
+END SUB
+
+SUB columnCopyTo(destR AS INTEGER, destC AS INTEGER)
+    DIM rect AS []STRING = columnText()
+    DIM destDisp AS INTEGER = runeIndexOf(gLines[destR], destC)
+    columnInsertAt(rect, destR, destDisp)
+    gModified = TRUE
+    gMessage = "Column block copied"
+END SUB
+
+SUB columnMoveTo(destR AS INTEGER, destC AS INTEGER)
+    DIM r1 AS INTEGER
+    DIM r2 AS INTEGER
+    DIM c1 AS INTEGER
+    DIM c2 AS INTEGER
+    r1, r2, c1, c2 = columnBounds()
+    DIM rect AS []STRING = columnText()
+    DIM destDisp AS INTEGER = runeIndexOf(gLines[destR], destC)
+    columnDeleteRange(r1, r2, c1, c2)
+    ' If the deletion was to the left of the destination on the same rows,
+    ' the destination column shifted left by the rectangle's width.
+    IF destR >= r1 AND destR <= r2 AND destDisp >= c2 THEN destDisp = destDisp - (c2 - c1)
+    columnInsertAt(rect, destR, destDisp)
+    gBBRow = 0 - 1
+    gBERow = 0 - 1
+    gModified = TRUE
+    gMessage = "Column block moved"
+END SUB
+
+' --- block math (^KM): sum the numbers in the marked block ----------------
+
+' parseNumeric — leading number of a cell; returns (isNumber, value).
+FUNCTION parseNumeric(cell AS STRING) AS (BOOLEAN, DOUBLE)
+    DIM s AS STRING = strings.TrimSpace(cell)
+    IF strings.HasPrefix(s, "$") THEN s = strings.TrimSpace(Mid(s, 2, LEN(s) - 1))
+    s = strings.ReplaceAll(s, ",", "")
+    IF s = "" THEN RETURN FALSE, 0
+    DIM a AS INTEGER = Asc(Left(s, 1))
+    DIM isNum AS BOOLEAN = (a >= 48 AND a <= 57) OR Left(s, 1) = "-" OR Left(s, 1) = "+" OR Left(s, 1) = "."
+    IF NOT isNum THEN RETURN FALSE, 0
+    RETURN TRUE, Val(s)
+END FUNCTION
+
+' blockMath — ^KM: sum / count / average the numbers in the marked block.
+SUB blockMath()
+    IF NOT blockSet() THEN
+        gMessage = "Mark a block first (^KB begin, ^KK end)"
+        RETURN
+    END IF
+    DIM cells AS []STRING
+    IF gColumnMode THEN
+        cells = columnText()
+    ELSE
+        cells = strings.Split(blockText(), Chr(10))
+    END IF
+    DIM sum AS DOUBLE = 0
+    DIM count AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(cells) - 1
+        DIM ok AS BOOLEAN
+        DIM v AS DOUBLE
+        ok, v = parseNumeric(cells[i])
+        IF ok THEN
+            sum = sum + v
+            count = count + 1
+        END IF
+    NEXT i
+    DIM avg AS DOUBLE = 0
+    IF count > 0 THEN avg = sum / Dbl(count)
+    gMessage = fmt.Sprintf("Sum: %g   Count: %d   Average: %g", sum, count, avg)
+END SUB
 
 ' blockText — the marked text as one string (with embedded newlines).
 FUNCTION blockText() AS STRING
@@ -669,6 +846,10 @@ END FUNCTION
 
 SUB blockDelete()
     IF NOT blockSet() THEN RETURN
+    IF gColumnMode THEN
+        columnDelete()
+        RETURN
+    END IF
     DIM sR AS INTEGER
     DIM sC AS INTEGER
     DIM eR AS INTEGER
@@ -687,6 +868,10 @@ END SUB
 
 SUB blockCopyTo(destR AS INTEGER, destC AS INTEGER)
     IF NOT blockSet() THEN RETURN
+    IF gColumnMode THEN
+        columnCopyTo(destR, destC)
+        RETURN
+    END IF
     DIM blk AS STRING = blockText()
     DIM doc AS STRING = strings.Join(gLines, Chr(10))
     DIM d AS INTEGER = offsetOf(destR, destC)
@@ -698,6 +883,10 @@ END SUB
 
 SUB blockMoveTo(destR AS INTEGER, destC AS INTEGER)
     IF NOT blockSet() THEN RETURN
+    IF gColumnMode THEN
+        columnMoveTo(destR, destC)
+        RETURN
+    END IF
     DIM sR AS INTEGER
     DIM sC AS INTEGER
     DIM eR AS INTEGER
@@ -1241,6 +1430,8 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "F|Find|Alt+E F")
         xs = APPEND(xs, "R|Find and Replace|Alt+E R")
         xs = APPEND(xs, "N|Next Find|Alt+E N")
+        xs = APPEND(xs, "O|Column Block Mode|Alt+E O")
+        xs = APPEND(xs, "M|Block Math|Alt+E M")
     CASE 2
         xs = APPEND(xs, "B|Block Highlighting|Alt+V B")
         xs = APPEND(xs, "C|Command Tags|Alt+V C")
@@ -2624,6 +2815,15 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             gPromptText = ""
         ELSEIF hk = "N" THEN
             doFindNext()
+        ELSEIF hk = "O" THEN
+            gColumnMode = NOT gColumnMode
+            IF gColumnMode THEN
+                gMessage = "Column (rectangular) block mode ON"
+            ELSE
+                gMessage = "Column block mode OFF (stream)"
+            END IF
+        ELSEIF hk = "M" THEN
+            blockMath()
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
@@ -2983,6 +3183,7 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     DIM colNum AS INTEGER = runeIndexOf(curLine(), gCol) + 1
     DIM docFlag AS STRING = ""
     IF gNonDocument THEN docFlag = "    NON-DOCUMENT"
+    IF gColumnMode THEN docFlag = docFlag + "    COLUMN"
     DIM status AS STRING = " StarWord   " + modFlag + gFileName + "    Line " + fmt.Sprintf("%d", gRow + 1) + "  Col " + fmt.Sprintf("%d", colNum) + "    " + modeStr + "    " + encStr + docFlag
     DIM statusFit AS STRING = swFit(status, w)
     rows = APPEND(rows, stStyle.Render(statusFit))
@@ -4133,6 +4334,15 @@ SUB handlePrefixK(key AS STRING)
         RequestQuit()
     ELSEIF k = "q" THEN
         RequestQuit()
+    ELSEIF k = "n" THEN
+        gColumnMode = NOT gColumnMode
+        IF gColumnMode THEN
+            gMessage = "Column (rectangular) block mode ON"
+        ELSE
+            gMessage = "Column block mode OFF (stream)"
+        END IF
+    ELSEIF k = "m" THEN
+        blockMath()
     ELSEIF digitOf(k) >= 0 THEN
         setPlaceMarker(digitOf(k))
     ELSE
