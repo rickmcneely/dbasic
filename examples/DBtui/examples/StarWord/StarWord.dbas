@@ -17,7 +17,7 @@ IMPORT "github.com/go-pdf/fpdf" AS fpdf
 ' StarWord version. Scheme: 0.9.NNb — bump NN by one each release (next is
 ' 0.9.02b); the trailing "b" marks beta. Switches to 1.0 once all features are
 ' complete and tested.
-CONST AppVersion AS STRING = "0.9.01b"
+CONST AppVersion AS STRING = "0.9.02b"
 
 SUB _dbtuiKeepFmtAlive()
     _ = fmt.Sprintf("")
@@ -1908,7 +1908,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "S|Save|Alt+F S")
         xs = APPEND(xs, "A|Save As|Alt+F A")
         xs = APPEND(xs, "P|Print|Alt+F P")
-        xs = APPEND(xs, "D|Print to PDF|Alt+F D")
+        xs = APPEND(xs, "T|Print To...|Alt+F T")
         xs = APPEND(xs, "V|Change Dir|Alt+F V")
         xs = APPEND(xs, "R|Run DOS|Alt+F R")
         xs = APPEND(xs, "X|Exit StarWord|Alt+F X")
@@ -1951,7 +1951,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "P|Page|Alt+L P")
         xs = APPEND(xs, "S|Line Spacing|Alt+L S")
         xs = APPEND(xs, "F|Print to Printer|Alt+L F")
-        xs = APPEND(xs, "D|Print to PDF|Alt+L D")
+        xs = APPEND(xs, "T|Print To...|Alt+L T")
     CASE 6
         xs = APPEND(xs, "W|Word Count|Alt+U W")
         xs = APPEND(xs, "S|Spell Check|Alt+U S")
@@ -2366,16 +2366,62 @@ END FUNCTION
 ' the default printer); elsewhere it pipes to lp.
 FUNCTION osDefaultPrint(body AS STRING) AS ERROR
     IF runtime.GOOS = "windows" THEN
+        ' Send the text to the default printer with a fixed-pitch font via a
+        ' .NET PrintDocument. This goes straight to the spooler (no file-type
+        ' "print" verb, no app window) and keeps columns aligned. Pages are the
+        ' Chr(12) form feeds buildPaginated already inserts.
         DIM tmp AS STRING = filepath.Join(os.TempDir(), "starword_print.txt")
         DIM we AS ERROR = os.WriteFile(tmp, Encode(body), 420)
         IF we <> NIL THEN RETURN we
-        DIM ps AS STRING = "Start-Process -FilePath '" + tmp + "' -Verb Print"
-        DIM c AS POINTER TO exec.Cmd = exec.Command("powershell", "-NoProfile", "-Command", ps)
+        DIM ps1 AS STRING = filepath.Join(os.TempDir(), "starword_print.ps1")
+        DIM se AS ERROR = os.WriteFile(ps1, Encode(winPrintScript(tmp)), 420)
+        IF se <> NIL THEN RETURN se
+        DIM c AS POINTER TO exec.Cmd = exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1)
         RETURN (^c).Run()
     END IF
     DIM lc AS POINTER TO exec.Cmd = exec.Command("lp")
     (^lc).Stdin = strings.NewReader(body)
     RETURN (^lc).Run()
+END FUNCTION
+
+' winPrintScript — a PowerShell script that prints a text file to the default
+' printer using a Consolas (monospaced) font, paginating on Chr(12) form feeds.
+' Built with Chr() for the few PowerShell metacharacters to avoid escaping
+' confusion in the DBasic string literal.
+FUNCTION winPrintScript(txtPath AS STRING) AS STRING
+    DIM bt AS STRING = Chr(96)        ' backtick — PowerShell escape char
+    DIM nl AS STRING = Chr(10)
+    DIM ff AS STRING = Chr(34) + bt + "f" + Chr(34)      ' "`f"
+    DIM cr AS STRING = Chr(34) + bt + "r" + Chr(34)      ' "`r"
+    DIM lf AS STRING = Chr(34) + bt + "n" + Chr(34)      ' "`n"
+    DIM s AS STRING = ""
+    s = s + "Add-Type -AssemblyName System.Drawing" + nl
+    s = s + "$txt = [System.IO.File]::ReadAllText('" + txtPath + "')" + nl
+    s = s + "$pages = $txt -split " + ff + nl
+    s = s + "$pd = New-Object System.Drawing.Printing.PrintDocument" + nl
+    s = s + "$font = New-Object System.Drawing.Font('Consolas', 9)" + nl
+    s = s + "$script:pi = 0" + nl
+    s = s + "$pd.add_PrintPage({" + nl
+    s = s + "  param($snd, $e)" + nl
+    s = s + "  $page = ($pages[$script:pi] -replace " + cr + ", '')" + nl
+    s = s + "  $lines = $page -split " + lf + nl
+    s = s + "  $top = $e.MarginBounds.Top" + nl
+    s = s + "  $left = $e.MarginBounds.Left" + nl
+    s = s + "  $lh = $font.GetHeight($e.Graphics)" + nl
+    s = s + "  $max = [int]([math]::Floor($e.MarginBounds.Height / $lh))" + nl
+    s = s + "  $y = $top" + nl
+    s = s + "  $n = 0" + nl
+    s = s + "  foreach ($ln in $lines) {" + nl
+    s = s + "    if ($n -ge $max) { break }" + nl
+    s = s + "    $e.Graphics.DrawString($ln, $font, [System.Drawing.Brushes]::Black, [single]$left, [single]$y)" + nl
+    s = s + "    $y = $y + $lh" + nl
+    s = s + "    $n = $n + 1" + nl
+    s = s + "  }" + nl
+    s = s + "  $script:pi = $script:pi + 1" + nl
+    s = s + "  $e.HasMorePages = ($script:pi -lt $pages.Length)" + nl
+    s = s + "})" + nl
+    s = s + "$pd.Print()" + nl
+    RETURN s
 END FUNCTION
 
 ' monoFontFile — a monospaced TrueType font on this system, for full-Unicode PDF
@@ -2483,9 +2529,10 @@ FUNCTION renderPdf(path AS STRING) AS ERROR
     RETURN pdf.OutputFileAndClose(path)
 END FUNCTION
 
-' doPrintPdf — render the document to <base>.pdf and open it; the viewer's
-' print dialog is the system print dialog (choose printer, copies, pages).
-SUB doPrintPdf()
+' doPrintTo — File > Print To...: render the document to <base>.pdf and open it
+' so the viewer presents the system (Windows) print dialog, where you choose the
+' printer, page range and copies. The PDF doubles as an export.
+SUB doPrintTo()
     DIM stem AS STRING = gFileName
     DIM dp AS INTEGER = strings.LastIndex(stem, ".")
     IF dp > 0 THEN stem = Left(stem, dp)
@@ -2503,29 +2550,23 @@ SUB doPrintPdf()
     END IF
     DIM oe AS ERROR = osOpen(target)
     IF oe <> NIL THEN
-        gMessage = "Wrote " + target + " — open it to print"
+        gMessage = "Wrote " + target + " — open it and print (choose your printer)"
     ELSE
-        gMessage = "Opened " + target + " — print from your viewer (Ctrl+P)"
+        gMessage = "Opened " + target + " — choose your printer in the Print dialog (Ctrl+P)"
     END IF
 END SUB
 
-' doPrint — File > Print: write a paginated print image (<base>.prn) with
-' headers/footers, page numbers, markers stripped and dot lines dropped.
+' doPrint — File > Print: send the paginated document straight to the printer
+' (the configured print command, else the OS default printer). No file is left
+' behind on success; on failure the print image is saved as <base>.prn so
+' nothing is lost.
 SUB doPrint()
     applyDotCommands()
     DIM out AS []STRING = buildPaginated(FALSE)
-    DIM stem AS STRING = gFileName
-    DIM dotPos AS INTEGER = strings.LastIndex(stem, ".")
-    IF dotPos > 0 THEN stem = Left(stem, dotPos)
-    DIM target AS STRING = stem + ".prn"
     DIM body AS STRING = strings.Join(out, Chr(13) + Chr(10))
-    DIM e AS ERROR = os.WriteFile(target, Encode(body), 420)
-    IF e <> NIL THEN
-        gMessage = "Print failed: " + e.Error()
-        RETURN
-    END IF
     DIM np AS INTEGER = LEN(paginate())
-    ' If a print command is configured, pipe the print image to it too.
+    DIM perr AS ERROR
+    DIM dest AS STRING
     IF strings.TrimSpace(gPrintCommand) <> "" THEN
         DIM shell AS STRING = "sh"
         DIM flag AS STRING = "-c"
@@ -2535,20 +2576,23 @@ SUB doPrint()
         END IF
         DIM c AS POINTER TO exec.Cmd = exec.Command(shell, flag, gPrintCommand)
         (^c).Stdin = strings.NewReader(body)
-        DIM pe AS ERROR = (^c).Run()
-        IF pe <> NIL THEN
-            gMessage = fmt.Sprintf("Wrote %s; printer failed: %v", target, pe)
-        ELSE
-            gMessage = fmt.Sprintf("Printed %d pages to %s and to '%s'", np, target, gPrintCommand)
-        END IF
-        RETURN
-    END IF
-    ' No print command configured — send the image to the OS default printer.
-    DIM de AS ERROR = osDefaultPrint(body)
-    IF de <> NIL THEN
-        gMessage = fmt.Sprintf("Wrote %s (saved); default printer unavailable: %v", target, de)
+        perr = (^c).Run()
+        dest = "'" + gPrintCommand + "'"
     ELSE
-        gMessage = fmt.Sprintf("Printed %d pages to the default printer (also saved %s)", np, target)
+        perr = osDefaultPrint(body)
+        dest = "the default printer"
+    END IF
+    IF perr <> NIL THEN
+        ' Printing failed — save the image so the user can recover it.
+        DIM stem AS STRING = gFileName
+        DIM dotPos AS INTEGER = strings.LastIndex(stem, ".")
+        IF dotPos > 0 THEN stem = Left(stem, dotPos)
+        DIM target AS STRING = stem + ".prn"
+        DIM we AS ERROR = os.WriteFile(target, Encode(body), 420)
+        _ = we
+        gMessage = fmt.Sprintf("Print failed (%v); saved %s", perr, target)
+    ELSE
+        gMessage = fmt.Sprintf("Printed %d pages to %s", np, dest)
     END IF
 END SUB
 
@@ -3836,8 +3880,8 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             requestExit()
         ELSEIF hk = "P" THEN
             doPrint()
-        ELSEIF hk = "D" THEN
-            doPrintPdf()
+        ELSEIF hk = "T" THEN
+            doPrintTo()
         ELSEIF hk = "V" THEN
             gPromptMode = "chdir"
             gPromptLabel = "Change to directory: "
@@ -3979,8 +4023,8 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             gPromptText = ""
         ELSEIF hk = "F" THEN
             doPrint()
-        ELSEIF hk = "D" THEN
-            doPrintPdf()
+        ELSEIF hk = "T" THEN
+            doPrintTo()
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
