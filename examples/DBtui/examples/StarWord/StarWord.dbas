@@ -3391,7 +3391,9 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
         DIM calcSt AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#e6eeff")).Background(lipgloss.Color("#14336e"))
         DIM iw AS INTEGER = 34
         DIM clines AS []STRING
-        clines = APPEND(clines, swFit(" > " + gCalcInput + Chr(9617), iw))
+        ' Pad the ASCII part to iw-1, then add the 1-col cursor block. (swFit
+        ' measures bytes, and Chr(9617) is 3 bytes / 1 column.)
+        clines = APPEND(clines, swFit(" > " + gCalcInput, iw - 1) + Chr(9617))
         clines = APPEND(clines, swFit(" = " + gCalcResult, iw))
         clines = APPEND(clines, strings.Repeat("─", iw))
         DIM cti AS INTEGER
