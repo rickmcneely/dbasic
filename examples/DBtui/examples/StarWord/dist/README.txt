@@ -1,4 +1,4 @@
-StarWord 0.9.03b - a modern WordStar 7.0 clone (beta)
+StarWord 0.9.04b - a modern WordStar 7.0 clone (beta)
 =====================================================
 
 Copyright Rick McNeely 2026  -  rickmcneely@gmail.com

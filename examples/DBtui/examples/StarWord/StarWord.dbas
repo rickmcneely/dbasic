@@ -15,9 +15,9 @@ IMPORT "path/filepath" AS filepath
 IMPORT "github.com/go-pdf/fpdf" AS fpdf
 
 ' StarWord version. Scheme: 0.9.NNb — bump NN by one each release (next is
-' 0.9.03b); the trailing "b" marks beta. Switches to 1.0 once all features are
+' 0.9.04b); the trailing "b" marks beta. Switches to 1.0 once all features are
 ' complete and tested.
-CONST AppVersion AS STRING = "0.9.03b"
+CONST AppVersion AS STRING = "0.9.04b"
 
 SUB _dbtuiKeepFmtAlive()
     _ = fmt.Sprintf("")
@@ -427,8 +427,9 @@ DIM gMenuSel AS INTEGER            ' highlighted item in the open menu
 DIM gMode AS STRING = "edit"       ' "edit" | "open" (Opening Menu)
 
 ' --- modal exit-confirmation dialog (unsaved changes) ---------------------
-DIM gDialog AS STRING              ' "" | "exit"
+DIM gDialog AS STRING              ' "" | "exit" | "about" | "softwrap"
 DIM gDialogSel AS INTEGER          ' highlighted button: 0 Save, 1 Abandon, 2 Cancel
+DIM gSoftWrapWarned AS BOOLEAN     ' shown the "switch to soft wrap reflows" notice?
 DIM gDlgBtnRow AS INTEGER          ' canvas row of the buttons (for mouse hit-test)
 DIM gDlgBtnLo AS []INTEGER         ' canvas col ranges of each button
 DIM gDlgBtnHi AS []INTEGER
@@ -1261,6 +1262,26 @@ SUB handleDialogKey(key AS STRING)
         gDialog = ""
         RETURN
     END IF
+    ' Soft-wrap confirm: Y/Enter(on Yes) reflow, N/Esc cancel, arrows toggle.
+    IF gDialog = "softwrap" THEN
+        DIM sk AS STRING = LCase(key)
+        IF key = "left" OR key = "right" OR key = "tab" OR key = "shift+tab" THEN
+            gDialogSel = (gDialogSel + 1) MOD 2
+            RETURN
+        END IF
+        IF sk = "y" OR (key = "enter" AND gDialogSel = 0) THEN
+            gSoftWrapWarned = TRUE
+            gDialog = ""
+            applySoftSwitch()
+            RETURN
+        END IF
+        IF sk = "n" OR key = "esc" OR (key = "enter" AND gDialogSel = 1) THEN
+            gDialog = ""
+            gMessage = "Stayed in " + gWrapMode + " wrap"
+            RETURN
+        END IF
+        RETURN
+    END IF
     DIM k AS STRING = LCase(key)
     IF key = "esc" OR k = "c" THEN
         dlgCancel()
@@ -1290,6 +1311,26 @@ SUB dialogClick(x AS INTEGER, y AS INTEGER)
     ' The About box dismisses on any click (its OK button included).
     IF gDialog = "about" THEN
         gDialog = ""
+        RETURN
+    END IF
+    ' Soft-wrap confirm: click Y Yes / N No.
+    IF gDialog = "softwrap" THEN
+        IF y = gDlgBtnRow THEN
+            DIM bi AS INTEGER
+            FOR bi = 0 TO LEN(gDlgBtnLo) - 1
+                IF x >= gDlgBtnLo[bi] AND x < gDlgBtnHi[bi] THEN
+                    IF bi = 0 THEN
+                        gSoftWrapWarned = TRUE
+                        gDialog = ""
+                        applySoftSwitch()
+                    ELSE
+                        gDialog = ""
+                        gMessage = "Stayed in " + gWrapMode + " wrap"
+                    END IF
+                    RETURN
+                END IF
+            NEXT bi
+        END IF
         RETURN
     END IF
     IF y <> gDlgBtnRow THEN RETURN
@@ -1495,6 +1536,100 @@ FUNCTION renderAboutDialog(w AS INTEGER, h AS INTEGER) AS STRING
         ELSEIF rel = nBody + 1 THEN
             mid = box.Render("│") + okRow + box.Render("│")
         ELSEIF rel = nBody + 2 THEN
+            mid = box.Render("╰" + strings.Repeat("─", inner) + "╯")
+        ELSE
+            done = FALSE
+        END IF
+        IF done THEN
+            DIM tail AS INTEGER = w - boxX - boxW
+            IF tail < 0 THEN tail = 0
+            rows = APPEND(rows, lead + mid + bg.Render(strings.Repeat(" ", tail)))
+        ELSE
+            rows = APPEND(rows, bg.Render(swFit("", w)))
+        END IF
+    NEXT r
+    RETURN strings.Join(rows, Chr(10))
+END FUNCTION
+
+' renderSoftWrapDialog — confirm switching to soft wrap (it reflows paragraphs).
+' Y Yes / N No are clickable; the chosen one is highlighted.
+FUNCTION renderSoftWrapDialog(w AS INTEGER, h AS INTEGER) AS STRING
+    DIM bg AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#8aa0d8")).Background(lipgloss.Color("#0f2350"))
+    DIM box AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cfe0ff")).Background(lipgloss.Color("#14336e"))
+    DIM ttl AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
+    DIM sel AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
+    DIM keySty AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffd166")).Background(lipgloss.Color("#14336e")).Bold(TRUE)
+
+    DIM msgs AS []STRING
+    msgs = APPEND(msgs, "Switch to soft word wrap?")
+    msgs = APPEND(msgs, "")
+    msgs = APPEND(msgs, "Wrapped line breaks inside paragraphs will be")
+    msgs = APPEND(msgs, "joined and reflowed to the margin. Enter breaks")
+    msgs = APPEND(msgs, "and blank lines are kept. Edit > Undo reverts it.")
+
+    DIM inner AS INTEGER = 52
+    DIM wc AS INTEGER = 78
+    IF w < wc THEN wc = w
+    DIM hc AS INTEGER = 22
+    IF h < hc THEN hc = h
+    IF inner > wc - 2 THEN inner = wc - 2
+    DIM boxW AS INTEGER = inner + 2
+    DIM boxX AS INTEGER = (wc - boxW) / 2
+    IF boxX < 0 THEN boxX = 0
+
+    ' Clickable Y Yes / N No tokens, centered.
+    DIM tok0 AS STRING = "Y Yes"
+    DIM tok1 AS STRING = "N No"
+    DIM gapW AS INTEGER = 6
+    DIM cmdTextW AS INTEGER = LEN(tok0) + gapW + LEN(tok1)
+    DIM off0 AS INTEGER = (inner - cmdTextW) / 2
+    IF off0 < 1 THEN off0 = 1
+    DIM off1 AS INTEGER = off0 + LEN(tok0) + gapW
+    gDlgBtnLo = nil
+    gDlgBtnHi = nil
+    gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off0)
+    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off0 + LEN(tok0))
+    gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off1)
+    gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off1 + LEN(tok1))
+
+    DIM t0 AS STRING = keySty.Render("Y") + box.Render(" Yes")
+    DIM t1 AS STRING = keySty.Render("N") + box.Render(" No")
+    IF gDialogSel = 0 THEN t0 = sel.Render(tok0)
+    IF gDialogSel = 1 THEN t1 = sel.Render(tok1)
+    DIM gapS AS STRING = strings.Repeat(" ", gapW)
+    DIM btnPlain AS INTEGER = off1 + LEN(tok1)
+    DIM btnPad AS STRING = ""
+    IF inner > btnPlain THEN btnPad = strings.Repeat(" ", inner - btnPlain)
+    DIM btnRow AS STRING = box.Render(strings.Repeat(" ", off0)) + t0 + box.Render(gapS) + t1 + box.Render(btnPad)
+
+    DIM bodyRows AS []STRING
+    DIM mi AS INTEGER
+    FOR mi = 0 TO LEN(msgs) - 1
+        bodyRows = APPEND(bodyRows, box.Render(dlgCenter(msgs[mi], inner)))
+    NEXT mi
+
+    DIM nBody AS INTEGER = LEN(bodyRows)
+    DIM boxH AS INTEGER = 1 + nBody + 1 + 1 + 1   ' title + body + blank + buttons + bottom
+    DIM boxY AS INTEGER = (hc - boxH) / 2
+    IF boxY < 1 THEN boxY = 1
+    gDlgBtnRow = boxY + 1 + nBody + 1             ' title + body + blank
+
+    DIM rows AS []STRING
+    DIM r AS INTEGER
+    FOR r = 0 TO h - 1
+        DIM rel AS INTEGER = r - boxY
+        DIM lead AS STRING = bg.Render(strings.Repeat(" ", boxX))
+        DIM mid AS STRING = ""
+        DIM done AS BOOLEAN = TRUE
+        IF rel = 0 THEN
+            mid = ttl.Render(dlgCenter("Soft Word Wrap", boxW))
+        ELSEIF rel >= 1 AND rel <= nBody THEN
+            mid = box.Render("│") + bodyRows[rel - 1] + box.Render("│")
+        ELSEIF rel = nBody + 1 THEN
+            mid = box.Render("│") + box.Render(swFit("", inner)) + box.Render("│")
+        ELSEIF rel = nBody + 2 THEN
+            mid = box.Render("│") + btnRow + box.Render("│")
+        ELSEIF rel = nBody + 3 THEN
             mid = box.Render("╰" + strings.Repeat("─", inner) + "╯")
         ELSE
             done = FALSE
@@ -3000,8 +3135,10 @@ FUNCTION configPath() AS STRING
     RETURN home + "/.starword"
 END FUNCTION
 
-' cycleWrapMode — hard -> soft -> off -> hard; keep gWordWrap (hard-insert) in sync.
-SUB cycleWrapMode()
+' cycleWrapSetting — just cycle the mode (hard -> soft -> off -> hard), keeping
+' gWordWrap in sync. Used by the config screen, where no document transform is
+' wanted.
+SUB cycleWrapSetting()
     IF gWrapMode = "hard" THEN
         gWrapMode = "soft"
     ELSEIF gWrapMode = "soft" THEN
@@ -3010,6 +3147,180 @@ SUB cycleWrapMode()
         gWrapMode = "hard"
     END IF
     gWordWrap = (gWrapMode = "hard")
+END SUB
+
+' softCollapseWouldChange — TRUE if any paragraph spans more than one line (a
+' line joined to the next by a soft return), i.e. switching to soft wrap would
+' merge lines.
+FUNCTION softCollapseWouldChange() AS BOOLEAN
+    ensureHardLen()
+    DIM i AS INTEGER
+    FOR i = 0 TO lastRow() - 1
+        IF isTextLine(gLines[i]) AND isTextLine(gLines[i + 1]) AND NOT hardAt(i) THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' collapseSoftParagraphs — merge each multi-line paragraph (a run of text lines
+' joined by soft returns, bounded by blank lines, dot commands and hard
+' returns) into a single logical line, so soft wrap reflows it to any margin.
+' Single-line paragraphs (titles, headings) are left untouched. Content-
+' lossless: words, hard breaks and blank/dot lines are preserved.
+SUB collapseSoftParagraphs()
+    ensureHardLen()
+    DIM out AS []STRING
+    DIM outH AS []BOOLEAN
+    DIM i AS INTEGER = 0
+    WHILE i <= lastRow()
+        IF NOT isTextLine(gLines[i]) THEN
+            out = APPEND(out, gLines[i])
+            outH = APPEND(outH, hardAt(i))
+            i = i + 1
+        ELSE
+            DIM j AS INTEGER = i
+            WHILE j < lastRow() AND isTextLine(gLines[j + 1]) AND NOT hardAt(j)
+                j = j + 1
+            WEND
+            IF j = i THEN
+                out = APPEND(out, gLines[i])           ' single line: keep as-is
+                outH = APPEND(outH, hardAt(i))
+            ELSE
+                DIM para AS STRING = strings.TrimRight(gLines[i], " ")
+                DIM g AS INTEGER
+                FOR g = i + 1 TO j
+                    para = para + " " + strings.TrimSpace(gLines[g])
+                NEXT g
+                out = APPEND(out, para)
+                outH = APPEND(outH, hardAt(j))
+            END IF
+            i = j + 1
+        END IF
+    WEND
+    gLines = out
+    gHard = outH
+    IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
+    ensureHardLen()
+    clampCursor()
+    gModified = TRUE
+END SUB
+
+' wrapWords — greedy-wrap words into lines at most maxW wide (justified per the
+' current setting; the last line never justified).
+FUNCTION wrapWords(words AS []STRING, maxW AS INTEGER) AS []STRING
+    DIM lines AS []STRING
+    DIM curWords AS []STRING
+    DIM curW AS INTEGER = 0
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(words) - 1
+        DIM ww AS INTEGER = dispWidth(words[k])
+        DIM addv AS INTEGER = ww
+        IF LEN(curWords) > 0 THEN addv = addv + 1
+        IF LEN(curWords) > 0 AND curW + addv > maxW THEN
+            lines = APPEND(lines, buildWrapLine(curWords, maxW, FALSE))
+            curWords = nil
+            curW = 0
+            addv = ww
+        END IF
+        curWords = APPEND(curWords, words[k])
+        curW = curW + addv
+    NEXT k
+    IF LEN(curWords) > 0 THEN lines = APPEND(lines, buildWrapLine(curWords, maxW, TRUE))
+    IF LEN(lines) = 0 THEN lines = APPEND(lines, "")
+    RETURN lines
+END FUNCTION
+
+' wrapAllParagraphs — re-wrap every paragraph to the current margins (the
+' inverse of collapse, used when leaving soft wrap). Short single lines that
+' already fit (titles/headings) are left untouched to preserve their layout.
+SUB wrapAllParagraphs()
+    ensureHardLen()
+    DIM maxW AS INTEGER = gRightMargin - gLeftMargin
+    IF maxW < 1 THEN maxW = 1
+    DIM out AS []STRING
+    DIM outH AS []BOOLEAN
+    DIM i AS INTEGER = 0
+    WHILE i <= lastRow()
+        IF NOT isTextLine(gLines[i]) THEN
+            out = APPEND(out, gLines[i])
+            outH = APPEND(outH, hardAt(i))
+            i = i + 1
+        ELSE
+            DIM j AS INTEGER = i
+            WHILE j < lastRow() AND isTextLine(gLines[j + 1]) AND NOT hardAt(j)
+                j = j + 1
+            WEND
+            IF j = i AND dispWidth(gLines[i]) <= maxW THEN
+                out = APPEND(out, gLines[i])           ' short standalone line: keep
+                outH = APPEND(outH, hardAt(i))
+            ELSE
+                DIM words AS []STRING
+                DIM g AS INTEGER
+                FOR g = i TO j
+                    DIM fs AS []STRING = strings.Fields(gLines[g])
+                    DIM f AS INTEGER
+                    FOR f = 0 TO LEN(fs) - 1
+                        words = APPEND(words, fs[f])
+                    NEXT f
+                NEXT g
+                DIM endHard AS BOOLEAN = hardAt(j)
+                DIM wl AS []STRING = wrapWords(words, maxW)
+                DIM w AS INTEGER
+                FOR w = 0 TO LEN(wl) - 1
+                    out = APPEND(out, wl[w])
+                    IF w = LEN(wl) - 1 THEN
+                        outH = APPEND(outH, endHard)
+                    ELSE
+                        outH = APPEND(outH, FALSE)
+                    END IF
+                NEXT w
+            END IF
+            i = j + 1
+        END IF
+    WEND
+    gLines = out
+    gHard = outH
+    IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
+    ensureHardLen()
+    clampCursor()
+    gModified = TRUE
+END SUB
+
+SUB applySoftSwitch()
+    gWrapMode = "soft"
+    gWordWrap = FALSE
+    collapseSoftParagraphs()
+    gMessage = "Soft word wrap — paragraphs reflowed (Edit > Undo reverts)"
+END SUB
+
+' cycleWrapMode — the editor's ^OW toggle: hard -> soft -> off -> hard, applying
+' the matching document transform. Switching to soft collapses soft-broken
+' paragraphs (after a one-time confirm); switching to hard re-wraps them.
+SUB cycleWrapMode()
+    DIM nextMode AS STRING = "hard"
+    IF gWrapMode = "hard" THEN
+        nextMode = "soft"
+    ELSEIF gWrapMode = "soft" THEN
+        nextMode = "off"
+    ELSE
+        nextMode = "hard"
+    END IF
+    IF nextMode = "soft" THEN
+        IF softCollapseWouldChange() AND NOT gSoftWrapWarned THEN
+            gDialog = "softwrap"          ' confirm first; switch happens on Yes
+            gDialogSel = 0
+            RETURN
+        END IF
+        applySoftSwitch()
+    ELSEIF nextMode = "hard" THEN
+        gWrapMode = "hard"
+        gWordWrap = TRUE
+        wrapAllParagraphs()
+        gMessage = "Hard word wrap — paragraphs re-wrapped to the margin"
+    ELSE
+        gWrapMode = "off"
+        gWordWrap = FALSE
+        gMessage = "Word wrap off"
+    END IF
 END SUB
 
 ' applySetting — set one configuration key to a value.
@@ -3169,7 +3480,7 @@ SUB handleConfigKey(key AS STRING)
     DIM k AS STRING = LCase(key)
     IF strings.HasPrefix(k, "ctrl+") THEN k = Right(k, LEN(k) - 5)
     IF k = "a" THEN
-        cycleWrapMode()
+        cycleWrapSetting()
     ELSEIF k = "b" THEN
         gJustify = NOT gJustify
     ELSEIF k = "c" THEN
@@ -4377,6 +4688,7 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     gW = w
     gH = h
     IF gDialog = "about" THEN RETURN renderAboutDialog(w, h)
+    IF gDialog = "softwrap" THEN RETURN renderSoftWrapDialog(w, h)
     IF gDialog <> "" THEN RETURN renderExitDialog(w, h)
     IF gMode = "open" THEN RETURN renderOpeningMenu(w, h)
     IF gMode = "preview" THEN RETURN renderPreview(w, h)
@@ -6023,7 +6335,6 @@ SUB handlePrefixO(key AS STRING)
         gMessage = "Justification toggled"
     ELSEIF k = "w" THEN
         cycleWrapMode()
-        gMessage = "Word wrap: " + UCase(gWrapMode)
     ELSEIF k = "l" THEN
         gPromptMode = "lmargin"
         gPromptLabel = "Left margin: "
