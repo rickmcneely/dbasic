@@ -384,6 +384,11 @@ DIM gWordWrap AS BOOLEAN = TRUE   ' ^OW
 ' --- find / replace -------------------------------------------------------
 DIM gFindStr AS STRING
 DIM gReplaceStr AS STRING
+DIM gFindIgnore AS BOOLEAN        ' U : ignore case
+DIM gFindWhole AS BOOLEAN         ' W : whole words only
+DIM gFindBack AS BOOLEAN          ' B : search backward
+DIM gReplNoConfirm AS BOOLEAN     ' N : replace all without asking
+DIM gReplCount AS INTEGER         ' matches replaced in the current operation
 
 ' --- modal prompt on the message line -------------------------------------
 DIM gPromptMode AS STRING    ' "" | "find" | "rfind" | "rwith" | "saveas" | …
@@ -402,8 +407,18 @@ DIM gLastCol AS INTEGER
 ' --- misc WordStar feature state ------------------------------------------
 DIM gHelpLevel AS INTEGER = 3     ' WordStar help level 0..3 (Help > Change Help Level)
 DIM gShowRuler AS BOOLEAN = TRUE  ' View > Screen Settings toggles the ruler line
-DIM gPageLength AS INTEGER = 66   ' Layout > Page: lines per printed page
+DIM gPageLength AS INTEGER = 66   ' Layout > Page / .pl : lines per printed page
+DIM gMarginTop AS INTEGER = 3     ' .mt : blank lines above the body
+DIM gMarginBottom AS INTEGER = 8  ' .mb : blank lines below the body
+DIM gHeader AS STRING             ' .he : running header ("#" -> page number)
+DIM gFooter AS STRING             ' .fo : running footer ("#" -> page number)
+DIM gPageNumbering AS BOOLEAN = TRUE  ' .pn on / .op off
+DIM gPrevTop AS INTEGER           ' first visible line in print-preview mode
 DIM gNonDocument AS BOOLEAN       ' non-document mode (WS /N): no wrap/justify/dot cmds
+
+' --- place markers 0..9 (^K0..^K9 set, ^Q0..^Q9 jump) ---------------------
+DIM gMarkRow AS []INTEGER         ' 10 entries; row = -1 means unset
+DIM gMarkCol AS []INTEGER
 
 ' --- single-register keyboard macro (Utilities > Macros) -------------------
 DIM gMacroKeys AS []STRING        ' recorded key names
@@ -778,48 +793,164 @@ END SUB
 ' Find
 ' ==========================================================================
 
-' findFrom — search forward for gFindStr starting just after (sr,sc).
-FUNCTION findFrom(sr AS INTEGER, sc AS INTEGER) AS BOOLEAN
-    IF gFindStr = "" THEN RETURN FALSE
-    DIM r AS INTEGER
-    FOR r = sr TO lastRow()
-        DIM startc AS INTEGER = 0
-        IF r = sr THEN startc = sc
-        DIM hay AS STRING = gLines[r]
-        IF startc <= LEN(hay) THEN
-            DIM hayb AS STRING = Mid(hay, startc + 1, LEN(hay) - startc)
-            DIM idx AS INTEGER = strings.Index(hayb, gFindStr)
-            IF idx >= 0 THEN
-                gRow = r
-                gCol = startc + idx
-                RETURN TRUE
-            END IF
+' matchAt — does gFindStr occur at byte offset pos in line, honoring the
+' ignore-case (U) and whole-word (W) options?
+FUNCTION matchAt(line AS STRING, pos AS INTEGER) AS BOOLEAN
+    DIM hay AS STRING = line
+    DIM nee AS STRING = gFindStr
+    IF gFindIgnore THEN
+        hay = LCase(line)
+        nee = LCase(gFindStr)
+    END IF
+    IF pos < 0 OR pos + LEN(nee) > LEN(hay) THEN RETURN FALSE
+    IF Mid(hay, pos + 1, LEN(nee)) <> nee THEN RETURN FALSE
+    IF gFindWhole THEN
+        IF pos > 0 THEN
+            IF isWordCh(runeAt(line, prevRuneStart(line, pos))) THEN RETURN FALSE
         END IF
-    NEXT r
+        DIM after AS INTEGER = pos + LEN(nee)
+        IF after < LEN(line) THEN
+            IF isWordCh(runeAt(line, after)) THEN RETURN FALSE
+        END IF
+    END IF
+    RETURN TRUE
+END FUNCTION
+
+' searchFrom — find gFindStr from (sr,sc) in the given direction; on success
+' set gRow/gCol to the match start and return TRUE.
+FUNCTION searchFrom(sr AS INTEGER, sc AS INTEGER, forward AS BOOLEAN) AS BOOLEAN
+    IF gFindStr = "" THEN RETURN FALSE
+    IF forward THEN
+        DIM r AS INTEGER
+        FOR r = sr TO lastRow()
+            DIM hay AS STRING = gLines[r]
+            DIM startc AS INTEGER = 0
+            IF r = sr THEN startc = sc
+            IF startc < 0 THEN startc = 0
+            DIM pos AS INTEGER = startc
+            WHILE pos <= LEN(hay)
+                IF matchAt(hay, pos) THEN
+                    gRow = r
+                    gCol = pos
+                    RETURN TRUE
+                END IF
+                pos = pos + 1
+            WEND
+        NEXT r
+    ELSE
+        DIM r2 AS INTEGER
+        FOR r2 = sr TO 0 STEP -1
+            DIM hay2 AS STRING = gLines[r2]
+            DIM startc2 AS INTEGER = LEN(hay2)
+            IF r2 = sr THEN startc2 = sc
+            IF startc2 > LEN(hay2) THEN startc2 = LEN(hay2)
+            DIM pos2 AS INTEGER = startc2
+            WHILE pos2 >= 0
+                IF matchAt(hay2, pos2) THEN
+                    gRow = r2
+                    gCol = pos2
+                    RETURN TRUE
+                END IF
+                pos2 = pos2 - 1
+            WEND
+        NEXT r2
+    END IF
     RETURN FALSE
 END FUNCTION
 
-SUB doFindNext()
-    IF findFrom(gRow, gCol + 1) THEN
+' parseFindOpts — set the W/U/B option flags from a typed option string.
+SUB parseFindOpts(opts AS STRING)
+    DIM o AS STRING = LCase(opts)
+    gFindIgnore = strings.Contains(o, "u")
+    gFindWhole = strings.Contains(o, "w")
+    gFindBack = strings.Contains(o, "b")
+END SUB
+
+' doFind — run a find from the cursor in the active direction.
+SUB doFind()
+    DIM ok AS BOOLEAN = FALSE
+    IF gFindBack THEN
+        ok = searchFrom(gRow, gCol - 1, FALSE)
+    ELSE
+        ok = searchFrom(gRow, gCol, TRUE)
+    END IF
+    IF ok THEN
         gMessage = "Found"
     ELSE
         gMessage = "Not found: " + gFindStr
     END IF
 END SUB
 
-' replaceAllFromCursor — replace every gFindStr with gReplaceStr from the
-' cursor to end of file (WordStar's ^QA, simplified to replace-all).
-SUB replaceAllFromCursor()
-    IF gFindStr = "" THEN RETURN
-    DIM n AS INTEGER = 0
-    WHILE findFrom(gRow, gCol)
-        DIM ln AS STRING = gLines[gRow]
-        gLines[gRow] = Left(ln, gCol) + gReplaceStr + Right(ln, LEN(ln) - gCol - LEN(gFindStr))
-        gCol = gCol + LEN(gReplaceStr)
-        n = n + 1
-    WEND
-    gModified = (n > 0)
-    gMessage = fmt.Sprintf("Replaced %d occurrence(s)", n)
+' doFindNext — ^L: repeat the last find, skipping the current match.
+SUB doFindNext()
+    DIM ok AS BOOLEAN = FALSE
+    IF gFindBack THEN
+        ok = searchFrom(gRow, gCol - 1, FALSE)
+    ELSE
+        ok = searchFrom(gRow, gCol + 1, TRUE)
+    END IF
+    IF ok THEN
+        gMessage = "Found"
+    ELSE
+        gMessage = "Not found: " + gFindStr
+    END IF
+END SUB
+
+' replaceCurrentMatch — replace the gFindStr-length span at the cursor.
+SUB replaceCurrentMatch()
+    DIM ln AS STRING = gLines[gRow]
+    gLines[gRow] = Left(ln, gCol) + gReplaceStr + Right(ln, LEN(ln) - gCol - LEN(gFindStr))
+    gCol = gCol + LEN(gReplaceStr)
+    gModified = TRUE
+    gReplCount = gReplCount + 1
+END SUB
+
+' startReplace — begin a replace run: all-at-once with N, else interactive
+' (Y/N/A/Esc) confirmation via the "confirmrepl" prompt.
+SUB startReplace()
+    gReplCount = 0
+    IF gReplNoConfirm THEN
+        WHILE searchFrom(gRow, gCol, TRUE)
+            replaceCurrentMatch()
+        WEND
+        gMessage = fmt.Sprintf("Replaced %d occurrence(s)", gReplCount)
+    ELSEIF searchFrom(gRow, gCol, TRUE) THEN
+        gPromptMode = "confirmrepl"
+        gPromptLabel = "Replace? (Y / N / A=all / Esc=stop): "
+        gPromptText = ""
+    ELSE
+        gMessage = "Not found: " + gFindStr
+    END IF
+END SUB
+
+' handleConfirmRepl — keystrokes while confirming each replacement.
+SUB handleConfirmRepl(key AS STRING)
+    DIM k AS STRING = LCase(key)
+    IF key = "esc" THEN
+        gPromptMode = ""
+        gMessage = fmt.Sprintf("Replaced %d occurrence(s)", gReplCount)
+        RETURN
+    END IF
+    IF k = "a" THEN
+        replaceCurrentMatch()
+        WHILE searchFrom(gRow, gCol, TRUE)
+            replaceCurrentMatch()
+        WEND
+        gPromptMode = ""
+        gMessage = fmt.Sprintf("Replaced %d occurrence(s)", gReplCount)
+        RETURN
+    END IF
+    IF k = "y" THEN
+        replaceCurrentMatch()
+    ELSEIF k = "n" THEN
+        gCol = gCol + LEN(gFindStr)
+    ELSE
+        RETURN
+    END IF
+    IF NOT searchFrom(gRow, gCol, TRUE) THEN
+        gPromptMode = ""
+        gMessage = fmt.Sprintf("Replaced %d occurrence(s)", gReplCount)
+    END IF
 END SUB
 
 ' ==========================================================================
@@ -1388,15 +1519,11 @@ FUNCTION stripMarkers(s AS STRING) AS STRING
     RETURN acc
 END FUNCTION
 
-' doPrint — File > Print: write a plain-text print image (<base>.prn) with
-' the print-control toggles removed and dot-command lines dropped.
+' doPrint — File > Print: write a paginated print image (<base>.prn) with
+' headers/footers, page numbers, markers stripped and dot lines dropped.
 SUB doPrint()
-    DIM out AS []STRING
-    DIM i AS INTEGER
-    FOR i = 0 TO lastRow()
-        DIM ln AS STRING = gLines[i]
-        IF Left(ln, 1) <> "." THEN out = APPEND(out, stripMarkers(ln))
-    NEXT i
+    applyDotCommands()
+    DIM out AS []STRING = buildPaginated(FALSE)
     DIM stem AS STRING = gFileName
     DIM dotPos AS INTEGER = strings.LastIndex(stem, ".")
     IF dotPos > 0 THEN stem = Left(stem, dotPos)
@@ -1407,7 +1534,7 @@ SUB doPrint()
         gMessage = "Print failed: " + e.Error()
         RETURN
     END IF
-    gMessage = "Printed to " + target
+    gMessage = fmt.Sprintf("Printed %d pages to %s", LEN(paginate()), target)
 END SUB
 
 ' --- Utilities menu: calculator -------------------------------------------
@@ -1561,14 +1688,17 @@ END SUB
 FUNCTION renderPreview(w AS INTEGER, h AS INTEGER) AS STRING
     DIM hdr AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
     DIM pg AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#101010")).Background(lipgloss.Color("#f4f4f4"))
+    applyDotCommands()
+    DIM body AS []STRING = buildPaginated(TRUE)
+    IF gPrevTop > LEN(body) - 1 THEN gPrevTop = LEN(body) - 1
+    IF gPrevTop < 0 THEN gPrevTop = 0
     DIM rows AS []STRING
-    rows = APPEND(rows, hdr.Render(swFit(" PREVIEW  -  " + gFileName + "    (press any key to return)", w)))
+    rows = APPEND(rows, hdr.Render(swFit(" PREVIEW  -  " + gFileName + fmt.Sprintf("    line %d/%d    (arrows/PgUp/PgDn scroll, Esc exits)", gPrevTop + 1, LEN(body)), w)))
     DIM shown AS INTEGER = 0
     DIM i AS INTEGER
-    FOR i = gTop TO lastRow()
-        DIM ln AS STRING = gLines[i]
-        IF Left(ln, 1) <> "." AND shown < h - 1 THEN
-            rows = APPEND(rows, pg.Render(swFit(stripMarkers(ln), w)))
+    FOR i = gPrevTop TO LEN(body) - 1
+        IF shown < h - 1 THEN
+            rows = APPEND(rows, pg.Render(swFit(body[i], w)))
             shown = shown + 1
         END IF
     NEXT i
@@ -1577,6 +1707,66 @@ FUNCTION renderPreview(w AS INTEGER, h AS INTEGER) AS STRING
     WEND
     RETURN strings.Join(rows, Chr(10))
 END FUNCTION
+
+' --- place markers + go-to (navigation) -----------------------------------
+
+' digitOf — the 0..9 value of a single-character key, or -1.
+FUNCTION digitOf(k AS STRING) AS INTEGER
+    IF LEN(k) <> 1 THEN RETURN 0 - 1
+    DIM a AS INTEGER = Asc(k)
+    IF a >= 48 AND a <= 57 THEN RETURN a - 48
+    RETURN 0 - 1
+END FUNCTION
+
+' setPlaceMarker — ^K0..^K9: remember the cursor as marker n.
+SUB setPlaceMarker(n AS INTEGER)
+    gMarkRow[n] = gRow
+    gMarkCol[n] = gCol
+    gMessage = fmt.Sprintf("Place marker %d set", n)
+END SUB
+
+' gotoPlaceMarker — ^Q0..^Q9: jump to marker n.
+SUB gotoPlaceMarker(n AS INTEGER)
+    IF gMarkRow[n] < 0 THEN
+        gMessage = fmt.Sprintf("Marker %d not set", n)
+        RETURN
+    END IF
+    gRow = gMarkRow[n]
+    gCol = gMarkCol[n]
+    clampCursor()
+    gMessage = fmt.Sprintf("Jumped to marker %d", n)
+END SUB
+
+' gotoLine — move the cursor to 1-based line number ln (clamped).
+SUB gotoLine(ln AS INTEGER)
+    gRow = ln - 1
+    IF gRow < 0 THEN gRow = 0
+    IF gRow > lastRow() THEN gRow = lastRow()
+    gCol = 0
+    gMessage = fmt.Sprintf("Line %d", gRow + 1)
+END SUB
+
+' gotoPage — move to the first line of 1-based page p (uses paginate()).
+SUB gotoPage(p AS INTEGER)
+    DIM starts AS []INTEGER = paginate()
+    IF p < 1 THEN p = 1
+    IF p > LEN(starts) THEN p = LEN(starts)
+    gRow = starts[p - 1]
+    gCol = 0
+    IF gRow > lastRow() THEN gRow = lastRow()
+    gMessage = fmt.Sprintf("Page %d of %d", p, LEN(starts))
+END SUB
+
+' doGoto — handle the ^QI prompt text: a bare number is a line; "P<n>" a page.
+SUB doGoto(txt AS STRING)
+    DIM t AS STRING = strings.TrimSpace(txt)
+    IF t = "" THEN RETURN
+    IF LCase(Left(t, 1)) = "p" THEN
+        gotoPage(Int(Val(strings.TrimSpace(Mid(t, 2, LEN(t) - 1)))))
+    ELSE
+        gotoLine(Int(Val(t)))
+    END IF
+END SUB
 
 ' doMenuItem — perform the action for (menuIdx, hotkey). Unimplemented WordStar
 ' features report a friendly message; the rest drive StarWord's real commands.
@@ -1656,6 +1846,7 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             gMessage = "Command tags display toggled"
         ELSEIF hk = "P" THEN
             gMode = "preview"
+            gPrevTop = 0
             gMessage = ""
         ELSEIF hk = "S" THEN
             gShowRuler = NOT gShowRuler
@@ -2256,6 +2447,15 @@ END SUB
 ' applyDotCommands — scan the document for ".lm N" / ".rm N" dot commands and
 ' set the ruler margins (last one in the file wins). Called each render.
 SUB applyDotCommands()
+    ' Header/footer/page settings are dot-command-only, so reset them to
+    ' defaults each pass (deleting a .he/.fo/.mt clears its effect). Margins
+    ' and page length are also settable from menus, so those persist unless a
+    ' dot command overrides them.
+    gHeader = ""
+    gFooter = ""
+    gMarginTop = 3
+    gMarginBottom = 8
+    gPageNumbering = TRUE
     DIM i AS INTEGER
     FOR i = 0 TO lastRow()
         DIM ln AS STRING = gLines[i]
@@ -2265,9 +2465,107 @@ SUB applyDotCommands()
         ELSEIF Left(ln, 4) = ".rm " THEN
             DIM v2 AS INTEGER = Int(Val(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))))
             IF v2 > 0 THEN gRightMargin = v2
+        ELSEIF Left(ln, 4) = ".pl " THEN
+            DIM pv AS INTEGER = Int(Val(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))))
+            IF pv > 0 THEN gPageLength = pv
+        ELSEIF Left(ln, 4) = ".mt " THEN
+            gMarginTop = Int(Val(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))))
+        ELSEIF Left(ln, 4) = ".mb " THEN
+            gMarginBottom = Int(Val(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))))
+        ELSEIF Left(ln, 4) = ".he " THEN
+            gHeader = Mid(ln, 5, LEN(ln) - 4)
+        ELSEIF Left(ln, 4) = ".fo " THEN
+            gFooter = Mid(ln, 5, LEN(ln) - 4)
+        ELSEIF Left(ln, 3) = ".pn" THEN
+            gPageNumbering = TRUE
+        ELSEIF Left(ln, 3) = ".op" THEN
+            gPageNumbering = FALSE
         END IF
     NEXT i
 END SUB
+
+' isDotCmd — a dot-command line (starts with ".") is not printed or paginated.
+FUNCTION isDotCmd(ln AS STRING) AS BOOLEAN
+    RETURN Left(ln, 1) = "."
+END FUNCTION
+
+' paginate — the document-line index that begins each printed page, honoring
+' .pa forced breaks and the page length minus top/bottom margins.
+FUNCTION paginate() AS []INTEGER
+    DIM starts AS []INTEGER
+    DIM perPage AS INTEGER = gPageLength - gMarginTop - gMarginBottom
+    IF perPage < 1 THEN perPage = 1
+    starts = APPEND(starts, 0)
+    DIM count AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO lastRow()
+        DIM ln AS STRING = gLines[i]
+        IF Left(ln, 3) = ".pa" THEN
+            count = 0
+            IF i + 1 <= lastRow() THEN starts = APPEND(starts, i + 1)
+        ELSEIF isDotCmd(ln) THEN
+            ' other dot command — no page advance
+        ELSE
+            count = count + 1
+            IF count > perPage THEN
+                starts = APPEND(starts, i)
+                count = 1
+            END IF
+        END IF
+    NEXT i
+    RETURN starts
+END FUNCTION
+
+' subPageNum — replace "#" in a header/footer with the page number.
+FUNCTION subPageNum(s AS STRING, p AS INTEGER) AS STRING
+    RETURN strings.ReplaceAll(s, "#", fmt.Sprintf("%d", p))
+END FUNCTION
+
+' centerText — center s within the right margin (for the page-number footer).
+FUNCTION centerText(s AS STRING) AS STRING
+    IF gRightMargin <= LEN(s) THEN RETURN s
+    RETURN strings.Repeat(" ", (gRightMargin - LEN(s)) / 2) + s
+END FUNCTION
+
+' buildPaginated — the document laid out into pages: header, body (markers
+' stripped, dot commands dropped), footer/page number. forScreen inserts a
+' visible separator between pages; otherwise a form-feed (Chr 12) for printing.
+FUNCTION buildPaginated(forScreen AS BOOLEAN) AS []STRING
+    DIM starts AS []INTEGER = paginate()
+    DIM out AS []STRING
+    DIM p AS INTEGER
+    FOR p = 0 TO LEN(starts) - 1
+        DIM firstLine AS INTEGER = starts[p]
+        DIM lastLine AS INTEGER = lastRow()
+        IF p + 1 < LEN(starts) THEN lastLine = starts[p + 1] - 1
+        IF gHeader <> "" THEN
+            out = APPEND(out, subPageNum(gHeader, p + 1))
+            out = APPEND(out, "")
+        END IF
+        DIM i AS INTEGER
+        FOR i = firstLine TO lastLine
+            IF NOT isDotCmd(gLines[i]) THEN out = APPEND(out, stripMarkers(gLines[i]))
+        NEXT i
+        DIM foot AS STRING = ""
+        IF gFooter <> "" THEN
+            foot = subPageNum(gFooter, p + 1)
+        ELSEIF gPageNumbering THEN
+            foot = centerText(fmt.Sprintf("%d", p + 1))
+        END IF
+        IF foot <> "" THEN
+            out = APPEND(out, "")
+            out = APPEND(out, foot)
+        END IF
+        IF p + 1 < LEN(starts) THEN
+            IF forScreen THEN
+                out = APPEND(out, strings.Repeat("─", 24) + fmt.Sprintf(" page %d ", p + 2) + strings.Repeat("─", 12))
+            ELSE
+                out = APPEND(out, Chr(12))
+            END IF
+        END IF
+    NEXT p
+    RETURN out
+END FUNCTION
 
 ' ==========================================================================
 ' Paragraph reflow + justification (^B reformat, ^OJ justify, ^OW word-wrap)
@@ -2585,6 +2883,8 @@ SUB handlePrefixK(key AS STRING)
         RequestQuit()
     ELSEIF k = "q" THEN
         RequestQuit()
+    ELSEIF digitOf(k) >= 0 THEN
+        setPlaceMarker(digitOf(k))
     ELSE
         gMessage = "^K" + UCase(k) + " — not in this build"
     END IF
@@ -2631,6 +2931,12 @@ SUB handlePrefixQ(key AS STRING)
         gPromptMode = "rfind"
         gPromptLabel = "Replace - find: "
         gPromptText = ""
+    ELSEIF k = "i" THEN
+        gPromptMode = "goto"
+        gPromptLabel = "Go to line (P# = page): "
+        gPromptText = ""
+    ELSEIF digitOf(k) >= 0 THEN
+        gotoPlaceMarker(digitOf(k))
     ELSE
         gMessage = "^Q" + UCase(k) + " — not in this build"
     END IF
@@ -2685,6 +2991,11 @@ END SUB
 
 ' handlePrompt — modal text entry on the message line (find / replace / etc).
 SUB handlePrompt(key AS STRING)
+    ' Per-match replace confirmation answers single keys, not typed text.
+    IF gPromptMode = "confirmrepl" THEN
+        handleConfirmRepl(key)
+        RETURN
+    END IF
     IF key = "esc" THEN
         gPromptMode = ""
         gMessage = "Cancelled"
@@ -2696,12 +3007,12 @@ SUB handlePrompt(key AS STRING)
         gPromptMode = ""
         IF mode = "find" THEN
             gFindStr = txt
-            ' Search from the cursor inclusive (^L repeats from after it).
-            IF findFrom(gRow, gCol) THEN
-                gMessage = "Found"
-            ELSE
-                gMessage = "Not found: " + gFindStr
-            END IF
+            gPromptMode = "findopts"
+            gPromptLabel = "Find options (W=word U=ignore-case B=back, Enter=none): "
+            gPromptText = ""
+        ELSEIF mode = "findopts" THEN
+            parseFindOpts(txt)
+            doFind()
         ELSEIF mode = "rfind" THEN
             gFindStr = txt
             gPromptMode = "rwith"
@@ -2709,7 +3020,17 @@ SUB handlePrompt(key AS STRING)
             gPromptText = ""
         ELSEIF mode = "rwith" THEN
             gReplaceStr = txt
-            replaceAllFromCursor()
+            gPromptMode = "replopts"
+            gPromptLabel = "Replace options (W U B  N=all  G=global): "
+            gPromptText = ""
+        ELSEIF mode = "replopts" THEN
+            parseFindOpts(txt)
+            gReplNoConfirm = strings.Contains(LCase(txt), "n")
+            IF strings.Contains(LCase(txt), "g") THEN
+                gRow = 0
+                gCol = 0
+            END IF
+            startReplace()
         ELSEIF mode = "saveas" THEN
             gFileName = txt
             gIsUnicode = detectUnicode(txt)
@@ -2748,6 +3069,8 @@ SUB handlePrompt(key AS STRING)
             gMessage = fmt.Sprintf("Page length = %d", gPageLength)
         ELSEIF mode = "calc" THEN
             doCalc(txt)
+        ELSEIF mode = "goto" THEN
+            doGoto(txt)
         END IF
         RETURN
     END IF
@@ -2834,10 +3157,22 @@ SUB Form_Key(key AS STRING)
     IF gMacroRecording AND NOT gMacroPlaying THEN gMacroKeys = APPEND(gMacroKeys, key)
     gMessage = ""
 
-    ' Print preview is a read-only overlay — any key returns to the editor.
+    ' Print preview is a read-only overlay — arrows/PgUp/PgDn scroll, any
+    ' other key (Esc) returns to the editor.
     IF gMode = "preview" THEN
-        gMode = "edit"
-        gMessage = "Left preview"
+        IF key = "up" OR key = "ctrl+e" THEN
+            gPrevTop = gPrevTop - 1
+        ELSEIF key = "down" OR key = "ctrl+x" THEN
+            gPrevTop = gPrevTop + 1
+        ELSEIF key = "pgup" OR key = "ctrl+r" THEN
+            gPrevTop = gPrevTop - (gH - 2)
+        ELSEIF key = "pgdown" OR key = "ctrl+c" THEN
+            gPrevTop = gPrevTop + (gH - 2)
+        ELSE
+            gMode = "edit"
+            gMessage = "Left preview"
+        END IF
+        IF gPrevTop < 0 THEN gPrevTop = 0
         RETURN
     END IF
 
@@ -3065,24 +3400,32 @@ SUB printUsage()
     fmt.Println("  /?  -h  --help          show this help and exit")
 END SUB
 
-' printDocToStdout — emit a plain-text copy of the loaded file (for -p): in
-' document mode, drop dot commands and strip print-control toggles; in
-' non-document mode, every line is literal.
+' printDocToStdout — emit a copy of the loaded file (for -p): document mode
+' paginates with headers/footers/page numbers; non-document mode is literal.
 SUB printDocToStdout()
     DIM i AS INTEGER
-    FOR i = 0 TO lastRow()
-        DIM ln AS STRING = gLines[i]
-        IF gNonDocument THEN
-            fmt.Println(ln)
-        ELSEIF Left(ln, 1) <> "." THEN
-            fmt.Println(stripMarkers(ln))
-        END IF
+    IF gNonDocument THEN
+        FOR i = 0 TO lastRow()
+            fmt.Println(gLines[i])
+        NEXT i
+        RETURN
+    END IF
+    applyDotCommands()
+    DIM lines AS []STRING = buildPaginated(FALSE)
+    FOR i = 0 TO LEN(lines) - 1
+        fmt.Println(lines[i])
     NEXT i
 END SUB
 
 ' Fired once at startup — parse WordStar-style command-line arguments, then
 ' open the named file (or the Opening Menu when none is given).
 SUB Form_Load()
+    ' Place markers 0..9 start unset.
+    DIM mi AS INTEGER
+    FOR mi = 0 TO 9
+        gMarkRow = APPEND(gMarkRow, 0 - 1)
+        gMarkCol = APPEND(gMarkCol, 0)
+    NEXT mi
     DIM args AS []STRING = os.Args
     DIM fileArg AS STRING = ""
     DIM wantHelp AS BOOLEAN = FALSE
