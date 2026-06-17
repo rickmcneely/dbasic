@@ -449,6 +449,12 @@ DIM gCfgSnapshot AS STRING             ' settings serialized on config entry (fo
 DIM gResizeShow AS BOOLEAN
 DIM gResizeGen AS INTEGER          ' bumped per resize; the timer clears only the latest
 
+' --- soft-wrap visual-row table (rebuilt each render when wrap mode = soft) -
+DIM gVisLine AS []INTEGER          ' logical line index for each visual row
+DIM gVisStart AS []INTEGER         ' segment start byte
+DIM gVisEnd AS []INTEGER           ' segment end byte (exclusive)
+DIM gTopVis AS INTEGER             ' first visible visual row (soft-mode scroll)
+
 ' --- place markers 0..9 (^K0..^K9 set, ^Q0..^Q9 jump) ---------------------
 DIM gMarkRow AS []INTEGER         ' 10 entries; row = -1 means unset
 DIM gMarkCol AS []INTEGER
@@ -2364,14 +2370,19 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     DIM txRows AS INTEGER = h - 4
     IF txRows < 1 THEN txRows = 1
 
-    ' Keep the cursor on screen (both axes).
-    IF gRow < gTop THEN gTop = gRow
-    IF gRow >= gTop + txRows THEN gTop = gRow - txRows + 1
-    IF gCol < gLeft THEN gLeft = gCol
-    IF gCol >= gLeft + w THEN gLeft = gCol - w + 1
-    IF gTop < 0 THEN gTop = 0
-    IF gLeft < 0 THEN gLeft = 0
-    gLeft = snapToRune(curLine(), gLeft)
+    ' Keep the cursor on screen. Soft wrap scrolls by visual row (no
+    ' horizontal scroll); hard/off mode scrolls by logical line + column.
+    IF softWrapOn() THEN
+        gLeft = 0
+    ELSE
+        IF gRow < gTop THEN gTop = gRow
+        IF gRow >= gTop + txRows THEN gTop = gRow - txRows + 1
+        IF gCol < gLeft THEN gLeft = gCol
+        IF gCol >= gLeft + w THEN gLeft = gCol - w + 1
+        IF gTop < 0 THEN gTop = 0
+        IF gLeft < 0 THEN gLeft = 0
+        gLeft = snapToRune(curLine(), gLeft)
+    END IF
 
     ' Palette — modernized WordStar blue.
     DIM stStyle AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
@@ -2425,9 +2436,26 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
 
     ' --- rows 2..h-2: text area ---
     DIM sy AS INTEGER
-    FOR sy = 0 TO txRows - 1
-        rows = APPEND(rows, renderTextRow(gTop + sy, w, txStyle, curStyle, blkStyle))
-    NEXT sy
+    IF softWrapOn() THEN
+        ' Build the visual-row table and scroll it to keep the cursor visible.
+        buildVisRows(wrapWidth())
+        DIM cvr AS INTEGER = cursorVisRow()
+        IF cvr < gTopVis THEN gTopVis = cvr
+        IF cvr >= gTopVis + txRows THEN gTopVis = cvr - txRows + 1
+        IF gTopVis < 0 THEN gTopVis = 0
+        FOR sy = 0 TO txRows - 1
+            DIM vr AS INTEGER = gTopVis + sy
+            IF vr < LEN(gVisLine) THEN
+                rows = APPEND(rows, renderSegment(gVisLine[vr], gVisStart[vr], gVisEnd[vr], 0, w, txStyle, curStyle, blkStyle))
+            ELSE
+                rows = APPEND(rows, txStyle.Render(strings.Repeat(" ", w)))
+            END IF
+        NEXT sy
+    ELSE
+        FOR sy = 0 TO txRows - 1
+            rows = APPEND(rows, renderTextRow(gTop + sy, w, txStyle, curStyle, blkStyle))
+        NEXT sy
+    END IF
 
     ' --- row h-1: message / modal prompt line ---
     DIM msg AS STRING
@@ -2483,9 +2511,8 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
                     leftPart = ruStyle.Render(Left(ruler, boxX))
                     rightPart = ruStyle.Render(Mid(ruler, rEnd + 1, w - rEnd))
                 ELSE
-                    DIM docRow AS INTEGER = gTop + (mr - txTop)
-                    leftPart = renderTextRange(docRow, 0, boxX, txStyle, curStyle, blkStyle)
-                    rightPart = renderTextRange(docRow, rEnd, w - rEnd, txStyle, curStyle, blkStyle)
+                    leftPart = renderBgRange(mr, 0, boxX, txStyle, curStyle, blkStyle)
+                    rightPart = renderBgRange(mr, rEnd, w - rEnd, txStyle, curStyle, blkStyle)
                 END IF
                 rows[mr] = leftPart + boxLine + rightPart
             END IF
@@ -2514,9 +2541,8 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
             DIM pmr AS INTEGER = pboxY + pi
             IF pmr >= txTop AND pmr <= h - 2 THEN
                 DIM pEnd AS INTEGER = pboxX + pboxW
-                DIM pdoc AS INTEGER = gTop + (pmr - txTop)
-                DIM pleft AS STRING = renderTextRange(pdoc, 0, pboxX, txStyle, curStyle, blkStyle)
-                DIM pright AS STRING = renderTextRange(pdoc, pEnd, w - pEnd, txStyle, curStyle, blkStyle)
+                DIM pleft AS STRING = renderBgRange(pmr, 0, pboxX, txStyle, curStyle, blkStyle)
+                DIM pright AS STRING = renderBgRange(pmr, pEnd, w - pEnd, txStyle, curStyle, blkStyle)
                 rows[pmr] = pleft + popSt.Render(pbox[pi]) + pright
             END IF
         NEXT pi
@@ -2567,6 +2593,17 @@ SUB sw_Click(x AS INTEGER, y AS INTEGER)
     END IF
     IF gPrefix <> "" OR gPromptMode <> "" THEN RETURN
     IF y < 3 OR y > gH - 2 THEN RETURN
+    IF softWrapOn() THEN
+        ' Map the click to a visual row, then to a byte within its segment.
+        DIM vr AS INTEGER = gTopVis + (y - 3)
+        IF vr >= 0 AND vr < LEN(gVisLine) THEN
+            gRow = gVisLine[vr]
+            gCol = byteAtCol(gLines[gRow], gVisStart[vr], gVisEnd[vr], x)
+        END IF
+        clampCursor()
+        gMessage = ""
+        RETURN
+    END IF
     gRow = gTop + (y - 3)
     IF gRow > lastRow() THEN gRow = lastRow()
     IF gRow < 0 THEN gRow = 0
@@ -2990,6 +3027,217 @@ SUB wrapInsertIfNeeded()
 END SUB
 
 ' ==========================================================================
+' Soft word wrap (display only) — gWrapMode = "soft". A long logical line is
+' shown across several screen rows ("visual rows") without changing the file.
+' ==========================================================================
+
+FUNCTION softWrapOn() AS BOOLEAN
+    RETURN gWrapMode = "soft"
+END FUNCTION
+
+' wrapWidth — columns to wrap at: the right margin, clamped to the screen.
+FUNCTION wrapWidth() AS INTEGER
+    DIM ww AS INTEGER = gRightMargin
+    IF ww < 1 OR ww >= gW THEN ww = gW - 1
+    IF ww < 1 THEN ww = 1
+    RETURN ww
+END FUNCTION
+
+' wrapSegments — byte offsets where each visual segment of `line` begins
+' (always starts with 0), breaking at the last space before `ww` columns
+' (hard break for an overlong word). Markers are counted as 1 column.
+FUNCTION wrapSegments(line AS STRING, ww AS INTEGER) AS []INTEGER
+    DIM segs AS []INTEGER
+    segs = APPEND(segs, 0)
+    IF ww < 1 THEN ww = 1
+    DIM segStart AS INTEGER = 0
+    DIM lastSpace AS INTEGER = 0 - 1
+    DIM col AS INTEGER = 0
+    DIM p AS INTEGER = 0
+    WHILE p < LEN(line)
+        IF Mid(line, p + 1, 1) = " " THEN lastSpace = p
+        IF col >= ww AND p > segStart THEN
+            DIM ns AS INTEGER = p
+            IF lastSpace >= segStart AND lastSpace + 1 < p THEN ns = lastSpace + 1
+            segs = APPEND(segs, ns)
+            segStart = ns
+            lastSpace = 0 - 1
+            col = 0
+            DIM q AS INTEGER = ns
+            WHILE q < p
+                col = col + 1
+                q = nextRuneStart(line, q)
+            WEND
+        END IF
+        col = col + 1
+        p = nextRuneStart(line, p)
+    WEND
+    RETURN segs
+END FUNCTION
+
+' segIndexOf — index of the segment containing byte offset col.
+FUNCTION segIndexOf(segs AS []INTEGER, col AS INTEGER) AS INTEGER
+    DIM i AS INTEGER = LEN(segs) - 1
+    WHILE i > 0 AND segs[i] > col
+        i = i - 1
+    WEND
+    RETURN i
+END FUNCTION
+
+' colWithin — display columns from byte `start` to byte `col`.
+FUNCTION colWithin(line AS STRING, start AS INTEGER, col AS INTEGER) AS INTEGER
+    DIM p AS INTEGER = start
+    DIM c AS INTEGER = 0
+    WHILE p < col AND p < LEN(line)
+        p = nextRuneStart(line, p)
+        c = c + 1
+    WEND
+    RETURN c
+END FUNCTION
+
+' byteAtCol — byte offset `col` runes after `start`, clamped to `endb`.
+FUNCTION byteAtCol(line AS STRING, start AS INTEGER, endb AS INTEGER, col AS INTEGER) AS INTEGER
+    DIM p AS INTEGER = start
+    DIM c AS INTEGER = 0
+    WHILE c < col AND p < endb
+        p = nextRuneStart(line, p)
+        c = c + 1
+    WEND
+    RETURN p
+END FUNCTION
+
+' buildVisRows — (re)build the whole-document visual-row table for soft mode.
+SUB buildVisRows(ww AS INTEGER)
+    gVisLine = nil
+    gVisStart = nil
+    gVisEnd = nil
+    DIM i AS INTEGER
+    FOR i = 0 TO lastRow()
+        DIM segs AS []INTEGER = wrapSegments(gLines[i], ww)
+        DIM s AS INTEGER
+        FOR s = 0 TO LEN(segs) - 1
+            DIM en AS INTEGER = LEN(gLines[i])
+            IF s + 1 < LEN(segs) THEN en = segs[s + 1]
+            gVisLine = APPEND(gVisLine, i)
+            gVisStart = APPEND(gVisStart, segs[s])
+            gVisEnd = APPEND(gVisEnd, en)
+        NEXT s
+    NEXT i
+END SUB
+
+' cursorVisRow — index into gVis* of the row the cursor sits on.
+FUNCTION cursorVisRow() AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gVisLine) - 1
+        IF gVisLine[i] = gRow THEN
+            IF gCol >= gVisStart[i] AND gCol < gVisEnd[i] THEN RETURN i
+            DIM lastOfLine AS BOOLEAN = (i + 1 >= LEN(gVisLine)) OR (gVisLine[i + 1] <> gRow)
+            IF gCol = gVisEnd[i] AND lastOfLine THEN RETURN i
+        END IF
+    NEXT i
+    RETURN 0
+END FUNCTION
+
+' renderSegment — render display cells [fromCell, fromCell+count) of the byte
+' range [segStart, segEnd) of a document row (the soft-wrap analog of
+' renderTextRange, which windows by gLeft instead).
+FUNCTION renderSegment(rowIdx AS INTEGER, segStart AS INTEGER, segEnd AS INTEGER, fromCell AS INTEGER, count AS INTEGER, baseSt AS lipgloss.Style, cur AS lipgloss.Style, blk AS lipgloss.Style) AS STRING
+    DIM line AS STRING = ""
+    IF rowIdx >= 0 AND rowIdx <= lastRow() THEN line = gLines[rowIdx]
+    DIM lineLen AS INTEGER = LEN(line)
+    DIM isDot AS BOOLEAN = (Left(line, 1) = ".")
+    DIM useBase AS lipgloss.Style = baseSt
+    IF isDot THEN useBase = lipgloss.NewStyle().Foreground(lipgloss.Color("#6b7bb5")).Background(lipgloss.Color("#0f2350")).Italic(TRUE)
+    DIM tagSt AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#e0af68")).Bold(TRUE)
+
+    DIM pos AS INTEGER = segStart
+    DIM skip AS INTEGER
+    FOR skip = 1 TO fromCell
+        IF pos < segEnd THEN pos = nextRuneStart(line, pos)
+    NEXT skip
+
+    DIM bold AS BOOLEAN = FALSE
+    DIM ital AS BOOLEAN = FALSE
+    DIM undl AS BOOLEAN = FALSE
+    IF NOT isDot THEN bold, ital, undl = attrsAt(line, pos)
+
+    DIM out AS STRING = ""
+    DIM buf AS STRING = ""
+    DIM bufCls AS INTEGER = 0 - 1
+    DIM bufB AS BOOLEAN = FALSE
+    DIM bufI AS BOOLEAN = FALSE
+    DIM bufU AS BOOLEAN = FALSE
+    DIM cell AS INTEGER = 0
+    WHILE cell < count
+        DIM ch AS STRING = " "
+        DIM rl AS INTEGER = 1
+        IF pos < segEnd THEN
+            rl = runeLenAt(line, pos)
+            ch = Mid(line, pos + 1, rl)
+        END IF
+        DIM mk AS STRING = ""
+        IF NOT isDot AND pos < segEnd THEN mk = markerLetter(ch)
+        IF mk <> "" THEN
+            DIM mc AS INTEGER = Asc(ch)
+            IF mc = 2 THEN bold = NOT bold
+            IF mc = 25 THEN ital = NOT ital
+            IF mc = 19 THEN undl = NOT undl
+            pos = pos + rl
+            IF gShowTags THEN
+                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+                buf = ""
+                bufCls = 0 - 1
+                out = out + tagSt.Render(mk)
+                cell = cell + 1
+            END IF
+        ELSE
+            DIM cls AS INTEGER = 0
+            DIM showCur AS BOOLEAN = FALSE
+            IF rowIdx = gRow AND pos = gCol THEN
+                IF pos < segEnd THEN
+                    showCur = TRUE
+                ELSEIF pos = segEnd AND segEnd = lineLen THEN
+                    showCur = TRUE
+                END IF
+            END IF
+            IF showCur THEN
+                cls = 1
+            ELSEIF isInBlock(rowIdx, pos) THEN
+                cls = 2
+            END IF
+            pos = pos + rl
+            DIM diff AS BOOLEAN = cls <> bufCls OR bold <> bufB OR ital <> bufI OR undl <> bufU
+            IF diff AND buf <> "" THEN
+                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+                buf = ""
+            END IF
+            bufCls = cls
+            bufB = bold
+            bufI = ital
+            bufU = undl
+            buf = buf + ch
+            cell = cell + 1
+        END IF
+    WEND
+    out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+    RETURN out
+END FUNCTION
+
+' renderBgRange — render the background text under an overlay box at screen
+' row mr, cells [fromCell, fromCell+count). Dispatches to the soft-wrap visual
+' row or the hard/off logical row as appropriate.
+FUNCTION renderBgRange(mr AS INTEGER, fromCell AS INTEGER, count AS INTEGER, baseSt AS lipgloss.Style, cur AS lipgloss.Style, blk AS lipgloss.Style) AS STRING
+    IF softWrapOn() THEN
+        DIM vr AS INTEGER = gTopVis + (mr - 3)
+        IF vr >= 0 AND vr < LEN(gVisLine) THEN
+            RETURN renderSegment(gVisLine[vr], gVisStart[vr], gVisEnd[vr], fromCell, count, baseSt, cur, blk)
+        END IF
+        RETURN baseSt.Render(strings.Repeat(" ", count))
+    END IF
+    RETURN renderTextRange(gTop + (mr - 3), fromCell, count, baseSt, cur, blk)
+END FUNCTION
+
+' ==========================================================================
 ' Cursor motion
 ' ==========================================================================
 
@@ -3013,12 +3261,50 @@ SUB moveRight()
 END SUB
 
 SUB moveUp()
+    IF softWrapOn() THEN
+        DIM ww AS INTEGER = wrapWidth()
+        DIM line AS STRING = curLine()
+        DIM segs AS []INTEGER = wrapSegments(line, ww)
+        DIM si AS INTEGER = segIndexOf(segs, gCol)
+        DIM col AS INTEGER = colWithin(line, segs[si], gCol)
+        IF si > 0 THEN
+            DIM pe AS INTEGER = segs[si]
+            gCol = byteAtCol(line, segs[si - 1], pe, col)
+        ELSEIF gRow > 0 THEN
+            gRow = gRow - 1
+            DIM nl AS STRING = curLine()
+            DIM ns AS []INTEGER = wrapSegments(nl, ww)
+            gCol = byteAtCol(nl, ns[LEN(ns) - 1], LEN(nl), col)
+        END IF
+        RETURN
+    END IF
     IF gRow > 0 THEN gRow = gRow - 1
     IF gCol > LEN(curLine()) THEN gCol = LEN(curLine())
     gCol = snapToRune(curLine(), gCol)
 END SUB
 
 SUB moveDown()
+    IF softWrapOn() THEN
+        DIM ww AS INTEGER = wrapWidth()
+        DIM line AS STRING = curLine()
+        DIM segs AS []INTEGER = wrapSegments(line, ww)
+        DIM si AS INTEGER = segIndexOf(segs, gCol)
+        DIM col AS INTEGER = colWithin(line, segs[si], gCol)
+        IF si < LEN(segs) - 1 THEN
+            DIM nstart AS INTEGER = segs[si + 1]
+            DIM nend AS INTEGER = LEN(line)
+            IF si + 2 < LEN(segs) THEN nend = segs[si + 2]
+            gCol = byteAtCol(line, nstart, nend, col)
+        ELSEIF gRow < lastRow() THEN
+            gRow = gRow + 1
+            DIM nl AS STRING = curLine()
+            DIM ns AS []INTEGER = wrapSegments(nl, ww)
+            DIM e0 AS INTEGER = LEN(nl)
+            IF LEN(ns) > 1 THEN e0 = ns[1]
+            gCol = byteAtCol(nl, 0, e0, col)
+        END IF
+        RETURN
+    END IF
     IF gRow < lastRow() THEN gRow = gRow + 1
     IF gCol > LEN(curLine()) THEN gCol = LEN(curLine())
     gCol = snapToRune(curLine(), gCol)
@@ -3065,6 +3351,13 @@ END SUB
 SUB pageUp()
     DIM pstep AS INTEGER = gH - 4
     IF pstep < 1 THEN pstep = 1
+    IF softWrapOn() THEN
+        DIM k AS INTEGER
+        FOR k = 1 TO pstep
+            moveUp()
+        NEXT k
+        RETURN
+    END IF
     gRow = gRow - pstep
     IF gRow < 0 THEN gRow = 0
     IF gCol > LEN(curLine()) THEN gCol = LEN(curLine())
@@ -3073,6 +3366,13 @@ END SUB
 SUB pageDown()
     DIM pstep AS INTEGER = gH - 4
     IF pstep < 1 THEN pstep = 1
+    IF softWrapOn() THEN
+        DIM k AS INTEGER
+        FOR k = 1 TO pstep
+            moveDown()
+        NEXT k
+        RETURN
+    END IF
     gRow = gRow + pstep
     IF gRow > lastRow() THEN gRow = lastRow()
     IF gCol > LEN(curLine()) THEN gCol = LEN(curLine())
@@ -3601,11 +3901,26 @@ SUB Form_Key(key AS STRING)
         RETURN
     END IF
     IF key = "home" THEN
-        gCol = 0
+        IF softWrapOn() THEN
+            DIM hsegs AS []INTEGER = wrapSegments(curLine(), wrapWidth())
+            gCol = hsegs[segIndexOf(hsegs, gCol)]
+        ELSE
+            gCol = 0
+        END IF
         RETURN
     END IF
     IF key = "end" THEN
-        gCol = LEN(curLine())
+        IF softWrapOn() THEN
+            DIM esegs AS []INTEGER = wrapSegments(curLine(), wrapWidth())
+            DIM esi AS INTEGER = segIndexOf(esegs, gCol)
+            IF esi + 1 < LEN(esegs) THEN
+                gCol = esegs[esi + 1]
+            ELSE
+                gCol = LEN(curLine())
+            END IF
+        ELSE
+            gCol = LEN(curLine())
+        END IF
         RETURN
     END IF
 
