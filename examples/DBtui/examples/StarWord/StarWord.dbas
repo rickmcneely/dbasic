@@ -1908,7 +1908,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "S|Save|Alt+F S")
         xs = APPEND(xs, "A|Save As|Alt+F A")
         xs = APPEND(xs, "P|Print|Alt+F P")
-        xs = APPEND(xs, "T|Print To...|Alt+F T")
+        xs = APPEND(xs, "D|Print to PDF|Alt+F D")
         xs = APPEND(xs, "V|Change Dir|Alt+F V")
         xs = APPEND(xs, "R|Run DOS|Alt+F R")
         xs = APPEND(xs, "X|Exit StarWord|Alt+F X")
@@ -1951,7 +1951,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "P|Page|Alt+L P")
         xs = APPEND(xs, "S|Line Spacing|Alt+L S")
         xs = APPEND(xs, "F|Print to Printer|Alt+L F")
-        xs = APPEND(xs, "T|Print To...|Alt+L T")
+        xs = APPEND(xs, "D|Print to PDF|Alt+L D")
     CASE 6
         xs = APPEND(xs, "W|Word Count|Alt+U W")
         xs = APPEND(xs, "S|Spell Check|Alt+U S")
@@ -2364,63 +2364,71 @@ END FUNCTION
 ' osDefaultPrint — send a plain-text print image to the OS default printer with
 ' no configured print command. Windows uses the shell "print" verb (silent, to
 ' the default printer); elsewhere it pipes to lp.
+' osDefaultPrint — print straight to the default printer on non-Windows hosts
+' (Windows uses winPrintDialog instead). Pipes the print image to lp.
 FUNCTION osDefaultPrint(body AS STRING) AS ERROR
-    IF runtime.GOOS = "windows" THEN
-        ' Send the text to the default printer with a fixed-pitch font via a
-        ' .NET PrintDocument. This goes straight to the spooler (no file-type
-        ' "print" verb, no app window) and keeps columns aligned. Pages are the
-        ' Chr(12) form feeds buildPaginated already inserts.
-        DIM tmp AS STRING = filepath.Join(os.TempDir(), "starword_print.txt")
-        DIM we AS ERROR = os.WriteFile(tmp, Encode(body), 420)
-        IF we <> NIL THEN RETURN we
-        DIM ps1 AS STRING = filepath.Join(os.TempDir(), "starword_print.ps1")
-        DIM se AS ERROR = os.WriteFile(ps1, Encode(winPrintScript(tmp)), 420)
-        IF se <> NIL THEN RETURN se
-        DIM c AS POINTER TO exec.Cmd = exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1)
-        RETURN (^c).Run()
-    END IF
     DIM lc AS POINTER TO exec.Cmd = exec.Command("lp")
     (^lc).Stdin = strings.NewReader(body)
     RETURN (^lc).Run()
 END FUNCTION
 
-' winPrintScript — a PowerShell script that prints a text file to the default
-' printer using a Consolas (monospaced) font, paginating on Chr(12) form feeds.
-' Built with Chr() for the few PowerShell metacharacters to avoid escaping
-' confusion in the DBasic string literal.
-FUNCTION winPrintScript(txtPath AS STRING) AS STRING
+' winPrintDialog — Windows: show the standard print dialog (choose printer,
+' orientation, paper, copies), then print the image with a Consolas
+' (monospaced) font. Launched non-blocking so the editor stays responsive
+' while the dialog is up.
+FUNCTION winPrintDialog(body AS STRING) AS ERROR
+    DIM tmp AS STRING = filepath.Join(os.TempDir(), "starword_print.txt")
+    DIM we AS ERROR = os.WriteFile(tmp, Encode(body), 420)
+    IF we <> NIL THEN RETURN we
+    DIM ps1 AS STRING = filepath.Join(os.TempDir(), "starword_printdlg.ps1")
+    DIM se AS ERROR = os.WriteFile(ps1, Encode(winPrintDialogScript(tmp)), 420)
+    IF se <> NIL THEN RETURN se
+    DIM c AS POINTER TO exec.Cmd = exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Sta", "-WindowStyle", "Hidden", "-File", ps1)
+    RETURN (^c).Start()
+END FUNCTION
+
+' winPrintDialogScript — PowerShell that prints a text file via the Windows
+' print dialog: a PrintDocument (Consolas, paginating on Chr(12) form feeds)
+' bound to a System.Windows.Forms.PrintDialog. The dialog lets the user pick
+' the printer plus orientation/paper (via Properties). Built with Chr() for the
+' PowerShell metacharacters to avoid escaping confusion in the DBasic literal.
+FUNCTION winPrintDialogScript(txtPath AS STRING) AS STRING
     DIM bt AS STRING = Chr(96)        ' backtick — PowerShell escape char
     DIM nl AS STRING = Chr(10)
     DIM ff AS STRING = Chr(34) + bt + "f" + Chr(34)      ' "`f"
     DIM cr AS STRING = Chr(34) + bt + "r" + Chr(34)      ' "`r"
     DIM lf AS STRING = Chr(34) + bt + "n" + Chr(34)      ' "`n"
     DIM s AS STRING = ""
+    s = s + "Add-Type -AssemblyName System.Windows.Forms" + nl
     s = s + "Add-Type -AssemblyName System.Drawing" + nl
     s = s + "$txt = [System.IO.File]::ReadAllText('" + txtPath + "')" + nl
-    s = s + "$pages = $txt -split " + ff + nl
-    s = s + "$pd = New-Object System.Drawing.Printing.PrintDocument" + nl
-    s = s + "$font = New-Object System.Drawing.Font('Consolas', 9)" + nl
+    s = s + "$script:pages = $txt -split " + ff + nl
+    s = s + "$script:font = New-Object System.Drawing.Font('Consolas', 9)" + nl
     s = s + "$script:pi = 0" + nl
+    s = s + "$pd = New-Object System.Drawing.Printing.PrintDocument" + nl
     s = s + "$pd.add_PrintPage({" + nl
     s = s + "  param($snd, $e)" + nl
-    s = s + "  $page = ($pages[$script:pi] -replace " + cr + ", '')" + nl
+    s = s + "  $page = ($script:pages[$script:pi] -replace " + cr + ", '')" + nl
     s = s + "  $lines = $page -split " + lf + nl
-    s = s + "  $top = $e.MarginBounds.Top" + nl
-    s = s + "  $left = $e.MarginBounds.Left" + nl
-    s = s + "  $lh = $font.GetHeight($e.Graphics)" + nl
+    s = s + "  $lh = $script:font.GetHeight($e.Graphics)" + nl
     s = s + "  $max = [int]([math]::Floor($e.MarginBounds.Height / $lh))" + nl
-    s = s + "  $y = $top" + nl
+    s = s + "  $y = [single]$e.MarginBounds.Top" + nl
+    s = s + "  $left = [single]$e.MarginBounds.Left" + nl
     s = s + "  $n = 0" + nl
     s = s + "  foreach ($ln in $lines) {" + nl
     s = s + "    if ($n -ge $max) { break }" + nl
-    s = s + "    $e.Graphics.DrawString($ln, $font, [System.Drawing.Brushes]::Black, [single]$left, [single]$y)" + nl
+    s = s + "    $e.Graphics.DrawString($ln, $script:font, [System.Drawing.Brushes]::Black, $left, $y)" + nl
     s = s + "    $y = $y + $lh" + nl
     s = s + "    $n = $n + 1" + nl
     s = s + "  }" + nl
     s = s + "  $script:pi = $script:pi + 1" + nl
-    s = s + "  $e.HasMorePages = ($script:pi -lt $pages.Length)" + nl
+    s = s + "  $e.HasMorePages = ($script:pi -lt $script:pages.Length)" + nl
     s = s + "})" + nl
-    s = s + "$pd.Print()" + nl
+    s = s + "$dlg = New-Object System.Windows.Forms.PrintDialog" + nl
+    s = s + "$dlg.Document = $pd" + nl
+    s = s + "$dlg.UseEXDialog = $true" + nl
+    s = s + "$dlg.AllowSomePages = $true" + nl
+    s = s + "if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $pd.Print() }" + nl
     RETURN s
 END FUNCTION
 
@@ -2529,10 +2537,9 @@ FUNCTION renderPdf(path AS STRING) AS ERROR
     RETURN pdf.OutputFileAndClose(path)
 END FUNCTION
 
-' doPrintTo — File > Print To...: render the document to <base>.pdf and open it
-' so the viewer presents the system (Windows) print dialog, where you choose the
-' printer, page range and copies. The PDF doubles as an export.
-SUB doPrintTo()
+' doPrintPdf — File > Print to PDF: render the document to <base>.pdf (named
+' after the document) and open it in the default viewer.
+SUB doPrintPdf()
     DIM stem AS STRING = gFileName
     DIM dp AS INTEGER = strings.LastIndex(stem, ".")
     IF dp > 0 THEN stem = Left(stem, dp)
@@ -2550,21 +2557,32 @@ SUB doPrintTo()
     END IF
     DIM oe AS ERROR = osOpen(target)
     IF oe <> NIL THEN
-        gMessage = "Wrote " + target + " — open it and print (choose your printer)"
+        gMessage = "Wrote " + target
     ELSE
-        gMessage = "Opened " + target + " — choose your printer in the Print dialog (Ctrl+P)"
+        gMessage = "Wrote and opened " + target
     END IF
 END SUB
 
-' doPrint — File > Print: send the paginated document straight to the printer
-' (the configured print command, else the OS default printer). No file is left
-' behind on success; on failure the print image is saved as <base>.prn so
-' nothing is lost.
+' doPrint — File > Print: on Windows, open the standard print dialog (printer,
+' orientation, paper, copies). A configured print command always overrides.
+' Elsewhere, print straight to the default printer (lp). On failure the print
+' image is saved as <base>.prn so nothing is lost.
 SUB doPrint()
     applyDotCommands()
     DIM out AS []STRING = buildPaginated(FALSE)
     DIM body AS STRING = strings.Join(out, Chr(13) + Chr(10))
     DIM np AS INTEGER = LEN(paginate())
+    ' Windows (no override): show the print dialog. It runs non-blocking, so we
+    ' can't await the result — report that the dialog has opened.
+    IF runtime.GOOS = "windows" AND strings.TrimSpace(gPrintCommand) = "" THEN
+        DIM de AS ERROR = winPrintDialog(body)
+        IF de <> NIL THEN
+            gMessage = "Could not open the print dialog: " + de.Error()
+        ELSE
+            gMessage = "Opened the Windows print dialog — pick a printer, orientation and paper, then Print"
+        END IF
+        RETURN
+    END IF
     DIM perr AS ERROR
     DIM dest AS STRING
     IF strings.TrimSpace(gPrintCommand) <> "" THEN
@@ -3880,8 +3898,8 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             requestExit()
         ELSEIF hk = "P" THEN
             doPrint()
-        ELSEIF hk = "T" THEN
-            doPrintTo()
+        ELSEIF hk = "D" THEN
+            doPrintPdf()
         ELSEIF hk = "V" THEN
             gPromptMode = "chdir"
             gPromptLabel = "Change to directory: "
@@ -4023,8 +4041,8 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             gPromptText = ""
         ELSEIF hk = "F" THEN
             doPrint()
-        ELSEIF hk = "T" THEN
-            doPrintTo()
+        ELSEIF hk = "D" THEN
+            doPrintPdf()
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
