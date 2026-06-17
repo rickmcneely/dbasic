@@ -397,6 +397,11 @@ DIM gClip AS STRING                   ' internal mirror of the OS clipboard
 DIM gColumnMode AS BOOLEAN            ' ^KN: rectangular (column) block mode
 DIM gRepeatNext AS INTEGER            ' ^QQ: repeat the next keystroke N times
 DIM gTabStops AS []INTEGER            ' ^OI/^ON: explicit ruler tab stops (display cols)
+DIM gPrevRow AS INTEGER = 0 - 1       ' ^QP: previous cursor position before a jump
+DIM gPrevCol AS INTEGER
+DIM gFindRow AS INTEGER = 0 - 1       ' ^QV: position of the last find
+DIM gFindCol AS INTEGER
+DIM gAutoScroll AS INTEGER            ' ^QW/^QZ: -1 up, +1 down, 0 off (auto-scroll)
 
 ' --- ruler / margins ------------------------------------------------------
 DIM gLeftMargin AS INTEGER = 0
@@ -1136,6 +1141,7 @@ END SUB
 
 ' doFind — run a find from the cursor in the active direction.
 SUB doFind()
+    savePrevPos()
     DIM ok AS BOOLEAN = FALSE
     IF gFindBack THEN
         ok = searchFrom(gRow, gCol - 1, FALSE)
@@ -1143,6 +1149,8 @@ SUB doFind()
         ok = searchFrom(gRow, gCol, TRUE)
     END IF
     IF ok THEN
+        gFindRow = gRow
+        gFindCol = gCol
         gMessage = "Found"
     ELSE
         gMessage = "Not found: " + gFindStr
@@ -1151,6 +1159,7 @@ END SUB
 
 ' doFindNext — ^L: repeat the last find, skipping the current match.
 SUB doFindNext()
+    savePrevPos()
     DIM ok AS BOOLEAN = FALSE
     IF gFindBack THEN
         ok = searchFrom(gRow, gCol - 1, FALSE)
@@ -1158,6 +1167,8 @@ SUB doFindNext()
         ok = searchFrom(gRow, gCol + 1, TRUE)
     END IF
     IF ok THEN
+        gFindRow = gRow
+        gFindCol = gCol
         gMessage = "Found"
     ELSE
         gMessage = "Not found: " + gFindStr
@@ -1783,7 +1794,30 @@ END SUB
 
 ' convertCaseWord — Style > Convert Case: flip the case of the word at the
 ' cursor (all-caps -> lower, otherwise -> upper).
+' convertCaseBlock — flip the case of the whole marked (stream) block.
+SUB convertCaseBlock()
+    DIM sR AS INTEGER
+    DIM sC AS INTEGER
+    DIM eR AS INTEGER
+    DIM eC AS INTEGER
+    sR, sC, eR, eC = blockBounds()
+    DIM doc AS STRING = strings.Join(gLines, Chr(10))
+    DIM s AS INTEGER = offsetOf(sR, sC)
+    DIM e AS INTEGER = offsetOf(eR, eC)
+    DIM blk AS STRING = Mid(doc, s + 1, e - s)
+    DIM newBlk AS STRING = UCase(blk)
+    IF blk = UCase(blk) THEN newBlk = LCase(blk)
+    setDoc(Left(doc, s) + newBlk + Right(doc, LEN(doc) - e))
+    gModified = TRUE
+    gMessage = "Block case converted"
+END SUB
+
 SUB convertCaseWord()
+    ' With a stream block marked, convert the whole block; else the word.
+    IF blockSet() AND gBlockShow AND NOT gColumnMode THEN
+        convertCaseBlock()
+        RETURN
+    END IF
     DIM ln AS STRING = curLine()
     DIM s AS INTEGER = gCol
     WHILE s > 0 AND isWordCh(runeAt(ln, prevRuneStart(ln, s)))
@@ -4755,6 +4789,80 @@ SUB pageDown()
     IF gCol > LEN(curLine()) THEN gCol = LEN(curLine())
 END SUB
 
+' --- WordStar commands added in the "section A" batch ----------------------
+
+' savePrevPos — remember the cursor before a jump, for ^QP.
+SUB savePrevPos()
+    gPrevRow = gRow
+    gPrevCol = gCol
+END SUB
+
+' gotoPrevPos — ^QP: swap the cursor with the saved previous position.
+SUB gotoPrevPos()
+    IF gPrevRow < 0 THEN
+        gMessage = "No previous position"
+        RETURN
+    END IF
+    DIM r AS INTEGER = gRow
+    DIM c AS INTEGER = gCol
+    gRow = gPrevRow
+    gCol = gPrevCol
+    gPrevRow = r
+    gPrevCol = c
+    clampCursor()
+    gMessage = "Previous position"
+END SUB
+
+' gotoLastFind — ^QV: jump to the position of the last successful find.
+SUB gotoLastFind()
+    IF gFindRow < 0 THEN
+        gMessage = "No previous find"
+        RETURN
+    END IF
+    savePrevPos()
+    gRow = gFindRow
+    gCol = gFindCol
+    clampCursor()
+    gMessage = "Last find"
+END SUB
+
+' deleteToLineStart — ^Q Del: delete from the start of the line to the cursor.
+SUB deleteToLineStart()
+    DIM ln AS STRING = curLine()
+    gLines[gRow] = Right(ln, LEN(ln) - gCol)
+    gCol = 0
+    gModified = TRUE
+END SUB
+
+' writeBlockToFile — ^KW: write the marked block to a file.
+SUB writeBlockToFile(path AS STRING)
+    IF NOT blockSet() THEN
+        gMessage = "Mark a block first (^KB / ^KK)"
+        RETURN
+    END IF
+    IF strings.TrimSpace(path) = "" THEN RETURN
+    DIM body AS STRING = blockText()
+    IF gColumnMode THEN body = strings.Join(columnText(), Chr(10))
+    DIM nl AS STRING = Chr(13) + Chr(10)
+    IF gIsUnicode THEN nl = Chr(10)
+    body = strings.ReplaceAll(body, Chr(10), nl)
+    DIM e AS ERROR = os.WriteFile(path, Encode(body), 420)
+    IF e <> NIL THEN
+        gMessage = "Write failed: " + e.Error()
+    ELSE
+        gMessage = "Block written to " + path
+    END IF
+END SUB
+
+' autoScrollTick — ^QW/^QZ: a background goroutine that wakes the UI a few
+' times a second; the scroll itself runs in Form_Wake (UI thread, no races).
+SUB autoScrollTick()
+    WHILE gAutoScroll <> 0
+        time.Sleep(110 * time.Millisecond)
+        _dbtuiWake()
+    WEND
+END SUB
+
 ' ==========================================================================
 ' Key dispatch
 ' ==========================================================================
@@ -4840,6 +4948,14 @@ SUB handlePrefixK(key AS STRING)
         END IF
     ELSEIF k = "m" THEN
         blockMath()
+    ELSEIF k = "w" THEN
+        gPromptMode = "blockwrite"
+        gPromptLabel = "Write block to file: "
+        gPromptText = ""
+    ELSEIF k = "r" THEN
+        gPromptMode = "insfile"
+        gPromptLabel = "Read file into document: "
+        gPromptText = ""
     ELSEIF digitOf(k) >= 0 THEN
         setPlaceMarker(digitOf(k))
     ELSE
@@ -4900,6 +5016,20 @@ SUB handlePrefixQ(key AS STRING)
         gPromptMode = "repeatcount"
         gPromptLabel = "Repeat next command how many times: "
         gPromptText = ""
+    ELSEIF k = "p" THEN
+        gotoPrevPos()
+    ELSEIF k = "v" THEN
+        gotoLastFind()
+    ELSEIF k = "w" THEN
+        gAutoScroll = 0 - 1
+        SPAWN autoScrollTick()
+        gMessage = "Auto-scroll up (any key stops)"
+    ELSEIF k = "z" THEN
+        gAutoScroll = 1
+        SPAWN autoScrollTick()
+        gMessage = "Auto-scroll down (any key stops)"
+    ELSEIF k = "delete" OR k = "backspace" THEN
+        deleteToLineStart()
     ELSEIF digitOf(k) >= 0 THEN
         gotoPlaceMarker(digitOf(k))
     ELSE
@@ -5105,6 +5235,8 @@ SUB handlePrompt(key AS STRING)
             doRenameFile(txt)
         ELSEIF mode = "copyto" THEN
             doCopyFile(txt)
+        ELSEIF mode = "blockwrite" THEN
+            writeBlockToFile(txt)
         ELSEIF mode = "lmargin" THEN
             gLeftMargin = Int(Val(txt))
             gMessage = fmt.Sprintf("Left margin = %d", gLeftMargin)
@@ -5246,6 +5378,13 @@ SUB Form_Key(key AS STRING)
     reconcileUndo()
     IF gMacroRecording AND NOT gMacroPlaying THEN gMacroKeys = APPEND(gMacroKeys, key)
     gMessage = ""
+
+    ' Any key stops continuous auto-scroll (^QW/^QZ).
+    IF gAutoScroll <> 0 THEN
+        gAutoScroll = 0
+        gMessage = "Scroll stopped"
+        RETURN
+    END IF
 
     ' Print preview is a read-only overlay — arrows/PgUp/PgDn scroll, any
     ' other key (Esc) returns to the editor.
@@ -5389,6 +5528,16 @@ SUB Form_Key(key AS STRING)
     END IF
     IF key = "ctrl+j" THEN
         gPrefix = "J"
+        RETURN
+    END IF
+
+    ' --- scroll the view a line without moving far (^W up / ^Z down) ---
+    IF key = "ctrl+w" THEN
+        scrollView(0 - 1)
+        RETURN
+    END IF
+    IF key = "ctrl+z" THEN
+        scrollView(1)
         RETURN
     END IF
 
@@ -5674,7 +5823,8 @@ END SUB
 
 ' Fired on the UI thread after a background goroutine calls _dbtuiWake().
 SUB Form_Wake()
-    ' StarWord has no background workers in v1.
+    ' Auto-scroll (^QW/^QZ) advances the view on each wake until a key stops it.
+    IF gAutoScroll <> 0 THEN scrollView(gAutoScroll)
 END SUB
 
 ' scrollView — mouse-wheel scroll by `delta` rows. The view is coupled to the
