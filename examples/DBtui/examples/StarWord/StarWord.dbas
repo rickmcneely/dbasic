@@ -491,6 +491,13 @@ DIM gMacroPlaying AS BOOLEAN
 DIM gCalcSrc AS STRING
 DIM gCalcPos AS INTEGER
 
+' --- on-screen calculator widget (Utilities > Calculator) ------------------
+DIM gCalcOpen AS BOOLEAN           ' the calculator panel is showing
+DIM gCalcInput AS STRING           ' the expression being entered
+DIM gCalcResult AS STRING          ' last evaluated result
+DIM gCalcTape AS []STRING          ' recent "expr = result" history
+DIM gCalcJustEval AS BOOLEAN       ' just pressed = (a digit starts fresh)
+
 ' ==========================================================================
 ' Small buffer helpers
 ' ==========================================================================
@@ -2050,6 +2057,65 @@ SUB doCalc(expr AS STRING)
     gMessage = expr + " = " + fmt.Sprintf("%g", v)
 END SUB
 
+' openCalculator — Utilities > Calculator: show the on-screen calculator.
+SUB openCalculator()
+    gCalcOpen = TRUE
+    gCalcInput = ""
+    gCalcResult = ""
+END SUB
+
+' handleCalcWidget — keystrokes while the calculator panel is open.
+SUB handleCalcWidget(key AS STRING)
+    IF key = "esc" THEN
+        gCalcOpen = FALSE
+        gMessage = ""
+        RETURN
+    END IF
+    IF key = "enter" THEN
+        IF strings.TrimSpace(gCalcInput) <> "" THEN
+            gCalcSrc = gCalcInput
+            gCalcPos = 0
+            DIM v AS DOUBLE = calcExpr()
+            gCalcResult = fmt.Sprintf("%g", v)
+            gCalcTape = APPEND(gCalcTape, gCalcInput + " = " + gCalcResult)
+            IF LEN(gCalcTape) > 6 THEN gCalcTape = gCalcTape[1:]
+            gCalcInput = gCalcResult
+            gCalcJustEval = TRUE
+        END IF
+        RETURN
+    END IF
+    IF key = "backspace" OR key = "ctrl+h" THEN
+        IF LEN(gCalcInput) > 0 THEN gCalcInput = Left(gCalcInput, LEN(gCalcInput) - 1)
+        gCalcJustEval = FALSE
+        RETURN
+    END IF
+    DIM lk AS STRING = LCase(key)
+    IF lk = "c" THEN
+        gCalcInput = ""
+        gCalcJustEval = FALSE
+        RETURN
+    END IF
+    IF lk = "i" THEN
+        IF gCalcResult <> "" THEN insertTextAtCursor(gCalcResult)
+        gCalcOpen = FALSE
+        gMessage = "Result inserted"
+        RETURN
+    END IF
+    IF key = "space" THEN
+        gCalcInput = gCalcInput + " "
+        RETURN
+    END IF
+    ' Accept only calculator characters (digits / operators / parens). After a
+    ' result, a digit/paren starts a fresh expression; an operator continues it.
+    IF LEN(key) = 1 AND strings.Contains("0123456789+-*/().%", key) THEN
+        IF gCalcJustEval THEN
+            IF NOT strings.Contains("+-*/.%", key) THEN gCalcInput = ""
+            gCalcJustEval = FALSE
+        END IF
+        gCalcInput = gCalcInput + key
+    END IF
+END SUB
+
 ' --- Utilities menu: keyboard macro ---------------------------------------
 
 ' macroToggle — Utilities > Macros cycles: start recording -> stop -> play.
@@ -2914,9 +2980,7 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
         ELSEIF hk = "G" THEN
             doMailMerge()
         ELSEIF hk = "C" THEN
-            gPromptMode = "calc"
-            gPromptLabel = "Calculate: "
-            gPromptText = ""
+            openCalculator()
         ELSEIF hk = "M" THEN
             macroToggle()
         ELSE
@@ -3320,6 +3384,44 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
                 rows[pmr] = pleft + popSt.Render(pbox[pi]) + pright
             END IF
         NEXT pi
+    END IF
+
+    ' --- on-screen calculator panel (Utilities > Calculator) ---------------
+    IF gCalcOpen THEN
+        DIM calcSt AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#e6eeff")).Background(lipgloss.Color("#14336e"))
+        DIM iw AS INTEGER = 34
+        DIM clines AS []STRING
+        clines = APPEND(clines, swFit(" > " + gCalcInput + Chr(9617), iw))
+        clines = APPEND(clines, swFit(" = " + gCalcResult, iw))
+        clines = APPEND(clines, strings.Repeat("─", iw))
+        DIM cti AS INTEGER
+        FOR cti = 0 TO LEN(gCalcTape) - 1
+            clines = APPEND(clines, swFit("   " + gCalcTape[cti], iw))
+        NEXT cti
+        clines = APPEND(clines, strings.Repeat("─", iw))
+        clines = APPEND(clines, swFit(" Enter=calc  C=clear  I=insert  Esc", iw))
+        DIM cbox AS []STRING
+        cbox = APPEND(cbox, "╭ Calculator " + strings.Repeat("─", iw - 12) + "╮")
+        DIM cl AS INTEGER
+        FOR cl = 0 TO LEN(clines) - 1
+            cbox = APPEND(cbox, "│" + clines[cl] + "│")
+        NEXT cl
+        cbox = APPEND(cbox, "╰" + strings.Repeat("─", iw) + "╯")
+        DIM cboxW AS INTEGER = iw + 2
+        DIM cboxX AS INTEGER = (w - cboxW) / 2
+        IF cboxX < 0 THEN cboxX = 0
+        DIM cboxY AS INTEGER = txTop + (txRows - LEN(cbox)) / 2
+        IF cboxY < txTop THEN cboxY = txTop
+        DIM ci AS INTEGER
+        FOR ci = 0 TO LEN(cbox) - 1
+            DIM cmr AS INTEGER = cboxY + ci
+            IF cmr >= txTop AND cmr <= h - 2 THEN
+                DIM cEnd AS INTEGER = cboxX + cboxW
+                DIM cLeft AS STRING = renderBgRange(cmr, 0, cboxX, txStyle, curStyle, blkStyle)
+                DIM cRight AS STRING = renderBgRange(cmr, cEnd, w - cEnd, txStyle, curStyle, blkStyle)
+                rows[cmr] = cLeft + calcSt.Render(cbox[ci]) + cRight
+            END IF
+        NEXT ci
     END IF
 
     RETURN strings.Join(rows, Chr(10))
@@ -4673,6 +4775,12 @@ SUB Form_Key(key AS STRING)
             gMessage = "Left preview"
         END IF
         IF gPrevTop < 0 THEN gPrevTop = 0
+        RETURN
+    END IF
+
+    ' The on-screen calculator panel owns the keyboard while it is open.
+    IF gCalcOpen THEN
+        handleCalcWidget(key)
         RETURN
     END IF
 
