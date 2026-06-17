@@ -91,6 +91,10 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF mc.X >= 1 AND mc.X < 1 + 78 AND mc.Y >= 1 AND mc.Y < 1 + 22 THEN
             m.Focus = 0
             sw_Click(mc.X - 1, mc.Y - 1)
+            IF _dbtuiQuitReq THEN
+                Form_Close()
+                RETURN m, tea.Quit
+            END IF
             RETURN m, NIL
         END IF
     END IF
