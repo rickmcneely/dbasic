@@ -451,6 +451,9 @@ DIM gMarginBottom AS INTEGER = 8  ' .mb : blank lines below the body
 DIM gHeader AS STRING             ' .he : running header ("#" -> page number)
 DIM gFooter AS STRING             ' .fo : running footer ("#" -> page number)
 DIM gPageNumbering AS BOOLEAN = TRUE  ' .pn on / .op off
+DIM gLineSpacing AS INTEGER = 1   ' .ls / ^OS : 1 single, 2 double, ...
+DIM gPageOffset AS INTEGER = 0    ' .po : left indent of the printed page
+DIM gPrintCommand AS STRING       ' config: shell command to pipe the print image to
 DIM gPrevTop AS INTEGER           ' first visible line in print-preview mode
 DIM gNonDocument AS BOOLEAN       ' non-document mode (WS /N): no wrap/justify/dot cmds
 
@@ -1499,6 +1502,8 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "C|Center Line|Alt+L C")
         xs = APPEND(xs, "R|Ruler Line|Alt+L R")
         xs = APPEND(xs, "P|Page|Alt+L P")
+        xs = APPEND(xs, "S|Line Spacing|Alt+L S")
+        xs = APPEND(xs, "F|Print to Printer|Alt+L F")
     CASE 6
         xs = APPEND(xs, "W|Word Count|Alt+U W")
         xs = APPEND(xs, "S|Spell Check|Alt+U S")
@@ -1905,7 +1910,26 @@ SUB doPrint()
         gMessage = "Print failed: " + e.Error()
         RETURN
     END IF
-    gMessage = fmt.Sprintf("Printed %d pages to %s", LEN(paginate()), target)
+    DIM np AS INTEGER = LEN(paginate())
+    ' If a print command is configured, pipe the print image to it too.
+    IF strings.TrimSpace(gPrintCommand) <> "" THEN
+        DIM shell AS STRING = "sh"
+        DIM flag AS STRING = "-c"
+        IF runtime.GOOS = "windows" THEN
+            shell = "cmd"
+            flag = "/C"
+        END IF
+        DIM c AS POINTER TO exec.Cmd = exec.Command(shell, flag, gPrintCommand)
+        (^c).Stdin = strings.NewReader(body)
+        DIM pe AS ERROR = (^c).Run()
+        IF pe <> NIL THEN
+            gMessage = fmt.Sprintf("Wrote %s; printer failed: %v", target, pe)
+        ELSE
+            gMessage = fmt.Sprintf("Printed %d pages to %s and to '%s'", np, target, gPrintCommand)
+        END IF
+        RETURN
+    END IF
+    gMessage = fmt.Sprintf("Printed %d pages to %s", np, target)
 END SUB
 
 ' ==========================================================================
@@ -2339,6 +2363,8 @@ SUB applySetting(k AS STRING, v AS STRING)
         IF v <> "" THEN gDictPath = v
     ELSEIF k = "thesaurus" THEN
         IF v <> "" THEN gThesPath = v
+    ELSEIF k = "printcommand" THEN
+        gPrintCommand = v
     END IF
 END SUB
 
@@ -2357,6 +2383,7 @@ FUNCTION serializeConfig() AS STRING
     b = b + "unicode = " + onoff(gDefaultUnicode) + Chr(10)
     b = b + "dictionary = " + gDictPath + Chr(10)
     b = b + "thesaurus = " + gThesPath + Chr(10)
+    b = b + "printcommand = " + gPrintCommand + Chr(10)
     RETURN b
 END FUNCTION
 
@@ -2427,6 +2454,7 @@ FUNCTION renderConfig(w AS INTEGER, h AS INTEGER) AS STRING
     rows = APPEND(rows, cfgRow("J", "Startup rows", fmt.Sprintf("%d", gStartRows), val, bg, w))
     rows = APPEND(rows, cfgRow("K", "Dictionary", gDictPath, val, bg, w))
     rows = APPEND(rows, cfgRow("L", "Thesaurus", gThesPath, val, bg, w))
+    rows = APPEND(rows, cfgRow("M", "Print command", gPrintCommand, val, bg, w))
     rows = APPEND(rows, bg.Render(swFit("", w)))
     rows = APPEND(rows, bg.Render(swFit("  Press a letter to change a setting.", w)))
     WHILE LEN(rows) < h - 1
@@ -2497,6 +2525,10 @@ SUB handleConfigKey(key AS STRING)
     ELSEIF k = "l" THEN
         gPromptMode = "cfg_thes"
         gPromptLabel = "Thesaurus path: "
+        gPromptText = ""
+    ELSEIF k = "m" THEN
+        gPromptMode = "cfg_printcmd"
+        gPromptLabel = "Print command (e.g. lp): "
         gPromptText = ""
     ELSEIF k = "s" THEN
         saveConfig()
@@ -3313,6 +3345,12 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             gPromptMode = "pagelen"
             gPromptLabel = "Page length (lines): "
             gPromptText = ""
+        ELSEIF hk = "S" THEN
+            gPromptMode = "linespacing"
+            gPromptLabel = "Line spacing (1=single, 2=double): "
+            gPromptText = ""
+        ELSEIF hk = "F" THEN
+            doPrint()
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
@@ -4080,6 +4118,11 @@ SUB applyDotCommands()
             gHeader = Mid(ln, 5, LEN(ln) - 4)
         ELSEIF Left(ln, 4) = ".fo " THEN
             gFooter = Mid(ln, 5, LEN(ln) - 4)
+        ELSEIF Left(ln, 4) = ".ls " THEN
+            DIM lsv AS INTEGER = Int(Val(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))))
+            IF lsv >= 1 THEN gLineSpacing = lsv
+        ELSEIF Left(ln, 4) = ".po " THEN
+            gPageOffset = Int(Val(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4))))
         ELSEIF Left(ln, 3) = ".pn" THEN
             gPageNumbering = TRUE
         ELSEIF Left(ln, 3) = ".op" THEN
@@ -4105,20 +4148,32 @@ FUNCTION paginate() AS []INTEGER
     WHILE lastContent > 0 AND strings.TrimSpace(gLines[lastContent]) = ""
         lastContent = lastContent - 1
     WEND
+    DIM sp AS INTEGER = gLineSpacing
+    IF sp < 1 THEN sp = 1
     DIM count AS INTEGER = 0
+    DIM forceBreak AS BOOLEAN = FALSE
     DIM i AS INTEGER
     FOR i = 0 TO lastContent
         DIM ln AS STRING = gLines[i]
         IF Left(ln, 3) = ".pa" THEN
             count = 0
             IF i + 1 <= lastRow() THEN starts = APPEND(starts, i + 1)
+        ELSEIF Left(ln, 4) = ".cp " THEN
+            ' conditional page: break now if the next N lines won't fit
+            DIM need AS INTEGER = Int(Val(strings.TrimSpace(Mid(ln, 5, LEN(ln) - 4)))) * sp
+            IF count + need > perPage THEN forceBreak = TRUE
         ELSEIF isDotCmd(ln) THEN
             ' other dot command — no page advance
         ELSE
-            count = count + 1
+            IF forceBreak THEN
+                starts = APPEND(starts, i)
+                count = 0
+                forceBreak = FALSE
+            END IF
+            count = count + sp
             IF count > perPage THEN
                 starts = APPEND(starts, i)
-                count = 1
+                count = sp
             END IF
         END IF
     NEXT i
@@ -4252,6 +4307,10 @@ FUNCTION buildPaginated(forScreen AS BOOLEAN) AS []STRING
             ELSEIF NOT isDotCmd(bl) THEN
                 out = APPEND(out, stripMarkers(bl))
                 lastBodyIdx = LEN(out) - 1
+                DIM extra AS INTEGER
+                FOR extra = 1 TO gLineSpacing - 1
+                    out = APPEND(out, "")
+                NEXT extra
             END IF
         NEXT i
         IF LEN(pageNotes) > 0 THEN
@@ -4279,6 +4338,14 @@ FUNCTION buildPaginated(forScreen AS BOOLEAN) AS []STRING
             END IF
         END IF
     NEXT p
+    ' .po page offset: indent every printed line (but not the form feeds).
+    IF gPageOffset > 0 THEN
+        DIM pad AS STRING = strings.Repeat(" ", gPageOffset)
+        DIM oi AS INTEGER
+        FOR oi = 0 TO LEN(out) - 1
+            IF out[oi] <> Chr(12) THEN out[oi] = pad + out[oi]
+        NEXT oi
+    END IF
     RETURN out
 END FUNCTION
 
@@ -5129,6 +5196,10 @@ SUB handlePrefixO(key AS STRING)
         setTabStop()
     ELSEIF k = "n" THEN
         clearTabStop()
+    ELSEIF k = "s" THEN
+        gPromptMode = "linespacing"
+        gPromptLabel = "Line spacing (1=single, 2=double): "
+        gPromptText = ""
     ELSEIF k = "c" THEN
         centerLine()
     ELSEIF k = "j" THEN
@@ -5285,6 +5356,13 @@ SUB handlePrompt(key AS STRING)
             IF txt <> "" THEN gDictPath = txt
         ELSEIF mode = "cfg_thes" THEN
             IF txt <> "" THEN gThesPath = txt
+        ELSEIF mode = "cfg_printcmd" THEN
+            gPrintCommand = txt
+        ELSEIF mode = "linespacing" THEN
+            DIM ls AS INTEGER = Int(Val(txt))
+            IF ls < 1 THEN ls = 1
+            gLineSpacing = ls
+            gMessage = fmt.Sprintf("Line spacing = %d", gLineSpacing)
         ELSEIF mode = "repeatcount" THEN
             DIM rc AS INTEGER = Int(Val(txt))
             IF rc < 1 THEN rc = 1
