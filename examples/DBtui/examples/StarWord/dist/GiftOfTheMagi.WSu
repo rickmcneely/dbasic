@@ -1,0 +1,56 @@
+.he   StarWord Feature Test  -  The Gift of the Magi              Page #
+.fo   A public-domain short story by O. Henry (1905)
+.mt 3
+.mb 3
+.pl 66
+.po 5
+.ls 1
+.pn 1
+
+                     THE GIFT OF THE MAGI
+                          by O. Henry
+
+
+This document exercises StarWord's formatting features: dot commands,
+headers and footers, a table of contents, an index, footnotes, page
+breaks, line spacing, and the bold, italic, underline, strike print styles.
+
+.toc
+.pa
+.tc The Gift of the Magi
+                     THE GIFT OF THE MAGI
+
+.ix Della
+.ix Christmas
+One dollar and eighty-seven cents. That was all. And sixty cents of it was in pennies. Pennies saved one and two at a time by bulldozing the grocer and the vegetable man and the butcher until one's cheeks burned with the silent imputation of parsimony that such close dealing implied. Three times Della counted it. One dollar and eighty-seven cents. And the next day would be Christmas.
+.fn O. Henry was the pen name of William Sydney Porter (1862-1910).
+
+There was clearly nothing to do but flop down on the shabby little couch and howl. So Della did it. Which instigates the moral reflection that life is made up of sobs, sniffles, and smiles, with sniffles predominating.
+
+Della finished her cry and attended to her cheeks with the powder rag. She stood by the window and looked out dully at a grey cat walking a grey fence in a grey backyard. Tomorrow would be Christmas Day, and she had only one dollar and eighty-seven cents with which to buy Jim a present.
+
+.cp 8
+.ix magi
+The magi, as you know, were wise men -- wonderfully wise men -- who brought gifts to the Babe in the manger. They invented the art of giving Christmas presents. And here I have lamely related to you the uneventful chronicle of two foolish children in a flat who most unwisely sacrificed for each other the greatest treasures of their house.
+
+But in a last word to the wise of these days let it be said that of all who give gifts these two were the wisest. Everywhere they are wisest. They are the magi.
+.pa
+.tc Notes on This Test Document
+                  NOTES ON THIS TEST DOCUMENT
+
+.ix dot commands
+.ix print styles
+This second page begins with a hard page break (.pa). The header and
+footer above and below repeat on every page, and the footer's # is
+replaced by the page number. Margins come from .mt/.mb, the left offset
+from .po, and the page length from .pl.
+
+Print styles, shown literally: bold, italic, underline, strikeout.
+Superscript: E = mc2.   Subscript: H2O.
+
+.ix footnotes
+Footnotes (.fn) collect at the foot of their page. Index entries (.ix)
+and contents entries (.tc) are gathered and printed by .index and .toc.
+Toggle soft word wrap to see these long lines re-wrap to the margin.
+
+.index

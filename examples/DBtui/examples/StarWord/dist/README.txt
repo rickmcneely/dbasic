@@ -1,14 +1,19 @@
-StarWord 0.9.02b - a modern WordStar 7.0 clone (beta)
+StarWord 0.9.03b - a modern WordStar 7.0 clone (beta)
 =====================================================
 
 Copyright Rick McNeely 2026  -  rickmcneely@gmail.com
 Created by Rick McNeely and my dear friend, Claude Code.
 
 CONTENTS
-  StarWord.exe   - the program (Windows 64-bit)
-  help.html      - command reference (Help menu > Help)
-  whatsnew.html  - what's new vs WordStar 7 (Help menu > Whats New?)
-  README.txt     - this file
+  StarWord.exe       - the program (Windows 64-bit)
+  help.html          - command reference (Help menu > Help)
+  whatsnew.html      - what's new vs WordStar 7 (Help menu > Whats New?)
+  GiftOfTheMagi.WSu  - sample document exercising every feature: headers/
+                       footers, table of contents, index, footnotes, page
+                       breaks, line spacing, and bold/italic/underline/strike/
+                       super/subscript print styles. Open it, then use
+                       View > Print Preview or File > Print to PDF.
+  README.txt         - this file
 
 INSTALL / RUN
   Keep all files together in the same folder. Double-click StarWord.exe
