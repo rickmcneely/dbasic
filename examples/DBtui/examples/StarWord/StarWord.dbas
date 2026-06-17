@@ -255,10 +255,12 @@ SUB _dbtuiRelaunchInTerminal()
     DIM _cwd AS STRING
     _cwd, _e = os.Getwd()
     IF _e <> NIL THEN _cwd = "."
+    ' Load the config so the new window opens at the configured size.
+    loadConfig()
     DIM _full AS []STRING
     _full = APPEND(_full, _wt)
     _full = APPEND(_full, "--size")
-    _full = APPEND(_full, "80,24")
+    _full = APPEND(_full, fmt.Sprintf("%d,%d", gStartCols, gStartRows))
     _full = APPEND(_full, "--title")
     _full = APPEND(_full, "StarWord")
     _full = APPEND(_full, "-d")
@@ -441,6 +443,8 @@ DIM gNonDocument AS BOOLEAN       ' non-document mode (WS /N): no wrap/justify/d
 ' --- configurable defaults (persisted via the WSCHANGE-style config) -------
 DIM gWrapMode AS STRING = "hard"  ' "hard" (insert breaks) | "soft" (display) | "off"
 DIM gTabWidth AS INTEGER = 5      ' columns per tab stop
+DIM gStartCols AS INTEGER = 80    ' startup window columns (Windows wt relaunch)
+DIM gStartRows AS INTEGER = 24    ' startup window rows
 DIM gDefaultUnicode AS BOOLEAN = TRUE  ' new documents default to UTF-8 (.WSu)
 DIM gCfgReturn AS STRING = "edit"      ' screen mode to return to after config
 DIM gCfgSnapshot AS STRING             ' settings serialized on config entry (for Abandon)
@@ -1798,6 +1802,12 @@ SUB applySetting(k AS STRING, v AS STRING)
     ELSEIF k = "tabwidth" THEN
         DIM tv AS INTEGER = Int(Val(v))
         IF tv > 0 THEN gTabWidth = tv
+    ELSEIF k = "startcols" THEN
+        DIM sc AS INTEGER = Int(Val(v))
+        IF sc > 0 THEN gStartCols = sc
+    ELSEIF k = "startrows" THEN
+        DIM sr AS INTEGER = Int(Val(v))
+        IF sr > 0 THEN gStartRows = sr
     ELSEIF k = "helplevel" THEN
         gHelpLevel = Int(Val(v))
     ELSEIF k = "unicode" THEN
@@ -1814,6 +1824,8 @@ FUNCTION serializeConfig() AS STRING
     b = b + "rightmargin = " + fmt.Sprintf("%d", gRightMargin) + Chr(10)
     b = b + "pagelength = " + fmt.Sprintf("%d", gPageLength) + Chr(10)
     b = b + "tabwidth = " + fmt.Sprintf("%d", gTabWidth) + Chr(10)
+    b = b + "startcols = " + fmt.Sprintf("%d", gStartCols) + Chr(10)
+    b = b + "startrows = " + fmt.Sprintf("%d", gStartRows) + Chr(10)
     b = b + "helplevel = " + fmt.Sprintf("%d", gHelpLevel) + Chr(10)
     b = b + "unicode = " + onoff(gDefaultUnicode) + Chr(10)
     RETURN b
@@ -1882,6 +1894,8 @@ FUNCTION renderConfig(w AS INTEGER, h AS INTEGER) AS STRING
     rows = APPEND(rows, cfgRow("F", "Tab width", fmt.Sprintf("%d", gTabWidth), val, bg, w))
     rows = APPEND(rows, cfgRow("G", "Help level", fmt.Sprintf("%d", gHelpLevel), val, bg, w))
     rows = APPEND(rows, cfgRow("H", "New files Unicode", onoff(gDefaultUnicode), val, bg, w))
+    rows = APPEND(rows, cfgRow("I", "Startup columns", fmt.Sprintf("%d", gStartCols), val, bg, w))
+    rows = APPEND(rows, cfgRow("J", "Startup rows", fmt.Sprintf("%d", gStartRows), val, bg, w))
     rows = APPEND(rows, bg.Render(swFit("", w)))
     rows = APPEND(rows, bg.Render(swFit("  Press a letter to change a setting.", w)))
     WHILE LEN(rows) < h - 1
@@ -1937,6 +1951,14 @@ SUB handleConfigKey(key AS STRING)
         gHelpLevel = (gHelpLevel + 1) MOD 4
     ELSEIF k = "h" THEN
         gDefaultUnicode = NOT gDefaultUnicode
+    ELSEIF k = "i" THEN
+        gPromptMode = "cfg_sc"
+        gPromptLabel = "Startup columns: "
+        gPromptText = ""
+    ELSEIF k = "j" THEN
+        gPromptMode = "cfg_sr"
+        gPromptLabel = "Startup rows: "
+        gPromptText = ""
     ELSEIF k = "s" THEN
         saveConfig()
         gMode = gCfgReturn
@@ -3653,6 +3675,12 @@ SUB handlePrompt(key AS STRING)
         ELSEIF mode = "cfg_tw" THEN
             DIM ctw AS INTEGER = Int(Val(txt))
             IF ctw > 0 THEN gTabWidth = ctw
+        ELSEIF mode = "cfg_sc" THEN
+            DIM csc AS INTEGER = Int(Val(txt))
+            IF csc > 0 THEN gStartCols = csc
+        ELSEIF mode = "cfg_sr" THEN
+            DIM csr AS INTEGER = Int(Val(txt))
+            IF csr > 0 THEN gStartRows = csr
         END IF
         RETURN
     END IF
