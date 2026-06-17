@@ -248,7 +248,29 @@ SUB _dbtuiRelaunchInTerminal()
     DIM _self AS STRING
     _self, _e = os.Executable()
     IF _e <> NIL THEN RETURN
-    DIM _c AS POINTER TO exec.Cmd = exec.Command(_wt, "--size", "80,24", "--title", "StarWord", _self)
+    ' Relaunch into Windows Terminal, preserving the working directory and
+    ' forwarding our own command-line arguments to the new instance. Build the
+    ' full argv (wt, its options, then "<self> <forwarded args...>") and set it
+    ' on the Cmd directly so a dynamic arg list needs no variadic spread.
+    DIM _cwd AS STRING
+    _cwd, _e = os.Getwd()
+    IF _e <> NIL THEN _cwd = "."
+    DIM _full AS []STRING
+    _full = APPEND(_full, _wt)
+    _full = APPEND(_full, "--size")
+    _full = APPEND(_full, "80,24")
+    _full = APPEND(_full, "--title")
+    _full = APPEND(_full, "StarWord")
+    _full = APPEND(_full, "-d")
+    _full = APPEND(_full, _cwd)
+    _full = APPEND(_full, _self)
+    DIM _argv AS []STRING = os.Args
+    DIM _ai AS INTEGER
+    FOR _ai = 1 TO LEN(_argv) - 1
+        _full = APPEND(_full, _argv[_ai])
+    NEXT _ai
+    DIM _c AS POINTER TO exec.Cmd = exec.Command(_wt)
+    _c.Args = _full
     _c.Env = APPEND(os.Environ(), "DBTUI_IN_TERMINAL=1")
     _e = _c.Start()
     IF _e <> NIL THEN RETURN
