@@ -1252,21 +1252,28 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     DIM ttl AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
     DIM btn AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cfe0ff")).Background(lipgloss.Color("#14336e"))
     DIM sel AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
+    DIM nameSty AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#14336e")).Bold(TRUE)
 
-    DIM inner AS INTEGER = 44
-    DIM boxW AS INTEGER = inner + 2
+    ' Content lines. The document name gets its own line so long (non-DOS)
+    ' names fit; the box grows wide enough to hold the name and the hint.
+    DIM nm AS STRING = gFileName
+    DIM nameLine AS STRING = "    " + nm
+    DIM hintLine AS STRING = "  S Save   A Abandon   Esc Cancel  (arrows/click)"
+    DIM msg1 AS STRING = "  This document has unsaved changes:"
+    DIM msg2 AS STRING = "  Save before leaving StarWord?"
+
+    DIM inner AS INTEGER = 52
+    IF LEN(nameLine) + 2 > inner THEN inner = LEN(nameLine) + 2
+    IF LEN(hintLine) + 2 > inner THEN inner = LEN(hintLine) + 2
     ' Center within the mouse-clickable region (the form's 78x22 area).
     DIM wc AS INTEGER = 78
     IF w < wc THEN wc = w
     DIM hc AS INTEGER = 22
     IF h < hc THEN hc = h
+    IF inner > wc - 2 THEN inner = wc - 2
+    DIM boxW AS INTEGER = inner + 2
     DIM boxX AS INTEGER = (wc - boxW) / 2
     IF boxX < 0 THEN boxX = 0
-
-    ' Content lines (text, padded to inner later).
-    DIM nm AS STRING = gFileName
-    DIM msg1 AS STRING = "  \"" + nm + "\" has unsaved changes."
-    DIM msg2 AS STRING = "  Save before leaving StarWord?"
 
     ' Button layout (record canvas hit-test ranges).
     DIM lbl0 AS STRING = "[ Save ]"
@@ -1296,18 +1303,19 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     IF inner > btnPlainLen THEN btnPad = strings.Repeat(" ", inner - btnPlainLen)
     DIM btnRow AS STRING = box.Render(strings.Repeat(" ", off0)) + b0 + box.Render("   ") + b1 + box.Render("   ") + b2 + box.Render(btnPad)
 
-    ' Assemble the box rows. The button row is index 4 below.
+    ' Assemble the box rows. The document name is on its own (bold) line.
     DIM bodyRows AS []STRING
     bodyRows = APPEND(bodyRows, box.Render(swFit(msg1, inner)))
+    bodyRows = APPEND(bodyRows, nameSty.Render(swFit(nameLine, inner)))
     bodyRows = APPEND(bodyRows, box.Render(swFit("", inner)))
     bodyRows = APPEND(bodyRows, box.Render(swFit(msg2, inner)))
     bodyRows = APPEND(bodyRows, box.Render(swFit("", inner)))
     ' (button row spliced in specially)
-    DIM hintRow AS STRING = box.Render(swFit("  S Save   A Abandon   Esc Cancel  (arrows/click)", inner))
-    DIM boxH AS INTEGER = 4 + 1 + 1 + 3   ' top + 4 body + button + hint + blank + bottom
+    DIM hintRow AS STRING = box.Render(swFit(hintLine, inner))
+    DIM boxH AS INTEGER = 5 + 1 + 1 + 3   ' title + 5 body + button + blank + hint + bottom
     DIM boxY AS INTEGER = (hc - boxH) / 2
     IF boxY < 1 THEN boxY = 1
-    gDlgBtnRow = boxY + 1 + 4              ' top border + 4 body rows
+    gDlgBtnRow = boxY + 1 + 5              ' title + 5 body rows
 
     DIM rows AS []STRING
     DIM r AS INTEGER
@@ -1318,15 +1326,15 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
         DIM done AS BOOLEAN = TRUE
         IF rel = 0 THEN
             mid = ttl.Render(swFit("  StarWord  -  Exit", boxW))
-        ELSEIF rel >= 1 AND rel <= 4 THEN
+        ELSEIF rel >= 1 AND rel <= 5 THEN
             mid = box.Render("│") + bodyRows[rel - 1] + box.Render("│")
-        ELSEIF rel = 5 THEN
-            mid = box.Render("│") + btnRow + box.Render("│")
         ELSEIF rel = 6 THEN
-            mid = box.Render("│") + box.Render(swFit("", inner)) + box.Render("│")
+            mid = box.Render("│") + btnRow + box.Render("│")
         ELSEIF rel = 7 THEN
-            mid = box.Render("│") + hintRow + box.Render("│")
+            mid = box.Render("│") + box.Render(swFit("", inner)) + box.Render("│")
         ELSEIF rel = 8 THEN
+            mid = box.Render("│") + hintRow + box.Render("│")
+        ELSEIF rel = 9 THEN
             mid = box.Render("╰" + strings.Repeat("─", inner) + "╯")
         ELSE
             done = FALSE
