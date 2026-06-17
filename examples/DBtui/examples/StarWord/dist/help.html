@@ -57,6 +57,7 @@ hold <kbd>Ctrl</kbd> and press <kbd>K</kbd>; <kbd>^K&nbsp;S</kbd> means press <k
     <li><a href="#mouse">Mouse</a></li>
     <li><a href="#clip">Clipboard</a></li>
     <li><a href="#cli">Command line</a></li>
+    <li><a href="#conflicts">Terminal key conflicts</a></li>
   </ul>
 </nav>
 
@@ -197,6 +198,18 @@ or an http(s) URL that StarWord downloads and caches). See the configuration scr
 <tr><td><code>/C</code> <code>-c</code> <code>--config</code></td><td>Open the configuration screen</td></tr>
 <tr><td><code>/?</code> <code>-h</code> <code>--help</code></td><td>Show command-line help</td></tr>
 </table>
+
+<h2 class="sec" id="conflicts">Terminal key conflicts <a class="top" href="#">top</a></h2>
+<p>A few WordStar control keys are also claimed by some terminals (notably Windows&nbsp;Terminal), which act
+on them before StarWord ever sees them. If a command seems to do the wrong thing, use the alternate key:</p>
+<table>
+<tr><th>If this happens</th><th>Use instead</th></tr>
+<tr><td><kbd>^V</kbd> pastes (or says nothing) instead of toggling Insert/Overtype &mdash; the terminal grabbed <kbd>Ctrl</kbd>+<kbd>V</kbd> for &ldquo;paste&rdquo;</td><td>Press the <kbd>Insert</kbd> key (it toggles too), or unbind <kbd>Ctrl</kbd>+<kbd>V</kbd> in your terminal settings</td></tr>
+<tr><td><kbd>^C</kbd> copies a selection instead of paging down &mdash; the terminal grabbed <kbd>Ctrl</kbd>+<kbd>C</kbd> while text was selected</td><td>Click to clear the selection, or press <kbd>PgDn</kbd></td></tr>
+</table>
+<div class="note">All cursor and navigation commands have a non-control alternative &mdash; the arrow keys,
+<kbd>PgUp</kbd>/<kbd>PgDn</kbd>, <kbd>Home</kbd>/<kbd>End</kbd>, <kbd>Insert</kbd>, <kbd>Delete</kbd> and
+<kbd>Backspace</kbd> &mdash; so you can always get the job done even when a terminal claims a Ctrl key.</div>
 
 </main>
 <footer>
