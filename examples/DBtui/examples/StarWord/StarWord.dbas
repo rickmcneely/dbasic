@@ -413,6 +413,9 @@ DIM gRightMargin AS INTEGER = 65
 ' ^S (Chr 19) underline. gShowTags (^OD) shows those tags instead of applying
 ' them. gJustify/gWordWrap are stored layout flags.
 DIM gShowTags AS BOOLEAN          ' ^OD: TRUE = reveal print-control tags
+DIM gHard AS []BOOLEAN            ' gHard[i] = the break ending line i is a HARD
+                                  ' (Enter) return; FALSE = soft (wrap-inserted)
+DIM gShowFlags AS BOOLEAN         ' show the right-margin flag column (</+)
 DIM gJustify AS BOOLEAN = TRUE    ' ^OJ
 DIM gWordWrap AS BOOLEAN = TRUE   ' ^OW
 
@@ -539,6 +542,69 @@ SUB clampCursor()
     IF gCol > LEN(gLines[gRow]) THEN gCol = LEN(gLines[gRow])
 END SUB
 
+' --- soft/hard return tracking (gHard parallels gLines) -------------------
+
+' resetHard — set every break to soft (unknown), sized to gLines. Used after
+' load / block ops / undo where per-break info isn't recoverable.
+SUB resetHard()
+    gHard = nil
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gLines) - 1
+        gHard = APPEND(gHard, FALSE)
+    NEXT i
+END SUB
+
+' ensureHardLen — keep gHard the same length as gLines (pad soft / truncate).
+SUB ensureHardLen()
+    WHILE LEN(gHard) < LEN(gLines)
+        gHard = APPEND(gHard, FALSE)
+    WEND
+    IF LEN(gHard) > LEN(gLines) THEN gHard = gHard[0:LEN(gLines)]
+END SUB
+
+' hardInsertAt — splice a break flag into gHard at index idx.
+SUB hardInsertAt(idx AS INTEGER, val AS BOOLEAN)
+    ensureHardLen()
+    DIM out AS []BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO idx - 1
+        IF i < LEN(gHard) THEN out = APPEND(out, gHard[i])
+    NEXT i
+    out = APPEND(out, val)
+    FOR i = idx TO LEN(gHard) - 1
+        out = APPEND(out, gHard[i])
+    NEXT i
+    gHard = out
+END SUB
+
+' hardRemoveAt — remove the break flag at index idx.
+SUB hardRemoveAt(idx AS INTEGER)
+    ensureHardLen()
+    DIM out AS []BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gHard) - 1
+        IF i <> idx THEN out = APPEND(out, gHard[i])
+    NEXT i
+    gHard = out
+END SUB
+
+' hardAt — is the break ending line i a hard return? (safe out of range.)
+FUNCTION hardAt(i AS INTEGER) AS BOOLEAN
+    IF i < 0 OR i >= LEN(gHard) THEN RETURN FALSE
+    RETURN gHard[i]
+END FUNCTION
+
+' flagChar — the right-margin flag for line i: "<" hard return, "+" soft
+' (wrapped), " " for blanks and dot commands.
+FUNCTION flagChar(i AS INTEGER) AS STRING
+    IF i < 0 OR i > lastRow() THEN RETURN " "
+    DIM ln AS STRING = gLines[i]
+    IF Left(ln, 1) = "." THEN RETURN " "
+    IF hardAt(i) THEN RETURN "<"
+    IF strings.TrimSpace(ln) = "" THEN RETURN " "
+    RETURN "+"
+END FUNCTION
+
 ' --- UTF-8 rune helpers ---------------------------------------------------
 ' gCol is a byte offset, but a Unicode glyph can be 1-4 bytes. These keep the
 ' cursor on rune boundaries and let edits act on whole runes, so a multibyte
@@ -623,6 +689,7 @@ END FUNCTION
 SUB setDoc(s AS STRING)
     gLines = strings.Split(s, Chr(10))
     IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
+    resetHard()
 END SUB
 
 FUNCTION offsetOf(r AS INTEGER, c AS INTEGER) AS INTEGER
@@ -1048,6 +1115,7 @@ SUB loadFile(path AS STRING)
     text = strings.ReplaceAll(text, Chr(13), Chr(10))
     gLines = strings.Split(text, Chr(10))
     IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
+    resetHard()
     gMessage = "Opened " + path + "  (" + fmt.Sprintf("%d", LEN(gLines)) + " lines)"
     syncUndoBaseline()
 END SUB
@@ -1484,6 +1552,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "C|Command Tags|Alt+V C")
         xs = APPEND(xs, "P|Preview|Alt+V P")
         xs = APPEND(xs, "S|Screen Settings|Alt+V S")
+        xs = APPEND(xs, "F|Flag Column|Alt+V F")
     CASE 3
         xs = APPEND(xs, "P|Page Break|Alt+I P")
         xs = APPEND(xs, "T|Todays Date|Alt+I T")
@@ -1675,6 +1744,7 @@ SUB doUndo()
     gUndoCol = gUndoCol[0:n - 1]
     gLines = strings.Split(doc, Chr(10))
     IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
+    resetHard()
     clampCursor()
     syncUndoBaseline()
     gModified = TRUE
@@ -1697,6 +1767,7 @@ SUB doRedo()
     gRedoCol = gRedoCol[0:n - 1]
     gLines = strings.Split(doc, Chr(10))
     IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
+    resetHard()
     clampCursor()
     syncUndoBaseline()
     gModified = TRUE
@@ -1789,6 +1860,7 @@ SUB doInsertFile(path AS STRING)
         out = APPEND(out, gLines[i])
     NEXT i
     gLines = out
+    resetHard()
     gRow = gRow + nf - 1
     gCol = LEN(flines[nf - 1])
     gModified = TRUE
@@ -3289,6 +3361,13 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             ELSE
                 gMessage = "Ruler hidden"
             END IF
+        ELSEIF hk = "F" THEN
+            gShowFlags = NOT gShowFlags
+            IF gShowFlags THEN
+                gMessage = "Flag column shown (< hard return, + soft/wrap)"
+            ELSE
+                gMessage = "Flag column hidden"
+            END IF
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
@@ -3445,6 +3524,7 @@ END SUB
 SUB newDoc()
     gLines = nil
     gLines = APPEND(gLines, "")
+    resetHard()
     gFileName = "untitled.WSu"
     gIsUnicode = gDefaultUnicode
     gRow = 0
@@ -3658,6 +3738,7 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     IF gMode = "preview" THEN RETURN renderPreview(w, h)
     IF gMode = "config" THEN RETURN renderConfig(w, h)
     clampCursor()
+    ensureHardLen()
     ' Non-document mode treats dot commands as literal text (no margin reflow).
     IF NOT gNonDocument THEN applyDotCommands()
 
@@ -3751,8 +3832,14 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
             END IF
         NEXT sy
     ELSE
+        DIM flagSt AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffd166")).Background(lipgloss.Color("#0f2350")).Bold(TRUE)
         FOR sy = 0 TO txRows - 1
-            rows = APPEND(rows, renderTextRow(gTop + sy, w, txStyle, curStyle, blkStyle))
+            DIM ri AS INTEGER = gTop + sy
+            IF gShowFlags THEN
+                rows = APPEND(rows, renderTextRow(ri, w - 1, txStyle, curStyle, blkStyle) + flagSt.Render(flagChar(ri)))
+            ELSE
+                rows = APPEND(rows, renderTextRow(ri, w, txStyle, curStyle, blkStyle))
+            END IF
         NEXT sy
     END IF
 
@@ -3987,6 +4074,7 @@ SUB splitLine()
     DIM tail AS STRING = Right(ln, LEN(ln) - gCol)
     gLines[gRow] = head
     gLines = lineInsertAt(gLines, gRow + 1, tail)
+    hardInsertAt(gRow, TRUE)          ' Enter creates a hard return after gRow
     gRow = gRow + 1
     gCol = 0
     gModified = TRUE
@@ -4024,6 +4112,7 @@ SUB deleteCharLeft()
         DIM prevLen AS INTEGER = LEN(gLines[gRow - 1])
         gLines[gRow - 1] = gLines[gRow - 1] + ln
         gLines = lineRemoveAt(gLines, gRow)
+        hardRemoveAt(gRow - 1)        ' the break joining the two lines is gone
         gRow = gRow - 1
         gCol = prevLen
     END IF
@@ -4039,6 +4128,7 @@ SUB deleteCharAt()
     ELSEIF gRow < lastRow() THEN
         gLines[gRow] = ln + gLines[gRow + 1]
         gLines = lineRemoveAt(gLines, gRow + 1)
+        hardRemoveAt(gRow)            ' the break joining gRow and gRow+1 is gone
     END IF
     gModified = TRUE
 END SUB
@@ -4058,6 +4148,7 @@ END SUB
 
 SUB deleteLine()
     gLines = lineRemoveAt(gLines, gRow)
+    hardRemoveAt(gRow)
     IF gRow > lastRow() THEN gRow = lastRow()
     gCol = 0
     gModified = TRUE
@@ -4065,6 +4156,7 @@ END SUB
 
 SUB insertBlankLine()
     gLines = lineInsertAt(gLines, gRow, "")
+    hardInsertAt(gRow, TRUE)
     gModified = TRUE
 END SUB
 
@@ -4425,14 +4517,19 @@ SUB reformatParagraph()
         gMessage = "Nothing to reformat here"
         RETURN
     END IF
+    ensureHardLen()
+    ' A paragraph is a run of text lines joined by SOFT returns; a hard
+    ' (Enter) return bounds it, so reformat never merges intentional breaks.
     DIM ps AS INTEGER = gRow
-    WHILE ps > 0 AND isTextLine(gLines[ps - 1])
+    WHILE ps > 0 AND isTextLine(gLines[ps - 1]) AND NOT hardAt(ps - 1)
         ps = ps - 1
     WEND
     DIM pe AS INTEGER = gRow
-    WHILE pe < lastRow() AND isTextLine(gLines[pe + 1])
+    WHILE pe < lastRow() AND isTextLine(gLines[pe + 1]) AND NOT hardAt(pe)
         pe = pe + 1
     WEND
+    DIM oldHardPe AS BOOLEAN = hardAt(pe)
+    DIM oldLen AS INTEGER = LEN(gHard)
     ' Gather every word in the paragraph.
     DIM words AS []STRING
     DIM i AS INTEGER
@@ -4466,6 +4563,25 @@ SUB reformatParagraph()
     IF LEN(curWords) > 0 THEN newLines = APPEND(newLines, buildWrapLine(curWords, maxW, TRUE))
     IF LEN(newLines) = 0 THEN newLines = APPEND(newLines, "")
     replaceLines(ps, pe, newLines)
+    ' Rebuild gHard for the spliced range: internal breaks soft, last preserved.
+    DIM nh AS []BOOLEAN
+    DIM hi AS INTEGER
+    FOR hi = 0 TO ps - 1
+        nh = APPEND(nh, gHard[hi])
+    NEXT hi
+    DIM nn AS INTEGER = LEN(newLines)
+    DIM hj AS INTEGER
+    FOR hj = 0 TO nn - 1
+        IF hj = nn - 1 THEN
+            nh = APPEND(nh, oldHardPe)
+        ELSE
+            nh = APPEND(nh, FALSE)
+        END IF
+    NEXT hj
+    FOR hi = pe + 1 TO oldLen - 1
+        nh = APPEND(nh, gHard[hi])
+    NEXT hi
+    gHard = nh
     gRow = ps
     gCol = 0
     gModified = TRUE
@@ -4495,6 +4611,7 @@ SUB wrapInsertIfNeeded()
     gLines[gRow] = head
     DIM moved AS INTEGER = gCol - brk - 1                ' cursor offset within tail
     gLines = lineInsertAt(gLines, gRow + 1, strings.Repeat(" ", gLeftMargin) + tail)
+    hardInsertAt(gRow, FALSE)         ' word-wrap creates a SOFT return after gRow
     gRow = gRow + 1
     gCol = gLeftMargin + moved
     IF gCol < gLeftMargin THEN gCol = gLeftMargin
