@@ -309,6 +309,29 @@ SUB _dbtuiApplyRequestedSize()
     NEXT _i
 END SUB
 
+' dlgQuitFilter — a program-level backstop. bubbletea routes EVERY quit
+' (tea.Quit command, Ctrl+C, an OS interrupt/close signal) through this
+' filter before it takes effect. If the document is modified and the user
+' has not already confirmed (RequestQuit sets _dbtuiQuitReq), we swallow the
+' quit and raise the confirmation dialog instead — returning a wake message
+' so the screen re-renders to show it. This guarantees the dialog appears no
+' matter HOW the exit was triggered, on every platform.
+FUNCTION dlgQuitFilter(m AS tea.Model, msg AS tea.Msg) AS tea.Msg
+    DIM _q AS tea.QuitMsg
+    DIM _ok AS BOOLEAN
+    _q, _ok = msg.(tea.QuitMsg)
+    IF _ok THEN
+        _ = _q
+        IF NOT _dbtuiQuitReq AND gModified AND gDialog = "" THEN
+            gDialog = "exit"
+            gDialogSel = 0
+            DIM _wake AS _dbtuiWakeMsg
+            RETURN _wake
+        END IF
+    END IF
+    RETURN msg
+END FUNCTION
+
 SUB Main()
     _dbtuiRelaunchInTerminal()
     _dbtuiApplyRequestedSize()
@@ -317,7 +340,7 @@ SUB Main()
     m.HoverTab = 0 - 1
     _formSize(@m)
     Form_Load()
-    DIM prog AS POINTER TO tea.Program = tea.NewProgram(m)
+    DIM prog AS POINTER TO tea.Program = tea.NewProgram(m, tea.WithFilter(dlgQuitFilter))
     _currentProgram = prog
     DIM final AS tea.Model
     DIM rerr AS ERROR
