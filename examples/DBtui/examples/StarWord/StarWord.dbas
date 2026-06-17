@@ -7,6 +7,8 @@ IMPORT "strings"
 IMPORT "runtime"
 IMPORT "os/exec" AS exec
 IMPORT "time"
+IMPORT "net/http" AS http
+IMPORT "io"
 IMPORT "github.com/atotto/clipboard" AS clipboard
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 
@@ -2572,6 +2574,50 @@ SUB applyFlag(stem AS STRING, flag AS STRING)
     NEXT i
 END SUB
 
+' cacheDir — where downloaded dictionaries/thesauri are cached.
+FUNCTION cacheDir() AS STRING
+    DIM home AS STRING
+    DIM e AS ERROR
+    home, e = os.UserHomeDir()
+    IF e <> NIL OR home = "" THEN RETURN ".starword-cache"
+    RETURN home + "/.starword-cache"
+END FUNCTION
+
+' resolveDataPath — if p is an http(s) URL, download it once to the cache and
+' return the local path (reused next time); otherwise return p unchanged. This
+' lets a dictionary/thesaurus be hosted on a website and fetched on demand.
+FUNCTION resolveDataPath(p AS STRING) AS STRING
+    DIM lp AS STRING = LCase(p)
+    IF NOT strings.HasPrefix(lp, "http://") AND NOT strings.HasPrefix(lp, "https://") THEN RETURN p
+    DIM nm AS STRING = p
+    DIM sl AS INTEGER = strings.LastIndex(nm, "/")
+    IF sl >= 0 THEN nm = Right(nm, LEN(nm) - sl - 1)
+    IF nm = "" THEN nm = "download.dat"
+    DIM dir AS STRING = cacheDir()
+    DIM target AS STRING = dir + "/" + nm
+    DIM fi AS os.FileInfo
+    DIM se AS ERROR
+    fi, se = os.Stat(target)
+    IF se = NIL THEN
+        _ = fi
+        RETURN target
+    END IF
+    DIM mkerr AS ERROR = os.MkdirAll(dir, 493)
+    _ = mkerr
+    DIM resp AS POINTER TO http.Response
+    DIM ge AS ERROR
+    resp, ge = http.Get(p)
+    IF ge <> NIL THEN RETURN p
+    DIM body AS BYTES
+    DIM re AS ERROR
+    body, re = io.ReadAll((^resp).Body)
+    (^resp).Body.Close()
+    IF re <> NIL THEN RETURN p
+    DIM we AS ERROR = os.WriteFile(target, body, 420)
+    IF we <> NIL THEN RETURN p
+    RETURN target
+END FUNCTION
+
 ' loadDictionary — read the word list + personal dictionary once (lazy).
 ' A flat list is one word per line; a hunspell .dic uses "stem/AFFIXFLAGS"
 ' with rules in the companion .aff (inflections are expanded).
@@ -2583,10 +2629,10 @@ SUB loadDictionary()
     gDict = dnew
     DIM data AS BYTES
     DIM e AS ERROR
-    data, e = os.ReadFile(gDictPath)
+    data, e = os.ReadFile(resolveDataPath(gDictPath))
     IF e = NIL THEN
         DIM isHunspell AS BOOLEAN = strings.HasSuffix(LCase(gDictPath), ".dic")
-        IF isHunspell THEN loadAffix(Left(gDictPath, LEN(gDictPath) - 4) + ".aff")
+        IF isHunspell THEN loadAffix(resolveDataPath(Left(gDictPath, LEN(gDictPath) - 4) + ".aff"))
         DIM lines AS []STRING = strings.Split(Decode(data), Chr(10))
         DIM i AS INTEGER
         FOR i = 0 TO LEN(lines) - 1
@@ -2872,7 +2918,7 @@ SUB loadThesaurus()
     gThesLoaded = TRUE
     DIM data AS BYTES
     DIM e AS ERROR
-    data, e = os.ReadFile(gThesPath)
+    data, e = os.ReadFile(resolveDataPath(gThesPath))
     IF e <> NIL THEN
         initThesaurus()
         RETURN
