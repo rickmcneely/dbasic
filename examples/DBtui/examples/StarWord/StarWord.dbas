@@ -449,6 +449,21 @@ DIM gDefaultUnicode AS BOOLEAN = TRUE  ' new documents default to UTF-8 (.WSu)
 DIM gCfgReturn AS STRING = "edit"      ' screen mode to return to after config
 DIM gCfgSnapshot AS STRING             ' settings serialized on config entry (for Abandon)
 
+' --- spell check + thesaurus -----------------------------------------------
+DIM gDictPath AS STRING = "/usr/share/dict/words"  ' word list (config: dictionary)
+DIM gDict AS MAP OF STRING TO BOOLEAN  ' loaded lowercase words (+ personal dict)
+DIM gDictLoaded AS BOOLEAN
+DIM gDictCount AS INTEGER
+DIM gSpellWord AS STRING                ' word currently flagged
+DIM gSpellEnd AS INTEGER               ' byte offset just past the flagged word
+DIM gSpellSugg AS []STRING             ' suggested corrections
+DIM gThes AS MAP OF STRING TO STRING   ' built-in synonyms (comma-separated)
+DIM gThesInit AS BOOLEAN
+DIM gThesWord AS STRING
+DIM gThesStart AS INTEGER
+DIM gThesEnd AS INTEGER
+DIM gThesSyn AS []STRING
+
 ' --- transient "size" popup shown while the terminal is being resized ------
 DIM gResizeShow AS BOOLEAN
 DIM gResizeGen AS INTEGER          ' bumped per resize; the timer clears only the latest
@@ -1243,6 +1258,8 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "P|Page|Alt+L P")
     CASE 6
         xs = APPEND(xs, "W|Word Count|Alt+U W")
+        xs = APPEND(xs, "S|Spell Check|Alt+U S")
+        xs = APPEND(xs, "T|Thesaurus|Alt+U T")
         xs = APPEND(xs, "C|Calculator|Alt+U C")
         xs = APPEND(xs, "M|Macros|Alt+U M")
     CASE 7
@@ -1812,6 +1829,8 @@ SUB applySetting(k AS STRING, v AS STRING)
         gHelpLevel = Int(Val(v))
     ELSEIF k = "unicode" THEN
         gDefaultUnicode = (lv = "on" OR lv = "true" OR lv = "1")
+    ELSEIF k = "dictionary" THEN
+        IF v <> "" THEN gDictPath = v
     END IF
 END SUB
 
@@ -1828,6 +1847,7 @@ FUNCTION serializeConfig() AS STRING
     b = b + "startrows = " + fmt.Sprintf("%d", gStartRows) + Chr(10)
     b = b + "helplevel = " + fmt.Sprintf("%d", gHelpLevel) + Chr(10)
     b = b + "unicode = " + onoff(gDefaultUnicode) + Chr(10)
+    b = b + "dictionary = " + gDictPath + Chr(10)
     RETURN b
 END FUNCTION
 
@@ -1896,6 +1916,7 @@ FUNCTION renderConfig(w AS INTEGER, h AS INTEGER) AS STRING
     rows = APPEND(rows, cfgRow("H", "New files Unicode", onoff(gDefaultUnicode), val, bg, w))
     rows = APPEND(rows, cfgRow("I", "Startup columns", fmt.Sprintf("%d", gStartCols), val, bg, w))
     rows = APPEND(rows, cfgRow("J", "Startup rows", fmt.Sprintf("%d", gStartRows), val, bg, w))
+    rows = APPEND(rows, cfgRow("K", "Dictionary", gDictPath, val, bg, w))
     rows = APPEND(rows, bg.Render(swFit("", w)))
     rows = APPEND(rows, bg.Render(swFit("  Press a letter to change a setting.", w)))
     WHILE LEN(rows) < h - 1
@@ -1959,6 +1980,10 @@ SUB handleConfigKey(key AS STRING)
         gPromptMode = "cfg_sr"
         gPromptLabel = "Startup rows: "
         gPromptText = ""
+    ELSEIF k = "k" THEN
+        gPromptMode = "cfg_dict"
+        gPromptLabel = "Dictionary path: "
+        gPromptText = ""
     ELSEIF k = "s" THEN
         saveConfig()
         gMode = gCfgReturn
@@ -1966,6 +1991,351 @@ SUB handleConfigKey(key AS STRING)
         applyConfigText(gCfgSnapshot)
         gMode = gCfgReturn
         gMessage = "Configuration unchanged"
+    END IF
+END SUB
+
+' ==========================================================================
+' Spell check (CorrectStar-style) + a small built-in thesaurus
+' ==========================================================================
+
+' personalDictPath — ~/.starword.dict (words added via "A" during a check).
+FUNCTION personalDictPath() AS STRING
+    DIM home AS STRING
+    DIM e AS ERROR
+    home, e = os.UserHomeDir()
+    IF e <> NIL OR home = "" THEN RETURN ".starword.dict"
+    RETURN home + "/.starword.dict"
+END FUNCTION
+
+' loadDictionary — read the word list + personal dictionary once (lazy).
+SUB loadDictionary()
+    IF gDictLoaded THEN RETURN
+    gDictLoaded = TRUE
+    ' Global maps aren't auto-initialized; seed from an (auto-init) local.
+    DIM dnew AS MAP OF STRING TO BOOLEAN
+    gDict = dnew
+    DIM data AS BYTES
+    DIM e AS ERROR
+    data, e = os.ReadFile(gDictPath)
+    IF e = NIL THEN
+        DIM lines AS []STRING = strings.Split(Decode(data), Chr(10))
+        DIM i AS INTEGER
+        FOR i = 0 TO LEN(lines) - 1
+            DIM w AS STRING = LCase(strings.TrimSpace(lines[i]))
+            IF w <> "" THEN
+                gDict[w] = TRUE
+                gDictCount = gDictCount + 1
+            END IF
+        NEXT i
+    END IF
+    DIM pd AS BYTES
+    DIM pe AS ERROR
+    pd, pe = os.ReadFile(personalDictPath())
+    IF pe = NIL THEN
+        DIM plines AS []STRING = strings.Split(Decode(pd), Chr(10))
+        DIM j AS INTEGER
+        FOR j = 0 TO LEN(plines) - 1
+            DIM pw AS STRING = LCase(strings.TrimSpace(plines[j]))
+            IF pw <> "" THEN
+                gDict[pw] = TRUE
+                gDictCount = gDictCount + 1
+            END IF
+        NEXT j
+    END IF
+END SUB
+
+' addToPersonalDict — accept a word and append it to ~/.starword.dict.
+SUB addToPersonalDict(word AS STRING)
+    DIM lw AS STRING = LCase(word)
+    gDict[lw] = TRUE
+    DIM existing AS STRING = ""
+    DIM data AS BYTES
+    DIM e AS ERROR
+    data, e = os.ReadFile(personalDictPath())
+    IF e = NIL THEN existing = Decode(data)
+    IF existing <> "" AND NOT strings.HasSuffix(existing, Chr(10)) THEN existing = existing + Chr(10)
+    existing = existing + lw + Chr(10)
+    DIM we AS ERROR = os.WriteFile(personalDictPath(), Encode(existing), 420)
+    _ = we
+END SUB
+
+' isMisspelled — TRUE if word is alphabetic, ASCII, and not in the dictionary.
+FUNCTION isMisspelled(word AS STRING) AS BOOLEAN
+    IF word = "" THEN RETURN FALSE
+    DIM i AS INTEGER = 0
+    WHILE i < LEN(word)
+        DIM a AS INTEGER = Asc(Mid(word, i + 1, 1))
+        IF a >= 48 AND a <= 57 THEN RETURN FALSE
+        IF a > 127 THEN RETURN FALSE
+        i = i + 1
+    WEND
+    IF gDict[LCase(word)] THEN RETURN FALSE
+    RETURN TRUE
+END FUNCTION
+
+' genSuggestions — dictionary words one edit away from `word` (up to 5).
+FUNCTION genSuggestions(word AS STRING) AS []STRING
+    DIM w AS STRING = LCase(word)
+    DIM letters AS STRING = "abcdefghijklmnopqrstuvwxyz"
+    DIM n AS INTEGER = LEN(w)
+    DIM cands AS []STRING
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    FOR i = 0 TO n - 1
+        cands = APPEND(cands, Left(w, i) + Right(w, n - i - 1))
+    NEXT i
+    FOR i = 0 TO n - 2
+        cands = APPEND(cands, Left(w, i) + Mid(w, i + 2, 1) + Mid(w, i + 1, 1) + Right(w, n - i - 2))
+    NEXT i
+    FOR i = 0 TO n - 1
+        FOR j = 1 TO 26
+            cands = APPEND(cands, Left(w, i) + Mid(letters, j, 1) + Right(w, n - i - 1))
+        NEXT j
+    NEXT i
+    FOR i = 0 TO n
+        FOR j = 1 TO 26
+            cands = APPEND(cands, Left(w, i) + Mid(letters, j, 1) + Right(w, n - i))
+        NEXT j
+    NEXT i
+    DIM out AS []STRING
+    DIM seen AS MAP OF STRING TO BOOLEAN
+    DIM k AS INTEGER
+    FOR k = 0 TO LEN(cands) - 1
+        DIM c AS STRING = cands[k]
+        IF c <> "" AND c <> w AND gDict[c] AND NOT seen[c] THEN
+            seen[c] = TRUE
+            out = APPEND(out, c)
+            IF LEN(out) >= 5 THEN RETURN out
+        END IF
+    NEXT k
+    RETURN out
+END FUNCTION
+
+' nextMisspelled — first misspelled word at/after (r,c). Returns found + bounds.
+FUNCTION nextMisspelled(r AS INTEGER, c AS INTEGER) AS (BOOLEAN, INTEGER, INTEGER, INTEGER)
+    DIM rr AS INTEGER = r
+    DIM cc AS INTEGER = c
+    WHILE rr <= lastRow()
+        DIM ln AS STRING = gLines[rr]
+        IF Left(ln, 1) = "." THEN
+            rr = rr + 1
+            cc = 0
+        ELSE
+            DIM p AS INTEGER = cc
+            WHILE p < LEN(ln) AND NOT isWordCh(runeAt(ln, p))
+                p = nextRuneStart(ln, p)
+            WEND
+            IF p >= LEN(ln) THEN
+                rr = rr + 1
+                cc = 0
+            ELSE
+                DIM ws AS INTEGER = p
+                WHILE p < LEN(ln) AND isWordCh(runeAt(ln, p))
+                    p = nextRuneStart(ln, p)
+                WEND
+                DIM word AS STRING = Mid(ln, ws + 1, p - ws)
+                IF isMisspelled(word) THEN RETURN TRUE, rr, ws, p
+                cc = p
+            END IF
+        END IF
+    WEND
+    RETURN FALSE, 0, 0, 0
+END FUNCTION
+
+' spellFrom — flag the next misspelled word from (r,c) and open the prompt.
+SUB spellFrom(r AS INTEGER, c AS INTEGER)
+    DIM found AS BOOLEAN
+    DIM wr AS INTEGER
+    DIM ws AS INTEGER
+    DIM we AS INTEGER
+    found, wr, ws, we = nextMisspelled(r, c)
+    IF NOT found THEN
+        gPromptMode = ""
+        gMessage = "Spell check complete"
+        RETURN
+    END IF
+    gRow = wr
+    gCol = ws
+    gSpellEnd = we
+    gSpellWord = Mid(gLines[wr], ws + 1, we - ws)
+    gSpellSugg = genSuggestions(gSpellWord)
+    DIM lbl AS STRING = "Misspelled '" + gSpellWord + "'  "
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gSpellSugg) - 1
+        lbl = lbl + fmt.Sprintf("%d)", i + 1) + gSpellSugg[i] + " "
+    NEXT i
+    lbl = lbl + " I)gnore A)dd R)eplace Esc"
+    gPromptMode = "spell"
+    gPromptLabel = lbl
+    gPromptText = ""
+END SUB
+
+' startSpell — Utilities > Spell Check / ^QN: check from the cursor onward.
+SUB startSpell()
+    loadDictionary()
+    IF gDictCount = 0 THEN
+        gMessage = "No dictionary found (set 'dictionary' in the config)"
+        RETURN
+    END IF
+    spellFrom(gRow, gCol)
+END SUB
+
+' checkWordAtCursor — ^QL: spell-check just the word under the cursor.
+SUB checkWordAtCursor()
+    loadDictionary()
+    DIM ln AS STRING = curLine()
+    DIM s AS INTEGER = gCol
+    WHILE s > 0 AND isWordCh(runeAt(ln, prevRuneStart(ln, s)))
+        s = prevRuneStart(ln, s)
+    WEND
+    DIM e2 AS INTEGER = gCol
+    WHILE e2 < LEN(ln) AND isWordCh(runeAt(ln, e2))
+        e2 = nextRuneStart(ln, e2)
+    WEND
+    IF s >= e2 THEN
+        gMessage = "No word at cursor"
+        RETURN
+    END IF
+    DIM word AS STRING = Mid(ln, s + 1, e2 - s)
+    IF isMisspelled(word) THEN
+        DIM sug AS []STRING = genSuggestions(word)
+        IF LEN(sug) > 0 THEN
+            gMessage = "Misspelled '" + word + "' — try: " + strings.Join(sug, ", ")
+        ELSE
+            gMessage = "Misspelled '" + word + "' (no suggestions)"
+        END IF
+    ELSE
+        gMessage = "'" + word + "' is correct"
+    END IF
+END SUB
+
+' handleSpellKey — keystrokes while a misspelled word is flagged.
+SUB handleSpellKey(key AS STRING)
+    IF key = "esc" THEN
+        gPromptMode = ""
+        gMessage = "Spell check stopped"
+        RETURN
+    END IF
+    DIM k AS STRING = LCase(key)
+    IF k = "i" THEN
+        DIM af AS INTEGER = gSpellEnd
+        gPromptMode = ""
+        spellFrom(gRow, af)
+        RETURN
+    END IF
+    IF k = "a" THEN
+        addToPersonalDict(gSpellWord)
+        DIM af2 AS INTEGER = gSpellEnd
+        gPromptMode = ""
+        spellFrom(gRow, af2)
+        RETURN
+    END IF
+    IF k = "r" THEN
+        gPromptMode = "spellrepl"
+        gPromptLabel = "Replace '" + gSpellWord + "' with: "
+        gPromptText = ""
+        RETURN
+    END IF
+    DIM d AS INTEGER = digitOf(k)
+    IF d >= 1 AND d <= LEN(gSpellSugg) THEN replaceSpellWord(gSpellSugg[d - 1])
+END SUB
+
+' replaceSpellWord — swap the flagged word for repl, then resume the check.
+SUB replaceSpellWord(repl AS STRING)
+    DIM ln AS STRING = gLines[gRow]
+    gLines[gRow] = Left(ln, gCol) + repl + Right(ln, LEN(ln) - gSpellEnd)
+    gModified = TRUE
+    DIM ne AS INTEGER = gCol + LEN(repl)
+    gPromptMode = ""
+    spellFrom(gRow, ne)
+END SUB
+
+' initThesaurus — a small built-in synonym table (a starter set).
+SUB initThesaurus()
+    IF gThesInit THEN RETURN
+    gThesInit = TRUE
+    DIM tnew AS MAP OF STRING TO STRING
+    gThes = tnew
+    gThes["good"] = "fine,excellent,great,superb,worthy"
+    gThes["bad"] = "poor,inferior,awful,terrible,deficient"
+    gThes["big"] = "large,huge,enormous,vast,great"
+    gThes["small"] = "little,tiny,compact,minor,slight"
+    gThes["happy"] = "glad,joyful,content,cheerful,pleased"
+    gThes["sad"] = "unhappy,sorrowful,gloomy,downcast"
+    gThes["fast"] = "quick,rapid,swift,speedy,brisk"
+    gThes["slow"] = "sluggish,gradual,leisurely,unhurried"
+    gThes["important"] = "significant,crucial,vital,key,major"
+    gThes["want"] = "desire,wish,crave,need,covet"
+    gThes["make"] = "create,build,produce,form,construct"
+    gThes["show"] = "display,reveal,present,exhibit,demonstrate"
+    gThes["use"] = "employ,utilize,apply,operate"
+    gThes["get"] = "obtain,acquire,receive,gain,fetch"
+    gThes["say"] = "state,declare,utter,mention,remark"
+    gThes["think"] = "believe,consider,reckon,ponder,suppose"
+    gThes["help"] = "aid,assist,support,abet"
+    gThes["start"] = "begin,commence,initiate,launch"
+    gThes["end"] = "finish,conclude,terminate,cease,close"
+    gThes["change"] = "alter,modify,vary,adjust,transform"
+    gThes["new"] = "fresh,recent,modern,novel,current"
+    gThes["old"] = "aged,ancient,former,outdated,elderly"
+    gThes["easy"] = "simple,effortless,straightforward,plain"
+    gThes["hard"] = "difficult,tough,arduous,demanding"
+    gThes["nice"] = "pleasant,agreeable,kind,lovely,delightful"
+END SUB
+
+' startThesaurus — Utilities > Thesaurus: synonyms for the word at the cursor.
+SUB startThesaurus()
+    initThesaurus()
+    DIM ln AS STRING = curLine()
+    DIM s AS INTEGER = gCol
+    WHILE s > 0 AND isWordCh(runeAt(ln, prevRuneStart(ln, s)))
+        s = prevRuneStart(ln, s)
+    WEND
+    DIM e2 AS INTEGER = gCol
+    WHILE e2 < LEN(ln) AND isWordCh(runeAt(ln, e2))
+        e2 = nextRuneStart(ln, e2)
+    WEND
+    IF s >= e2 THEN
+        gMessage = "No word at cursor"
+        RETURN
+    END IF
+    DIM word AS STRING = Mid(ln, s + 1, e2 - s)
+    DIM syn AS STRING = gThes[LCase(word)]
+    IF syn = "" THEN
+        gMessage = "No thesaurus entry for '" + word + "'"
+        RETURN
+    END IF
+    gThesWord = word
+    gThesStart = s
+    gThesEnd = e2
+    gThesSyn = strings.Split(syn, ",")
+    DIM lbl AS STRING = "Synonyms for '" + word + "': "
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gThesSyn) - 1
+        lbl = lbl + fmt.Sprintf("%d)", i + 1) + gThesSyn[i] + " "
+    NEXT i
+    lbl = lbl + " (#=replace, Esc)"
+    gPromptMode = "thes"
+    gPromptLabel = lbl
+    gPromptText = ""
+END SUB
+
+' handleThesKey — pick a synonym (digit) to replace the word, or Esc.
+SUB handleThesKey(key AS STRING)
+    IF key = "esc" THEN
+        gPromptMode = ""
+        gMessage = ""
+        RETURN
+    END IF
+    DIM d AS INTEGER = digitOf(LCase(key))
+    IF d >= 1 AND d <= LEN(gThesSyn) THEN
+        DIM repl AS STRING = gThesSyn[d - 1]
+        DIM ln AS STRING = gLines[gRow]
+        gLines[gRow] = Left(ln, gThesStart) + repl + Right(ln, LEN(ln) - gThesEnd)
+        gCol = gThesStart + LEN(repl)
+        gModified = TRUE
+        gPromptMode = ""
+        gMessage = "Replaced with '" + repl + "'"
     END IF
 END SUB
 
@@ -2162,6 +2532,10 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
     ELSEIF menuIdx = 6 THEN      ' UTILITIES
         IF hk = "W" THEN
             wordCount()
+        ELSEIF hk = "S" THEN
+            startSpell()
+        ELSEIF hk = "T" THEN
+            startThesaurus()
         ELSEIF hk = "C" THEN
             gPromptMode = "calc"
             gPromptLabel = "Calculate: "
@@ -3528,6 +3902,10 @@ SUB handlePrefixQ(key AS STRING)
         gPromptMode = "goto"
         gPromptLabel = "Go to line (P# = page): "
         gPromptText = ""
+    ELSEIF k = "l" THEN
+        checkWordAtCursor()
+    ELSEIF k = "n" THEN
+        startSpell()
     ELSEIF digitOf(k) >= 0 THEN
         gotoPlaceMarker(digitOf(k))
     ELSE
@@ -3587,6 +3965,15 @@ SUB handlePrompt(key AS STRING)
     ' Per-match replace confirmation answers single keys, not typed text.
     IF gPromptMode = "confirmrepl" THEN
         handleConfirmRepl(key)
+        RETURN
+    END IF
+    ' Spell-check and thesaurus prompts answer single keys too.
+    IF gPromptMode = "spell" THEN
+        handleSpellKey(key)
+        RETURN
+    END IF
+    IF gPromptMode = "thes" THEN
+        handleThesKey(key)
         RETURN
     END IF
     IF key = "esc" THEN
@@ -3681,6 +4068,10 @@ SUB handlePrompt(key AS STRING)
         ELSEIF mode = "cfg_sr" THEN
             DIM csr AS INTEGER = Int(Val(txt))
             IF csr > 0 THEN gStartRows = csr
+        ELSEIF mode = "cfg_dict" THEN
+            IF txt <> "" THEN gDictPath = txt
+        ELSEIF mode = "spellrepl" THEN
+            replaceSpellWord(txt)
         END IF
         RETURN
     END IF
