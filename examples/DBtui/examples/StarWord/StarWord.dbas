@@ -2267,7 +2267,7 @@ FUNCTION renderOpeningMenu(w AS INTEGER, h AS INTEGER) AS STRING
     DIM rows AS []STRING
     rows = APPEND(rows, hdr.Render(swFit(" StarWord  -  Opening Menu", w)))
     rows = APPEND(rows, bg.Render(swFit("", w)))
-    rows = APPEND(rows, bg.Render("  ") + key.Render("D ") + bg.Render("Open document   ") + key.Render("N ") + bg.Render("New document   ") + key.Render("L ") + bg.Render("Change dir   ") + key.Render("C ") + bg.Render("Configure   ") + key.Render("X ") + bg.Render(swFit("Exit", w - 66)))
+    rows = APPEND(rows, bg.Render("  ") + key.Render("D ") + bg.Render("Open document   ") + key.Render("N ") + bg.Render("New document   ") + key.Render("L ") + bg.Render("Change dir   ") + key.Render("C ") + bg.Render("Configure   ") + key.Render("X ") + bg.Render(swFit("Exit", w - 68)))
     rows = APPEND(rows, dimSt.Render(swFit("  Up/Down select   Enter open   Esc back to editor", w)))
     rows = APPEND(rows, bg.Render(swFit("", w)))
     rows = APPEND(rows, bg.Render("  Directory: ") + dirSt.Render(swFit(gOpenDir, w - 13)))
