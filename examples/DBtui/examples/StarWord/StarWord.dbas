@@ -1250,7 +1250,6 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     DIM bg AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#8aa0d8")).Background(lipgloss.Color("#0f2350"))
     DIM box AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cfe0ff")).Background(lipgloss.Color("#14336e"))
     DIM ttl AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
-    DIM btn AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#cfe0ff")).Background(lipgloss.Color("#14336e"))
     DIM sel AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#10204a")).Background(lipgloss.Color("#ffd166")).Bold(TRUE)
     DIM nameSty AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#14336e")).Bold(TRUE)
 
@@ -1258,7 +1257,7 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     ' names fit; the box grows wide enough to hold the name and the hint.
     DIM nm AS STRING = gFileName
     DIM nameLine AS STRING = "    " + nm
-    DIM hintLine AS STRING = "  S Save   A Abandon   Esc Cancel  (arrows/click)"
+    DIM hintLine AS STRING = "  Click a word, press its letter, or arrows + Enter."
     DIM msg1 AS STRING = "  This document has unsaved changes:"
     DIM msg2 AS STRING = "  Save before leaving StarWord?"
 
@@ -1275,13 +1274,15 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     DIM boxX AS INTEGER = (wc - boxW) / 2
     IF boxX < 0 THEN boxX = 0
 
-    ' Button layout (record canvas hit-test ranges).
-    DIM lbl0 AS STRING = "[ Save ]"
-    DIM lbl1 AS STRING = "[ Abandon ]"
-    DIM lbl2 AS STRING = "[ Cancel ]"
-    DIM off0 AS INTEGER = 3
-    DIM off1 AS INTEGER = off0 + LEN(lbl0) + 3
-    DIM off2 AS INTEGER = off1 + LEN(lbl1) + 3
+    ' Action words (no buttons): click the word or press its first letter.
+    ' Record canvas hit-test ranges so a click on a word activates it.
+    DIM lbl0 AS STRING = "Save"
+    DIM lbl1 AS STRING = "Abandon"
+    DIM lbl2 AS STRING = "Cancel"
+    DIM gapW AS INTEGER = 6
+    DIM off0 AS INTEGER = 6
+    DIM off1 AS INTEGER = off0 + LEN(lbl0) + gapW
+    DIM off2 AS INTEGER = off1 + LEN(lbl1) + gapW
     gDlgBtnLo = nil
     gDlgBtnHi = nil
     gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off0)
@@ -1291,17 +1292,19 @@ FUNCTION renderExitDialog(w AS INTEGER, h AS INTEGER) AS STRING
     gDlgBtnLo = APPEND(gDlgBtnLo, boxX + 1 + off2)
     gDlgBtnHi = APPEND(gDlgBtnHi, boxX + 1 + off2 + LEN(lbl2))
 
-    ' The styled button row (selected one highlighted), padded to inner.
-    DIM b0 AS STRING = btn.Render(lbl0)
-    DIM b1 AS STRING = btn.Render(lbl1)
-    DIM b2 AS STRING = btn.Render(lbl2)
+    ' The styled action row (selected word highlighted), padded to inner.
+    DIM act AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#14336e")).Bold(TRUE)
+    DIM b0 AS STRING = act.Render(lbl0)
+    DIM b1 AS STRING = act.Render(lbl1)
+    DIM b2 AS STRING = act.Render(lbl2)
     IF gDialogSel = 0 THEN b0 = sel.Render(lbl0)
     IF gDialogSel = 1 THEN b1 = sel.Render(lbl1)
     IF gDialogSel = 2 THEN b2 = sel.Render(lbl2)
+    DIM gapS AS STRING = strings.Repeat(" ", gapW)
     DIM btnPlainLen AS INTEGER = off2 + LEN(lbl2)
     DIM btnPad AS STRING = ""
     IF inner > btnPlainLen THEN btnPad = strings.Repeat(" ", inner - btnPlainLen)
-    DIM btnRow AS STRING = box.Render(strings.Repeat(" ", off0)) + b0 + box.Render("   ") + b1 + box.Render("   ") + b2 + box.Render(btnPad)
+    DIM btnRow AS STRING = box.Render(strings.Repeat(" ", off0)) + b0 + box.Render(gapS) + b1 + box.Render(gapS) + b2 + box.Render(btnPad)
 
     ' Assemble the box rows. The document name is on its own (bold) line.
     DIM bodyRows AS []STRING
