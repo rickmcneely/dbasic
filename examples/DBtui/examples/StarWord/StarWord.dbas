@@ -438,6 +438,13 @@ DIM gPageNumbering AS BOOLEAN = TRUE  ' .pn on / .op off
 DIM gPrevTop AS INTEGER           ' first visible line in print-preview mode
 DIM gNonDocument AS BOOLEAN       ' non-document mode (WS /N): no wrap/justify/dot cmds
 
+' --- configurable defaults (persisted via the WSCHANGE-style config) -------
+DIM gWrapMode AS STRING = "hard"  ' "hard" (insert breaks) | "soft" (display) | "off"
+DIM gTabWidth AS INTEGER = 5      ' columns per tab stop
+DIM gDefaultUnicode AS BOOLEAN = TRUE  ' new documents default to UTF-8 (.WSu)
+DIM gCfgReturn AS STRING = "edit"      ' screen mode to return to after config
+DIM gCfgSnapshot AS STRING             ' settings serialized on config entry (for Abandon)
+
 ' --- place markers 0..9 (^K0..^K9 set, ^Q0..^Q9 jump) ---------------------
 DIM gMarkRow AS []INTEGER         ' 10 entries; row = -1 means unset
 DIM gMarkCol AS []INTEGER
@@ -1730,6 +1737,206 @@ FUNCTION renderPreview(w AS INTEGER, h AS INTEGER) AS STRING
     RETURN strings.Join(rows, Chr(10))
 END FUNCTION
 
+' ==========================================================================
+' Configuration — a WSCHANGE-style settings program + ~/.starword file
+' WordStar configured itself by patching WS.EXE via WSCHANGE; StarWord keeps
+' the same idea but persists to a small text file you can also hand-edit.
+' ==========================================================================
+
+FUNCTION onoff(b AS BOOLEAN) AS STRING
+    IF b THEN RETURN "on"
+    RETURN "off"
+END FUNCTION
+
+' configPath — the ~/.starword file (current dir if there is no home).
+FUNCTION configPath() AS STRING
+    DIM home AS STRING
+    DIM e AS ERROR
+    home, e = os.UserHomeDir()
+    IF e <> NIL OR home = "" THEN RETURN ".starword"
+    RETURN home + "/.starword"
+END FUNCTION
+
+' cycleWrapMode — hard -> soft -> off -> hard; keep gWordWrap (hard-insert) in sync.
+SUB cycleWrapMode()
+    IF gWrapMode = "hard" THEN
+        gWrapMode = "soft"
+    ELSEIF gWrapMode = "soft" THEN
+        gWrapMode = "off"
+    ELSE
+        gWrapMode = "hard"
+    END IF
+    gWordWrap = (gWrapMode = "hard")
+END SUB
+
+' applySetting — set one configuration key to a value.
+SUB applySetting(k AS STRING, v AS STRING)
+    DIM lv AS STRING = LCase(v)
+    IF k = "wrapmode" THEN
+        IF lv = "hard" OR lv = "soft" OR lv = "off" THEN gWrapMode = lv
+        gWordWrap = (gWrapMode = "hard")
+    ELSEIF k = "justify" THEN
+        gJustify = (lv = "on" OR lv = "true" OR lv = "1")
+    ELSEIF k = "leftmargin" THEN
+        gLeftMargin = Int(Val(v))
+    ELSEIF k = "rightmargin" THEN
+        DIM rv AS INTEGER = Int(Val(v))
+        IF rv > 0 THEN gRightMargin = rv
+    ELSEIF k = "pagelength" THEN
+        DIM pv AS INTEGER = Int(Val(v))
+        IF pv > 0 THEN gPageLength = pv
+    ELSEIF k = "tabwidth" THEN
+        DIM tv AS INTEGER = Int(Val(v))
+        IF tv > 0 THEN gTabWidth = tv
+    ELSEIF k = "helplevel" THEN
+        gHelpLevel = Int(Val(v))
+    ELSEIF k = "unicode" THEN
+        gDefaultUnicode = (lv = "on" OR lv = "true" OR lv = "1")
+    END IF
+END SUB
+
+' serializeConfig — the current settings as the ~/.starword file body.
+FUNCTION serializeConfig() AS STRING
+    DIM b AS STRING = "# StarWord configuration (edit here or via the in-app config)" + Chr(10)
+    b = b + "wrapmode = " + gWrapMode + Chr(10)
+    b = b + "justify = " + onoff(gJustify) + Chr(10)
+    b = b + "leftmargin = " + fmt.Sprintf("%d", gLeftMargin) + Chr(10)
+    b = b + "rightmargin = " + fmt.Sprintf("%d", gRightMargin) + Chr(10)
+    b = b + "pagelength = " + fmt.Sprintf("%d", gPageLength) + Chr(10)
+    b = b + "tabwidth = " + fmt.Sprintf("%d", gTabWidth) + Chr(10)
+    b = b + "helplevel = " + fmt.Sprintf("%d", gHelpLevel) + Chr(10)
+    b = b + "unicode = " + onoff(gDefaultUnicode) + Chr(10)
+    RETURN b
+END FUNCTION
+
+' applyConfigText — parse "key = value" lines (and # comments) into settings.
+SUB applyConfigText(text AS STRING)
+    DIM lines AS []STRING = strings.Split(text, Chr(10))
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        DIM ln AS STRING = strings.TrimSpace(lines[i])
+        IF ln <> "" AND Left(ln, 1) <> "#" THEN
+            DIM eq AS INTEGER = strings.Index(ln, "=")
+            IF eq > 0 THEN
+                DIM k AS STRING = LCase(strings.TrimSpace(Left(ln, eq)))
+                DIM v AS STRING = strings.TrimSpace(Mid(ln, eq + 2, LEN(ln) - eq - 1))
+                applySetting(k, v)
+            END IF
+        END IF
+    NEXT i
+END SUB
+
+' loadConfig — read ~/.starword at startup (silent if absent).
+SUB loadConfig()
+    DIM data AS BYTES
+    DIM e AS ERROR
+    data, e = os.ReadFile(configPath())
+    IF e <> NIL THEN RETURN
+    applyConfigText(Decode(data))
+END SUB
+
+' saveConfig — write the current settings to ~/.starword.
+SUB saveConfig()
+    DIM e AS ERROR = os.WriteFile(configPath(), Encode(serializeConfig()), 420)
+    IF e <> NIL THEN
+        gMessage = "Config save failed: " + e.Error()
+    ELSE
+        gMessage = "Configuration saved to " + configPath()
+    END IF
+END SUB
+
+' enterConfig — open the WSCHANGE-style screen, remembering where to return.
+SUB enterConfig()
+    gCfgReturn = gMode
+    IF gCfgReturn = "config" THEN gCfgReturn = "edit"
+    gCfgSnapshot = serializeConfig()
+    gMode = "config"
+    gMessage = ""
+END SUB
+
+' renderConfig — the configuration screen (WordStar WSCHANGE-style menu).
+FUNCTION renderConfig(w AS INTEGER, h AS INTEGER) AS STRING
+    DIM hdr AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Background(lipgloss.Color("#3b6fe0")).Bold(TRUE)
+    DIM bg AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#dbe6ff")).Background(lipgloss.Color("#0f2350"))
+    DIM key AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffd166")).Background(lipgloss.Color("#0f2350")).Bold(TRUE)
+    DIM val AS lipgloss.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#9ece6a")).Background(lipgloss.Color("#0f2350")).Bold(TRUE)
+    DIM rows AS []STRING
+    rows = APPEND(rows, hdr.Render(swFit(" StarWord  -  Configuration (WSCHANGE)", w)))
+    rows = APPEND(rows, bg.Render(swFit("", w)))
+    _ = key
+    rows = APPEND(rows, cfgRow("A", "Word wrap", UCase(gWrapMode), val, bg, w))
+    rows = APPEND(rows, cfgRow("B", "Justification", onoff(gJustify), val, bg, w))
+    rows = APPEND(rows, cfgRow("C", "Left margin", fmt.Sprintf("%d", gLeftMargin), val, bg, w))
+    rows = APPEND(rows, cfgRow("D", "Right margin", fmt.Sprintf("%d", gRightMargin), val, bg, w))
+    rows = APPEND(rows, cfgRow("E", "Page length", fmt.Sprintf("%d", gPageLength), val, bg, w))
+    rows = APPEND(rows, cfgRow("F", "Tab width", fmt.Sprintf("%d", gTabWidth), val, bg, w))
+    rows = APPEND(rows, cfgRow("G", "Help level", fmt.Sprintf("%d", gHelpLevel), val, bg, w))
+    rows = APPEND(rows, cfgRow("H", "New files Unicode", onoff(gDefaultUnicode), val, bg, w))
+    rows = APPEND(rows, bg.Render(swFit("", w)))
+    rows = APPEND(rows, bg.Render(swFit("  Press a letter to change a setting.", w)))
+    WHILE LEN(rows) < h - 1
+        rows = APPEND(rows, bg.Render(swFit("", w)))
+    WEND
+    DIM foot AS STRING = "  S Save & exit    Esc Use without saving    Q Abandon changes"
+    IF gPromptMode <> "" THEN foot = " " + gPromptLabel + gPromptText + Chr(9617)
+    rows = APPEND(rows, hdr.Render(swFit(foot, w)))
+    RETURN strings.Join(rows, Chr(10))
+END FUNCTION
+
+' cfgRow — one "  A   Label .......... VALUE" configuration line.
+FUNCTION cfgRow(letter AS STRING, label AS STRING, value AS STRING, val AS lipgloss.Style, bg AS lipgloss.Style, w AS INTEGER) AS STRING
+    DIM lbl AS STRING = "  " + letter + "   " + label + " "
+    DIM dots AS INTEGER = 30 - LEN(lbl)
+    IF dots < 1 THEN dots = 1
+    lbl = lbl + strings.Repeat(".", dots) + " "
+    DIM pad AS INTEGER = w - LEN(lbl) - LEN(value)
+    IF pad < 0 THEN pad = 0
+    RETURN bg.Render(lbl) + val.Render(value) + bg.Render(strings.Repeat(" ", pad))
+END FUNCTION
+
+' handleConfigKey — keyboard for the configuration screen.
+SUB handleConfigKey(key AS STRING)
+    IF key = "esc" THEN
+        gMode = gCfgReturn
+        gMessage = "Settings applied for this session (not saved)"
+        RETURN
+    END IF
+    DIM k AS STRING = LCase(key)
+    IF strings.HasPrefix(k, "ctrl+") THEN k = Right(k, LEN(k) - 5)
+    IF k = "a" THEN
+        cycleWrapMode()
+    ELSEIF k = "b" THEN
+        gJustify = NOT gJustify
+    ELSEIF k = "c" THEN
+        gPromptMode = "cfg_lm"
+        gPromptLabel = "Left margin: "
+        gPromptText = ""
+    ELSEIF k = "d" THEN
+        gPromptMode = "cfg_rm"
+        gPromptLabel = "Right margin: "
+        gPromptText = ""
+    ELSEIF k = "e" THEN
+        gPromptMode = "cfg_pl"
+        gPromptLabel = "Page length: "
+        gPromptText = ""
+    ELSEIF k = "f" THEN
+        gPromptMode = "cfg_tw"
+        gPromptLabel = "Tab width: "
+        gPromptText = ""
+    ELSEIF k = "g" THEN
+        gHelpLevel = (gHelpLevel + 1) MOD 4
+    ELSEIF k = "h" THEN
+        gDefaultUnicode = NOT gDefaultUnicode
+    ELSEIF k = "s" THEN
+        saveConfig()
+        gMode = gCfgReturn
+    ELSEIF k = "q" THEN
+        applyConfigText(gCfgSnapshot)
+        gMode = gCfgReturn
+        gMessage = "Configuration unchanged"
+    END IF
+END SUB
+
 ' --- place markers + go-to (navigation) -----------------------------------
 
 ' digitOf — the 0..9 value of a single-character key, or -1.
@@ -2008,7 +2215,7 @@ SUB newDoc()
     gLines = nil
     gLines = APPEND(gLines, "")
     gFileName = "untitled.WSu"
-    gIsUnicode = TRUE
+    gIsUnicode = gDefaultUnicode
     gRow = 0
     gCol = 0
     gTop = 0
@@ -2050,7 +2257,7 @@ FUNCTION renderOpeningMenu(w AS INTEGER, h AS INTEGER) AS STRING
     DIM rows AS []STRING
     rows = APPEND(rows, hdr.Render(swFit(" StarWord  -  Opening Menu", w)))
     rows = APPEND(rows, bg.Render(swFit("", w)))
-    rows = APPEND(rows, bg.Render("  ") + key.Render("D ") + bg.Render("Open document   ") + key.Render("N ") + bg.Render("New document   ") + key.Render("L ") + bg.Render("Change directory   ") + key.Render("X ") + bg.Render(swFit("Exit", w - 60)))
+    rows = APPEND(rows, bg.Render("  ") + key.Render("D ") + bg.Render("Open document   ") + key.Render("N ") + bg.Render("New document   ") + key.Render("L ") + bg.Render("Change dir   ") + key.Render("C ") + bg.Render("Configure   ") + key.Render("X ") + bg.Render(swFit("Exit", w - 66)))
     rows = APPEND(rows, dimSt.Render(swFit("  Up/Down select   Enter open   Esc back to editor", w)))
     rows = APPEND(rows, bg.Render(swFit("", w)))
     rows = APPEND(rows, bg.Render("  Directory: ") + dirSt.Render(swFit(gOpenDir, w - 13)))
@@ -2131,6 +2338,8 @@ SUB handleOpenKey(key AS STRING)
         gPromptMode = "opendir"
         gPromptLabel = "Directory: "
         gPromptText = ""
+    ELSEIF lk = "c" THEN
+        enterConfig()
     ELSEIF lk = "x" THEN
         RequestQuit()
     END IF
@@ -2141,6 +2350,7 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
     gH = h
     IF gMode = "open" THEN RETURN renderOpeningMenu(w, h)
     IF gMode = "preview" THEN RETURN renderPreview(w, h)
+    IF gMode = "config" THEN RETURN renderConfig(w, h)
     clampCursor()
     ' Non-document mode treats dot commands as literal text (no margin reflow).
     IF NOT gNonDocument THEN applyDotCommands()
@@ -3000,8 +3210,8 @@ SUB handlePrefixO(key AS STRING)
         gJustify = NOT gJustify
         gMessage = "Justification toggled"
     ELSEIF k = "w" THEN
-        gWordWrap = NOT gWordWrap
-        gMessage = "Word wrap toggled"
+        cycleWrapMode()
+        gMessage = "Word wrap: " + UCase(gWrapMode)
     ELSEIF k = "l" THEN
         gPromptMode = "lmargin"
         gPromptLabel = "Left margin: "
@@ -3098,6 +3308,17 @@ SUB handlePrompt(key AS STRING)
             doCalc(txt)
         ELSEIF mode = "goto" THEN
             doGoto(txt)
+        ELSEIF mode = "cfg_lm" THEN
+            gLeftMargin = Int(Val(txt))
+        ELSEIF mode = "cfg_rm" THEN
+            DIM crm AS INTEGER = Int(Val(txt))
+            IF crm > 0 THEN gRightMargin = crm
+        ELSEIF mode = "cfg_pl" THEN
+            DIM cpl AS INTEGER = Int(Val(txt))
+            IF cpl > 0 THEN gPageLength = cpl
+        ELSEIF mode = "cfg_tw" THEN
+            DIM ctw AS INTEGER = Int(Val(txt))
+            IF ctw > 0 THEN gTabWidth = ctw
         END IF
         RETURN
     END IF
@@ -3213,6 +3434,12 @@ SUB Form_Key(key AS STRING)
     ' The Opening Menu owns the keyboard while it is showing.
     IF gMode = "open" THEN
         handleOpenKey(key)
+        RETURN
+    END IF
+
+    ' The configuration (WSCHANGE) screen owns the keyboard while open.
+    IF gMode = "config" THEN
+        handleConfigKey(key)
         RETURN
     END IF
 
@@ -3386,8 +3613,10 @@ SUB Form_Key(key AS STRING)
         RETURN
     END IF
     IF key = "tab" OR key = "ctrl+i" THEN
-        ' Insert spaces to the next 5-column tab stop.
-        DIM ts AS INTEGER = 5 - (gCol MOD 5)
+        ' Insert spaces to the next tab stop (width from the config).
+        DIM tw AS INTEGER = gTabWidth
+        IF tw < 1 THEN tw = 1
+        DIM ts AS INTEGER = tw - (gCol MOD tw)
         DIM ti AS INTEGER
         FOR ti = 1 TO ts
             insertChar(" ")
@@ -3424,6 +3653,7 @@ SUB printUsage()
     fmt.Println("  /N  -n  --nondocument   open in non-document mode (plain text: no wrap,")
     fmt.Println("                          no justify, dot commands left as literal text)")
     fmt.Println("  /P  -p  --print         print a clean copy of the file to stdout and exit")
+    fmt.Println("  /C  -c  --config        open the configuration (WSCHANGE) screen")
     fmt.Println("  /?  -h  --help          show this help and exit")
 END SUB
 
@@ -3453,10 +3683,13 @@ SUB Form_Load()
         gMarkRow = APPEND(gMarkRow, 0 - 1)
         gMarkCol = APPEND(gMarkCol, 0)
     NEXT mi
+    ' Load persisted settings first; CLI flags below can still override them.
+    loadConfig()
     DIM args AS []STRING = os.Args
     DIM fileArg AS STRING = ""
     DIM wantHelp AS BOOLEAN = FALSE
     DIM wantPrint AS BOOLEAN = FALSE
+    DIM wantConfig AS BOOLEAN = FALSE
     DIM i AS INTEGER
     FOR i = 1 TO LEN(args) - 1
         DIM a AS STRING = args[i]
@@ -3469,6 +3702,8 @@ SUB Form_Load()
             gNonDocument = FALSE
         ELSEIF lo = "-p" OR lo = "/p" OR lo = "--print" THEN
             wantPrint = TRUE
+        ELSEIF lo = "-c" OR lo = "/c" OR lo = "--config" THEN
+            wantConfig = TRUE
         ELSEIF Left(a, 1) = "-" OR (Left(a, 1) = "/" AND LEN(a) = 2) THEN
             ' Unknown switch — ignore so a stray flag can't block startup.
             ' (A "/" token longer than 2 chars is a Unix absolute path, below.)
@@ -3506,6 +3741,12 @@ SUB Form_Load()
         ' No file given: start at the WordStar-style Opening Menu.
         gLines = APPEND(gLines, "")
         enterOpeningMenu()
+    END IF
+    ' --config jumps straight into the WSCHANGE-style settings screen.
+    IF wantConfig THEN
+        gMode = "edit"
+        enterConfig()
+        gCfgReturn = "edit"
     END IF
     syncUndoBaseline()
 END SUB
