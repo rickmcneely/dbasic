@@ -455,6 +455,7 @@ DIM gDictPath AS STRING = "/usr/share/dict/words"  ' word list (config: dictiona
 DIM gDict AS MAP OF STRING TO BOOLEAN  ' loaded lowercase words (+ personal dict)
 DIM gDictLoaded AS BOOLEAN
 DIM gDictCount AS INTEGER
+DIM gAffRules AS MAP OF STRING TO STRING  ' hunspell affix flag -> "TYPE|strip|add|cond" lines
 DIM gSpellWord AS STRING                ' word currently flagged
 DIM gSpellEnd AS INTEGER               ' byte offset just past the flagged word
 DIM gSpellSugg AS []STRING             ' suggested corrections
@@ -2423,7 +2424,147 @@ FUNCTION personalDictPath() AS STRING
     RETURN home + "/.starword.dict"
 END FUNCTION
 
+' addWord — add a lowercased word to the dictionary (deduped count).
+SUB addWord(w AS STRING)
+    DIM lw AS STRING = LCase(strings.TrimSpace(w))
+    IF lw <> "" THEN
+        IF NOT gDict[lw] THEN gDictCount = gDictCount + 1
+        gDict[lw] = TRUE
+    END IF
+END SUB
+
+FUNCTION isAllDigits(s AS STRING) AS BOOLEAN
+    IF s = "" THEN RETURN FALSE
+    DIM i AS INTEGER = 0
+    WHILE i < LEN(s)
+        DIM a AS INTEGER = Asc(Mid(s, i + 1, 1))
+        IF a < 48 OR a > 57 THEN RETURN FALSE
+        i = i + 1
+    WEND
+    RETURN TRUE
+END FUNCTION
+
+' --- hunspell affix expansion (.dic stems + .aff rules) -------------------
+
+' parseCondAtoms — break a hunspell condition into per-character atoms:
+'   "." -> any, "X" -> "=X", "[abc]" -> "+abc", "[^abc]" -> "-abc".
+FUNCTION parseCondAtoms(cond AS STRING) AS []STRING
+    DIM atoms AS []STRING
+    DIM p AS INTEGER = 0
+    WHILE p < LEN(cond)
+        DIM c AS STRING = Mid(cond, p + 1, 1)
+        IF c = "." THEN
+            atoms = APPEND(atoms, ".")
+            p = p + 1
+        ELSEIF c = "[" THEN
+            DIM q AS INTEGER = p + 1
+            DIM neg AS BOOLEAN = FALSE
+            IF q < LEN(cond) AND Mid(cond, q + 1, 1) = "^" THEN
+                neg = TRUE
+                q = q + 1
+            END IF
+            DIM setstr AS STRING = ""
+            WHILE q < LEN(cond) AND Mid(cond, q + 1, 1) <> "]"
+                setstr = setstr + Mid(cond, q + 1, 1)
+                q = q + 1
+            WEND
+            IF neg THEN
+                atoms = APPEND(atoms, "-" + setstr)
+            ELSE
+                atoms = APPEND(atoms, "+" + setstr)
+            END IF
+            p = q + 1
+        ELSE
+            atoms = APPEND(atoms, "=" + c)
+            p = p + 1
+        END IF
+    WEND
+    RETURN atoms
+END FUNCTION
+
+FUNCTION matchAtom(atom AS STRING, ch AS STRING) AS BOOLEAN
+    DIM t AS STRING = Left(atom, 1)
+    IF t = "." THEN RETURN TRUE
+    DIM rest AS STRING = Right(atom, LEN(atom) - 1)
+    IF t = "=" THEN RETURN rest = ch
+    IF t = "+" THEN RETURN strings.Contains(rest, ch)
+    IF t = "-" THEN RETURN NOT strings.Contains(rest, ch)
+    RETURN FALSE
+END FUNCTION
+
+' condMatch — does s satisfy the condition at its end (suffix) or start (prefix)?
+FUNCTION condMatch(s AS STRING, cond AS STRING, atEnd AS BOOLEAN) AS BOOLEAN
+    DIM atoms AS []STRING = parseCondAtoms(cond)
+    DIM n AS INTEGER = LEN(atoms)
+    IF n = 0 THEN RETURN TRUE
+    IF LEN(s) < n THEN RETURN FALSE
+    DIM bpos AS INTEGER = 0
+    IF atEnd THEN bpos = LEN(s) - n
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        IF NOT matchAtom(atoms[i], Mid(s, bpos + i + 1, 1)) THEN RETURN FALSE
+    NEXT i
+    RETURN TRUE
+END FUNCTION
+
+' loadAffix — parse a hunspell .aff into gAffRules (flag -> rule lines).
+SUB loadAffix(affPath AS STRING)
+    DIM am AS MAP OF STRING TO STRING
+    gAffRules = am
+    DIM data AS BYTES
+    DIM e AS ERROR
+    data, e = os.ReadFile(affPath)
+    IF e <> NIL THEN RETURN
+    DIM lines AS []STRING = strings.Split(Decode(data), Chr(10))
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(lines) - 1
+        DIM f AS []STRING = strings.Fields(lines[i])
+        IF LEN(f) >= 5 AND (f[0] = "SFX" OR f[0] = "PFX") THEN
+            DIM flag AS STRING = f[1]
+            DIM add AS STRING = f[3]
+            DIM sl AS INTEGER = strings.Index(add, "/")
+            IF sl >= 0 THEN add = Left(add, sl)
+            DIM enc AS STRING = f[0] + "|" + f[2] + "|" + add + "|" + f[4]
+            IF gAffRules[flag] = "" THEN
+                gAffRules[flag] = enc
+            ELSE
+                gAffRules[flag] = gAffRules[flag] + Chr(10) + enc
+            END IF
+        END IF
+    NEXT i
+END SUB
+
+' applyFlag — emit the words a single affix flag derives from stem.
+SUB applyFlag(stem AS STRING, flag AS STRING)
+    DIM rules AS STRING = gAffRules[flag]
+    IF rules = "" THEN RETURN
+    DIM rl AS []STRING = strings.Split(rules, Chr(10))
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(rl) - 1
+        DIM parts AS []STRING = strings.Split(rl[i], "|")
+        DIM typ AS STRING = parts[0]
+        DIM strip AS STRING = parts[1]
+        DIM add AS STRING = parts[2]
+        DIM cond AS STRING = parts[3]
+        IF typ = "SFX" THEN
+            IF condMatch(stem, cond, TRUE) THEN
+                DIM sb AS STRING = stem
+                IF strip <> "0" AND strings.HasSuffix(stem, strip) THEN sb = Left(stem, LEN(stem) - LEN(strip))
+                addWord(sb + add)
+            END IF
+        ELSE
+            IF condMatch(stem, cond, FALSE) THEN
+                DIM sb2 AS STRING = stem
+                IF strip <> "0" AND strings.HasPrefix(stem, strip) THEN sb2 = Right(stem, LEN(stem) - LEN(strip))
+                addWord(add + sb2)
+            END IF
+        END IF
+    NEXT i
+END SUB
+
 ' loadDictionary — read the word list + personal dictionary once (lazy).
+' A flat list is one word per line; a hunspell .dic uses "stem/AFFIXFLAGS"
+' with rules in the companion .aff (inflections are expanded).
 SUB loadDictionary()
     IF gDictLoaded THEN RETURN
     gDictLoaded = TRUE
@@ -2434,13 +2575,31 @@ SUB loadDictionary()
     DIM e AS ERROR
     data, e = os.ReadFile(gDictPath)
     IF e = NIL THEN
+        DIM isHunspell AS BOOLEAN = strings.HasSuffix(LCase(gDictPath), ".dic")
+        IF isHunspell THEN loadAffix(Left(gDictPath, LEN(gDictPath) - 4) + ".aff")
         DIM lines AS []STRING = strings.Split(Decode(data), Chr(10))
         DIM i AS INTEGER
         FOR i = 0 TO LEN(lines) - 1
-            DIM w AS STRING = LCase(strings.TrimSpace(lines[i]))
-            IF w <> "" THEN
-                gDict[w] = TRUE
-                gDictCount = gDictCount + 1
+            DIM raw AS STRING = strings.TrimSpace(lines[i])
+            DIM isCount AS BOOLEAN = isHunspell AND i = 0 AND isAllDigits(raw)
+            IF raw <> "" AND NOT isCount THEN
+                DIM stem AS STRING = raw
+                DIM flags AS STRING = ""
+                DIM sl AS INTEGER = strings.Index(raw, "/")
+                IF sl >= 0 THEN
+                    stem = Left(raw, sl)
+                    flags = Right(raw, LEN(raw) - sl - 1)
+                END IF
+                DIM tab AS INTEGER = strings.IndexAny(stem, Chr(9) + " ")
+                IF tab >= 0 THEN stem = Left(stem, tab)
+                addWord(stem)
+                IF isHunspell AND flags <> "" THEN
+                    DIM fi AS INTEGER = 0
+                    WHILE fi < LEN(flags)
+                        applyFlag(stem, Mid(flags, fi + 1, 1))
+                        fi = fi + 1
+                    WEND
+                END IF
             END IF
         NEXT i
     END IF
@@ -2451,11 +2610,7 @@ SUB loadDictionary()
         DIM plines AS []STRING = strings.Split(Decode(pd), Chr(10))
         DIM j AS INTEGER
         FOR j = 0 TO LEN(plines) - 1
-            DIM pw AS STRING = LCase(strings.TrimSpace(plines[j]))
-            IF pw <> "" THEN
-                gDict[pw] = TRUE
-                gDictCount = gDictCount + 1
-            END IF
+            addWord(plines[j])
         NEXT j
     END IF
 END SUB
