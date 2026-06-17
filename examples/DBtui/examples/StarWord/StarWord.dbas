@@ -12,6 +12,7 @@ IMPORT "io"
 IMPORT "github.com/atotto/clipboard" AS clipboard
 IMPORT "charm.land/lipgloss/v2" AS lipgloss
 IMPORT "path/filepath" AS filepath
+IMPORT "github.com/go-pdf/fpdf" AS fpdf
 
 ' StarWord version. Scheme: 0.9.NNb — bump NN by one each release (next is
 ' 0.9.02b); the trailing "b" marks beta. Switches to 1.0 once all features are
@@ -1907,6 +1908,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "S|Save|Alt+F S")
         xs = APPEND(xs, "A|Save As|Alt+F A")
         xs = APPEND(xs, "P|Print|Alt+F P")
+        xs = APPEND(xs, "D|Print to PDF|Alt+F D")
         xs = APPEND(xs, "V|Change Dir|Alt+F V")
         xs = APPEND(xs, "R|Run DOS|Alt+F R")
         xs = APPEND(xs, "X|Exit StarWord|Alt+F X")
@@ -1949,6 +1951,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "P|Page|Alt+L P")
         xs = APPEND(xs, "S|Line Spacing|Alt+L S")
         xs = APPEND(xs, "F|Print to Printer|Alt+L F")
+        xs = APPEND(xs, "D|Print to PDF|Alt+L D")
     CASE 6
         xs = APPEND(xs, "W|Word Count|Alt+U W")
         xs = APPEND(xs, "S|Spell Check|Alt+U S")
@@ -2345,6 +2348,161 @@ FUNCTION stripMarkers(s AS STRING) AS STRING
     RETURN acc
 END FUNCTION
 
+' osOpen — open a file with the OS default handler (PDF viewer, browser, etc.).
+FUNCTION osOpen(target AS STRING) AS ERROR
+    DIM c AS POINTER TO exec.Cmd
+    IF runtime.GOOS = "windows" THEN
+        c = exec.Command("cmd", "/c", "start", "", target)
+    ELSEIF runtime.GOOS = "darwin" THEN
+        c = exec.Command("open", target)
+    ELSE
+        c = exec.Command("xdg-open", target)
+    END IF
+    RETURN (^c).Start()
+END FUNCTION
+
+' osDefaultPrint — send a plain-text print image to the OS default printer with
+' no configured print command. Windows uses the shell "print" verb (silent, to
+' the default printer); elsewhere it pipes to lp.
+FUNCTION osDefaultPrint(body AS STRING) AS ERROR
+    IF runtime.GOOS = "windows" THEN
+        DIM tmp AS STRING = filepath.Join(os.TempDir(), "starword_print.txt")
+        DIM we AS ERROR = os.WriteFile(tmp, Encode(body), 420)
+        IF we <> NIL THEN RETURN we
+        DIM ps AS STRING = "Start-Process -FilePath '" + tmp + "' -Verb Print"
+        DIM c AS POINTER TO exec.Cmd = exec.Command("powershell", "-NoProfile", "-Command", ps)
+        RETURN (^c).Run()
+    END IF
+    DIM lc AS POINTER TO exec.Cmd = exec.Command("lp")
+    (^lc).Stdin = strings.NewReader(body)
+    RETURN (^lc).Run()
+END FUNCTION
+
+' monoFontFile — a monospaced TrueType font on this system, for full-Unicode PDF
+' output. Empty if none is found (then PDF falls back to the core Courier font).
+FUNCTION monoFontFile() AS STRING
+    DIM cands AS []STRING
+    IF runtime.GOOS = "windows" THEN
+        cands = APPEND(cands, "C:\\Windows\\Fonts\\consola.ttf")
+        cands = APPEND(cands, "C:\\Windows\\Fonts\\cour.ttf")
+        cands = APPEND(cands, "C:\\Windows\\Fonts\\lucon.ttf")
+    ELSEIF runtime.GOOS = "darwin" THEN
+        cands = APPEND(cands, "/Library/Fonts/Courier New.ttf")
+        cands = APPEND(cands, "/System/Library/Fonts/Menlo.ttc")
+    ELSE
+        cands = APPEND(cands, "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")
+        cands = APPEND(cands, "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf")
+        cands = APPEND(cands, "/usr/share/fonts/TTF/DejaVuSansMono.ttf")
+    END IF
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(cands) - 1
+        DIM fi AS os.FileInfo
+        DIM st AS ERROR
+        fi, st = os.Stat(cands[i])
+        IF st = NIL THEN
+            _ = fi
+            RETURN cands[i]
+        END IF
+    NEXT i
+    RETURN ""
+END FUNCTION
+
+' toLatin — reduce a string to single-byte (ASCII) chars for the core PDF font,
+' replacing wider runes with "?" (used only when no Unicode TTF is available).
+FUNCTION toLatin(s AS STRING) AS STRING
+    DIM acc AS STRING = ""
+    DIM p AS INTEGER = 0
+    WHILE p < LEN(s)
+        DIM ch AS STRING = runeAt(s, p)
+        IF LEN(ch) = 1 THEN
+            acc = acc + ch
+        ELSE
+            acc = acc + "?"
+        END IF
+        p = nextRuneStart(s, p)
+    WEND
+    RETURN acc
+END FUNCTION
+
+' renderPdf — lay the paginated document out to a PDF at `path` (Letter,
+' monospaced). Reuses buildPaginated, splitting pages on its Chr(12) breaks.
+FUNCTION renderPdf(path AS STRING) AS ERROR
+    applyDotCommands()
+    DIM flat AS []STRING = buildPaginated(FALSE)
+
+    DIM pdf AS POINTER TO fpdf.Fpdf = fpdf.New("P", "pt", "Letter", "")
+    DIM utf AS BOOLEAN = FALSE
+    DIM ttf AS STRING = monoFontFile()
+    DIM fontName AS STRING = "Courier"
+    IF ttf <> "" THEN
+        DIM fdata AS BYTES
+        DIM fe AS ERROR
+        fdata, fe = os.ReadFile(ttf)
+        IF fe = NIL THEN
+            pdf.AddUTF8FontFromBytes("doc", "", fdata)
+            fontName = "doc"
+            utf = TRUE
+        END IF
+    END IF
+
+    ' One inch top/side margins; size the row pitch so a full page of lines fits.
+    DIM marginL AS DOUBLE = 54.0
+    DIM marginT AS DOUBLE = 54.0
+    DIM marginB AS DOUBLE = 36.0
+    DIM usableH AS DOUBLE = 792.0 - marginT - marginB
+    DIM plen AS INTEGER = gPageLength
+    IF plen < 10 THEN plen = 66
+    DIM lh AS DOUBLE = usableH / Dbl(plen)
+    DIM fontSize AS DOUBLE = lh * 0.82
+    IF fontSize < 6.0 THEN fontSize = 6.0
+    IF fontSize > 12.0 THEN fontSize = 12.0
+
+    pdf.SetMargins(marginL, marginT, marginL)
+    pdf.SetAutoPageBreak(TRUE, marginB)
+    pdf.SetFont(fontName, "", fontSize)
+    pdf.AddPage()
+    pdf.SetXY(marginL, marginT)
+
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(flat) - 1
+        DIM ln AS STRING = flat[i]
+        IF ln = Chr(12) THEN
+            pdf.AddPage()
+            pdf.SetXY(marginL, marginT)
+        ELSE
+            DIM txt AS STRING = ln
+            IF NOT utf THEN
+                txt = strings.ReplaceAll(txt, "─", "-")
+                txt = toLatin(txt)
+            END IF
+            pdf.SetX(marginL)
+            pdf.Cell(0.0, lh, txt)
+            pdf.Ln(lh)
+        END IF
+    NEXT i
+    RETURN pdf.OutputFileAndClose(path)
+END FUNCTION
+
+' doPrintPdf — render the document to <base>.pdf and open it; the viewer's
+' print dialog is the system print dialog (choose printer, copies, pages).
+SUB doPrintPdf()
+    DIM stem AS STRING = gFileName
+    DIM dp AS INTEGER = strings.LastIndex(stem, ".")
+    IF dp > 0 THEN stem = Left(stem, dp)
+    DIM target AS STRING = stem + ".pdf"
+    DIM e AS ERROR = renderPdf(target)
+    IF e <> NIL THEN
+        gMessage = "PDF failed: " + e.Error()
+        RETURN
+    END IF
+    DIM oe AS ERROR = osOpen(target)
+    IF oe <> NIL THEN
+        gMessage = "Wrote " + target + " — open it to print"
+    ELSE
+        gMessage = "Opened " + target + " — print from your viewer (Ctrl+P)"
+    END IF
+END SUB
+
 ' doPrint — File > Print: write a paginated print image (<base>.prn) with
 ' headers/footers, page numbers, markers stripped and dot lines dropped.
 SUB doPrint()
@@ -2379,7 +2537,13 @@ SUB doPrint()
         END IF
         RETURN
     END IF
-    gMessage = fmt.Sprintf("Printed %d pages to %s", np, target)
+    ' No print command configured — send the image to the OS default printer.
+    DIM de AS ERROR = osDefaultPrint(body)
+    IF de <> NIL THEN
+        gMessage = fmt.Sprintf("Wrote %s (saved); default printer unavailable: %v", target, de)
+    ELSE
+        gMessage = fmt.Sprintf("Printed %d pages to the default printer (also saved %s)", np, target)
+    END IF
 END SUB
 
 ' ==========================================================================
@@ -3666,6 +3830,8 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             requestExit()
         ELSEIF hk = "P" THEN
             doPrint()
+        ELSEIF hk = "D" THEN
+            doPrintPdf()
         ELSEIF hk = "V" THEN
             gPromptMode = "chdir"
             gPromptLabel = "Change to directory: "
@@ -3807,6 +3973,8 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
             gPromptText = ""
         ELSEIF hk = "F" THEN
             doPrint()
+        ELSEIF hk = "D" THEN
+            doPrintPdf()
         ELSE
             gMessage = label + " — coming in a later StarWord build"
         END IF
