@@ -383,6 +383,7 @@ DIM gMode AS STRING = "edit"       ' "edit" | "open" (Opening Menu)
 DIM gOpenDir AS STRING = "."       ' directory the Opening Menu is browsing
 DIM gOpenFiles AS []STRING         ' "..", dirs (with "/"), then files
 DIM gOpenSel AS INTEGER            ' highlighted entry in the file list
+DIM gOpFile AS STRING              ' file targeted by an Opening-Menu rename/copy/delete
 DIM gOpenTop AS INTEGER            ' scroll offset of the file list
 
 ' --- block markers (row/col; -1 = unset) ----------------------------------
@@ -394,6 +395,8 @@ DIM gBlockShow AS BOOLEAN = TRUE      ' ^KH toggles marker/highlight display
 DIM gClip AS STRING                   ' internal mirror of the OS clipboard
                                       ' (Ctrl+Shift+X/C/V), used as fallback
 DIM gColumnMode AS BOOLEAN            ' ^KN: rectangular (column) block mode
+DIM gRepeatNext AS INTEGER            ' ^QQ: repeat the next keystroke N times
+DIM gTabStops AS []INTEGER            ' ^OI/^ON: explicit ruler tab stops (display cols)
 
 ' --- ruler / margins ------------------------------------------------------
 DIM gLeftMargin AS INTEGER = 0
@@ -427,6 +430,9 @@ DIM gPromptLabel AS STRING
 DIM gUndoDoc AS []STRING
 DIM gUndoRow AS []INTEGER
 DIM gUndoCol AS []INTEGER
+DIM gRedoDoc AS []STRING          ' redo stack (cleared by a fresh edit)
+DIM gRedoRow AS []INTEGER
+DIM gRedoCol AS []INTEGER
 DIM gLastDoc AS STRING            ' doc as of the end of the previous keystroke
 DIM gLastRow AS INTEGER
 DIM gLastCol AS INTEGER
@@ -1227,35 +1233,44 @@ FUNCTION swFit(s AS STRING, width AS INTEGER) AS STRING
 END FUNCTION
 
 ' markerLetter — for a 1-byte print-control toggle, the tag letter; else "".
+' markerLetter — the tag letter for a 1-byte ^P print-control toggle, else "".
+'   ^B(2)=Bold  ^Y(25)=italic  ^S(19)=underline  ^X(24)=strikeout
+'   ^D(4)=Double-strike(bold)  ^T(20)=superscripT  ^V(22)=subscript(V)
 FUNCTION markerLetter(ch AS STRING) AS STRING
     IF LEN(ch) <> 1 THEN RETURN ""
     DIM a AS INTEGER = Asc(ch)
     IF a = 2 THEN RETURN "B"
     IF a = 25 THEN RETURN "Y"
     IF a = 19 THEN RETURN "S"
+    IF a = 24 THEN RETURN "X"
+    IF a = 4 THEN RETURN "D"
+    IF a = 20 THEN RETURN "T"
+    IF a = 22 THEN RETURN "V"
     RETURN ""
 END FUNCTION
 
-' attrsAt — the (bold, italic, underline) state at byte offset pos, found by
-' replaying the toggle markers from the start of the line.
-FUNCTION attrsAt(line AS STRING, pos AS INTEGER) AS (BOOLEAN, BOOLEAN, BOOLEAN)
+' attrsAt — the (bold, italic, underline, strike) state at byte offset pos,
+' found by replaying the toggle markers from the start of the line.
+FUNCTION attrsAt(line AS STRING, pos AS INTEGER) AS (BOOLEAN, BOOLEAN, BOOLEAN, BOOLEAN)
     DIM bold AS BOOLEAN = FALSE
     DIM ital AS BOOLEAN = FALSE
     DIM undl AS BOOLEAN = FALSE
+    DIM strk AS BOOLEAN = FALSE
     DIM p AS INTEGER = 0
     WHILE p < pos AND p < LEN(line)
         DIM a AS INTEGER = Asc(Mid(line, p + 1, 1))
-        IF a = 2 THEN bold = NOT bold
+        IF a = 2 OR a = 4 THEN bold = NOT bold
         IF a = 25 THEN ital = NOT ital
         IF a = 19 THEN undl = NOT undl
+        IF a = 24 THEN strk = NOT strk
         p = p + runeLenAt(line, p)
     WEND
-    RETURN bold, ital, undl
+    RETURN bold, ital, undl, strk
 END FUNCTION
 
 ' renderRun — style one buffered run by class (0 base / 1 cursor / 2 block) and
 ' the active character attributes.
-FUNCTION renderRun(buf AS STRING, cls AS INTEGER, b AS BOOLEAN, it AS BOOLEAN, u AS BOOLEAN, baseSt AS lipgloss.Style, cur AS lipgloss.Style, blk AS lipgloss.Style) AS STRING
+FUNCTION renderRun(buf AS STRING, cls AS INTEGER, b AS BOOLEAN, it AS BOOLEAN, u AS BOOLEAN, st AS BOOLEAN, baseSt AS lipgloss.Style, cur AS lipgloss.Style, blk AS lipgloss.Style) AS STRING
     IF buf = "" THEN RETURN ""
     IF cls = 1 THEN RETURN cur.Render(buf)
     IF cls = 2 THEN RETURN blk.Render(buf)
@@ -1263,6 +1278,7 @@ FUNCTION renderRun(buf AS STRING, cls AS INTEGER, b AS BOOLEAN, it AS BOOLEAN, u
     IF b THEN s = s.Bold(TRUE)
     IF it THEN s = s.Italic(TRUE)
     IF u THEN s = s.Underline(TRUE)
+    IF st THEN s = s.Strikethrough(TRUE)
     RETURN s.Render(buf)
 END FUNCTION
 
@@ -1298,7 +1314,8 @@ FUNCTION renderTextRange(rowIdx AS INTEGER, fromCell AS INTEGER, count AS INTEGE
     DIM bold AS BOOLEAN = FALSE
     DIM ital AS BOOLEAN = FALSE
     DIM undl AS BOOLEAN = FALSE
-    IF NOT isDot THEN bold, ital, undl = attrsAt(line, pos)
+    DIM strk AS BOOLEAN = FALSE
+    IF NOT isDot THEN bold, ital, undl, strk = attrsAt(line, pos)
 
     DIM out AS STRING = ""
     DIM buf AS STRING = ""
@@ -1306,6 +1323,7 @@ FUNCTION renderTextRange(rowIdx AS INTEGER, fromCell AS INTEGER, count AS INTEGE
     DIM bufB AS BOOLEAN = FALSE
     DIM bufI AS BOOLEAN = FALSE
     DIM bufU AS BOOLEAN = FALSE
+    DIM bufX AS BOOLEAN = FALSE
     DIM cell AS INTEGER = 0
     WHILE cell < count
         DIM ch AS STRING = " "
@@ -1320,12 +1338,13 @@ FUNCTION renderTextRange(rowIdx AS INTEGER, fromCell AS INTEGER, count AS INTEGE
             ' Print-control toggle: flip the attribute. When tags are revealed
             ' (^OD) it shows as a tag cell; otherwise it is zero-width.
             DIM mc AS INTEGER = Asc(ch)
-            IF mc = 2 THEN bold = NOT bold
+            IF mc = 2 OR mc = 4 THEN bold = NOT bold
             IF mc = 25 THEN ital = NOT ital
             IF mc = 19 THEN undl = NOT undl
+            IF mc = 24 THEN strk = NOT strk
             pos = pos + rl
             IF gShowTags THEN
-                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, bufX, useBase, cur, blk)
                 buf = ""
                 bufCls = 0 - 1
                 out = out + tagSt.Render(mk)
@@ -1339,20 +1358,21 @@ FUNCTION renderTextRange(rowIdx AS INTEGER, fromCell AS INTEGER, count AS INTEGE
                 cls = 2
             END IF
             pos = pos + rl
-            DIM diff AS BOOLEAN = cls <> bufCls OR bold <> bufB OR ital <> bufI OR undl <> bufU
+            DIM diff AS BOOLEAN = cls <> bufCls OR bold <> bufB OR ital <> bufI OR undl <> bufU OR strk <> bufX
             IF diff AND buf <> "" THEN
-                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, bufX, useBase, cur, blk)
                 buf = ""
             END IF
             bufCls = cls
             bufB = bold
             bufI = ital
             bufU = undl
+            bufX = strk
             buf = buf + ch
             cell = cell + 1
         END IF
     WEND
-    out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+    out = out + renderRun(buf, bufCls, bufB, bufI, bufU, bufX, useBase, cur, blk)
     RETURN out
 END FUNCTION
 
@@ -1434,6 +1454,7 @@ FUNCTION menuItems(i AS INTEGER) AS []STRING
         xs = APPEND(xs, "X|Exit StarWord|Alt+F X")
     CASE 1
         xs = APPEND(xs, "U|Undo|Alt+E U")
+        xs = APPEND(xs, "Y|Redo|Alt+E Y")
         xs = APPEND(xs, "B|Mark Block Begin|Alt+E B")
         xs = APPEND(xs, "E|Mark Block End|Alt+E E")
         xs = APPEND(xs, "V|Move Block|Alt+E V")
@@ -1602,6 +1623,10 @@ SUB reconcileUndo()
     IF cur <> gLastDoc THEN
         pushUndoState(gLastDoc, gLastRow, gLastCol)
         gLastDoc = cur
+        ' A fresh edit invalidates the redo history.
+        gRedoDoc = nil
+        gRedoRow = nil
+        gRedoCol = nil
     END IF
     gLastRow = gRow
     gLastCol = gCol
@@ -1615,13 +1640,17 @@ SUB syncUndoBaseline()
     gLastCol = gCol
 END SUB
 
-' doUndo — restore the most recent undo snapshot (Edit > Undo).
+' doUndo — restore the most recent undo snapshot (Edit > Undo), pushing the
+' current state onto the redo stack so it can be re-applied.
 SUB doUndo()
     DIM n AS INTEGER = LEN(gUndoDoc)
     IF n = 0 THEN
         gMessage = "Nothing to undo"
         RETURN
     END IF
+    gRedoDoc = APPEND(gRedoDoc, joinDoc())
+    gRedoRow = APPEND(gRedoRow, gRow)
+    gRedoCol = APPEND(gRedoCol, gCol)
     DIM doc AS STRING = gUndoDoc[n - 1]
     gRow = gUndoRow[n - 1]
     gCol = gUndoCol[n - 1]
@@ -1634,6 +1663,28 @@ SUB doUndo()
     syncUndoBaseline()
     gModified = TRUE
     gMessage = "Undid last change"
+END SUB
+
+' doRedo — re-apply the most recently undone change (Edit > Redo).
+SUB doRedo()
+    DIM n AS INTEGER = LEN(gRedoDoc)
+    IF n = 0 THEN
+        gMessage = "Nothing to redo"
+        RETURN
+    END IF
+    pushUndoState(joinDoc(), gRow, gCol)
+    DIM doc AS STRING = gRedoDoc[n - 1]
+    gRow = gRedoRow[n - 1]
+    gCol = gRedoCol[n - 1]
+    gRedoDoc = gRedoDoc[0:n - 1]
+    gRedoRow = gRedoRow[0:n - 1]
+    gRedoCol = gRedoCol[0:n - 1]
+    gLines = strings.Split(doc, Chr(10))
+    IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
+    clampCursor()
+    syncUndoBaseline()
+    gModified = TRUE
+    gMessage = "Redid change"
 END SUB
 
 ' --- Insert menu: text/date/page-break/file -------------------------------
@@ -3114,6 +3165,8 @@ SUB doMenuItem(menuIdx AS INTEGER, hk AS STRING)
     ELSEIF menuIdx = 1 THEN
         IF hk = "U" THEN
             doUndo()
+        ELSEIF hk = "Y" THEN
+            doRedo()
         ELSEIF hk = "B" THEN
             gBBRow = gRow
             gBBCol = gCol
@@ -3364,7 +3417,7 @@ FUNCTION renderOpeningMenu(w AS INTEGER, h AS INTEGER) AS STRING
     rows = APPEND(rows, hdr.Render(swFit(" StarWord  -  Opening Menu", w)))
     rows = APPEND(rows, bg.Render(swFit("", w)))
     rows = APPEND(rows, bg.Render("  ") + key.Render("D ") + bg.Render("Open document   ") + key.Render("N ") + bg.Render("New document   ") + key.Render("L ") + bg.Render("Change dir   ") + key.Render("C ") + bg.Render("Configure   ") + key.Render("X ") + bg.Render(swFit("Exit", w - 68)))
-    rows = APPEND(rows, dimSt.Render(swFit("  Up/Down select   Enter open   Esc back to editor", w)))
+    rows = APPEND(rows, dimSt.Render(swFit("  Up/Down select   Enter open   E rename  O copy  Y delete   Esc back to editor", w)))
     rows = APPEND(rows, bg.Render(swFit("", w)))
     rows = APPEND(rows, bg.Render("  Directory: ") + dirSt.Render(swFit(gOpenDir, w - 13)))
     DIM sepW AS INTEGER = w - 4
@@ -3446,9 +3499,84 @@ SUB handleOpenKey(key AS STRING)
         gPromptText = ""
     ELSEIF lk = "c" THEN
         enterConfig()
+    ELSEIF lk = "e" THEN
+        startFileOp("renameto", "Rename to: ")
+    ELSEIF lk = "o" THEN
+        startFileOp("copyto", "Copy to: ")
+    ELSEIF lk = "y" THEN
+        IF validFileTarget() THEN
+            gOpFile = gOpenFiles[gOpenSel]
+            gPromptMode = "deleteconfirm"
+            gPromptLabel = "Delete '" + gOpFile + "'? (Y/N): "
+            gPromptText = ""
+        ELSE
+            gMessage = "Select a file first"
+        END IF
     ELSEIF lk = "x" THEN
         RequestQuit()
     END IF
+END SUB
+
+' validFileTarget — the highlighted Opening-Menu entry is a real file (not ".."
+' or a directory)?
+FUNCTION validFileTarget() AS BOOLEAN
+    IF gOpenSel < 0 OR gOpenSel >= LEN(gOpenFiles) THEN RETURN FALSE
+    DIM nm AS STRING = gOpenFiles[gOpenSel]
+    IF nm = ".." THEN RETURN FALSE
+    IF strings.HasSuffix(nm, "/") THEN RETURN FALSE
+    RETURN TRUE
+END FUNCTION
+
+' startFileOp — begin a rename/copy of the highlighted file (prompts for name).
+SUB startFileOp(mode AS STRING, lbl AS STRING)
+    IF NOT validFileTarget() THEN
+        gMessage = "Select a file first"
+        RETURN
+    END IF
+    gOpFile = gOpenFiles[gOpenSel]
+    gPromptMode = mode
+    gPromptLabel = lbl
+    gPromptText = ""
+END SUB
+
+' doRenameFile / doCopyFile / doDeleteFile — Opening-Menu file management.
+SUB doRenameFile(newName AS STRING)
+    IF newName = "" THEN RETURN
+    DIM e AS ERROR = os.Rename(joinPath(gOpenDir, gOpFile), joinPath(gOpenDir, newName))
+    IF e <> NIL THEN
+        gMessage = "Rename failed: " + e.Error()
+    ELSE
+        gMessage = "Renamed to " + newName
+    END IF
+    refreshFileList()
+END SUB
+
+SUB doCopyFile(newName AS STRING)
+    IF newName = "" THEN RETURN
+    DIM data AS BYTES
+    DIM e AS ERROR
+    data, e = os.ReadFile(joinPath(gOpenDir, gOpFile))
+    IF e <> NIL THEN
+        gMessage = "Copy failed: " + e.Error()
+        RETURN
+    END IF
+    DIM we AS ERROR = os.WriteFile(joinPath(gOpenDir, newName), data, 420)
+    IF we <> NIL THEN
+        gMessage = "Copy failed: " + we.Error()
+    ELSE
+        gMessage = "Copied to " + newName
+    END IF
+    refreshFileList()
+END SUB
+
+SUB doDeleteFile()
+    DIM e AS ERROR = os.Remove(joinPath(gOpenDir, gOpFile))
+    IF e <> NIL THEN
+        gMessage = "Delete failed: " + e.Error()
+    ELSE
+        gMessage = "Deleted " + gOpFile
+    END IF
+    refreshFileList()
 END SUB
 
 FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
@@ -3521,6 +3649,8 @@ FUNCTION sw_Render(w AS INTEGER, h AS INTEGER) AS STRING
             rc = "L"
         ELSEIF dc = gRightMargin THEN
             rc = "R"
+        ELSEIF isTabStop(dc) THEN
+            rc = "T"
         ELSEIF dc MOD 5 = 0 THEN
             rc = "!"
         END IF
@@ -4402,7 +4532,8 @@ FUNCTION renderSegment(rowIdx AS INTEGER, segStart AS INTEGER, segEnd AS INTEGER
     DIM bold AS BOOLEAN = FALSE
     DIM ital AS BOOLEAN = FALSE
     DIM undl AS BOOLEAN = FALSE
-    IF NOT isDot THEN bold, ital, undl = attrsAt(line, pos)
+    DIM strk AS BOOLEAN = FALSE
+    IF NOT isDot THEN bold, ital, undl, strk = attrsAt(line, pos)
 
     DIM out AS STRING = ""
     DIM buf AS STRING = ""
@@ -4410,6 +4541,7 @@ FUNCTION renderSegment(rowIdx AS INTEGER, segStart AS INTEGER, segEnd AS INTEGER
     DIM bufB AS BOOLEAN = FALSE
     DIM bufI AS BOOLEAN = FALSE
     DIM bufU AS BOOLEAN = FALSE
+    DIM bufX AS BOOLEAN = FALSE
     DIM cell AS INTEGER = 0
     WHILE cell < count
         DIM ch AS STRING = " "
@@ -4422,12 +4554,13 @@ FUNCTION renderSegment(rowIdx AS INTEGER, segStart AS INTEGER, segEnd AS INTEGER
         IF NOT isDot AND pos < segEnd THEN mk = markerLetter(ch)
         IF mk <> "" THEN
             DIM mc AS INTEGER = Asc(ch)
-            IF mc = 2 THEN bold = NOT bold
+            IF mc = 2 OR mc = 4 THEN bold = NOT bold
             IF mc = 25 THEN ital = NOT ital
             IF mc = 19 THEN undl = NOT undl
+            IF mc = 24 THEN strk = NOT strk
             pos = pos + rl
             IF gShowTags THEN
-                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, bufX, useBase, cur, blk)
                 buf = ""
                 bufCls = 0 - 1
                 out = out + tagSt.Render(mk)
@@ -4449,20 +4582,21 @@ FUNCTION renderSegment(rowIdx AS INTEGER, segStart AS INTEGER, segEnd AS INTEGER
                 cls = 2
             END IF
             pos = pos + rl
-            DIM diff AS BOOLEAN = cls <> bufCls OR bold <> bufB OR ital <> bufI OR undl <> bufU
+            DIM diff AS BOOLEAN = cls <> bufCls OR bold <> bufB OR ital <> bufI OR undl <> bufU OR strk <> bufX
             IF diff AND buf <> "" THEN
-                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+                out = out + renderRun(buf, bufCls, bufB, bufI, bufU, bufX, useBase, cur, blk)
                 buf = ""
             END IF
             bufCls = cls
             bufB = bold
             bufI = ital
             bufU = undl
+            bufX = strk
             buf = buf + ch
             cell = cell + 1
         END IF
     WEND
-    out = out + renderRun(buf, bufCls, bufB, bufI, bufU, useBase, cur, blk)
+    out = out + renderRun(buf, bufCls, bufB, bufI, bufU, bufX, useBase, cur, blk)
     RETURN out
 END FUNCTION
 
@@ -4762,6 +4896,10 @@ SUB handlePrefixQ(key AS STRING)
         checkWordAtCursor()
     ELSEIF k = "n" THEN
         startSpell()
+    ELSEIF k = "q" THEN
+        gPromptMode = "repeatcount"
+        gPromptLabel = "Repeat next command how many times: "
+        gPromptText = ""
     ELSEIF digitOf(k) >= 0 THEN
         gotoPlaceMarker(digitOf(k))
     ELSE
@@ -4782,10 +4920,73 @@ SUB handlePrefixP(key AS STRING)
     ELSEIF k = "s" THEN
         insertMarker(19)
         gMessage = "Underline toggle inserted (^S)"
+    ELSEIF k = "x" THEN
+        insertMarker(24)
+        gMessage = "Strikeout toggle inserted (^X)"
+    ELSEIF k = "d" THEN
+        insertMarker(4)
+        gMessage = "Double-strike toggle inserted (^D)"
+    ELSEIF k = "t" THEN
+        insertMarker(20)
+        gMessage = "Superscript toggle inserted (^T)"
+    ELSEIF k = "v" THEN
+        insertMarker(22)
+        gMessage = "Subscript toggle inserted (^V)"
     ELSE
         gMessage = "^P" + UCase(k) + " — not in this build"
     END IF
     gPrefix = ""
+END SUB
+
+' isTabStop — is display column dc an explicit ruler tab stop?
+FUNCTION isTabStop(dc AS INTEGER) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gTabStops) - 1
+        IF gTabStops[i] = dc THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+END FUNCTION
+
+' nextTabStop — the next stop past curCol: nearest explicit stop, else the
+' configured tab-width grid.
+FUNCTION nextTabStop(curCol AS INTEGER) AS INTEGER
+    DIM best AS INTEGER = 0 - 1
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gTabStops) - 1
+        IF gTabStops[i] > curCol AND (best < 0 OR gTabStops[i] < best) THEN best = gTabStops[i]
+    NEXT i
+    IF best >= 0 THEN RETURN best
+    DIM tw AS INTEGER = gTabWidth
+    IF tw < 1 THEN tw = 1
+    RETURN curCol + (tw - (curCol MOD tw))
+END FUNCTION
+
+' setTabStop — ^OI: add a tab stop at the cursor's display column.
+SUB setTabStop()
+    DIM dc AS INTEGER = runeIndexOf(curLine(), gCol)
+    IF NOT isTabStop(dc) THEN gTabStops = APPEND(gTabStops, dc)
+    gMessage = fmt.Sprintf("Tab stop set at column %d", dc + 1)
+END SUB
+
+' clearTabStop — ^ON: remove the tab stop at the cursor's display column.
+SUB clearTabStop()
+    DIM dc AS INTEGER = runeIndexOf(curLine(), gCol)
+    DIM out AS []INTEGER
+    DIM removed AS BOOLEAN = FALSE
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(gTabStops) - 1
+        IF gTabStops[i] = dc THEN
+            removed = TRUE
+        ELSE
+            out = APPEND(out, gTabStops[i])
+        END IF
+    NEXT i
+    gTabStops = out
+    IF removed THEN
+        gMessage = fmt.Sprintf("Tab stop cleared at column %d", dc + 1)
+    ELSE
+        gMessage = "No tab stop at this column"
+    END IF
 END SUB
 
 ' handlePrefixO — the ^O Onscreen Format menu.
@@ -4794,6 +4995,10 @@ SUB handlePrefixO(key AS STRING)
     IF k = "d" THEN
         gShowTags = NOT gShowTags
         gMessage = "Command tags display toggled"
+    ELSEIF k = "i" THEN
+        setTabStop()
+    ELSEIF k = "n" THEN
+        clearTabStop()
     ELSEIF k = "c" THEN
         centerLine()
     ELSEIF k = "j" THEN
@@ -4830,6 +5035,16 @@ SUB handlePrompt(key AS STRING)
     END IF
     IF gPromptMode = "thes" THEN
         handleThesKey(key)
+        RETURN
+    END IF
+    ' Delete confirmation answers a single Y/N.
+    IF gPromptMode = "deleteconfirm" THEN
+        gPromptMode = ""
+        IF LCase(key) = "y" THEN
+            doDeleteFile()
+        ELSE
+            gMessage = "Delete cancelled"
+        END IF
         RETURN
     END IF
     IF key = "esc" THEN
@@ -4886,6 +5101,10 @@ SUB handlePrompt(key AS STRING)
                 gOpenDir = txt
                 refreshFileList()
             END IF
+        ELSEIF mode = "renameto" THEN
+            doRenameFile(txt)
+        ELSEIF mode = "copyto" THEN
+            doCopyFile(txt)
         ELSEIF mode = "lmargin" THEN
             gLeftMargin = Int(Val(txt))
             gMessage = fmt.Sprintf("Left margin = %d", gLeftMargin)
@@ -4934,6 +5153,12 @@ SUB handlePrompt(key AS STRING)
             IF txt <> "" THEN gDictPath = txt
         ELSEIF mode = "cfg_thes" THEN
             IF txt <> "" THEN gThesPath = txt
+        ELSEIF mode = "repeatcount" THEN
+            DIM rc AS INTEGER = Int(Val(txt))
+            IF rc < 1 THEN rc = 1
+            IF rc > 9999 THEN rc = 9999
+            gRepeatNext = rc
+            gMessage = fmt.Sprintf("Repeat next command %d times…", rc)
         ELSEIF mode = "spellrepl" THEN
             replaceSpellWord(txt)
         END IF
@@ -5051,6 +5276,17 @@ SUB Form_Key(key AS STRING)
     ' either screen mode.
     IF gPromptMode <> "" THEN
         handlePrompt(key)
+        RETURN
+    END IF
+
+    ' ^QQ: replay the next keystroke N times.
+    IF gRepeatNext > 0 THEN
+        DIM rn AS INTEGER = gRepeatNext
+        gRepeatNext = 0
+        DIM ri AS INTEGER
+        FOR ri = 1 TO rn
+            Form_Key(key)
+        NEXT ri
         RETURN
     END IF
 
@@ -5251,12 +5487,12 @@ SUB Form_Key(key AS STRING)
         RETURN
     END IF
     IF key = "tab" OR key = "ctrl+i" THEN
-        ' Insert spaces to the next tab stop (width from the config).
-        DIM tw AS INTEGER = gTabWidth
-        IF tw < 1 THEN tw = 1
-        DIM ts AS INTEGER = tw - (gCol MOD tw)
+        ' Advance to the next explicit ruler tab stop past the cursor; if none,
+        ' fall back to the configured tab-width grid.
+        DIM curCol AS INTEGER = runeIndexOf(curLine(), gCol)
+        DIM target AS INTEGER = nextTabStop(curCol)
         DIM ti AS INTEGER
-        FOR ti = 1 TO ts
+        FOR ti = curCol + 1 TO target
             insertChar(" ")
         NEXT ti
         RETURN
