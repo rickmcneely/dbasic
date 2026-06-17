@@ -4902,10 +4902,13 @@ FUNCTION paginate() AS []INTEGER
                 count = 0
                 forceBreak = FALSE
             END IF
-            count = count + sp
+            ' Soft wrap turns one long logical line into several printed lines.
+            DIM add AS INTEGER = sp
+            IF softWrapOn() THEN add = sp * LEN(wrapSegments(stripMarkers(ln), printWrapWidth()))
+            count = count + add
             IF count > perPage THEN
                 starts = APPEND(starts, i)
-                count = sp
+                count = add
             END IF
         END IF
     NEXT i
@@ -5037,8 +5040,21 @@ FUNCTION buildPaginated(forScreen AS BOOLEAN) AS []STRING
                 NEXT t
                 lastBodyIdx = LEN(out) - 1
             ELSEIF NOT isDotCmd(bl) THEN
-                out = APPEND(out, stripMarkers(bl))
-                lastBodyIdx = LEN(out) - 1
+                ' Soft wrap is display-only, so the logical line is long; break
+                ' it at the right margin for printing/preview so the output
+                ' matches the screen.
+                DIM stripped AS STRING = stripMarkers(bl)
+                IF softWrapOn() THEN
+                    DIM segLines AS []STRING = wrapLineText(stripped, printWrapWidth())
+                    DIM si AS INTEGER
+                    FOR si = 0 TO LEN(segLines) - 1
+                        out = APPEND(out, segLines[si])
+                        lastBodyIdx = LEN(out) - 1
+                    NEXT si
+                ELSE
+                    out = APPEND(out, stripped)
+                    lastBodyIdx = LEN(out) - 1
+                END IF
                 DIM extra AS INTEGER
                 FOR extra = 1 TO gLineSpacing - 1
                     out = APPEND(out, "")
@@ -5304,6 +5320,29 @@ FUNCTION wrapSegments(line AS STRING, ww AS INTEGER) AS []INTEGER
         p = nextRuneStart(line, p)
     WEND
     RETURN segs
+END FUNCTION
+
+' printWrapWidth — column to wrap printed/PDF output at when soft wrap is on:
+' the document's right margin (independent of the live screen width).
+FUNCTION printWrapWidth() AS INTEGER
+    DIM ww AS INTEGER = gRightMargin
+    IF ww < 1 THEN ww = 65
+    RETURN ww
+END FUNCTION
+
+' wrapLineText — split a line into the text of each soft-wrap segment at width
+' ww. A line with no wrap returns itself as the single element.
+FUNCTION wrapLineText(line AS STRING, ww AS INTEGER) AS []STRING
+    DIM segs AS []INTEGER = wrapSegments(line, ww)
+    DIM out AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(segs) - 1
+        DIM s AS INTEGER = segs[i]
+        DIM e AS INTEGER = LEN(line)
+        IF i + 1 < LEN(segs) THEN e = segs[i + 1]
+        out = APPEND(out, Mid(line, s + 1, e - s))
+    NEXT i
+    RETURN out
 END FUNCTION
 
 ' segIndexOf — index of the segment containing byte offset col.
