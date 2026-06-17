@@ -2496,9 +2496,14 @@ FUNCTION paginate() AS []INTEGER
     DIM perPage AS INTEGER = gPageLength - gMarginTop - gMarginBottom
     IF perPage < 1 THEN perPage = 1
     starts = APPEND(starts, 0)
+    ' Ignore trailing blank lines so a final newline can't spawn an empty page.
+    DIM lastContent AS INTEGER = lastRow()
+    WHILE lastContent > 0 AND strings.TrimSpace(gLines[lastContent]) = ""
+        lastContent = lastContent - 1
+    WEND
     DIM count AS INTEGER = 0
     DIM i AS INTEGER
-    FOR i = 0 TO lastRow()
+    FOR i = 0 TO lastContent
         DIM ln AS STRING = gLines[i]
         IF Left(ln, 3) = ".pa" THEN
             count = 0
