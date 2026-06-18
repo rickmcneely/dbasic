@@ -101,7 +101,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
                 RETURN m, NIL
             END IF
         END IF
-        IF mc.X >= 1 AND mc.X < 1 + 78 AND mc.Y >= 1 AND mc.Y < 1 + 22 THEN
+        IF mc.X >= 1 AND mc.X < 1 + (m._formW - 2) AND mc.Y >= 1 AND mc.Y < 1 + (m._formH - 2) THEN
             m.Focus = 0
             DIM _wasMenu AS BOOLEAN = gMenuOpen >= 0
             sw_Click(mc.X - 1, mc.Y - 1)
@@ -121,7 +121,7 @@ FUNCTION (m AS Model) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
         IF mm.Button = tea.MouseLeft THEN _mmb = "left"
         Form_Mouse("motion", _mmb, mm.X, mm.Y)
         DIM mmHit AS INTEGER = 0 - 1
-        IF mmHit < 0 AND mm.X >= 1 AND mm.X < 1 + 78 AND mm.Y >= 1 AND mm.Y < 1 + 22 THEN mmHit = 0
+        IF mmHit < 0 AND mm.X >= 1 AND mm.X < 1 + (m._formW - 2) AND mm.Y >= 1 AND mm.Y < 1 + (m._formH - 2) THEN mmHit = 0
         _ = mm
         m.Hover = mmHit
         m.HoverTab = 0 - 1
@@ -5017,6 +5017,24 @@ SUB setCursorFromCanvas(x AS INTEGER, y AS INTEGER)
         END IF
     NEXT cellsX
     gCol = pos
+    ' A click can only land on a visible column, so on a horizontally-scrolled
+    ' long line the mouse alone could never move past the right edge. If the
+    ' click is at the edge of a line that continues out of view, scroll the
+    ' view (the keyboard already auto-scrolls); repeated edge clicks walk along.
+    DIM vw AS INTEGER = gW
+    IF vw < 8 THEN vw = 8
+    DIM stepc AS INTEGER = vw - 8
+    IF stepc < 1 THEN stepc = 1
+    DIM sc AS INTEGER
+    IF gCol >= gLeft + vw - 3 AND gCol < LEN(ln) THEN
+        FOR sc = 1 TO stepc
+            IF gCol < LEN(ln) THEN gCol = nextRuneStart(ln, gCol)
+        NEXT sc
+    ELSEIF gCol <= gLeft + 1 AND gLeft > 0 THEN
+        FOR sc = 1 TO stepc
+            IF gCol > 0 THEN gCol = prevRuneStart(ln, gCol)
+        NEXT sc
+    END IF
     clampCursor()
 END SUB
 
