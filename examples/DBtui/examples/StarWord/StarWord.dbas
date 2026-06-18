@@ -5654,15 +5654,18 @@ FUNCTION wrapSegments(line AS STRING, ww AS INTEGER) AS []INTEGER
         IF col >= ww AND p > segStart THEN
             DIM ns AS INTEGER = p
             IF lastSpace >= segStart AND lastSpace + 1 < p THEN ns = lastSpace + 1
-            segs = APPEND(segs, ns)
-            segStart = ns
-            lastSpace = 0 - 1
-            col = 0
-            DIM q AS INTEGER = ns
-            WHILE q < p
-                col = col + 1
-                q = nextRuneStart(line, q)
+            ' A wrapped line must never begin with a space: skip spaces at the
+            ' break so they stay as trailing space on the line above.
+            WHILE ns < LEN(line) AND Mid(line, ns + 1, 1) = " "
+                ns = nextRuneStart(line, ns)
             WEND
+            IF ns < LEN(line) THEN
+                segs = APPEND(segs, ns)
+                segStart = ns
+                lastSpace = 0 - 1
+                col = 0
+                p = ns                ' re-scan from the new segment's start
+            END IF
         END IF
         col = col + 1
         p = nextRuneStart(line, p)
