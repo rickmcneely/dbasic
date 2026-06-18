@@ -15,9 +15,9 @@ IMPORT "path/filepath" AS filepath
 IMPORT "github.com/go-pdf/fpdf" AS fpdf
 
 ' StarWord version. Scheme: 0.9.NNb — bump NN by one each release (next is
-' 0.9.05b); the trailing "b" marks beta. Switches to 1.0 once all features are
+' 0.9.06b); the trailing "b" marks beta. Switches to 1.0 once all features are
 ' complete and tested.
-CONST AppVersion AS STRING = "0.9.05b"
+CONST AppVersion AS STRING = "0.9.06b"
 
 SUB _dbtuiKeepFmtAlive()
     _ = fmt.Sprintf("")
