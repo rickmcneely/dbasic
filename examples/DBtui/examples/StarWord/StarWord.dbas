@@ -1178,6 +1178,75 @@ FUNCTION detectUnicode(path AS STRING) AS BOOLEAN
     RETURN strings.HasSuffix(LCase(path), "u")
 END FUNCTION
 
+' looksLikeWordStar — does `data` use classic WordStar 8th-bit encoding? Real
+' WordStar document files set bit 7 on word-final letters and on "soft" spaces,
+' so a sizeable fraction of bytes are high-bit values that strip to printable
+' ASCII, while the file as a whole stays mostly text (this excludes binary
+' formats such as OLE Word .DOC).
+FUNCTION looksLikeWordStar(data AS BYTES) AS BOOLEAN
+    DIM n AS INTEGER = LEN(data)
+    IF n = 0 THEN RETURN FALSE
+    ' Ignore the classic trailing ^Z (0x1A) EOF padding when judging density.
+    DIM cn AS INTEGER = n
+    WHILE cn > 0 AND Int(data[cn - 1]) = 26
+        cn = cn - 1
+    WEND
+    IF cn = 0 THEN RETURN FALSE
+    DIM hadPad AS BOOLEAN = (cn < n)
+    DIM hi AS INTEGER = 0
+    DIM printable AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO cn - 1
+        DIM b AS INTEGER = Int(data[i])
+        DIM lo AS INTEGER = b MOD 128
+        IF (lo >= 32 AND lo < 127) OR lo = 9 OR lo = 10 OR lo = 13 OR lo = 26 THEN printable = printable + 1
+        IF b >= 128 AND lo >= 32 AND lo < 127 THEN hi = hi + 1
+    NEXT i
+    ' Must be mostly text (excludes binary like OLE Word .DOC). WordStar if a
+    ' normal density of high-bit chars, or a lighter density on a file that
+    ' carries the classic trailing ^Z padding.
+    IF printable * 100 < cn * 90 THEN RETURN FALSE
+    IF hi * 100 >= cn * 6 THEN RETURN TRUE
+    IF hadPad AND hi >= 1 THEN RETURN TRUE
+    RETURN FALSE
+END FUNCTION
+
+' decodeWordStar — convert a classic WordStar document to plain text: clear the
+' 8th bit on every byte (recovering letters and turning soft spaces into
+' spaces), keep StarWord's print-style control markers (bold/underline/...),
+' drop other control codes and the trailing ^Z padding, and normalize returns
+' to LF. Soft vs hard returns both become line breaks (StarWord then treats
+' them as soft, so paragraphs reflow; blank lines keep paragraphs apart).
+FUNCTION decodeWordStar(data AS BYTES) AS STRING
+    DIM out AS STRING = ""
+    DIM n AS INTEGER = LEN(data)
+    DIM i AS INTEGER = 0
+    WHILE i < n
+        DIM b AS INTEGER = Int(data[i])
+        DIM lo AS INTEGER = b MOD 128
+        IF lo = 26 THEN
+            i = n                       ' ^Z = end-of-file padding
+        ELSEIF lo = 13 THEN
+            out = out + Chr(10)         ' CR (soft or hard) -> LF
+            IF i + 1 < n AND (Int(data[i + 1]) MOD 128) = 10 THEN i = i + 1
+            i = i + 1
+        ELSEIF lo = 10 THEN
+            out = out + Chr(10)
+            i = i + 1
+        ELSEIF lo = 9 THEN
+            out = out + Chr(9)
+            i = i + 1
+        ELSEIF lo < 32 THEN
+            IF markerLetter(Chr(lo)) <> "" THEN out = out + Chr(lo)
+            i = i + 1
+        ELSE
+            out = out + Chr(lo)
+            i = i + 1
+        END IF
+    WEND
+    RETURN out
+END FUNCTION
+
 SUB loadFile(path AS STRING)
     DIM data AS BYTES
     DIM e AS ERROR
@@ -1191,13 +1260,24 @@ SUB loadFile(path AS STRING)
         syncUndoBaseline()
         RETURN
     END IF
-    DIM text AS STRING = Decode(data)
+    DIM text AS STRING
+    DIM wsFmt AS BOOLEAN = FALSE
+    IF NOT gIsUnicode AND looksLikeWordStar(data) THEN
+        text = decodeWordStar(data)
+        wsFmt = TRUE
+    ELSE
+        text = Decode(data)
+    END IF
     text = strings.ReplaceAll(text, Chr(13) + Chr(10), Chr(10))
     text = strings.ReplaceAll(text, Chr(13), Chr(10))
     gLines = strings.Split(text, Chr(10))
     IF LEN(gLines) = 0 THEN gLines = APPEND(gLines, "")
     resetHard()
-    gMessage = "Opened " + path + "  (" + fmt.Sprintf("%d", LEN(gLines)) + " lines)"
+    IF wsFmt THEN
+        gMessage = "Opened " + path + "  (WordStar format, " + fmt.Sprintf("%d", LEN(gLines)) + " lines)"
+    ELSE
+        gMessage = "Opened " + path + "  (" + fmt.Sprintf("%d", LEN(gLines)) + " lines)"
+    END IF
     syncUndoBaseline()
 END SUB
 
