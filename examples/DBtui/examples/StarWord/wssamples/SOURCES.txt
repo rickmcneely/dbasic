@@ -1,0 +1,11 @@
+Genuine WordStar test documents (old-school binary format with high-bit
+soft returns / soft spaces and control codes), for StarWord compatibility
+testing.
+
+  BOLD.WS CENTER.WS NEST.WS SAMPLE.WS UNDERLN.WS WORDSTAR.WS
+      from  github.com/freedosproject/wshtml  (wordstar/)
+  EXAMPLE.DOC
+      WordStar 4.0 .DOC  from  github.com/kevinselwyn/ws2txt
+
+Note: these use WordStar's 8th-bit encoding; open them in StarWord to see
+how it currently handles real WordStar files.
