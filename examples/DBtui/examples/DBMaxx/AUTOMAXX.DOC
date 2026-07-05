@@ -1,0 +1,1566 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                               AUTOMAXX (tm)
+
+                             The  PC  Manager
+
+                               Version 2.61
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     (C)  COPYRIGHT  1986-1988  by  The Computer Enhancement  Group
+     11711 Whittier Road, Mitchellville, MD  20716   (301) 464-8895    
+     ALL RIGHTS RESERVED
+
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group     CONTENTS
+
+
+
+                        TABLE  OF  CONTENTS
+
+
+     Introduction  ..........................................  1
+
+     AUTOMAXX Description ...................................  2
+
+     Files Belonging to AUTOMAXX  ...........................  3
+
+     Hardware and Software Requirments  .....................  3
+
+     What AUTOMAXX Does  ....................................  4
+
+     The Menu System ......................................... 5
+
+     Getting Started  .......................................  7
+
+     Menu Characteristics  ..................................  8
+
+     Shell Characteristics  ................................. 11
+
+     AUTOMAXX Environment  .................................. 12
+
+     Parameters  ............................................ 13
+
+     The DOS Shell  ......................................... 14
+
+     DOS Utilities  ......................................... 18
+     
+     Custom Installation  ................................... 22
+
+     Error Messages  ........................................ 23
+
+     Tips, Questions & Answers  ............................. 25
+
+     Problems  .............................................. 27
+
+     Ordering Information  .................................. 28
+
+     AUTOMAXX License  ...................................... 29
+
+     Order Form  ............................................ 30
+
+     AUTOMAXX    (c) 1986-88 by The Computer Enhancement Group      PAGE 1
+
+
+
+
+                             INTRODUCTION
+
+
+          AUTOMAXX  v2.61 and all  previous  versions are copyright
+     (c)  1986-1988  by  The  Computer  Enhancement  Group.     The
+     software was written in the C language with extensive assembler
+     routines  for  optimal speed.   We  used  versions  4.0  of the
+     Microsoft C compiler  and  Macro Assembler.   This software was
+     not developed free, it is the result of many  hours  devoted to
+     writing handcrafted C and assember  routines  and  linking them
+     together  to make software  that  allows  you  to  get  maximum
+     performance from your computer with a  minimum  of  effort.  We
+     have purposely not disabled any features  of AUTOMAXX to enable
+     you to fully test drive the software.
+     
+          This marks the second annual  posting  of  AUTOMAXX to the
+     BBS systems.  The first release was  version  2.36  released in
+     January,  1987.   Since  then  we  have  received  overwhelming
+     support from users all over the  world  in  the form of license
+     fees.   We  owe  the  best features in AUTOMAXX  to suggestions
+     from the users, and we  expect  much  more  dynamic exchange to
+     result  from  this  version.   Between  releases  to  the   BBS
+     systems  we  are continually making incremental improvements to
+     the software which are  passed  on  to each person, corporation,
+     governmental  agency,  or  business  that licenses the software
+     from us.
+     
+          We  wish  to  thank all  the companies and individuals who
+     have generously  supported  the  development  of AUTOMAXX.  The
+     shareware  mechanism  of  software  marketing really does work.
+     As  we  enter  1988  the  latest advances in personal computers
+     offers  us  all  tremendous  computing power.  We wish you  all
+     the best in the new year.
+     
+                                                     January 2, 1988
+
+                                      The Computer Enhancement Group
+                                                   11711 Whittier Rd.
+                                             Mitchellville, MD  20716
+                                             
+                                             
+     
+     AUTOMAXX    (c) 1986-88 by The Computer Enhancement Group      PAGE 1A
+
+
+     
+                          LICENSE INFORMATION
+ 
+     You are granted a limited license to use AUTOMAXX and install
+     it on more than one computer for a 30 day period for the sole purpose
+     of evaluating the software for its suitability to your needs.  Use
+     of the software beyond this period requires that a license fee be
+     paid; use of non-registered copies of AUTOMAXX beyond this period
+     by any person, corporation, governmental agency or other business
+     entity is STRICTLY FORBIDDEN.
+
+     Site licenses are available.  See the order form in the back of this
+     manual for more details.  Registered users receive a Custom Install
+     program for customizing the AUTOMAXX color screens and other features,
+     the latest version of the program, and a printed documentation book.
+     Upon registration the licensee is granted a limited license to use
+     AUTOMAXX on the number of computers allowable according to the license
+     fee paid.  See the license information section for more information
+     regarding license fees and limitations.
+          
+     Operators of electronic bulletin board systems may post the current
+     BBS version of AUTOMAXX (AMAXX261.ARC) for downloading by their users
+     subject to the following conditions:
+     
+        o  You may NOT modify the program or charge a fee for copying or
+           distributing the program.
+
+        o  AUTOMAXX may NOT be distributed in conjunction with any other
+           product unless written permission is granted by The Computer
+           Enhancement Group.
+
+     Distributors of public domain or user supported software may distribute
+     copies of AUTOMAXX (BBS version) subject to the above conditions and only
+     after obtaining written permission from The Computer Enhancement Group.  
+     Such permission usually is granted;  please write for details.
+
+     All licensing fees for the use of this program will be appreciated,
+     and should be sent to:
+
+                            William P. Smith
+                     The Computer Enhancement Group
+                             P.O. Box 70348
+                      Washington, D.C.  20024-0348
+               
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 2
+
+
+
+                           AUTOMAXX DESCRIPTION
+
+     The program AUTOMAXX will manage your computer with a powerful
+     DOS shell and a simple system of menus which you create yourself.
+     AUTOMAXX is both an application manager and a full featured File
+     Manager and DOS Shell.  This program was built for SPEED and ease
+     of use!  AUTOMAXX makes the computer work hard, not you.
+
+
+     Complete Fixed Disk Manager
+         DISPLAYS all files & directories
+         RENAMES files & directories
+         CREATES & Removes directories
+         QUICK file UNERASE
+         UNREMOVES directories
+         EDITS file Attribute, date, and time stamp
+         POINT & SHOOT feature for running programs in Dos Shell
+         LINKS with any editor to view/edit files
+         LINKS with ARC compatible programs for file management
+         FAST mass delete, copy, and move facility
+         TREE display for disk access and directory management
+         WHEREIS feature to find files fast anywhere on disk
+               shows file time, date, size and full path
+         INCREMENTAL SEARCH within files display
+         SUPER fast file sorts
+               name, ext, date&time, size, attribute
+               ascending or descending
+               unsort for original DOS order  
+         PRINTER setup for any printer
+         FILE SECURITY encryption/decryption
+         DOS GATEWAY and return
+     Ability to define many individual menu windows per menu file
+     Supports Monochrome, Hercules, CGA, EGA, PGA, and VGA adapters
+     Extensive printer support
+     Desk top display with Menu Windows
+     Supports up to 50 menu screens
+     Written in C with FAST Assembler routines
+     Intelligent Screen Save feature
+     Switch between Mono and Color Monitors
+     CUSTOM Color Installation for color displays
+         (for registered users)
+     System Information screen
+     Current day, date, and time displayed while in menu
+     Current Directory and Drive displayed
+     Full featured File Management
+     Multiple keys perform the same functions for logical
+         selection
+     Fast selection of Directory/Drive
+     Updates available upon registration
+     POPUP Calendar and Calculator
+     PASSWORDS
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 3
+
+
+
+                        FILES BELONGING TO AUTOMAXX
+
+
+              AUTOEXEC.BAT     <--  Sample autoexec.bat
+              AUTOMAXX.EXE     <--  AUTOMAXX program
+              AUTOMAXX.DAT     <--  Sample Menu Data file
+              AUTOMAXX.DOC     <--  Documentation
+              LICENSE.DOC      <--  AUTOMAXX license
+              AUTOMAXX.PDF     <--  Default Printer Setup file
+              EPSON-FX.PDF     <--  Epson FX printer setup file
+              EPSON-MX.PDF     <--    "   MX    "
+              GEMINI-X.PDF     <--  Gemini      "
+              HP-LASER.PDF     <--  HP-Laser    "
+              OKIDATA.PDF      <--  Okidata     "
+              INSTALL.HLP      <--  Install help file
+              INSTALL.BAT      <--  Install for drive C
+              MENU.BAT         <--  sample menu.bat
+              UPDATE.BAT       <--  Update for latest version
+              XDIR.EXE         <--  Extended directory program
+              INST.COM         <--  Custom Install program
+                                      (registered users only)
+              CALC.COM         <--  pop-up Calculator
+                                      (registered users only)
+
+
+
+
+
+
+                          ________________________
+
+
+
+
+
+                     HARDWARE AND SOFTWARE REQUIREMENTS
+
+     These are the minimum requirements of AUTOMAXX:
+
+         *  Compatible machine or (PC,XT,AT,PC Jr.,Portable)
+         *  DOS 2.0 and up
+         *  Minimum of 256KB of free memory
+         *  Monochrome, Hercules, CGA, EGA, PGA, or VGA adapter
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 4
+
+
+
+                            WHAT AUTOMAXX DOES
+
+           AUTOMAXX is a complete PC Manager, that is, it provides an
+     extremely powerful DOS system interface that gives the user access
+     to all DOS commands through single keystrokes that unleash the
+     powerful facilities of AUTOMAXX for file and directory management,
+     quickly finding files, rapid and effortless manuevering around
+     the disk and all the other DOS chores.  AUTOMAXX also provides a
+     simple and efficient menu system to run your applications.
+     The menu system requires that you create a data file called
+     AUTOMAXX.DAT that contains the DOS commands needed to run your
+     applications. The sample.dat file supplied with the package is
+     self documenting and can be easily customized to manage the
+     applications on your particular computer.  If you don't already
+     have an AUTOMAXX.DAT file you can rename the sample.dat and use
+     it, then later customize the DAT file to your particular needs.
+     AUTOMAXX provides the user with easy to read and stunningly
+     colored menu windows on a desk top display.  Each window
+     contains options from which to choose.   When an option is
+     selected AUTOMAXX automatically executes the commands required
+     to run that option for the user.  AUTOMAXX provides the user
+     with the capability to set up their own customized menu systems.
+
+          The user can define the menu titles, the menu options
+     displayed, and DOS commands required to carry out each of these
+     menu options.  In addition, any DOS command, application
+     program, or user program can be executed interactively from
+     within the AUTOMAXX shell.  AUTOMAXX provides an extremely
+     powerful and versatile DOS shell to take care of all the file
+     management chores, including a QUICK UNERASE and file finder.
+     AUTOMAXX uses the point and shoot facility for quick execution
+     of programs and editing of text files.  Any text file can be
+     read/edited interactively within AUTOMAXX by linking to your
+     favorite editor to the View option.  The file manager is able to
+     use an ARC compatible utility for fast file compression
+     facilities.
+             
+          AUTOMAXX also provides a pop-up calendar and calculator
+     that can be invoked at any time within the program.  Each one is
+     a full featured option that is available to registered users.
+     Also available is an install program to customize the screen
+     colors as well as fine tune other features of the program.
+     
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 5
+
+
+
+                      HOW AUTOMAXX MENU SYSTEM WORKS
+
+
+          The menu system consists of a collection of DOS
+     commands that you would normally enter at the DOS prompt to run
+     a program or perform any DOS function to manage the applications
+     and files on your PC.
+
+          The difference is that with AUTOMAXX you only enter these DOS
+     commands once into the AUTOMAXX.DAT file.  AUTOMAXX presents the
+     user with application WINDOWs from which the user selects options
+     by pressing a single key.  The user may quickly page from window to
+     window.
+
+          All that is required to create a DAT file for your system is
+     a general knowledge of DOS and a text editor.  The SAMPLE.DAT
+     file is self documenting dat file that contains all the information
+     needed to create your own menus.  All you must know is that the
+     leading character of each line in the DAT file determines how
+     AUTOMAXX will use the line to build the menus.  These special
+     characters are {%,*,+,>,;,$,&} with respective functions as listed
+     below:
+
+                    %Menu title
+                    *Menu option description
+                    +DOS command
+                    >Title of Menu to display
+                    ?Password
+                    ;Comment
+                    &input parameter
+                    $load auxiliary dat dile
+     
+     These leading characters may be preceeded by spaces or tabs to
+     improve the readability of the dat file.
+     
+     The percent (%) character preceeds a menu title.  The asterisk (*)
+     character preceeds the name of a menu option.  The plus sign (+)
+     preceeds a DOS command.  The greater-than (>) character preceeds a
+     string which will be compared to all menu titles; if a match is
+     found that menu will be displayed.  This will allow the creation
+     of nested menus, i.e., menus whose options are other menus  -- see
+     the sample.dat file for examples.  The (?) character preceeds a
+     password needed to continue the menu option.  If the correct password
+     is not inputted by the user, the option will not be processed and
+     the user is returned to the menu.  The semicolon (;) preceeds a
+     comment line which tells AUTOMAXX not to process this line.  The (&)
+     character preceeds a text prompt requesting user input.  Successive
+     input strings can be used like batch file parameters &1, &2, ...
+     to build batch files.  The ($) character loads an auxiliary dat
+     file which is primarily for a network environment where each
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 6
+     
+          
+     user's automaxx.dat file must contain a common set of commands
+     that reside in a master file, say master.net.  When AUTOMAXX is  
+     loading automaxx.dat it will load auxiliary dat files whenever
+     it encounters the '$' as a leading character of a line.  Please
+     review the SAMPLE.DAT file for an example of these features.
+     
+     Note:  The maximum length for each line preceeded by '%', '*',
+     and '>' is 50 characters, otherwise the maximum length of a line
+     is 128 characters, the limit imposed the DOS.
+
+     The maximum number of menus that can be defined by the menu data
+     file is probably more than any any user will require.
+     There is a maximum number of eight options per menu.  Because the
+     number of DOS commands that can be defined for an individual option
+     may vary, it is difficult to set a maximum limit on the number of
+     menu windows in one data file.  Program storage limits the size of
+     AUTOMAXX.DAT to 16k of characters excluding the cr,lf pairs, probably
+     enough for 50 menu windows.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 7
+
+
+
+                         GETTING STARTED
+
+          AUTOMAXX comes setup to run from fixed disk C.  To run it
+     on a drive other than C, SUBSTITUTE that drive letter in the
+     following instructions, then follow the directions in the
+     sections, ENVIRONMENT and PARAMETERS.
+
+     To run AUTOMAXX from drive C take the following steps:
+
+          1.   Install the following files on the root directory of
+               drive C:
+
+                    MENU.BAT
+                    AUTOMAXX.EXE
+                    AUTOMAXX.DAT
+                    XDIR.EXE       (optional)
+                    AUTOMAXX.PDF   (optional)
+                    YOUR EDITOR    (optional)
+                    CALC.COM       (optional)
+
+               Note:  If the AUTOMAXX.DAT file does not exist you can rename
+                      the SAMPLE.DAT file to AUTOMAXX.DAT and use it.
+
+          2.   Put C:\ in the DOS path command so that DOS can find
+               MENU.BAT, AUTOMAXX.EXE, and AUTOTEMP.BAT.  The last file
+               is created by AUTOMAXX in the environment C:\ when a menu
+               option is selected.
+
+          3.   From the DOS prompt, enter the following command: MENU
+               You can enter this command to start AUTOMAXX from any drive,
+               or subdirctory because the path will enable DOS to find
+               menu.bat.
+
+          4.   The menu screen should then appear, ready for you to choose
+               an option.  These menu options are purely for example.  Later
+               at your convenience edit the file AUTOMAXX.DAT with your
+               text editor to customize the menus and options to your system.
+               There is room for many more menus in the DAT file, so don't
+               hesitate to add menus.
+
+          5.   To have AUTOMAXX begin at boot-up make sure MENU is the last
+               command in your autoexec.bat file.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 8
+
+
+
+                          MENU CHARACTERISTICS
+
+         The menu options or menu items can be selected in various
+     ways.  For help ctrl-F1 can be pressed to explain the function of
+     these keys at any time.  Press <alt>Q at any time to quit AUTOMAXX.
+
+         The particular menu option with the arrow pointing to it can be
+     selected by pressing the return key.  The arrow pointer can be moved
+     to another menu option by using the up and down arrow keys, or the
+     space bar. A menu option can also be selected by using a number key
+     on the top row corresponding to the number value of that menu option.
+     If more than one menu has been defined, the user can change to the
+     other menus by pressing the left and right arrow cursor keys or the
+     PgUp and PgDn keys.
+
+     An automatic screen blanking feature exists such that if the keyboard
+     has not been touched for more than three minutes while AUTOMAXX is
+     running the screen will be turned off until the user presses any
+     key on the keyboard.  The blanking feature is active only while
+     AUTOMAXX is running; the feature is NOT available when AUTOMAXX is
+     terminated by exiting to DOS, or when a menu option was selected, or
+     when AUTOMAXX has executed a child process.
+
+          Valid keys while in the AUTOMAXX MENU System:
+
+                ^F1                    Help for Menu screen
+                <alt>Q                 Quit AUTOMAXX
+                /,B,C,F,L,M,R,S,W,X    Command selection
+                Up arrow               Move arrow pointer up
+                Down arrow, space      Move arrow pointer down
+                <return>               Select option being
+                                         pointed to
+                <alt>C                 Calculator
+                <alt>L                 caLendar
+                <alt>R                 Rebuild tree
+                <alt>X                 extended directory
+                1..8                   Select option by number
+                F1..F8                 Select option by function key
+                PgDn,right arrow,F10   Go to next menu
+                PgUp,left arrow, F9    Go to previous menu
+                Home                   First Menu
+                End                    Last Menu
+
+          Available commands while in the AUTOMAXX MENU System:
+
+                BW/CO                  Change colors on color display
+                ChDir                  Change Directory
+                Files                  Complete File Management
+                Logged Drive           Change Drive
+                Monitors               Switch between Mono and CGA screens
+                Register               Display Copyright & License Info.
+                Sysinf                 System Information
+                eXecute                execute command line
+                Whereis                file finder
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 9
+     
+
+     
+    Any of the MENU commands may be accessed by pressing the upper case letter
+    of that command, or by pressing the / key and then selecting a command with
+    cursor keys and pressing the return key.  The help line at the bottom of
+    screen describes the function of each command.  The / key is best for new
+    users because of this help feature.  Experienced users will select the
+    commands with the first letter method.
+
+    BW/CO      This feature is a toggle between the Black&White mode and the
+               color mode (the colors in the color mode are set by the color
+               install program).  This mode is initially set according to the
+               command line parameters used to call AUTOMAXX in menu.bat.  If
+               menu.bat contains the line 'AUTOMAXX C:\ N' the mode is set to
+               BW, while the line 'AUTOMAXX C:\ Y' would set the mode to CO.
+               Press <B> to invoke this toggle.
+
+    ChDir      Press <C> to select this feature.This feature displays a
+               full featured tree for maneuvering around the disk.  Select
+               destination by using cursor keys or press first letter of
+               destination subdirectory, then press <return> to confirm.
+               Other key functions are <ESC> to leave the tree without
+               changing directory, ^M to make a directory, and ^R to
+               remove a directory.  Normally you will perform all
+               directory maintenance (making and removing directories)
+               from within the tree feature, but occasionally the disk
+               directory structure will be changed outside of AUTOMAXX,
+               such as when you install other software on your disk.  In
+               this case use the tree rebuild option by pressing <alt>R.
+               This will tell AUTOMAXX to rebuild the tree the next time
+               it is accessed.
+
+
+    Files      Press <F> to enter the file manager and DOS shell.  Please refer
+               to the description of features in the DOS Shell section.
+
+    Logged     This feature allows you to change to another logical drive
+               in the system.  Press <L> to invoke this feature.
+
+    Monitors   This feature allows the MONO and CGA screens to be swapped.
+               That is, if the IBM monochrome screen is in use, pressing
+               <M> will blank the monochrome screen and send all video output
+               to the CGA screen.  Pressing <M> again would blank the CGA
+               screen and send all video output to the monochrome screen.  This
+               feature should NOT be used when either of the EGA or Hercules
+               boards are present.  A system crash may result if this feature
+               is invoked when either of these boards is present; it is
+               doubtful that any damage would be done however.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 10
+     
+     
+     
+    Register   Press <R> to display the copyright screen and software licensing
+               information.  The discounts available for licensing multiple
+               copies of the software are shown.  For more information consult
+               the documentation.
+
+    Sysinf     This feature provides information about the computer system
+               such as the operating system in use, the ROM BIOS creation date,
+               the microprocessor type, available/total kilobytes of system
+               memory, available/total kilobytes of expanded memory, ports,
+               logical drives, and presence of the math coprocessor.  Press <S>
+               to invoke this feature.
+
+   Whereis     Press <W> or <alt>W to invoke the file finder.
+
+   eXecute     This feature presents the user with a command line prompt at
+               which any executable command may be entered, i.e., a DOS
+               command, a user program, a bat file, etc.  AUTOMAXX stays
+               resident while the command is executed so that you are
+               returned instantly to AUTOMAXX when execution terminates.
+               Press <X> to invoke this feature.
+               Note:  press <alt>D for a DOS gateway if you need to perform
+               several DOS commands (see description in the DOS Shell).
+               
+               
+     <alt>     This menu of commands are omnipresent because they are
+               available at any time within AUTOMAXX.  Press and hold down
+               <alt> to bring up the menu, then press the corresponding
+               letter to invoke one of the following commands:
+                
+                    ----------------------------
+                    |     <alt> Commands       |
+                    |--------------------------|
+                    |                          |                    
+                    |  <C>alculator            |
+                    |  <D>os gateway           |
+                    |  ca<L>endar              |
+                    |  <R>ebuild tree          |
+                    |  <W>here is file finder  |
+                    |  e<X>tended Dir          |
+                    |  <Q>uit automaxx         |
+                    |                          |
+                    ----------------------------               
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 11
+
+
+                           SHELL CHARACTERISTICS
+
+
+         The DOS SHELL features is accessed from the files command of
+    the menu system.
+
+
+          Valid keys while in the AUTOMAXX SHELL:
+
+                A                      Archive tagged files
+                                         using ARC.EXE
+                C                      Change directory / access tree
+                D                      File hex Dump - two modes
+                <Del>                  erase tagged files
+                E                      encrypt/decrypt file
+                F                      alter file search mask
+                M                      Move tagged files
+                L                      change Logged drive
+                N                      Name search
+                O                      cOpy tagged files
+                P                      Print file
+                R                      Rename file or directory
+                S                      Sort files
+                T                      Tag options
+                space bar              tag individual file
+               ^right arrow            tag sequential files forward
+               ^left arrow             tag sequential files backward
+                cursor keys            display directory of files
+                U                      Quick file unerase, directory unremove
+                V                      View text file
+                X                      eXecute command line
+               ^A                      Attributes
+               ^M,^R                   Make, Remove directory from tree
+               ^U                      File attribute, date, time editor
+                <return>               run executable file
+                <alt>                  press to select from alt commands menu
+                Esc                    return to menu system
+                                         or abort commands
+                F1..F10                exec links menu
+               <alt>C                  pop-up Calculator
+               <alt>D                  temporary Dos gateway
+               <alt>L                  pop-up caLendar
+               <alt>R                  Rebuild tree
+               <alt>W                  Where is file on logical drive
+               <alt>X                  run eXtended directory manager
+               <alt>Q                  Quit AUTOMAXX
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 12
+
+
+                          AUTOMAXX ENVIRONMENT
+
+     This environment is a path of the type 'C:\' that AUTOMAXX uses
+     to find the files it uses: These are AUTOMAXX.DAT, AUTOTEMP.BAT,
+     and optionally AUTOMAXX.PDF.  This environment string must be
+     specified in a command line of MENU.BAT and all AUTOMAXX files
+     should be stored there.  Also the path statement in autoexec.bat
+     must specify this as one of the paths DOS will use.  For example,
+     an AUTOEXEC.BAT good for fixed disk systems with AUTOMAXX installed
+     on the root directory of drive C: could be
+
+          +---------------------------+
+          |ECHO OFF                   | <- Don't display commands
+          |PROMPT $P$G                | <- Prompt to show present sub-directory
+          |PATH=C:\                   | <- Path to root directory of drive C:
+          |MENU                       | <- Execute AUTOMAXX batch file
+          +---------------------------+
+
+     Simply stated another way: If you want to run AUTOMAXX on drive
+     D: then put all of the AUTOMAXX files on the root directory of
+     drive D:, make sure your autoexec.bat has path=D:\ in it, and
+     start up put the line AUTOMAXX D:\ {Y,N} <path\editor> in menu.bat.
+     I have found using AUTOMAXX on a RAM disk, say Drive D:, to be the
+     best for fastest operation.  Those who want to install AUTOMAXX on
+     a subdirectory of drive C, MYDIR for example, would use the line
+
+                  AUTOMAXX C:\MYDIR {Y,N} <path\editor>
+
+     and place all files there with a path to C:\MYDIR.  One could of
+     install AUTOMAXX on a subdirectory of any other drive. Please read the
+     next section on parameters for more information if you are confused.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 13
+
+
+                      *****     PARAMETERS      *****
+
+
+          AUTOMAXX can be called with command line parameters. For
+     example to define the AUTOMAXX environment as the root directory
+     of drive C: and to turn color on you could use a MENU.BAT such as
+
+
+                     +--------------------------------+
+                     |  Echo Off                      |
+                     |  AUTOMAXX C:\ Y PATH\EDITOR    |
+                     |  AUTOTEMP                      |
+                     +--------------------------------+
+
+
+         The first parameter is the AUTOMAXX environment, the path that 
+     AUTOMAXX will use to write and read the AUTOTEMP.BAT file and to read the
+     AUTOMAXX.DAT file. The space is used as a parameter separator.  The next
+     parameter, the B&W switch for color monitors, is specified as
+     either Y or N.  This parameter will be ignored (but still must be used)
+     when the IBM monochrome or Hercules adapter or equivalent is being used.
+     Those using composite monitors or compaqs would want to use
+
+                     AUTOMAXX C:\ N C:\DOC\NE.COM
+
+     instead.  The third parameter is optional.  This parameter is the full
+     pathname of your editor that you wish to link up with AUTOMAXX.  Here
+     for example I we have specified an editor named 'ne.com' which resides
+     in the DOC subdirectory of drive C.  This is only an example, you
+     would use the path-name of your editor.  AUTOMAXX will automatically
+     load it to view files within the file manager.  For example,
+
+                     AUTOMAXX C:\ Y D:\ED.EXE
+
+     would load an editor named 'ed.exe' from the root directory of drive D
+     to View the selected file.  The editor is then used to its full
+     capabilities.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 14
+
+
+                     INTRODUCTION TO THE DOS SHELL
+
+     The Filer option contains the commands that comprise a very
+     powerful DOS Shell.  When this option is selected a sorted
+     list of all files on the current directory appears, the total
+     number of files and the total bytes free on the drive are
+     displayed.  The file name, extension, date&time, and size are
+     displayed for each file.  You may then sort on name, extension,
+     date/time, or file size in ascending or descending order.  The
+     PgUp, PgDn, Home, End, up-arrow, and down-arrow keys will allow
+     you to page thru the files.  The file marker on the screen
+     points to the current file.  A range of DOS options may be
+     selected :
+
+     Arc       Press <A> to arc the tagged files using an ARC.EXE
+               compatible program. The arc program must be named
+               ARC because this name is coded into AUTOMAXX.  To
+               the prompt '>ARC ' the user could for example type
+               'A MY' to create the arc file MY.ARC containing the
+               tagged files.
+               [Note: Press Esc if you desire to abort at the command line.]
+               All of the command line arguments for ARC.EXE are supported.
+               You could type 'A MY *.*' without tagging any files and
+               have all files in the current directory arced in MY.ARC.
+               Typing 'l util' would list the files contained in the
+               existing arc file util.arc, etc.
+
+     Bak       Press <B> to invoke the backup feature to make a copy of the
+               hilited file within the current directory.  A different name
+               must be used or the error message 'a file cannot be copied
+               onto itself' will be given.  You are prompted for the file
+               name.
+
+     cOpy      The tagged files are copied to the drive or subdirectory
+               specified.  Use the cursor keys to select the target
+               subdirectory and confirm with a return; the selection
+               of a subdirectory is achieved in the same manner as
+               Chdir.  Directories cannot be copied; a beep will be
+               sounded.
+
+     Dump      Press <D> to display a hex dump of the hilited file.  Press
+               <return> to toggle between two display modes.  Press <Esc>
+               to quit.
+
+     <Del>     The <Del> key activates this option.  The tagged files
+               are erased if you confirm with 'Y'.  Only read/write
+               files can be deleted.
+
+     Encry     Press <E> key to encrypt/decrypt the tagged file(s).  This 
+               option will encrypt each of the tagged file(s) using the
+               key you input at the prompt "Enter key>".  The key is a
+               phrase of up to 56 characters that can be entered from the
+               keyboard, for example, "yellow rose of Texas" or anything
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 15
+     
+     
+               else you can dream up.  The encryption algorithm used is
+               both fast and provides a high level of security.  Encrypting
+               a file(s) twice with the same key restores the file(s) to its
+               original state, so the encryption algorithm can be used for
+               both encryption and decryption.  A typical use for this
+               feature is when you have one or more confidential files on
+               disk whose contents must remain secure from the eyes of all
+               other persons.  First, tag the file(s) you want to encrypt then
+               press <E> and enter a key that will be used to encrypt the
+               file(s).  That same key is used later to decrypt the file(s)
+               by encrypting them again with the that key.  DO NOT FORGET
+               THE KEY because THAT KEY and ONLY THAT KEY can be used to
+               decrypt the file(s).  After you encrypt file(s) you may
+               want to make them READ ONLY to prevent them from being
+               encrypted again with a different key.  The encrypt feature
+               works only on files with READ/WRITE status.
+
+     Filter    Press <F> to alter the file mask which will be used for
+               file searches.  The Filter option then prompts for the mask.
+               All DOS masks are supported.  The files will then be listed
+               that satisfy the mask.  Note that all subsequent file
+               management will use this mask until another one is specified
+               with the Filter option.  The default mask at start-up is *.*.
+               To have the file manager display, for example, only EXE files
+               you would input the mask *.exe.  All DOS wild-card characters
+               are allowed in a mask specification.
+
+                    (1)  If you specify a mask, say '*.exe', and you have no
+               'EXE' files on the currrent directory then "no files matching
+               current mask" message will appear.  This may alarm some users
+               that think all of their files have disappeared.  All subsequent
+               use of the File manager will use this mask until it is changed
+               with the 'Filter' option.
+               
+                    (2)  If a mask is specified that lists files in
+               a directory other than the current one, the move, copy and
+               erase features will become confused because they expect the
+               tagged files to be in the current directory.  Caution is
+               therefore advised when using masks that search for files not
+               in the current directory.
+
+     Move      Press <M> to move the tagged files to the selected subdirectory
+               on the current drive.  Files with the system, hidden, or
+               directory attributes set cannot be moved, a beep will be
+               sounded instead.
+               
+     Name      Press <N> to quickly locate file(s) within the files
+               display.  This is an incremental search facility, that is,
+               it searches after each character input and waits for the
+               next input.  The prompt 'Name search _' appears at which
+               you enter a character at a time.  The file search will
+               begin after each character input; a matching file will be
+               hilited or a beep will be sounded indicating no match to
+               the string.  If a match is found you may press <space> for
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 16
+     
+          
+                    
+               next match, or enter the next character to initiate another
+               search for the expanded string.  Press <return> or the
+               arrow keys to reset.
+               
+     Print     The <P>rint menu is displayed.  This option will allow you to
+               access the full range of features that today's printers
+               provide.  If the file is a text file it can be sent to the
+               printer device.  The printer can be set-up using the options
+               in the print menu that is loaded automatically if the file
+               AUTOMAXX.PDF, is in the environment.  The setup file is
+               a text file that contains printer setup options, each
+               followed by the printer control codes for that option.
+               You may create printer setup files for any printer.
+               Included are printer setup files for Okidata, Epson, Gemini,
+               Citizen, and HP series printers.
+     
+               The first five function keys provide standard options
+               common to all printers:
+               
+                    F1 - Begin/resume Print       F2 - Suspend Print
+                    F3 - Cancel Print             F4 - Reset to power-up
+                    F5 - Load Setup File
+                    
+               These five commands will always be available, so your setup
+               files need never contain commands for them; the only
+               exception would be for a printer that requires special
+               RESET control codes such as the HP Laserjet.  The F5 key
+               prompts you for the name of a setup file which must be in
+               the AUTOMAXX environment; the extension PDF need not
+               be entered.  The setup file will be loaded and the new
+               menus will be displayed.  You should name your most
+               frequently used setup file AUTOMAXX.PDF so that it will
+               automatically be loaded when the printer option is selected.
+               If AUTOMAXX.PDF, or a requested PDF file, is not in the
+               environment you will here a beep when the printer option is
+               selected and the message "could not open file" will appear.
+               The cursor keys are used to select a file to print.  When
+               the appropriate printer control commands have been sent to
+               the printer by pressing the function keys, pressing F1 will
+               send the file to the printer.  You may interrupt print at
+               any time by pressing F2-suspend print and then send the
+               printer other set up codes, then press F1 to resume
+               printing.  The other control features are:
+               
+                         <P>age length - set number of lines per page
+                         <L>eft margin - set left margin
+                         <T>ab width   - set spaces for expanding tabs 
+                         <D>evice      - switch parallel printers
+                         
+                    The page length parameter will control the number of
+               printed lines on the page before the page is ejected.  The
+               standard matrix printer set to 1/6" line spacing fits 56
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 17
+     
+     
+
+               lines per page with a top and bottom margin of five lines.
+               This configuration can be achieved by setting the page
+               length parameter to 56.  The page length feature is useful
+               for printers that do not automatically skip over the
+               perforation, or to force the printer to print less than
+               its default lines per page.  Automaxx sets the page length
+               parameter to 0 by default which effectively disables this
+               option, that is, the page will be ejected when the number
+               of lines that the printer can physically write on the page
+               is reached, or when a form feed character is encountered in
+               the file being printed.
+               
+                    The tab width parameter controls the number of spaces to
+               which the tabs will be expanded.   The default width is 8,
+               but you can specify any width of one or more spaces.
+     
+                    The printer output can be sent to any of the parallel
+               printers ports attached to the system.  Currently, DOS
+               recognizes up to 3 parallel ports (Lpt1, Lpt2, and Lpt3).
+               The <D>evice selection will allow the output to be directed
+               to any one of the parallel printers available to the system.
+                    
+     Ren       Press <R> to rename a file or directory.
+
+     Sort      Press <S> to invoke the sort option for sorting files by
+               name/ext, ext/name, date/time, size, or attribute keys in
+               ascending or descending order.  The unsort key will display
+               the files in the original DOS order.
+
+     Tag       Press <T> to invoke a menu of tag methods, or press the
+               <space> bar to tag or untag single files, or press <ctrl>
+               right-arrow key or <ctrl> left-arrow key to rapidly tag
+               (untag) consecutive files.  The Copy, Erase, Move, and util
+               options require files to be tagged.
+
+     View      Press <V> to display a text file for browsing or editing.
+               The filename will be passed to the editor you have defined
+               in menu.bat.  If the file has arc extension the filename will
+               be passed to an ARC.EXE compatible program for a verbose
+               listing.  You may configure AUTOMAXX to load your word
+               processor automatically for editing and browsing text files.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 18
+
+
+                                DOS UTILITIES
+
+    ^Attr      Press ^A to toggle the files attribute/time display.  This acts
+               as a toggle to show either the file's time of creation or its
+               attributes.
+
+     Chdir     Press <C> to change directories or to select a destination
+               directory for the cOpy or Move operations.  Please see
+               the description of this command in the menu system section.
+
+     Log       Press <L> to change drives.  The files residing on the default
+               directory of the selected drive are displayed in the sort
+               order currently selected for files.
+               
+     Undel     This utility unerases files and unremoves directories.  Press
+               <U> to invoke it.  The list of erased files and removed
+               directories in the current directory will be displayed.  The
+               unerase is a QUICK unerase.  To select a file put the file
+               marker on it and press <return> then input the first letter
+               of the file name.  Repeat this selection for as many files
+               (directories) you desire to unerase, then press <ESC> to quit.
+               To complete the unerase of all files (directories) selected
+               answer <Y> to confirm or <N> to quit and ignore the changes.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 19
+               
+
+    ^MkDir     This feature is accessed when the tree is displayed.  To
+               invoke the tree press C then hilite the directory into
+               which the new subdirectory will exist then press ^M.  You
+               will be prompted for a subdirectory name.  An error will be
+               returned if the path already exists, or if an invalid
+               name has been given.
+
+    ^RmDir     This feature is accessed when the tree is displayed.  Press
+               ^R to remove the directory hilited by the file pointer.  An
+               'access denied' error message means that the directory
+               contains files and/or subdirectories which must be erased
+               before the directory can be removed.  A 'cannot remove
+               current directory' error message will be displayed if you
+               attempt to remove current directory; remedy is to change
+               directory then access the tree again to remove that
+               directory.
+
+    ^Util      Press ^U to access the file utility menu for editing the
+               the attribute, date, and time stamps for the tagged files.
+               In the utility menu select the first letter of the desired
+               option.  Press <A> to enter a four character string consisting
+               of the characters 'rhsa.'; for example, to make the files
+               read-only, hidden, and set the archive bit, you would enter the
+               string 'rh.a'.  A beep will be sounded when the input is
+               complete.  To change the date enter <D> and input a string
+               'mm-dd-yy'.  To change the time enter <T> and input a time
+               string in the format 'hh:mm:ss'.  To quit the utility and
+               record the changes on disk you must press the <ctrl> <return>
+               keys simultaneously.  To quit and ignore the changes just
+               press <ESC>.
+
+     Where     Press <alt>W to invoke the file finder.  For example to find 
+               all occurrences of the file named 'ed.exe' on the current disk
+               you would input this at the prompt.  All directories of the
+               disk will be searched and all paths to this file will be
+               listed.  You may use DOS wild card searches too, i.e.,
+               '*.com' would list all paths to files with 'com' extension.
+
+     eXec      Press X to access a command line prompt to which any DOS
+               executable command may be entered.  The command will then be
+               passed to a copy of the command interpreter and executed by
+               DOS.  This feature presents the user with a command line prompt
+               to which any executable command may be entered, i.e., a DOS
+               command, a user program, a bat file, etc.  AUTOMAXX stays
+               resident while the command is executed so that you are returned
+               instantly to AUTOMAXX when execution terminates.
+               
+     Note:     <alt>D is a DOS gateway to the command processor, too.
+               If you need to perform several DOS commands, this gateway may
+               be best.  When done, be sure to type exit and press <return>
+               to pass back thru the gateway to AUTOMAXX.
+              
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 20
+     
+     
+    <return>   This is the point and shoot feature of AUTOMAXX.  Pressing
+               <return> produces a result dependent on the type of file
+               which is currently hilited:
+               
+               'EXE', 'COM' and 'BAT' files --
+               LOADS AND EXECUTE the file as a child process of AUTOMAXX.
+               The file must be an executable file (one with 'exe', 'com',
+               or 'bat' extension).  The command line will prompt you for
+               optional parameter input for executable files.  Press Esc
+               if you desire to abort at the command line.
+               
+               'BAS' files --
+               Runs a basic program (one with 'bas' extension).  The basic
+               interpreter, BASICA, will be automatically loaded to run
+               a basic program.  A path must be set so the basic interpreter
+               can be found if it is not in ROM.
+               
+               When the process terminates you will be returned to the same
+               place you were when you left AUTOMAXX.
+
+               'Directory' --
+               The hilited directory will become the current directory.  The
+               files will be displayed.  This is another way to change
+               directories.
+
+
+     <Esc>     Press this key to leave the Files option and return to the
+               main menu of AUTOMAXX.
+
+     
+     
+               
+     <alt>     This menu of commands are omnipresent because they are
+               available at any time within AUTOMAXX.  Press and hold down
+               <alt> to bring up the menu, then press the corresponding
+               letter to invoke one of the following commands:
+                
+                    ----------------------------
+                    |     <alt> Commands       |
+                    |--------------------------|
+                    |                          |                    
+                    |  <C>alculator            |
+                    |  <D>os gateway           |
+                    |  ca<L>endar              |
+                    |  <R>ebuild tree          |                    
+                    |  <W>here is file finder  |
+                    |  e<X>tended Dir          |
+                    |  <Q>uit automaxx         |
+                    |                          |
+                    ----------------------------
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 21
+                    
+                    
+                    
+    <alt>D     This loads a copy of the COMMAND interpreter and drops you
+               into DOS.  To return to AUTOMAXX you must type 'EXIT'.  You
+               will then return to AUTOMAXX at the place you were when you
+               left.  Note: When a copy of DOS is loaded AUTOMAXX is still in
+               memory taking up about 120k, so this should be used for only
+               temporary access of DOS facilities.  To recover all of available
+               memory for large applications you should run the application
+               from the menu, i.e., make it a menu option via AUTOMAXX.DAT.
+                    
+    <alt>R     erases the <drive>:\_tree.dat file which holds the tree
+               data that AUTOMAXX writes to disk and subsequently uses to
+               quickly construct the tree.  This erasing
+               makes AUTOMAXX read the disk to construct a new tree and
+               write a new _tree.dat file to disk.  The way the tree works
+               is that AUTOMAXX will first look for the _tree.dat file
+               and use it to draw the tree, if it does not exist on the
+               current drive, the tree will be rebuilt.  The <alt>R feature
+               forces a new tree to be built which is usually unnecessary
+               unless you have removed or added directories outside of
+               AUTOMAXX.
+
+    <alt>W     invokes the where is file finder.  For example to find 
+               all occurrences of the file named 'ed.exe' on the current disk
+               you would input this at the prompt.  All directories of the
+               disk will be searched and all paths to this file will be
+               listed.  You may use DOS wild card searches too, i.e.,
+               '*.com' would list all paths to files with 'com' extension.
+               
+     <alt>X    invokes the extended directory program, XDIR.EXE v1A, created
+               by the Computer Enhancement Group for AUTOMAXX.  It can be
+               also used as a stand alone program.  This program presents the
+               user with a full screen editor that can be used to write a note
+               about each directory entry.  Press <F1> within XDIR for help.
+               Call XDIR at any time to update or change your notes.
+               
+     <alt>Q    quits AUTOMAXX.  Type menu at any time to return to AUTOMAXX.
+               This is the preferred method of leaving AUTOMAXX.  Another
+               way is the use a 'Dos operating system' choice in the menu.
+               
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 22
+
+
+                             CUSTOM  INSTALLATION
+
+
+               The program INST.COM is supplied to registered users.  This
+               installation program will allow you to customize the following
+               features of AUTOMAXX:
+
+     COLORS    The colors on the menu screen can be defined.  Some stunning
+               color displays can be quickly and easily created.  The left
+               and right cursor keys select the foreground color while the
+               up and down cursor keys select background colors.  The
+               return key confirms the color selection and moves to the
+               next area of the screen.  The blinking white block marks the
+               currently selected area of the screen.  Press F1 to return
+               to the setup menu where you may save the changes.
+
+     SAVE      screen delay.  You may select the number of minutes delay
+               for the screen blank feature.  AUTOMAXX comes setup with the
+               delay set to 5 minutes.  The delay can be from 1 to 60
+               minutes.  A delay of 60 disables the screen blank, i.e., the
+               screen will never be blanked.
+
+     SCREEN    write speed.  This feature applies only to CGA displays that
+               are susceptible to snow on the screen.  For these monitors
+               you may select a slow, fast or fastest screen write speed.  
+               For example, the IBM XT with an IBM CGA adapter will exhibit
+               considerable snow at the fast settings, and no snow at the
+               slow setting which uses the ROM BIOS.  The fastest speed is
+               recommended for COMPAQ and EGA displays.  The IBM monochrome
+               and Hercules displays will always operate at the fastest
+               setting.  Remember the speed setting will only be used when
+               the CGA or EGA adapter is being used, so if you will be
+               using the monochrome or Hercules adapters you can ignore
+               this feature.
+
+     SORT      You may specify the initial sort keys that the file manager
+               uses to sort files.  AUTOMAXX comes with the sort keys set
+               to the default on name/extension.  The choices the install
+               provides allow all possible sort keys as well as no sort
+               (files displayed in original order).
+
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 23
+
+
+
+                               ERROR MESSAGES
+
+
+     The following errors may occur while using AUTOMAXX:
+
+          (1)  Can't find "AUTOMAXX.DAT" file
+               This error occurs when the program cannot find or read
+               that file. To remedy this make sure this file is in the
+               environment -- see the Parameters & Environment sections.
+
+          (2)  Undefined line --
+               This occurs if a line in the automaxx.dat begins with a
+               character other than %,*,+, or #.  Automaxx will warn
+               you with a beep and list the offending line when the DAT
+               file is loaded.  The undefined line will be ignored and
+               Automaxx continues.  To use a DAT file from another
+               menu system rename the DAT file to AUTOMAXX.DAT and
+               then remove the undefined line(s) with a text editor.
+               You may leave undefined lines in the DAT file but the
+               beeps may become bothersome.
+
+          (3)  AUTOMAXX.DAT is too big --
+               This occurs if the 8192 character limit has been exceeded
+               by the DAT file.  The program loads the DAT file up to this
+               limit.
+               
+          (4)  Editor not installed --
+               This means you have not put a path to your editor in MENU.BAT.
+               See the section on parameters.  If you have put an editor path
+               in menu.bat and you get the error message 'File not found' this
+               means that the editor is not on the path.  Remedy is to put the
+               correct path in menu.bat.
+               
+          (5)  Cannot remove the current directory --
+               If you get this error from the tree it means that the
+               directory you are trying to remove contains files and/or
+               subdirectories, or is the current directory; DOS will not
+               allow this.  First check to see if this directory contains
+               files and erase/remove them.  Finally, to successfully remove
+               the directory make sure it is not the current directory (if
+               so change directory to its parent) then remove the directory.
+               
+          (6)  DOS Errors --
+               AUTOMAXX will handle all critical and noncritical DOS
+               errors.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 24
+
+
+
+
+
+               Critical DOS Errors:
+                   A blah sound will be emitted when a Critical DOS error
+                   has occurred.  One of the following messages will apply:
+
+
+
+                      --------------------------------
+                      |     DOS CRITICAL ERRORS      |
+                      |==============================|
+                      | Disk is write-protected      |
+                      | Unknown Unit                 |
+                      | Drive not ready              |
+                      | Unknown command              |
+                      | Seek error                   |
+                      | Unknown media type           |
+                      | Sector not found             |
+                      | Printer out of paper         |
+                      | Write fault                  |
+                      | Read fault                   |
+                      | General failure              |
+                      --------------------------------
+
+
+
+
+
+               Noncritical DOS Errors:
+                    A beep will be emitted when a noncritical DOS error has
+                    occurred.  One of the following messages will apply:
+
+                      --------------------------------
+                      |    NONCRITICAL DOS ERRORS    |
+                      |==============================|
+                      |  Invalid function number     |
+                      |  File not found              |
+                      |  Path not found              |
+                      |  Too many files open         |
+                      |  Access denied               |
+                      |  Invalid handle              |
+                      |  Memory Destroyed            |
+                      |  Insufficient memory         |
+                      |  Invalid format              |
+                      |  Invalid data                |
+                      |  Invalid drive specified     |
+                      |  Cannot remove current Dir   |
+                      |  Not same device             |
+                      |  No more files               |
+                      |  I/O error                   |
+                      --------------------------------
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 25
+
+
+                          TIPS, QUESTIONS & ANSWERS
+                          
+
+     1. When I try to invoke the <P>rint option the message "could
+        not open file" appears.  This occurs because the automaxx.pdf
+        file was not in the environment.  Place the file there.
+        
+     2. When I try to invoke the Xtended directory or the view option
+        the screen just blinks.  In the case of Xtended directory, it
+        is because XDIR.EXE was not on the DOS path.  Place Xdir.exe
+        where DOS can find it.  In the case of the view option it is
+        because the full path to your editor was not placed in menu.bat.
+        Read the section on parameters for more information.
+
+     3. When I try to the remove a directory from the treeI get the
+        message "cannot remove current directory."  This directory
+        may be the current directory (DOS will not allow the current
+        to be removed); you may need to change to another directory then
+        access the tree again and press ^R to remove the directory.
+        You may also get this message if the current directory contains
+        any files; delete the files and attempt to remove the directory.
+        
+     4. Is there a way to tag a range of files?  You can rapidly
+        tag or (untag) files sequentially by pressing the <ctrl>
+        right-arrow or <ctrl> left-arrow keys.  The space bar can be
+        used to tag or untag individual files as usual.  A tag menu with
+        several choices can be invoked by <T>.
+
+     5. Can you select a directory by touching the first letter
+        of its name?  To select a directory for the cOpy or Move
+        operations, or to change directory, you can hilite the desired
+        path by touching the first letter of that directory's name.
+        This is much faster than using the cursor keys.  The <Home> and
+        <End> keys also speed selection.
+
+     6. If the calculator gives overflow you can retrieve the number by
+        changing the number of decimal places -- hit D then select 0..9.
+
+     7. You can quit AUTOMAXX by pressing <alt>q.  This means that you
+        do not need an 'Exit to DOS' option in your menus.
+
+     8. The <Alt> commands menu is available for the omnipresent
+        features of AUTOMAXX.  Press <alt> at any time then select the
+        desired command.  The <alt>X selects the eXtended DIRectory
+        program "XDIR.EXE" that comes with this version of AUTOMAXX.
+        There is no help file for XDIR just press F1.  The current
+        version of XDIR is version 1A.  Modifications will depend on
+        your needs.  Try it, you'll love it.  The calculator pops up
+        when you press <alt>C.  The calendar pops up when you press
+        <alt>L.  Whereis can be accessed by <alt>W.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 26
+     
+     
+
+     9. A QUICK file unerase and directory unremover has been added
+        The function keys have been programmed in the file manager.
+        The printer definition file structure was changed.  The
+        PRT2PDF.COM is supplied to change the old PRT files to the new
+        PDF format.  The change was made to use text instead of HEX
+        numbers.  Passwords have been added by using the '?' character
+        in the DAT file (see the SAMPLE.DAT file for an example).
+         
+    10. A file attribute, date, and time stamp editor feature 
+        was added.  The print feature was enhanced to allow page
+        formatting and port control.  The calendar was made internal
+        and changed to an annual display.  The screen blank was redone.
+        
+    11. File encryption/decryption was added.  Use with care.
+     
+    12. An incremental Name search was added to the file manager for
+        quickly locating files in the files display.  The menu
+        definition file, AUTOMAXX.DAT was expanded to allow for
+        parameter input and loading of other DAT files for networks
+        capability.  Leading Tabs and spaces can now be used in the DAT
+        file to increase readability and give a structured look.  (The
+        semicolon is now used to begin a comment for consistency with
+        programming languages.)  Read the self-documenting sample.dat
+        file on disk for a summary of the DAT file cababilities.
+
+ ** 13. The AUTOMAXX program is now AUTOMAXX.EXE; be sure to erase
+        the old AUTOMAXX.COM before updating (does not apply to new
+        users).  New users run the install program.
+     
+    14. Installation:  If you're an AUTOMAXX user run the program
+        UPDATE.BAT to install the latest version.  If you are a first
+        time user run the INSTALL program on the program disk, then
+        later at your leisure read the install procedure in the
+        AUTOMAXX.DOC file if you desire to install AUTOMAXX on other
+        drives and or subdirectories please refer to the documentation.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 27
+
+
+                                PROBLEMS
+
+
+         If you have problems with AUTOMAXX, please read the manual
+     first to make sure you understand everything.  I have tried
+     to provide a bug-free product but it is not possible to anticipate
+     all possible circumstances.  If you think you have found a problem,
+     document it, and communicate it to me for extermination.
+     Make sure that you note the following information to help me evaluate
+     the problem:
+
+                1. Version of AUTOMAXX used
+                2. Machine type, memory, monitors, etc.
+                3. Any application run before AUTOMAXX
+                4. Operating System used
+                5. Where and how you obtained AUTOMAXX
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 28
+
+
+
+
+                              ORDERING INFORMATION
+
+
+
+    An AUTOMAXX registration licenses you to use the  product on a regular
+    basis.  Registration includes:
+    
+         o  A Custom Install program for customizing the AUTOMAXX color
+            screens and other features.
+            
+         o  The latest version of the program.
+         
+         o  A printed bound reference manual.
+
+         o  Mailed notification of updates.
+         
+         o  Priority telephone support.
+         
+    Upon registration the licensee is granted a limited license to use
+    AUTOMAXX on the number of computers allowable according to the license
+    fee paid.  Users need register only  one version  of AUTOMAXX;
+    registration includes licensed use of all upgrades.
+
+    To order please call the Computer Enhancement Group at (301) 464-8895
+    or mail the enclosed order form with your payment.
+
+    For orders outside the U.S., please add an additional $5.  Payment is
+    by either an international money order payable in U.S. currency, or by
+    credit card.
+    
+    PURCHASE ORDERS accepted for orders of at least $100; quantities less
+    than $100 must be prepaid.
+     
+    Maryland residents please add 5% state sales tax.
+     
+    For commercial site license orders, please enclose a signed copy of
+    the site license agreement.  Sorry, no C.O.D. orders will be accepted.
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 29
+
+
+
+                             AUTOMAXX LICENSE
+
+     The use of AUTOMAXX by an individual, a business, corporation, or
+     government entity is granted under the following terms:
+
+     1.  Payment of the license fee must be made to The Computer Enhancement
+         Group.   The fee is based on the number of computers on which
+         AUTOMAXX will be installed, as follows:
+
+               1 - 20  copies    $35 each
+              21 - 50  copies    $30 each
+              50 - 99  copies    $25 each
+             100 - 149 copies    $20 each
+             150+      copies    $3000 plus $15 each after 150 copoies
+
+     2.  You may use AUTOMAXX on the number of computers included in the
+         license fee.
+
+     3.  You may make archival copies of the program, in its original,
+         unmodified form, without restriction.
+
+     4.  You may use future versions of AUTOMAXX under this license.  The
+         latest version is available from The Computer Enhancement Group
+         for a small service charge.
+
+     5.  You may NOT modify the program or charge a fee for copying or
+         distributing the program.
+
+     6.  AUTOMAXX may not be distributed in conjunction with any other
+         product unless written permission is granted by The Computer
+         Enhancement Group.
+
+     7.  It is your responsibility to make the necessary copies and to
+         deliver them to the computers on which they will be used.
+
+
+     I agree to abide by the terms and conditions of this license.
+
+
+         _____________________________         __________________________
+         Signature                             Date
+
+         _____________________________
+         Name (please print or type)
+
+         _____________________________
+         Title
+
+         _____________________________
+         Company
+
+    AUTOMAXX     (c) 1986-88 by The Computer Enhancement Group      PAGE 30
+
+
+                                   ORDER FORM
+
+
+     Check which items you wish to purchase:
+
+     (_) Noncommercial license for the use of AUTOMAXX.
+         ( $35 includes latest program disk & printed manual)
+           
+     (_) Commercial license for the use of AUTOMAXX on _____ computers
+         (see price schedule and terms on preceding page).
+         Includes latest program disk(s) & printed manual(s).
+         
+     Total payment: $ _________
+
+     Payment by:  ( ) Check      ( ) MC       ( ) Visa
+                  ( ) PO# ______________
+
+     Credit Card information (if applicable):
+     
+         Card #: ______________________ Exp. Date: _______________
+         
+         Signature of cardholder: ________________________________
+
+
+     Specify disk media:    (_) 5-1/4" disk
+                            (_) 3-1/2" disk   (please add $1 )
+
+
+     Shipping address:
+     
+         ________________________________________________  
+         Name                               
+
+         ________________________________________________
+         Address
+
+         ________________________________________________
+
+
+         ______________________   ________  _____________
+         City                     State     Zip
+
+
+     Send this completed form with payment to:
+
+                            William P. Smith
+                     The Computer Enhancement Group
+                             P.O. Box 70348
+                      Washington, D.C.  20024-0348
+
+End of AUTOMAXX Documentation
+

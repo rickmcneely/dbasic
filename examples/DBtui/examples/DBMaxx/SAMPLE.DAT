@@ -1,0 +1,303 @@
+;                        EXAMPLE DAT FILE STRUCTURE
+; ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ
+; REVISED 02/10/88
+; This is a real dat file.  Rename to AUTOMAXX.DAT before use.
+
+
+
+
+;                      *****  G E N E R A L  *****
+
+; A semicolon is used to precede a comment line.
+;   Comments will not be processed by AUTOMAXX but
+;   can be used to document a dat file or to comment out
+;   command lines when needed.
+; Blank lines are allowed.
+; Indenting with spaces or tabs is allowed to improve readability.
+; Command lines are processed by AUTOMAXX.  A command line begins with
+;   one of the leading characters '%*+?>$&'.  You may precede a leading
+;   character with spaces or tabs to improve readability.
+
+
+
+;              *****  LEADING CHARACTERS DEFINITIONS  *****
+
+;    character      definition
+;    ÄÄÄÄÄÄÄÄÄ      ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ
+;         ;         precedes a comment
+;         %         precedes menu title
+;         *         precedes an option title
+;         +         precedes dos command
+;         ?         precedes password
+;         >         jump to menu title which follows
+;         $         load another dat file
+;         &         get parameter
+;         @         timed execution
+;         ^         ctrl-key macro definition
+;         !         macro defined in menu
+
+; Note:  Leading characters may only be preceded by spaces or tabs
+
+
+; ============================  Keyboard macros  =============================
+
+   ^A ""
+   ^B "xGWBASIC \%\|"
+   ^C ""
+   ^D "spddg"
+   ^E "speasnag"
+   ^F ""
+   ^G ""
+   ^H ""
+   ^I ""
+   ^J ""
+   ^K ""
+   ^L "xLIST \%\|\["
+   ^M ""
+   ^N "spnaseag"
+   ^O ""
+   ^P ""
+   ^Q "xQ \%\|\["
+   ^R ""
+   ^S ""
+   ^T ""
+   ^U ""
+   ^V ""
+   ^W "xWP \%\|\["
+   ^X "xpkxarc \%\|"
+   ^Y ""
+   ^Z "xPKUNZIP \%\|"
+
+
+
+; ============================== Timed Executables ===========================
+; Example -- The system display a directory at 9:45 am and 11:30 pm.
+;            Remove semicolons to activate.
+
+
+; Timed Events
+;    @09:45 23:30
+;    +dir
+;    +menu
+
+
+
+; ================================== Menus ===================================
+
+
+
+;                   *****   SAMPLE MENUs  *****
+
+; This first menu is an example of calling menus within a menu
+;   using the '>' character
+
+%MENU of MENUs
+     *APPLICATION PROGRAMS
+          ; next line calls the MENU titled 'APPLICATION PROGRAM MENU'
+          ;   using the '>' character
+          >APPLICATION PROGRAM MENU
+     *COMMUNICATION
+          ; call 'COMMUNICATIONS PROGRAMS MENU'
+          >COMMUNICATION PROGRAMS MENU
+     *DOS COMMANDS
+          >BASIC DOS COMMANDS MENU
+     *ADVANCED UTILITIES
+          >ADVANCED UTILITIES MENU
+     *HARD DISK BACKUP
+          >SPECIAL HARD DISK BACKUP MENU
+     *MISCELLANEOUS
+          >MISCELLANEOUS MENU
+     *Disk Operating System
+          ; this option quits AUTOMAXX and returns you to DOS
+          +echo off
+          +echo ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+          +echo ³ÜÜÜÜÜÛ D  O  S ÛÜÜÜÜÜ³
+          +echo ÃÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´
+          +echo ³   Enter MENU to     ³
+          +echo ³ return to AUTOMAXX  ³
+          +echo ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+          +echo on
+
+
+; Note the indenting for readability
+
+%APPLICATION PROGRAM MENU
+     *Main Menu
+          ; return to first menu
+          >MENU of MENUs
+     *WordPerfect
+          ; the next command line uses the '?' to prompt the user to enter
+          ;   a password which must be banana yellow to continue processing
+          ;   the next lines for the Wordperfect option
+          ?banana yellow
+          +c:
+          +cd \wp
+          +wp
+          +cd \
+          +menu
+     *Lotus 123
+          +c:
+          +cd \lotus
+          +lotus
+          +cd \
+          +menu
+     *File Manager
+          ; this macro brings up the file manager
+		; and sorts newest files first
+          !fspddg
+     *Wordstar
+          ; this macro calls wordstar within AUTOMAXX
+          ;    "x"       invoke the dos interface
+          ;    "ws\|"    type WS then hit <return>
+          ; the macro is:
+          !xws\|
+     *Text Editor
+          ; use of '&' for parameter input is demonstated here:
+          +c:
+          +cd \text
+          &Name of file to edit?
+          +ed &1
+          +cd \
+          +menu
+     *Dbase
+          &Enter dbase program to be run>
+          +cd \dbase
+          +dbase &1
+          +menu
+
+; next is an example of the '$' command.  It is used to load another dat file,
+; in this case one named a:\master.net.  The dat file commands are loaded here
+; then the AUTOMAXX.DAT continues being loaded.  This can be used for networks
+; when a common set of instructions must be put in each users automaxx.dat
+; file. It has been commented out here
+
+;    $c:\master.net
+
+%COMMUNICATION PROGRAMS MENU
+     *Main Menu
+          ; return to first menu
+          >MENU of MENUs
+     *Mirror
+          +cd \mirror
+          +mirror
+          +menu
+     *Telix
+          +cd \telix
+          +telix
+          +menu
+     *Crosstalk
+          +c:
+          +cd \bbs
+          +xtalk
+          +cd \
+          +menu
+
+%BASIC DOS COMMANDS MENU
+     *Main Menu
+          ; return to first menu
+          >MENU of MENUs
+     *Check diskette:
+          +c:
+          ; the first use of '&' generates input which will be
+          ; substituted wherever &1 occurs in the command
+          ; lines that follow in this option
+          &Enter drive letter>
+          ; now get second parameter &2
+          &enter optional parameters (/f/v)
+          +chkdsk &1: &2
+          +pause
+          +menu
+     *Normal diskette duplication
+          &enter source drive letter>
+          &enter target drive letter>
+          +pause
+          +copy &1:*.*  &2:
+          +menu
+     *Format floppy diskette
+          +c:
+          &Enter drive letter>
+          &enter optional parameters (/s/1/8/v/b/4) >
+          ; '&' can be used for prompts
+          +echo place disk in drive &1:
+          +pause
+          +format &1:&2
+          +menu
+     *Disk Operating System
+          +echo off
+          +echo ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿
+          +echo ³ÜÜÜÜÜÛ D  O  S ÛÜÜÜÜÜ³
+          +echo ÃÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´
+          +echo ³   Enter MENU to     ³
+          +echo ³ return to AUTOMAXX  ³
+          +echo ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ
+          +echo on
+
+%ADVANCED UTILITIES MENU
+     *Main Menu
+          ; return to first menu
+          >MENU of MENUs
+     *Norton SI
+          +cd \norton
+          +si
+          +pause
+          +menu
+     *Norton Utility
+          +cd \norton
+          +nu
+          +menu
+     *Optimize Disk
+          +cd \norton
+          &enter drive letter>
+          +sd &1:
+          +pause
+          +menu
+     *Test Disk
+          +cd \norton
+          &enter drive letter>
+          +dt &1: /d
+          +pause
+          +menu
+     *Text search
+          +cd \norton
+          +ts
+          +pause
+          +menu
+
+%SPECIAL HARD DISK BACKUP MENU
+     *Main Menu
+          ; return to first menu
+          >MENU of MENUs
+     *Total Backup of Drive C:
+          +c:
+          +backup c:\ a:/s
+          +menu
+     *Update backup for files changed on Drive C:
+          +echo off
+          +echo Warning:  This procedure overwrites files on Disk A.
+          +echo           Enter Ctl-C to stop now.  Otherwise,
+          +pause          put a formatted disk in Drive A.
+          +echo on
+          +backup c:\ a:/s/m
+          +menu
+
+%MISCELLANEOUS MENU
+     *Main Menu
+          ; return to first menu
+          >MENU of MENUs
+     *Samples Programs
+          +c:
+          +cd \games
+          +basica samples
+          +cd \
+          +menu
+     *COMPAQ Demo
+          +c:
+          +cd \games
+          +basica demo
+          +cd \
+          +menu
+
+; The end file symbol '#' is purely optional and may be
+;   omitted if desired.
+#End of Menu File
+

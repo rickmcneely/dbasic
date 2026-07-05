@@ -1,0 +1,136 @@
+
+
+    
+                             KEYSTROKE  MACROS
+                         SUPPLEMENTARY  INFORMATION
+                         
+                         
+   It is easy to build and invoke keystroke macros.  A macro is a string of
+   characters that is either bound to one of the ^A, .. ,^Z keys or defined
+   in a menu option using the ! character.  For example when the macro is 
+   bound to the ctrl-A key it is defined as
+
+     ^A "string"
+
+   where the macro string must be enclosed within quotes.
+
+   If the macro is defined within a menu option it is defined as
+
+      !string
+
+   where the macro does NOT have to be enclsoed within quotes.
+
+   The macro string is any sequence of characters that you could enter at
+   the keyboard.  The ctrl-key macros are defined in the DAT file
+   and use the '^' character prefix.  A macro is assigned to one of the
+   ctrl keys ^A, ^B, ..., ^Z in its definition.  There are therefore 26
+   different ctrl-macros that can be accessed by AUTOMAXX at a given time.
+   There are an unlimited number of macros that can be defined as menu
+   options.  A macro string is restricted to 50 characters.  The
+   following ctrl-macro listing is taken from the sample.dat file:
+
+   ^A ""
+   ^B ""
+   ^C ""
+   ^D "spddg"
+   ^E "speasnag"
+   ^F ""
+   ^G ""
+   ^H ""
+   ^I ""
+   ^J ""
+   ^K ""
+   ^L "xlist \%\|\["
+   ^M ""
+   ^N "spnaseag"
+   ^O ""
+   ^P ""
+   ^Q "xq \%\|\["
+   ^R ""
+   ^S ""
+   ^T ""
+   ^U "xpkunzip \%\|"
+   ^V "xpkarc v \%\|"
+   ^W "xwp \%\|\["
+   ^X "xpkxarc \%\|"
+   ^Y ""
+   ^Z ""
+
+
+
+
+                         SOME USEFUL MACRO STRINGS 
+     
+     
+     "taoa\|ya"
+          copy all files in currrent directory to drive A
+     "ua...a\|q"
+          set the archive bit of tagged files in current directory
+     "ua.h..\|q"
+          set the hidden bit of tagged files in current directory
+     "uar..a\|q"
+          set the archive bit of tagged files in current directory
+          and make them read-only
+     "ud07-04-88\|t17:30:00\|q"
+          change date and time of tagged files to 5:30 pm, July 4, 1988
+	"usq"	 
+          stamp all tagged files with system date & time 
+     "xprogname\|"
+          run user application PROGNAME.
+     "xprogname\%\|"
+          run user application PROGNAME with current file as argument.
+     "spnaseag"
+          sort files on name/ext in ascending order
+     "speasnag"
+           sort files on ext/name in ascending order
+     "speasddg"
+          sort files by extension (ascending order) and use date & time
+          (descending order) as secondary sort key.
+     "spddg"
+           sort files on date/time --  latest first
+     "spsag"
+           sort files in order of size
+     "su"
+           display files in DOS order
+     "sr"
+           sort files using default sort
+     "xpkunzip %\|"
+          unzip current ZIP file using the PKUNZIP utility.
+     "z a myarc\|"
+          add tagged file(s) to myarc.arc using the ZIP option. 
+     "\w\c\c\1"
+          From the menu screen select the first option in menu 3.
+     "\z\3\a\a"
+          From the menu screen select the third option in the last
+          defined menu.  Sound two bells when completed.
+
+
+
+
+                         Table of Ascii Sequences
+          + ------------------------------------------------------+
+          | sequence  |     key       | sequence  |   key         |
+          |-----------|---------------|-----------|---------------+
+          |     \[    |  <Esc>        |   \z      |  <End>        |
+          |     \i    |  <Ins>        |   \r      |  <PgUp>       |
+          |     \g    |  <Del>        |   \c      |  <PgDn>       |
+          |     \b    |  <Back Space> |   \1      |  <F1>         |
+          |     \t    |  <Tab>        |   \2      |  <F2>         |
+          |     \a    |  bell         |   \3      |  <F3>         |
+          |     \|    |  <return>     |   \4      |  <F4>         |
+          |     \%    |  filespec     |   \5      |  <F5>         |
+          |     \\    |  back slash   |   \6      |  <F6>         |
+          |     \e    |  cursor up    |   \7      |  <F7>         |
+          |     \s    |  cursor left  |   \8      |  <F8>         |
+          |     \d    |  cursor right |   \9      |  <F9>         |
+          |     \x    |  cursor down  |   \0      |  <F10>        |
+          |     \w    |  <Home>       |           |               |
+          +-------------------------------------------------------+
+                               
+
+     The possibilities for your choice of macros are endless and are
+     only limited by your imagination and creativity.  You could for
+     example link several editors or utilities to the file manager
+     by macros.
+
+

@@ -1,0 +1,1109 @@
+<!doctype html><html><head><meta charset="utf-8"><title>AUTOMAXX.HLP reconstructed</title><style>
+body{background:#050505;color:#00ff66;font-family:"Courier New",monospace;margin:0;padding:24px;}
+h1,h2{color:#66ffff;font-weight:normal}.meta{color:#ccc;margin-bottom:20px}.screen{border:1px solid #00dddd;margin:18px 0;padding:12px;background:#000;box-shadow:0 0 0 1px #003333 inset;display:inline-block;min-width:78ch}.bar{color:#66ffff;margin-bottom:8px}.hl{background:#aa0000;color:#ffff66}.dim{color:#00aaaa}.toc a{color:#66ffff;text-decoration:none}.toc{columns:2;max-width:900px}.toc div{break-inside:avoid}pre{margin:0;line-height:1.05;font-size:15px;white-space:pre;}
+</style></head><body>
+<h1>AUTOMAXX.HLP reconstructed</h1>
+<div class="meta">Extracted 53 help screens. Control bytes 0x01/0x02 are rendered as highlight spans; CP437 box-drawing characters are preserved.</div>
+<h2>Contents</h2><div class="toc">
+<div><a href="#s01">01. Help — THE HELP FACILITY</a></div>
+<div><a href="#s02">02. Help — AUTOMAXX INTRODUCTION</a></div>
+<div><a href="#s03">03. Help — WHAT AUTOMAXX DOES</a></div>
+<div><a href="#s04">04. Help — AUTOMAXX LICENSE</a></div>
+<div><a href="#s05">05. Help — COMMUNICATION</a></div>
+<div><a href="#s06">06. Menu_Creation — THE MENU DATA FILE</a></div>
+<div><a href="#s07">07. Menu_Creation — EXAMPLE MENU DATA FILE STRUCTURE</a></div>
+<div><a href="#s08">08. Menu_Creation — MENU DEFINITION CHARACTERS</a></div>
+<div><a href="#s09">09. Menu_Creation — THE MENU SYSTEM</a></div>
+<div><a href="#s10">10. Menu_Creation — MENU COMMANDS</a></div>
+<div><a href="#s11">11. Menu_Creation — MENU Command Keys</a></div>
+<div><a href="#s12">12. Menu_Creation — ACCESSORY PROGRAMS, COLOR TOGGLE, TREE</a></div>
+<div><a href="#s13">13. Menu_Creation — DOS GATEWAY, FILE MANAGER, HELP</a></div>
+<div><a href="#s14">14. Menu_Creation — SWITCHING DRIVES AND MONITORS</a></div>
+<div><a href="#s15">15. Menu_Creation — QUIT, REBUILDING TREE, and SYSTEM INFORMATION</a></div>
+<div><a href="#s16">16. Menu_Creation — VERSION, WHEREIS, AND EXEC</a></div>
+<div><a href="#s17">17. Menu_Creation — DOS SHELL SYSTEM</a></div>
+<div><a href="#s18">18. Menu_Creation — DOS SHELL SYSTEM (continued)</a></div>
+<div><a href="#s19">19. Menu_Creation — The ALT-Menu</a></div>
+<div><a href="#s20">20. Menu_Creation — The ALT-Menu</a></div>
+<div><a href="#s21">21. Menu_Creation — The ALT-Menu</a></div>
+<div><a href="#s22">22. Menu_Creation — The ALT-Menu</a></div>
+<div><a href="#s23">23. Menu_Creation — THE GRAPHICAL TREE</a></div>
+<div><a href="#s24">24. Menu_Creation — THE GRAPHICAL TREE</a></div>
+<div><a href="#s25">25. Menu_Creation — THE GRAPHICAL TREE</a></div>
+<div><a href="#s26">26. Menu_Creation — THE GRAPHICAL TREE</a></div>
+<div><a href="#s27">27. Menu_Creation — THE GRAPHICAL TREE</a></div>
+<div><a href="#s28">28. Menu_Creation — CONFIGURING AUTOMAXX</a></div>
+<div><a href="#s29">29. Menu_Creation — CONFIGURATION SWITCHES</a></div>
+<div><a href="#s30">30. Menu_Creation — CONFIGURATION SWITCHES (continued)</a></div>
+<div><a href="#s31">31. Menu_Creation — MENU.BAT</a></div>
+<div><a href="#s32">32. Menu_Creation — AUTOEXEC.BAT</a></div>
+<div><a href="#s33">33. Menu_Creation — COLOR INSTALLATION</a></div>
+<div><a href="#s34">34. Mouse — The MOUSE Interface</a></div>
+<div><a href="#s35">35. Mouse — The MOUSE Interface</a></div>
+<div><a href="#s36">36. Mouse — The MOUSE Interface</a></div>
+<div><a href="#s37">37. Mouse — KEYBOARD MACROS</a></div>
+<div><a href="#s38">38. Mouse — Change Directory</a></div>
+<div><a href="#s39">39. Mouse — FILE BACKUP, COPY, and HEX EDITOR</a></div>
+<div><a href="#s40">40. Mouse — FILE ERASE/WIPE and FILTER</a></div>
+<div><a href="#s41">41. Mouse — FILE MOVE and INCREMENTAL SEARCH</a></div>
+<div><a href="#s42">42. Mouse — THE FILE PRINT FEATURE</a></div>
+<div><a href="#s43">43. Mouse — FILE UNERASE, DIRECTORY UNREMOVE</a></div>
+<div><a href="#s44">44. Mouse — Point and Shoot</a></div>
+<div><a href="#s45">45. Mouse — RENAME and SORT</a></div>
+<div><a href="#s46">46. Mouse — TAGGING FILES</a></div>
+<div><a href="#s47">47. Mouse — UTILITY MENU</a></div>
+<div><a href="#s48">48. Mouse — UTILITY MENU (continued)</a></div>
+<div><a href="#s49">49. Mouse — VIEW</a></div>
+<div><a href="#s50">50. Mouse — WHEREIS FILE FINDER</a></div>
+<div><a href="#s51">51. Mouse — Command line eXec</a></div>
+<div><a href="#s52">52. Mouse — XtenDIR</a></div>
+<div><a href="#s53">53. Mouse — ZIP -- File Compression Interface</a></div>
+</div>
+<div class="screen" id="s01"><div class="bar">Screen 01 | Help | THE HELP FACILITY </div><pre>  THE HELP FACILITY  
+
+    The help screens can be used as an online manual.  Use the cursor <span class="hl">arrow
+</span>    <span class="hl">keys</span> to select help on any of the <span class="hl">25 topics</span> shown above.
+
+    The first help screen for that topic will appear.  The number of help
+    screens for the selected topic will be shown on the status line at the
+    bottom of the screen.  The <span class="hl">PgDn</span> and <span class="hl">PgUp</span> keys are used to display the
+    topic screens.  To go to the another topic use the <span class="hl">arrow</span> keys.
+
+         ╔═══════════════════════════════════════════════════════╗
+         ║    <span class="hl">Key</span>                     Function                   ║
+         ╟────────────┬──────────────────────────────────────────╢
+         ║    <span class="hl">PgDn </span>   │  <span class="hl">next</span> help screen for selected topic     ║
+         ║    <span class="hl">PgUp</span>    │  <span class="hl">previous</span> help screen for selected topic ║
+         ║    <span class="hl"></span>    │  <span class="hl">select help topic           </span>            ║
+         ║    <span class="hl">Esc</span>     │  exit help                               ║
+         ╚════════════╧══════════════════════════════════════════╝
+ 
+
+
+Intro</pre></div><br>
+<div class="screen" id="s02"><div class="bar">Screen 02 | Help | AUTOMAXX INTRODUCTION </div><pre>  AUTOMAXX INTRODUCTION  
+
+
+     The program <span class="hl">AUTOMAXX (R) </span>will manage your computer with a powerful
+     DOS shell and a simple system of menus which you create yourself.
+     AUTOMAXX is both an <span class="hl">application manager</span> and a full featured <span class="hl">File 
+     Manager and DOS Shell</span>.  This program was built for SPEED and ease
+     of use!  AUTOMAXX makes the computer work hard, not you.  Written
+     in C - optimized for speed with FAST Assembler routines, it is the
+     ultimate DOS environment for both the experienced and the novice
+     computer users.
+
+                     <span class="hl">HARDWARE AND SOFTWARE REQUIREMENTS
+
+</span>         *  IBM Compatible machine
+         *  DOS 2.0 and up
+         *  Minimum of 256KB of free memory
+         *  Monochrome, Hercules, CGA, EGA, PGA, or VGA adapter</pre></div><br>
+<div class="screen" id="s03"><div class="bar">Screen 03 | Help | WHAT AUTOMAXX DOES </div><pre>  WHAT AUTOMAXX DOES  
+
+    <span class="hl">AUTOMAXX</span> is literally the ultimate DOS environment. It is both a
+    complete menu system<span class="hl"> </span>and a disk manager.  AUTOMAXX that provides an
+    extremely powerful DOS system interface which gives the user access
+    to all DOS commands through single keystrokes that unleash the
+    powerful facilities of AUTOMAXX for file and directory management,
+    quickly finding files, rapid and effortless manuevering around
+    the disk and all the other DOS chores.  AUTOMAXX also provides a
+    simple and efficient menu system to run your applications.
+    The menu system requires that you create a data file called
+    <span class="hl">AUTOMAXX.DAT</span> that contains the DOS commands needed to run your
+    applications. The sample.dat file supplied with the package is
+    self documenting and can be easily customized to manage the
+    applications on your particular computer.  If you don&#x27;t already
+    have an AUTOMAXX.DAT file you can rename the sample.dat and use
+    it, then later customize the DAT file to your particular needs.</pre></div><br>
+<div class="screen" id="s04"><div class="bar">Screen 04 | Help | AUTOMAXX LICENSE </div><pre>  AUTOMAXX LICENSE  
+
+    The use of AUTOMAXX by an individual, a business, corporation, or
+    government entity requires that a license fee be paid to The Computer
+    Enhancement Group.   The fee is based on the number of computers on
+    which AUTOMAXX will be installed, as follows:
+
+                   ┌───────────────────────────────────┐
+                   │     1 -  10  copies    $40 each   │
+                   │    11 -  50  copies    $35 each   │
+                   │    51 - 150  copies    $30 each   │
+                   │   151 - 250  copies    $25 each   │
+                   │   251 - 500  copies    $20 each   │
+                   │   501 -      copies    $17 each   │
+                   └───────────────────────────────────┘
+
+    You may use AUTOMAXX on the number of computers included in the license
+    fee.  Read LICENSE.DOC for a full description of the license.</pre></div><br>
+<div class="screen" id="s05"><div class="bar">Screen 05 | Help | COMMUNICATION </div><pre>  COMMUNICATION  
+
+
+
+    Send all written correspondence, license inquiries, and fees to:
+
+                 ╔══════════════════════════════════════╗
+                 ║                                      ║
+                 ║    The Computer Enhancement Group    ║
+                 ║         11711 Whittier Road          ║
+                 ║       Mitchellville, MD  20721       ║
+                 ║                                      ║
+                 ╚══════════════════════════════════════╝
+
+    or call (301) 464-8895 to order by phone.  CODs accepted.  Dealer
+    discount is 33%.</pre></div><br>
+<div class="screen" id="s06"><div class="bar">Screen 06 | Menu_Creation | THE MENU DATA FILE </div><pre>  THE MENU DATA FILE  
+
+          The menu system consists of a collection of DOS commands
+     that you would normally enter at the DOS prompt to run a program
+     or perform any DOS function to manage the applications and files
+     on your PC.
+           The difference is that with AUTOMAXX you only enter these DOS
+     commands once into the AUTOMAXX.DAT file.  AUTOMAXX presents the
+     user with application WINDOWs from which the user selects options
+     by pressing a single key.  The user may quickly page from window to
+     window.
+           All that is required to create a DAT file for your system is
+     a general knowledge of DOS and a text editor.  The SAMPLE.DAT
+     file is self documenting dat file that contains all the information
+     needed to create your own menus.  All you must know is that the
+     leading character of each line in the DAT file determines how
+     AUTOMAXX will use the line to build the menus.  These special
+     characters with respective functions are listed below:</pre></div><br>
+<div class="screen" id="s07"><div class="bar">Screen 07 | Menu_Creation | EXAMPLE MENU DATA FILE STRUCTURE </div><pre>  EXAMPLE MENU DATA FILE STRUCTURE  
+
+
+    <span class="hl">%</span>APPLICATION PROGRAMS MENU 1  <span class="hl">────────────</span> menu name
+         <span class="hl">*</span>WORD PROCESSING     <span class="hl">────────────────</span> option name
+         <span class="hl">;</span> first change to wp directory <span class="hl">──────</span> comment line
+              <span class="hl">+</span>cd \wp     <span class="hl">────────────────────</span> DOS command
+              <span class="hl">+</span>wp
+              <span class="hl">+</span>menu                    ┌────────────────────────────────────┐
+         <span class="hl">*</span>SPREADSHEET                  │ <span class="hl">Free formatting style using tabs</span>   │
+              <span class="hl">+</span>cd \lotus               │ <span class="hl">or spaces in menu definition file.</span> │
+              <span class="hl">+</span>123                     │                                    │
+              <span class="hl">+</span>menu                    │ <span class="hl">Use any name for the DAT file.</span>     │
+          <span class="hl">*</span>COMMUNICATION               │ <span class="hl">AUTOMAXX.DAT is the default</span>        │
+              .                        │ <span class="hl">name</span>.  See configuring AUTOMAXX    │
+              .                        │ for more information.              │
+              .                        └────────────────────────────────────┘
+    <span class="hl">%</span>APLICATION PROGRAMS MENU 2</pre></div><br>
+<div class="screen" id="s08"><div class="bar">Screen 08 | Menu_Creation | MENU DEFINITION CHARACTERS </div><pre> MENU DEFINITION CHARACTERS 
+
+
+              ╔═════════════════════════════════════════╗
+              ║    <span class="hl">Character           Purpose</span>          ║
+              ╟──────────────────┬──────────────────────╢
+              ║         <span class="hl">%</span>        │  menu title          ║
+              ║         <span class="hl">*</span>        │  menu option         ║
+              ║         <span class="hl">+</span>        │  DOS command         ║
+              ║         <span class="hl">&gt;</span>        │  call menu           ║
+              ║         <span class="hl">?</span>        │  password            ║
+              ║         <span class="hl">@</span>        │  hh:mm (timed event) ║
+              ║         <span class="hl">;</span>        │  comment line        ║
+              ║    <span class="hl">space</span>, <span class="hl">tab</span>    │  formatting chars    ║
+              ║         <span class="hl">&amp;</span>        │  input parameter     ║
+              ║         <span class="hl">$</span>        │  load dat file       ║
+              ║         <span class="hl">^</span>        │  macro definition    ║
+              ╚══════════════════╧══════════════════════╝
+ 
+
+
+Menu_System</pre></div><br>
+<div class="screen" id="s09"><div class="bar">Screen 09 | Menu_Creation | THE MENU SYSTEM </div><pre>  THE MENU SYSTEM  
+
+         ╔═══════════════════════════════════════════════════════╗
+         ║    <span class="hl">Key                 Function</span>                       ║
+         ╟──────────────────────┬────────────────────────────────╢
+         ║ &lt;<span class="hl">alt&gt;Q</span>               │ Quit AUTOMAXX                  ║
+         ║ <span class="hl">/,A,B,C,D,F,H,L,    </span> │ Command selection              ║
+         ║ <span class="hl">Q,R,S,V,W,X</span>          │                                ║
+         ║ <span class="hl">       </span>             │ Move arrow pointer up          ║
+         ║ <span class="hl">, &lt;space&gt;         </span>  │ Move arrow pointer down        ║
+         ║ &lt;<span class="hl">return</span>&gt;             │ Select menu option             ║
+         ║ <span class="hl">1 .. 8</span>               │ Select option by number        ║
+         ║ <span class="hl">F1</span> .. <span class="hl">F8</span>             │ Select option by function key  ║
+         ║ <span class="hl">PgDn</span>,<span class="hl"> </span>, <span class="hl">F10</span>         │ next menu                      ║
+         ║ <span class="hl">PgUp</span>, <span class="hl"></span>, <span class="hl">F9</span>          │ previous menu                  ║
+         ║ &lt;<span class="hl">Home</span>&gt;, &lt;<span class="hl">End</span>&gt;        │ first, last menu               ║
+         ║ <span class="hl">^A</span> .. <span class="hl">^Z</span>             │ invoke keyboard macro          ║
+         ╚══════════════════════╧════════════════════════════════╝</pre></div><br>
+<div class="screen" id="s10"><div class="bar">Screen 10 | Menu_Creation | MENU COMMANDS </div><pre>   MENU COMMANDS  
+
+
+
+    The <span class="hl">MENU commands</span> are accessed by pressing &#x27;<span class="hl">/</span>&#x27; to dislay the commands
+    menu and then selecting a command with cursor keys and pressing the
+    return key, or by pressing the first letter of the command.  There is a
+    help screen for each command.  The &#x27;<span class="hl">/</span>&#x27; key is best for new users.
+    Experienced users will select the commands with the first letter method.
+
+    Note:  For fast operation the <span class="hl">F</span>ile, <span class="hl">L</span>ogged, and <span class="hl">C</span>hDir features are
+    accessible outside the commands menu.</pre></div><br>
+<div class="screen" id="s11"><div class="bar">Screen 11 | Menu_Creation | MENU Command Keys </div><pre>  MENU Command Keys 
+
+            ╔════════════════════╤══════════════════════════════════╗
+            ║   <span class="hl">A</span>ccessories      │ Invoke accessory programs        ║
+            ║   <span class="hl">B</span>W/CO            │ Change colors on color display   ║
+            ║   <span class="hl">C</span>hDir            │ Change Directory                 ║
+            ║   <span class="hl">D</span>os Gateway      │ Invoke command interpreter       ║
+            ║   <span class="hl">F</span>iles            │ Complete File Management         ║
+            ║   <span class="hl">H</span>elp             │ Online help                      ║
+            ║   <span class="hl">L</span>ogged Drive     │ Change Drive                     ║
+            ║   <span class="hl">M</span>onitors         │ Switch display monitors          ║
+            ║   <span class="hl">Quit</span>             │ Terminate AUTOMAXX               ║
+            ║   <span class="hl">R</span>ebuild tree     │ rebuild tree data file           ║
+            ║   <span class="hl">S</span>ysinf           │ System Information               ║
+            ║   <span class="hl">V</span>ersion          │ show copyright and version no.   ║
+            ║   <span class="hl">W</span>hereis          │ file finder                      ║
+            ║   e<span class="hl">X</span>ecute          │ execute command line             ║
+            ╚════════════════════╧══════════════════════════════════╝</pre></div><br>
+<div class="screen" id="s12"><div class="bar">Screen 12 | Menu_Creation | ACCESSORY PROGRAMS, COLOR TOGGLE, TREE </div><pre>  ACCESSORY PROGRAMS, COLOR TOGGLE, TREE 
+
+     <span class="hl">Access</span>   Press &lt;<span class="hl">A</span>&gt; to display the accessory programs menu.  Select the
+              <span class="hl">C</span>alculator, ca<span class="hl">L</span>endar, or <span class="hl">X</span>tended directory program by using first
+              letter method or the cursor keys.
+
+     <span class="hl">BW/CO</span>    This feature is a <span class="hl">toggle</span> between the <span class="hl">Black&amp;White</span> mode and the
+              <span class="hl">color</span> mode (the colors in the color mode are set by the color
+              install program, INST.COM).  This setting is temporary.  A
+              permanent mode is set using a configure switch in menu.bat.  Pres
+              &lt;<span class="hl">B</span>&gt; to invoke this toggle.
+
+     <span class="hl">ChDir</span>     Press &lt;<span class="hl">C</span>&gt; to select this feature.  This feature displays a
+               full featured tree for maneuvering around the disk.  Select
+               destination by using cursor keys or press first letter of
+               destination subdirectory, then press &lt;return&gt; to confirm.
+               Other key functions are discussed in the section &quot;Using
+               the Graphical TREE.</pre></div><br>
+<div class="screen" id="s13"><div class="bar">Screen 13 | Menu_Creation | DOS GATEWAY, FILE MANAGER, HELP </div><pre>  DOS GATEWAY, FILE MANAGER, HELP 
+
+
+    <span class="hl">DOS</span>  This puts you into the AUTOMAXX command interpreter where you
+         may enter any DOS executable command.  To exit the interpreter
+         you must press &lt;Esc&gt; or &lt;return&gt;.  Note: AUTOMAXX is still in
+         memory taking up about 120k, so the interpreter should be used
+         for only temporary access of DOS facilities.  To recover all
+         of available memory for large applications you should run the
+         application from the menu, i.e., make it a menu option via
+         AUTOMAXX.DAT.
+
+  <span class="hl">Files</span>  Press &lt;<span class="hl">F</span>&gt; to enter the file manager and DOS shell.  Please
+         refer to the description of features in the DOS Shell section.
+         Press Esc to return to the menu screen.
+
+   <span class="hl">Help</span>  The <span class="hl">H</span>elp facility.  Accessed by <span class="hl">&lt;alt&gt;h</span> or <span class="hl">H</span>elp from the menu. You
+         are here.</pre></div><br>
+<div class="screen" id="s14"><div class="bar">Screen 14 | Menu_Creation | SWITCHING DRIVES AND MONITORS </div><pre>  SWITCHING DRIVES AND MONITORS  
+
+
+
+    <span class="hl">Logged    </span>This feature allows you to change from one logical drive of your
+              system to another.  Press &lt;<span class="hl">L</span>&gt; to invoke this feature.
+
+    <span class="hl">Monitors</span>  Press &lt;<span class="hl">M</span>&gt; to switch all video output to another display.
+              This is for systems that have two video adapter cards, one
+              driving each display.  Useful when an auxiliary dislay is hooked
+              up to a laptop, or for the old XT&#x27;s which have both CGA and
+              a monchrome adapter cards.</pre></div><br>
+<div class="screen" id="s15"><div class="bar">Screen 15 | Menu_Creation | QUIT, REBUILDING TREE, and SYSTEM INFORMATION </div><pre>  QUIT, REBUILDING TREE, and SYSTEM INFORMATION  
+
+
+    <span class="hl">Quit</span>      To quit AUTOMAXX.  Type menu at any time to return to
+              AUTOMAXX.  This is the preferred method of exiting the AUTOMAXX
+              program.  Another way is to use a &#x27;DOS operating system&#x27; choice
+              in the menu.
+
+    <span class="hl">Rebuild</span>   This is the tree <span class="hl">R</span>ebuild feature.  Use this to force AUTOMAXX to
+              read the disk to construct a new tree.  This will be necessary
+              only if you have removed or added directories outside of AUTOMAXX
+              for example, during installation of some software packages.
+
+    <span class="hl">Sysinf</span>    The <span class="hl">S</span>ystem information feature provides information about the
+              computer system and the AUTOMAXX configuration parameters.  The
+              top window shows the system information. The bottom window shows
+              the current configuration of AUTOMAXX.  The configuration
+              parameters and switches can be changed by modifying menu.bat.</pre></div><br>
+<div class="screen" id="s16"><div class="bar">Screen 16 | Menu_Creation | VERSION, WHEREIS, AND EXEC </div><pre>  VERSION, WHEREIS, AND EXEC  
+
+
+
+    <span class="hl">Version   </span>Press &lt;<span class="hl">V</span>&gt; to display the copyright screen and software licensing
+              information.  The discounts available for Licensing multiple
+              copies of the software are shown.  For more information consult
+              the documentation.
+
+<span class="hl">    Whereis</span>   Press &lt;<span class="hl">W</span>&gt; to invoke the whereis file finder.  The disk will be
+              searched for all files matching a user defined mask.  The full
+              path, date and time of creation, and size of each file matching
+              the mask will be displayed.
+
+
+    <span class="hl">eXecute</span>   Press &lt;<span class="hl">X</span>&gt; to access a command line for user input of any DOS
+              executable command.  The command will be executed from AUTOMAXX.
+              When the process terminates you will be returned to AUTOMAXX.
+ 
+
+<span class="hl">
+Shell_System
+
+
+
+</span></pre></div><br>
+<div class="screen" id="s17"><div class="bar">Screen 17 | Menu_Creation | DOS SHELL SYSTEM </div><pre>  DOS SHELL SYSTEM  
+
+         ╔════════════════════════════════════════════════╗
+         ║     <span class="hl">Key                Function</span>                ║
+         ╟─────────────────┬──────────────────────────────╢
+         ║      <span class="hl">  /</span>        │  commands menu               ║
+         ║      <span class="hl">  B</span>        │  file backup                 ║
+         ║      <span class="hl">  C</span>        │  access tree                 ║
+         ║      &lt;<span class="hl">Del</span>&gt;      │  erase/wipe tagged files     ║
+         ║        <span class="hl">E</span>        │  Edit file                   ║
+         ║        <span class="hl">F</span>        │  file search mask            ║
+         ║      <span class="hl">  H</span>        │  Hex editor                  ║
+         ║      <span class="hl">  M</span>        │  Move tagged files           ║
+         ║        <span class="hl">L</span>        │  change Logged drive         ║
+         ║      <span class="hl">  N</span>        │  Name search                 ║
+         ║        <span class="hl">O</span>        │  cOpy tagged files           ║
+         ║      <span class="hl">  P</span>        │  Print file                  ║
+         ║      <span class="hl">&lt;Tab&gt;</span>      │  unerase &amp; unremove          ║</pre></div><br>
+<div class="screen" id="s18"><div class="bar">Screen 18 | Menu_Creation | DOS SHELL SYSTEM (continued) </div><pre>  DOS SHELL SYSTEM (continued) 
+
+         ╔════════════════════════════════════════════════╗
+         ║     <span class="hl">Key                Function</span>                ║
+         ╟─────────────────┬──────────────────────────────╢
+         ║        <span class="hl">R</span>        │  Rename file                 ║
+         ║      <span class="hl">  S</span>        │  Sort files                  ║
+         ║      <span class="hl">  T</span>        │  Tag options                 ║
+         ║      &lt;<span class="hl">space</span>&gt;    │  tag individual file(s)      ║
+         ║     <span class="hl">cursor keys</span> │  display directory of files  ║
+         ║        <span class="hl">U</span>        │  attribute/date/time editor  ║
+         ║        <span class="hl">V</span>        │  View file / zip listing     ║
+         ║      <span class="hl">  X</span>        │  eXecute command line        ║
+         ║        <span class="hl">Z  </span>      │  Zip program interface       ║
+         ║     &lt;<span class="hl">return</span>&gt;    │  run executable file         ║
+         ║      &lt;<span class="hl">Esc</span>&gt;      │  abort                       ║
+         ║   <span class="hl"> ^A .. ^Z</span>     │  invoke keyboard macro       ║
+         ╚═════════════════╧══════════════════════════════╝
+ 
+
+
+Alt_Menu</pre></div><br>
+<div class="screen" id="s19"><div class="bar">Screen 19 | Menu_Creation | The ALT-Menu </div><pre>  The ALT-Menu 
+
+ This menu of commands are <span class="hl">omnipresent</span> because they are available at any time
+ within AUTOMAXX.  Press and hold down &lt;<span class="hl">alt</span>&gt; then press the corresponding
+ <span class="hl">letter</span> to invoke one of the following commands:
+
+                         ╔══════════════════════════╗
+                         ║     &lt;alt&gt; Commands       ║
+                         ╟──────────────────────────╢
+                         ║  <span class="hl">C</span>alculator              ║
+                         ║  <span class="hl">D</span>os gateway             ║
+                         ║  <span class="hl">H</span>elp                    ║
+                         ║  ca<span class="hl">L</span>endar                ║
+                         ║  <span class="hl">R</span>ebuild tree            ║
+                         ║  <span class="hl">W</span>here is file finder    ║
+                         ║  e<span class="hl">X</span>tended Dir            ║
+                         ║  <span class="hl">Q</span>uit automaxx           ║
+                         ╚══════════════════════════╝</pre></div><br>
+<div class="screen" id="s20"><div class="bar">Screen 20 | Menu_Creation | The ALT-Menu </div><pre>  The ALT-Menu 
+
+    <span class="hl">&lt;alt&gt;C</span>    Press &lt;alt&gt;C to use the calculator.  Press &lt;Esc&gt; to quit.
+
+    <span class="hl">&lt;alt&gt;D</span>    This puts you into the AUTOMAXX command interpreter
+              where you may enter any DOS executable command.  To
+              exit the interpreter you must press &lt;Esc&gt; or
+              &lt;return&gt;. Note: If you want to access the regular
+              DOS command.com you should enter &#x27;command&#x27;, but
+              remember to enter &#x27;exit&#x27; when done.   Note: AUTOMAXX
+              is still in memory taking up about 120k, so the
+              interpreter should be used for only temporary access
+              of DOS facilities.  To recover all of available
+              memory for large applications you should run the
+              application from the menu, i.e., make it a menu
+              option via AUTOMAXX.DAT.
+
+    <span class="hl">&lt;alt&gt;H</span>    Access Help.</pre></div><br>
+<div class="screen" id="s21"><div class="bar">Screen 21 | Menu_Creation | The ALT-Menu </div><pre>  The ALT-Menu 
+
+    <span class="hl">&lt;alt&gt;L</span>    Access caLendar.
+
+    <span class="hl">&lt;alt&gt;R</span>    Press &lt;alt&gt;R to erase the &lt;drive&gt;:_tree.dat file
+              which contains the tree information that AUTOMAXX
+              writes to disk and subsequently uses to quickly
+              construct the tree.  This erasing makes AUTOMAXX
+              read the disk to construct a new tree and write a
+              new tree.dat file to disk.  When the tree needs to
+              be accessed AUTOMAXX first looks on the current
+              drive for the tree.dat file; if the file exixts it
+              will be used to instantly draw the tree, if it does
+              not, the current drive the tree will be rebuilt.
+              The &lt;alt&gt;R feature forces a new tree to be built;
+              this will be necessary only if you have removed or
+              added directories outside of AUTOMAXX, for example,
+              during installation of some software packages.</pre></div><br>
+<div class="screen" id="s22"><div class="bar">Screen 22 | Menu_Creation | The ALT-Menu </div><pre>  The ALT-Menu 
+
+
+
+    <span class="hl">&lt;alt&gt;W</span>    To invoke the &quot;where is&quot; file finder.
+
+    <span class="hl">&lt;alt&gt;X</span>    To access the eXtended DIRectory program, XDIR.EXE.
+
+    <span class="hl">&lt;alt&gt;Q</span>    To quit AUTOMAXX.  Type menu at any time to return to
+              AUTOMAXX.  This is the preferred method of exiting
+              the AUTOMAXX program.  Another way is the use a
+              &#x27;Dos operating system&#x27; choice in the menu.
+
+
+
+
+
+
+ 
+
+
+Tree</pre></div><br>
+<div class="screen" id="s23"><div class="bar">Screen 23 | Menu_Creation | THE GRAPHICAL TREE </div><pre> THE GRAPHICAL TREE 
+
+
+         ╔════════════════════════════════════════════════════════╗
+         ║         <span class="hl">Key                      Function</span>              ║
+         ╟─────────────────────┬──────────────────────────────────╢
+         ║    <span class="hl">cursor keys</span>      │  navigate the tree               ║
+         ║    <span class="hl">letter keys</span>      │  jump to subdirectory            ║
+         ║    &lt;<span class="hl">space</span>&gt;          │  move down the tree              ║
+         ║    &lt;<span class="hl">return</span>&gt;         │  select destination &amp; leave tree ║
+         ║   <span class="hl">^&lt;return&gt;</span>         │  select destination              ║
+         ║    <span class="hl">^M</span>               │  make subdirectory               ║
+         ║    <span class="hl">^R</span>               │  remove subdirectory             ║
+         ║    <span class="hl">^N</span>               │  rename subdirectory             ║
+         ║    &lt;<span class="hl">Esc</span>&gt;            │  leave tree                      ║
+         ╚═════════════════════╧══════════════════════════════════╝
+
+    <span class="hl">Press &lt;C&gt; to access the tree.
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</span></pre></div><br>
+<div class="screen" id="s24"><div class="bar">Screen 24 | Menu_Creation | THE GRAPHICAL TREE </div><pre> THE GRAPHICAL TREE 
+
+
+
+         The tree is accessed by pressing &lt;<span class="hl">C</span>&gt; for Change Directory.
+         When you first run AUTOMAXX after installation it will build
+         the tree on the hard disk when the tree is accessed for the
+         first time (via a Chdir or thru the cOpy or Move operations)
+         and write the tree information to the &lt;drive&gt;_tree.dat file
+         placed in the root directory of the disk.  When a subsequent
+         tree access occurs AUTOMAXX will load the tree file for
+         instant tree access.  The tree rebuild feature &lt;<span class="hl">alt</span>&gt;&lt;<span class="hl">R</span>&gt;
+         (accessed from the alt-menu not from the tree screen) is used
+         to force AUTOMAXX to build the tree rather than reading the
+         tree file.  You would want to rebuild the tree when you have
+         added or removed directories while not in AUTOMAXX such as
+         after installing software packages.</pre></div><br>
+<div class="screen" id="s25"><div class="bar">Screen 25 | Menu_Creation | THE GRAPHICAL TREE </div><pre> THE GRAPHICAL TREE 
+
+
+
+
+              When the tree is displayed you will see a graphical
+              display of the directory structure of the current
+              drive.  All directory management, including making
+              and removing directories, is done from the tree.
+              When the tree is first displayed the current
+              directory is marked by the block selector.  Move the
+              block selector with the cursor keys to the desired
+              destination path and press &lt;return&gt; to select.
+              Valid keys in the tree feature are shown on the
+              following screens.</pre></div><br>
+<div class="screen" id="s26"><div class="bar">Screen 26 | Menu_Creation | THE GRAPHICAL TREE </div><pre> THE GRAPHICAL TREE 
+
+
+    <span class="hl">/</span>         display commands menu.
+
+    <span class="hl">cursor</span>    maneuver up and down the tree, jump to its top,
+              jump to its bottom, page up, or page down the tree.
+
+    <span class="hl">A..Z</span>      jump to the next node on the tree whose name begins
+    <span class="hl">a..z</span>      with that letter.  This is a quick way to jump to
+              search for a particular path.  Press the letter again
+              to jump to the next match the destination is matched.
+
+    <span class="hl">&lt;return&gt;</span>  select destination and leave the tree.  Use
+              <span class="hl">^&lt;return&gt;</span> to select a destination without leaving
+              the tree.
+
+    <span class="hl">&lt;Esc&gt;</span>      leave the tree.</pre></div><br>
+<div class="screen" id="s27"><div class="bar">Screen 27 | Menu_Creation | THE GRAPHICAL TREE </div><pre> THE GRAPHICAL TREE 
+
+
+
+    <span class="hl">^M</span>        make subdirectory.  To make a subdirectory move the
+              block marker to the parent and press ^M, then input
+              the name of the new directory at the prompt.
+
+    <span class="hl">^R</span>        remove subdirectory.  Note that you cannot remove a
+              directory if it contains files or subdirectories.
+              You cannot remove thecurrent directory.  If you
+              wish to remove the current directory use ^enter to
+              change directory to another path and then move the
+              block marker to the desired directory and remove
+              it.
+
+    <span class="hl">^N</span>        rename directory.
+
+ 
+
+
+Configure</pre></div><br>
+<div class="screen" id="s28"><div class="bar">Screen 28 | Menu_Creation | CONFIGURING AUTOMAXX </div><pre>  CONFIGURING AUTOMAXX 
+
+
+    The file <span class="hl">MENU.BAT calls AUTOMAXX</span> with <span class="hl">optional</span> command line <span class="hl">switches</span>.  The
+    following logic is followed:
+
+    The switches and parameters may be specified in any order.  A switch  or
+    parameter must begin with one of the <span class="hl">switch characters</span> defined below.  If
+    more than one switch or parameter is used they must be separated by one or
+    more spaces.
+    If a parameter or switch is not used the <span class="hl">DEFAULT</span> is assumed.
+    MENU.BAT as before will contain         <span class="hl">┌────────────────────────────┐
+</span>    three lines with optional switches.     <span class="hl">│    ECHO OFF                │
+</span>    MENU.BAT and AUTOMAXX.EXE may be        <span class="hl">│    AUTOMAXX [c-] [f-] ...  │
+</span>    stored anywhere on the DOS path.        <span class="hl">│    AUTOTEMP                │
+</span>    The DOS path must include a path to     <span class="hl">└────────────────────────────┘
+</span>    environment so that DOS can execute the bat file, <span class="hl">autotemp.bat</span>.
+    AUTOMAXX writes to its environment.</pre></div><br>
+<div class="screen" id="s29"><div class="bar">Screen 29 | Menu_Creation | CONFIGURATION SWITCHES </div><pre>  CONFIGURATION SWITCHES  
+
+
+           ╔═════════════════════════════════════════════════════════╗
+           ║    <span class="hl">Switch           Function             Default</span>        ║
+           ╟───────────────┬────────────────────┬────────────────────╢
+           ║   <span class="hl">c-</span>          │ disable color      │                    ║
+           ║   <span class="hl">d-</span>          │ disable file erase │                    ║
+           ║  <span class="hl"> f-</span>          │ disable file Mgr   │                    ║
+           ║   <span class="hl">m-</span>          │ disable menu       │                    ║
+           ║  <span class="hl"> q-</span>          │ disable quit       │                    ║
+           ║  <span class="hl"> t-</span>          │ disable clock      │                    ║
+           ║  <span class="hl"> x-</span>          │ disable DOS access │                    ║
+           ║  <span class="hl"> a=n </span>        │ search attribute   │  a=7               ║
+           ║  <span class="hl"> e=path</span>      │ environment        │  e=C:\             ║
+           ║  <span class="hl"> k=n</span>         │ typematic rate     │  k=11              ║
+           ║  <span class="hl"> i=n</span>         │ typematic delay    │  i=2               ║
+           ╚═══════════════╧════════════════════╧════════════════════╝</pre></div><br>
+<div class="screen" id="s30"><div class="bar">Screen 30 | Menu_Creation | CONFIGURATION SWITCHES (continued) </div><pre>  CONFIGURATION SWITCHES (continued) 
+
+
+           ╔═════════════════════════════════════════════════════════╗
+           ║    <span class="hl">Switch           Function             Default</span>        ║
+           ╟───────────────┬────────────────────┬────────────────────╢
+           ║  <span class="hl"> m=pathname</span>  │ dat file pathname  │  m=C:\AUTOMAXX.DAT ║
+           ║  <span class="hl"> s=n</span>         │ screen save delay  │  s=3               ║
+           ║  <span class="hl"> o=n</span>         │ mouse sensitivity  │  o=24              ║
+           ║ <span class="hl">  t=string</span>    │ INITIAL sort keys  │  t=spnaseag        ║
+           ║  <span class="hl"> v=pathname</span>  │ 1st editor (view)  │                    ║
+           ║ <span class="hl">  w=pathname</span>  │ 2nd editor (edit)  │                    ║
+           ╚═══════════════╧════════════════════╧════════════════════╝</pre></div><br>
+<div class="screen" id="s31"><div class="bar">Screen 31 | Menu_Creation | MENU.BAT </div><pre>  MENU.BAT  
+
+
+                                              <span class="hl">┌──────────────────┐
+</span>    The default menu.bat supplied on the      <span class="hl">│   echo off       │
+</span>    program disk calls AUTOMAXX with          <span class="hl">│   automaxx       │
+</span>    switch settings and parameters set        <span class="hl">│   autotemp       │
+</span>    to their defaults.                        <span class="hl">└──────────────────┘
+
+
+</span>    <span class="hl">EXAMPLE</span>:
+                 <span class="hl">automaxx k=31 v=c:\ed.exe t=spddg 
+
+</span>    The <span class="hl">keyboard repeat speed</span> will be set at maximum.  The <span class="hl">View feature
+</span>    will use the editor program, ed.exe, assumed to be stored in the root
+    directory of drive C.  The files will be <span class="hl">sorted latest files first</span>.
+    Other parameters are set to the defaults.  You define the configuration
+    that meets your specific needs.</pre></div><br>
+<div class="screen" id="s32"><div class="bar">Screen 32 | Menu_Creation | AUTOEXEC.BAT </div><pre>  AUTOEXEC.BAT  
+
+
+     An <span class="hl">AUTOEXEC.BAT</span> good for fixed disk systems with AUTOMAXX.EXE
+     and MENU.BAT located on the root directory of drive C: might be
+
+     <span class="hl">┌────────────────────────────┐
+</span>     <span class="hl">│ ECHO OFF                   │</span> &lt;- Don&#x27;t display commands
+     <span class="hl">│ PROMPT $P$G                │</span> &lt;- Prompt to show present sub-directory
+     <span class="hl">│ PATH=C:\                   │</span> &lt;- Path to root directory of drive C:
+     <span class="hl">│ MENU                       │</span> &lt;- Execute AUTOMAXX batch file
+     <span class="hl">└────────────────────────────┘
+
+</span>     The path statement should include a path to AUTOMAXX.EXE
+     and MENU.BAT so DOS can find them.  This will enable AUTOMAXX to
+     be started at boot-up time, and also at the DOS prompt by typing
+     &#x27;menu&#x27; &lt;return&gt; from any logical drive drive within your system.</pre></div><br>
+<div class="screen" id="s33"><div class="bar">Screen 33 | Menu_Creation | COLOR INSTALLATION </div><pre>  COLOR INSTALLATION  
+
+
+
+         The program <span class="hl">SETUP.EXE</span> is used to customize the colors of
+         AUTOMAXX.
+
+         The <span class="hl">COLORS</span> on the menu and file manager screens can be
+         defined.  Some stunning color displays can be quickly and
+         easily created.  The blinking white block marks the currently
+         selected area of the screen.  The left and right cursor keys
+         select the foreground color while the up and down cursor keys
+         select background colors.  The return key confirms the color
+         selection and moves to the next area of the screen.   Press
+         ESC to return to the main menu where you may save the changes.</pre></div><br>
+<div class="screen" id="s34"><div class="bar">Screen 34 | Mouse | The MOUSE Interface </div><pre>  The MOUSE Interface  
+
+
+
+
+    AUTOMAXX v3.3 supports a mouse.  The mouse interface uses the left
+    and right mouse buttons.
+
+
+    RIGHT MOUSE BUTTON
+
+        Clicking the right mouse button opens a popup menu and is used
+    to escape from it.  This button is used otherwise as an escape
+    device much as the &lt;Esc&gt; key is used.</pre></div><br>
+<div class="screen" id="s35"><div class="bar">Screen 35 | Mouse | The MOUSE Interface </div><pre>  The MOUSE Interface  
+
+
+    LEFT MOUSE BUTTON
+
+    Main Menu    -- click this button to select a menu option.
+
+    File Manager -- click this button once to tag a file, or click it twice
+                    to execute a file, or press this button while moving
+                    the mouse up or down to tag several files at once.
+
+                    When a popup menu is opened (by clicking the right
+                    mouse button) clicking the left button selects a choice.
+                    In the tree clicking this button selects a subdirectory.
+
+    Viewer       -- click the left button to scroll forward,
+                    or click the right button to scroll backward,
+                    or click both to return to the file manager.</pre></div><br>
+<div class="screen" id="s36"><div class="bar">Screen 36 | Mouse | The MOUSE Interface </div><pre>  The MOUSE Interface  
+
+
+        That&#x27;s all there is to the mouse.  Just remember the right button
+    opens a popup menu in which case the left button selects a choice
+    or the right button closes the popup menu.  Outside of popup menus
+    the left button is used to select an option from the main menu screen,
+    or to tag or execute files in the file manager.  Otherwise the left
+    button is used to confirm operations much as the &lt;return&gt; key, and the
+    right button is used to abort operations like the &lt;Esc&gt; key.
+
+    MOUSE SENSITIVITY
+
+    To adjust sensitivity use the command line switch O=nm
+    where: n is horizontal, and m is vertical sensitivity.  The numbers m
+    and n must be in the range 1 to 9.  The higher number the greater the
+    sensitivity.
+    DEFAULT: o=24
+ 
+
+
+Macros</pre></div><br>
+<div class="screen" id="s37"><div class="bar">Screen 37 | Mouse | KEYBOARD MACROS </div><pre>  KEYBOARD MACROS  
+
+
+   It is easy to build and invoke keyboard macros.  A macro is a string of
+   characters enclosed within double quotes for example, <span class="hl">&quot;string&quot;</span>.  The
+   characters are ones that you would normally type at the keyboard to
+   access the features of AUTOMAXX.  The <span class="hl">macros are defined in the DAT file 
+   and use the &#x27;^&#x27; character prefix</span>.  A macro is assigned to one of the
+   ctrl keys <span class="hl">^A, ^B, ..., ^Z</span> in its definition.  There are therefore 26
+   different macros that can be accessed by AUTOMAXX at a given time.  A
+   macro string is restricted to 50 characters.  Some typical keyboard
+   macros defined for the keys ^E, ^L, and ^Z might be:
+
+   EXAMPLE:   <span class="hl">^E &quot;xed \%\|\[&quot;      
+              ^L &quot;xlist \%\|\[&quot; 
+              ^Z &quot;xpkunzip \%\|&quot; 
+
+</span>  Refer to the sample.dat listing for an example keyboard macro list.
+ 
+
+
+Chdir</pre></div><br>
+<div class="screen" id="s38"><div class="bar">Screen 38 | Mouse | Change Directory </div><pre>  Change Directory  
+
+
+
+
+
+
+         Press &lt;<span class="hl">C</span>&gt; to select this feature.This feature displays a full
+         featured tree for maneuvering around the disk.  Select
+         destination by using cursor keys or press first letter of
+         destination subdirectory, then press &lt;return&gt; to confirm.
+         Other key functions are discussed in the section &quot;Using the
+         Graphical <span class="hl">TREE</span>.
+
+
+
+
+
+ 
+
+
+cOpy</pre></div><br>
+<div class="screen" id="s39"><div class="bar">Screen 39 | Mouse | FILE BACKUP, COPY, and HEX EDITOR </div><pre>  FILE BACKUP, COPY, and HEX EDITOR 
+
+
+     <span class="hl">Bak</span>      Press &lt;<span class="hl">B</span>&gt; to invoke the backup feature to make a copy of the
+              current file within the current directory.  A different name
+              must be used or the error message &#x27;a file cannot be copied
+              onto itself&#x27; will be given.  You are prompted for the file name.
+
+     <span class="hl">cOpy</span>     The tagged files are c<span class="hl">O</span>pied to the drive and subdirectory
+              selected.  Confirm with &lt;<span class="hl">y</span>&gt; or &lt;<span class="hl">return</span>&gt; to copy files
+              to the selected destination.  All matching files
+              will be overwritten unless you select one of the
+              other copy options.  Select <span class="hl">N</span>o to cancel.  Press
+              &lt;<span class="hl">Esc</span>&gt; to interrupt when copying is underway.
+
+    <span class="hl"> Hexed</span>    Press &lt;<span class="hl">H</span>&gt; to edit the bytes of the hilited file.  Press
+              &lt;F1&gt; for help, &lt;Esc&gt; or &lt;F10&gt; to exit.
+
+ 
+
+
+Del/Wipe</pre></div><br>
+<div class="screen" id="s40"><div class="bar">Screen 40 | Mouse | FILE ERASE/WIPE and FILTER </div><pre>  FILE ERASE/WIPE and FILTER  
+
+
+<span class="hl">&lt;Del&gt;</span>    The &lt;<span class="hl">Del</span>&gt; key activates this option.  The tagged files are
+         <span class="hl">erased</span> if you confirm with &lt;<span class="hl">y</span>&gt;, <span class="hl">wiped</span> first then erased if you
+         confirm with &lt;<span class="hl">w</span>&gt;, or left alone if you press &lt;<span class="hl">n</span>&gt;.  Only
+         read/write files can be erased/wiped.
+
+<span class="hl">Filter</span>   Press &lt;<span class="hl">F</span>&gt; to alter the file mask which will be used for file searches.
+         The Filter option then prompts for the mask.  All DOS masks
+         are supported.  The files will then be listed that satisfy the
+         mask.  Note that all subsequent file management will use this
+         mask until another one is specified with the Filter option.
+         The default mask at start-up is *.*.  To have the file manager
+         display, for example, only EXE files you would input the mask
+         *.exe.  All DOS wild-card characters are allowed in a mask
+         specification.
+
+ 
+
+
+Move</pre></div><br>
+<div class="screen" id="s41"><div class="bar">Screen 41 | Mouse | FILE MOVE and INCREMENTAL SEARCH </div><pre>  FILE MOVE and INCREMENTAL SEARCH  
+
+
+
+<span class="hl">Move     </span>Press &lt;<span class="hl">M</span>&gt; to move the tagged files to the selected destination. Files
+         with the system, hidden, or directory attributes set cannot be moved,
+         beep will be sounded instead.
+
+<span class="hl">Name     </span>Press &lt;<span class="hl">N</span>&gt; to quickly locate file(s) within the files display.  This is
+         an incremental search facility, that is, it searches after each
+         character input and waits for the next input.  The prompt &#x27;Name search
+         _&#x27; appears at which you enter a character at a time.  The file search
+         will begin after each character input; a matching file will be hilited
+         or a beep will be sounded indicating no match to the string.  If a
+         match is found you ma press &lt;space&gt; for the next match to the string
+         input so far, or enter another character to initiate another search fo
+         the expanded string.  Press &lt;return&gt; or the arrow keys to reset.
+
+ 
+
+
+Print</pre></div><br>
+<div class="screen" id="s42"><div class="bar">Screen 42 | Mouse | THE FILE PRINT FEATURE </div><pre>  THE FILE PRINT FEATURE  
+
+
+
+
+<span class="hl">Print    </span>The &lt;<span class="hl">P</span>&gt;rint menu is displayed.  This option will allow you to access
+         the full range of features that today&#x27;s printers provide.  If the file
+         is a text file it can be sent to the printer device.  The printer can
+         be set-up using the options in the print menu that is loaded
+         automatically if the file AUTOMAXX.PDF, is in the environment.  The
+         setup file is a text file that contains printer setup options, each
+         followed by the printer control codes for that option.  You may create
+         printer setup files for any printer.  Included are printer setup files
+         for Okidata, Epson, Gemini, Citizen, and HP series printers.
+
+
+
+
+ 
+
+
+Unerase</pre></div><br>
+<div class="screen" id="s43"><div class="bar">Screen 43 | Mouse | FILE UNERASE, DIRECTORY UNREMOVE </div><pre>  FILE UNERASE, DIRECTORY UNREMOVE  
+
+
+<span class="hl">&lt;Tab&gt;    </span>Unerase &amp; Unremove.  Press <span class="hl">&lt;Tab&gt;</span> to invoke the alternate
+         files display.  A map of the disk space used by each
+         file/subdirectory is shown.  Files can be <span class="hl">unerased</span> and
+         subdirectories can be <span class="hl">unremoved</span> from this display. A list of
+         all normal files, erased files, normal subdirectories, and
+         removed subdirectories in the current directory will be
+         displayed.  Select files (subdirectories) which can be
+         unerased (unremoved) by using the space bar.  To select an
+         entry (erased file or removed subdirectory) tag it with the
+         &lt;space&gt; bar, then input the first letter of the entry&#x27;s name.
+         Repeat this process for the desired entries then press <span class="hl">&lt;ESC&gt;
+</span>         or <span class="hl">&lt;-</span> to quit.  To complete the procedure answer &lt;Y&gt; to
+         confirm or &lt;N&gt; to quit and ignore the changes.  You will be
+         returned to the files display with the new entry(s) shown in
+         the listing.
+ 
+
+
+Point</pre></div><br>
+<div class="screen" id="s44"><div class="bar">Screen 44 | Mouse | Point and Shoot </div><pre>  Point and Shoot  
+
+    This is the <span class="hl">point and shoot feature</span> of AUTOMAXX.  Pressing &lt;<span class="hl">return</span>&gt;
+    produces a result dependent on the type of file which is currently
+    hilited:
+
+    <span class="hl">EXE, COM and BAT</span> files -- <span class="hl">LOADS AND EXECUTE</span> the file as a child process
+    of AUTOMAXX.  The file must be an executable file (one with &#x27;exe&#x27;,
+    &#x27;com&#x27;, or &#x27;bat&#x27; extension).  The command line will prompt you for
+    optional parameter input for executable files.  Press Esc if you desire
+    to abort at the command line.
+
+    <span class="hl">BAS</span> files -- <span class="hl">RUNS Basic programs</span> (ones with &#x27;bas&#x27; extension).  The basic
+    interpreter, BASICA, will be automatically loaded to run a basic
+    program.  A path must be set so the basic interpreter can be found if it
+    is not in ROM.  You will have to rename GWBASICA.EXE to BASICA.EXE.
+    When the process terminates you will be returned to the same place you
+    were when you left AUTOMAXX.
+ 
+
+
+Sort</pre></div><br>
+<div class="screen" id="s45"><div class="bar">Screen 45 | Mouse | RENAME and SORT </div><pre>  RENAME and SORT  
+
+
+
+
+     <span class="hl">Ren</span>       Press &lt;<span class="hl">R</span>&gt; to rename a file.
+
+     <span class="hl">Sort</span>      Press &lt;<span class="hl">S</span>&gt; to invoke the sort option for sorting files.  Both
+               a primary and secondary sort key can be selected for file
+               sorts.  The initial sort keys can be specified with the
+               /t switch (see configuring AUTOMAXX).  The unsort key will
+               display the files in the original DOS order.  The reset
+               key will sort files using the default sort keys.
+
+
+
+
+
+ 
+
+
+Tag</pre></div><br>
+<div class="screen" id="s46"><div class="bar">Screen 46 | Mouse | TAGGING FILES </div><pre>  TAGGING FILES  
+
+<span class="hl">Tag</span>      Press &lt;<span class="hl">T</span>&gt; to invoke a menu of tag options, then select one of the
+         following options for tagging files:
+
+           ┌────────────┬──────────────────────────────────────────┐
+           │ <span class="hl">A</span>ll        │ tag all files                            │
+           │ <span class="hl">B</span>ackwards  │ tag files up to the current file         │
+           │ <span class="hl">C</span>omplement │ untagged files are tagged and vice-versa │
+           │ <span class="hl">F</span>orwards   │ tag files beginning with current file    │
+           │ <span class="hl">M</span>ask       │ input a mask for tagging                 │
+           │ <span class="hl">N</span>one       │ untag all files                          │
+           └────────────┴──────────────────────────────────────────┘
+
+         The cOpy, &lt;Del&gt;, Move, and Util options require file(s) to be tagged.
+
+<span class="hl">&lt;space&gt;</span>  Press &lt;space&gt; key to tag or untag single files or consecutive
+         files.
+ 
+
+<span class="hl">
+Util
+
+
+
+
+
+
+
+
+
+
+
+</span></pre></div><br>
+<div class="screen" id="s47"><div class="bar">Screen 47 | Mouse | UTILITY MENU </div><pre>  UTILITY MENU  
+
+
+
+
+    Press <span class="hl">U</span>til to access the file utility menu for changing attributes, alterin
+the time and date of file creation, touching files with the current system time
+and date, or encrypting/decrypting files.
+
+           ┌────────────┬──────────────────────────────────────────┐
+           │ <span class="hl">A</span>ttribute  │ modify attributes                        │
+           │ <span class="hl">D</span>ate       │ modify date of creation                  │
+           │ <span class="hl">T</span>ime       │ modify time of creation                  │
+           │ <span class="hl">S</span>tamp      │ Touch all files with system time &amp; date  │
+           │ <span class="hl">E</span>ncrypt    │ Encrypt/decrypt files                    │
+           │ <span class="hl">Q</span>uit       │ quit and save A, D, T, and S options     │
+           └────────────┴──────────────────────────────────────────┘</pre></div><br>
+<div class="screen" id="s48"><div class="bar">Screen 48 | Mouse | UTILITY MENU (continued) </div><pre>  UTILITY MENU (continued) 
+
+    <span class="hl">A</span>ttribute Enter a four character string consisting of the characters
+              [<span class="hl">rhsa.</span>].  Use the period &#x27;.&#x27; to turn off an attribute. For
+              example, to make the tagged files read-only and set the archive
+              bit, you would enter the string <span class="hl">r..a</span>.
+
+    <span class="hl">D</span>ate      Enter a date string using the format <span class="hl">mm-dd-yy</span>.
+
+    <span class="hl">T</span>ime      Enter a time string in the format <span class="hl">hh:mm:ss</span>.
+
+    <span class="hl">S</span>tamp     This is the touch facility.  Press &lt;<span class="hl">S</span>&gt; to stamp files.  To exit
+              the utility and record the changes made with the A, D, T, and S
+              options you must select Go to confirm the changes.  To quit and
+              ignore the changes just press &lt;ESC&gt;.
+
+    <span class="hl">E</span>ncrypt   Press &lt;<span class="hl">E</span>&gt; to encrypt files.  See the documentation for a complete
+              description of this powerful yet dangerous option.
+ 
+
+
+View</pre></div><br>
+<div class="screen" id="s49"><div class="bar">Screen 49 | Mouse | VIEW </div><pre>  VIEW  
+
+
+
+     <span class="hl">View</span>     Press &lt;<span class="hl">V</span>&gt; to display a text file for browsing or
+              editing.  The filename will be passed to the editor
+              you have defined by the parameter /v=pathname in
+              command line configuration of AUTOMAXX.  If you have
+              not defined an editor an internal view facility will
+              be used.  You may configure AUTOMAXX to load your
+              word processor automatically for editing and
+              browsing text files.  Also, if the file has ZIP
+              extension the filename will be passed to an PKZIP
+              (tm) compatible program for a verbose listing.
+
+
+
+
+ 
+
+
+Where</pre></div><br>
+<div class="screen" id="s50"><div class="bar">Screen 50 | Mouse | WHEREIS FILE FINDER </div><pre>  WHEREIS FILE FINDER  
+
+
+
+
+    <span class="hl">Whereis</span>   Press <span class="hl">&lt;alt&gt;W</span> to invoke the file finder, or press <span class="hl">W
+</span>              to invoke it from the menu.  For example to find all
+              occurrences of the file named &#x27;ed.exe&#x27; on the
+              current disk you would input this at the prompt.
+              All directories of the disk will be searched and all
+              paths to this file will be listed.  You may use DOS
+              wild card searches too, i.e., &#x27;*.com&#x27; would list all
+              paths to files with &#x27;com&#x27; extension.
+
+
+
+
+
+ 
+
+
+eXec</pre></div><br>
+<div class="screen" id="s51"><div class="bar">Screen 51 | Mouse | Command line eXec </div><pre>  Command line eXec  
+
+
+    <span class="hl">eXec      </span>Press &lt;<span class="hl">X</span>&gt; to access a command line prompt to which any
+              DOS executable command may be entered.  The command will
+              then be passed to a copy of the command interpreter and
+              executed by DOS.  This feature presents the user with a
+              command line prompt to which any executable command may
+              be entered, i.e., a DOS command, a user program, a bat
+              file, etc.  AUTOMAXX stays resident while the command is
+              executed so that you are returned instantly to AUTOMAXX
+              when execution terminates.
+
+    Note:     <span class="hl">&lt;alt&gt;D </span>is a <span class="hl">DOS gateway</span> to the command processor, too.
+              If you need to perform several DOS commands, this gateway may
+              be best.  When done, be sure to type exit and press &lt;return&gt;
+              to pass back thru the gateway to AUTOMAXX. Both features may
+              be disabled by using the switch x-.
+ 
+
+
+xdir</pre></div><br>
+<div class="screen" id="s52"><div class="bar">Screen 52 | Mouse | XtenDIR </div><pre>  XtenDIR  
+
+
+
+
+         Press <span class="hl">&lt;alt&gt; X</span> to invoke the extended directory program,
+         XDIR.EXE v1A, created by the Computer Enhancement Group for
+         AUTOMAXX.  The program, <span class="hl">XDIR, </span>is an <span class="hl">extended directory program
+</span>         that presents the user with a full screen editor that can be
+         used to write a note about each directory entry.  Press &lt;F1&gt;
+         within XDIR for help.  It supports all the usual editor
+         commands, including undo.  XDIR can be run as a stand alone
+         program, too.
+
+
+
+
+
+ 
+
+
+zip</pre></div><br>
+<div class="screen" id="s53"><div class="bar">Screen 53 | Mouse | ZIP -- File Compression Interface </div><pre>  ZIP -- File Compression Interface  
+
+
+         This is the file compression facility.  It uses the PKZIP file
+         compression utility (Note: The user is required to have the
+         PKZIP (tm) program and it must reside somewhere on the DOS
+         path for AUTOMAXX to access it).  The user is prompted for the
+         PKZIP command line including any optional parameters.  The
+         command line with tagged files are then passed to the PKZIP
+         program for file compression.  During compression the &quot;WAIT&quot;
+         signal will flash in the upper right corner of the AUTOMAXX
+         screen.  When the archive is created the tagged files can be
+         erased if desired, otherwise to see the newly created ZIP file
+         you must refresh the directory list by &lt;L&gt;ogging to the
+         current drive again.
+
+
+
+■</pre></div><br>
+</body></html>

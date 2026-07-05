@@ -92,3 +92,13 @@ Thumbs.db
 *.dylib
 *.test
 *.out
+
+# Generated/scratch artifacts
+__pycache__/
+*.bak
+*:Zone.Identifier
+examples/DBtui/examples/StarWord/*.zip
+examples/DBtui/examples/StarWord/dist/*.zip
+examples/DBtui/examples/StarWord/dist/*.pdf
+examples/DBtui/examples/StarWord/untitled.*
+examples/DBtui/examples/StarWord/myTest.WSu
