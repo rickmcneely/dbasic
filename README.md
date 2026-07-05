@@ -86,9 +86,21 @@ Options:
   -v                    Verbose output
   --target os/arch      Cross-compile (e.g. windows/amd64, linux/arm64)
   --offline             Build using only cached Go modules
+  --allow-external-includes
+                        Permit INCLUDE outside the project dir (off by default)
   -w                    Write formatted output back to file (fmt only)
   -l                    List files needing formatting (fmt only)
 ```
+
+## Security / Trust Model
+
+DBasic is a compiler-and-runtime, so treat a `.dbas` file the way you would treat a shell script: **only build or run sources you trust.** The security properties are:
+
+- **`build`, `run`, and `test` execute code.** They transpile to Go, run `go mod tidy` (which may **download the Go modules the program imports** from the network), and then execute the result. A hostile `.dbas` can import any Go package and run arbitrary commands — this is inherent to the language's goal of using *all* Go packages, not a bug. Do not `dbasic run` a file from an untrusted source.
+- **`check`, `fmt`, `emit`, and `doc` do not execute your program** and do not fetch modules. They only read the source (and any files it `INCLUDE`s). The `dbasic-lsp` language server likewise never executes code, fetches modules, or follows `INCLUDE` — it analyzes the open document in memory. These are safe to run on files you have not vetted.
+- **`INCLUDE` is confined to the project directory.** By default a `.dbas` file may only `INCLUDE` files at or below the directory of the top-level file passed on the command line. Absolute paths and `../` traversal (e.g. `INCLUDE "/etc/passwd"`) are rejected, so merely *checking* or *formatting* an untrusted file cannot be used to read arbitrary files off your disk. Pass `--allow-external-includes` to opt out when you have a legitimate need to include files from outside the project. (Confinement is lexical; it does not resolve symlinks that already live inside the project.)
+- **No shell injection in the toolchain.** The compiler invokes `go` with explicit arguments (never a shell string), writes generated code to a private `0700` temp directory, and applies cross-compile targets via `GOOS`/`GOARCH` environment variables. Generated Go string literals are escaped, so source text cannot break out into generated code.
+- **`Shell()` / `ShellExec()` are your program's responsibility.** These language built-ins run commands on behalf of the *compiled program* (via `/bin/sh -c` for `Shell`). If your program passes untrusted data to them, quote/validate it yourself — `ShellExec` splits arguments on whitespace and does no quoting.
 
 ### Editor Support
 

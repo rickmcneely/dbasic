@@ -24,13 +24,14 @@ import (
 const version = "0.2.0"
 
 var (
-	debugMode   bool
-	verboseMode bool
-	outputFile  string
-	targetSpec  string
-	offlineMode bool
-	fmtWrite    bool
-	fmtList     bool
+	debugMode             bool
+	verboseMode           bool
+	outputFile            string
+	targetSpec            string
+	offlineMode           bool
+	fmtWrite              bool
+	fmtList               bool
+	allowExternalIncludes bool
 )
 
 func main() {
@@ -50,6 +51,7 @@ func main() {
 	flagSet.BoolVar(&offlineMode, "offline", false, "Build using only cached Go modules (sets GOPROXY=off and pins to the latest cached versions; useful when proxy.golang.org is unreachable)")
 	flagSet.BoolVar(&fmtWrite, "w", false, "Write formatted output back to source file (fmt only)")
 	flagSet.BoolVar(&fmtList, "l", false, "List files whose formatting differs from the formatter's output (fmt only)")
+	flagSet.BoolVar(&allowExternalIncludes, "allow-external-includes", false, "Permit INCLUDE of files outside the project directory (absolute paths or ../ traversal). Off by default for safety.")
 
 	switch command {
 	case "build":
@@ -82,6 +84,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: dbasic check <file.dbas>")
 			os.Exit(1)
 		}
+		flagSet.Parse(os.Args[3:])
 		check(os.Args[2])
 	case "fmt", "format":
 		if len(os.Args) < 3 {
@@ -414,6 +417,10 @@ func printUsage() {
 	fmt.Println("  -o <file>             Output file name (for build)")
 	fmt.Println("  -debug                Include source line comments in output")
 	fmt.Println("  -v                    Verbose output")
+	fmt.Println("  --target os/arch      Cross-compile (e.g. windows/amd64, linux/arm64)")
+	fmt.Println("  --offline             Build using only cached Go modules")
+	fmt.Println("  --allow-external-includes")
+	fmt.Println("                        Permit INCLUDE outside the project dir (off by default)")
 	fmt.Println("")
 	fmt.Println("Examples:")
 	fmt.Println("  dbasic build hello.dbas           # Creates hello executable")
@@ -457,6 +464,7 @@ func compile(filename string) (*CompileResult, error) {
 
 	// Preprocess (handle INCLUDE directives)
 	pp := preprocessor.New(filepath.Dir(filename))
+	pp.SetAllowExternal(allowExternalIncludes)
 	ppResult, err := pp.Process(filename)
 	if err != nil {
 		return nil, err

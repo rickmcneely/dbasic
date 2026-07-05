@@ -699,14 +699,15 @@ END SUB
 ### Path Resolution
 
 - Paths are relative to the including file's directory
-- Absolute paths are also supported
 - File extension should be `.dbas`
+- **Includes are confined to the project directory.** By default a file may only `INCLUDE` targets at or below the directory of the top-level file passed on the command line. Absolute paths and `../` traversal that escape the project are rejected — this prevents an untrusted `.dbas` from reading files like `/etc/passwd` when it is merely `check`ed or `fmt`ted. Pass `--allow-external-includes` to opt out.
 
 ```basic
-' Relative to current file
+' Relative to current file — allowed
 INCLUDE "utils/helpers.dbas"
 
-' Parent directory
+' Parent directory — blocked by default (escapes the project root).
+' Build/check with --allow-external-includes to permit it.
 INCLUDE "../common/shared.dbas"
 ```
 

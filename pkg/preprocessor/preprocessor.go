@@ -18,19 +18,21 @@ type SourceMapping struct {
 
 // Result contains the preprocessed source and metadata.
 type Result struct {
-	Source      string
-	LineMap     []SourceMapping // Maps output line number to original file:line
-	MainFile    string
+	Source        string
+	LineMap       []SourceMapping // Maps output line number to original file:line
+	MainFile      string
 	IncludedFiles []string
 }
 
 // Preprocessor handles INCLUDE directives and other preprocessing.
 type Preprocessor struct {
-	baseDir      string
-	includedSet  map[string]bool // Track included files to prevent circular includes
-	includedList []string        // Ordered list of included files
-	lineMap      []SourceMapping
-	errors       []string
+	baseDir       string
+	rootDir       string          // Project root; INCLUDE targets are confined here unless allowExternal
+	allowExternal bool            // When true, INCLUDE may reference files outside rootDir
+	includedSet   map[string]bool // Track included files to prevent circular includes
+	includedList  []string        // Ordered list of included files
+	lineMap       []SourceMapping
+	errors        []string
 }
 
 // New creates a new preprocessor with the given base directory.
@@ -41,6 +43,33 @@ func New(baseDir string) *Preprocessor {
 	}
 }
 
+// SetAllowExternal controls whether INCLUDE directives may reference files
+// outside the project directory (absolute paths or ../ traversal). It is off
+// by default: reading files outside the project is a path-traversal/exfiltration
+// risk when tooling (check, doc, emit) is run on an untrusted .dbas file.
+func (p *Preprocessor) SetAllowExternal(v bool) {
+	p.allowExternal = v
+}
+
+// escapesRoot reports whether the given (possibly relative) include path
+// resolves to a location outside the project root. Comparison is lexical
+// (after filepath.Abs + Clean); symlinks are not resolved.
+func (p *Preprocessor) escapesRoot(path string) (bool, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(p.rootDir, abs)
+	if err != nil {
+		// Different volume (e.g. C:\ vs D:\ on Windows) — treat as an escape.
+		return true, nil
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return true, nil
+	}
+	return false, nil
+}
+
 // Process preprocesses the source file, expanding INCLUDE directives.
 func (p *Preprocessor) Process(filename string) (*Result, error) {
 	absPath, err := filepath.Abs(filename)
@@ -48,8 +77,10 @@ func (p *Preprocessor) Process(filename string) (*Result, error) {
 		return nil, fmt.Errorf("cannot resolve path '%s': %v", filename, err)
 	}
 
-	// Set base directory from the main file's location
+	// Set base directory from the main file's location. This is also the
+	// project root that INCLUDE targets are confined to (unless allowExternal).
 	p.baseDir = filepath.Dir(absPath)
+	p.rootDir = p.baseDir
 
 	source, err := p.processFile(absPath, 0)
 	if err != nil {
@@ -118,6 +149,21 @@ func (p *Preprocessor) processFile(filename string, depth int) (string, error) {
 			// Resolve the include path relative to the current file
 			if !filepath.IsAbs(includePath) {
 				includePath = filepath.Join(fileDir, includePath)
+			}
+
+			// Confine includes to the project directory unless explicitly
+			// allowed. Blocks absolute paths and ../ traversal that would let
+			// an untrusted .dbas pull in files like /etc/passwd.
+			if !p.allowExternal {
+				esc, escErr := p.escapesRoot(includePath)
+				if escErr != nil {
+					p.errors = append(p.errors, fmt.Sprintf("%s:%d: cannot resolve INCLUDE \"%s\": %v", baseName, lineNum, matches[1], escErr))
+					continue
+				}
+				if esc {
+					p.errors = append(p.errors, fmt.Sprintf("%s:%d: INCLUDE \"%s\" escapes the project directory %s (pass --allow-external-includes to permit)", baseName, lineNum, matches[1], p.rootDir))
+					continue
+				}
 			}
 
 			// Add a comment showing where the include came from (useful for debugging)
