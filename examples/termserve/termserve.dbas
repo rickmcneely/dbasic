@@ -1,0 +1,270 @@
+' =========================================================================
+' termserve — host a DBasic "TermApp" over SSH, written in DBasic.
+' =========================================================================
+'
+' WHAT IS A TERMAPP?
+'   A TermApp is a normal DBasic terminal program (a Charm bubbletea app)
+'   that RUNS ON A SERVER instead of on each person's computer. People
+'   connect to it over SSH and drive it in their own terminal — but the
+'   program itself lives in one place. That means everyone always runs the
+'   current version, your data and secrets stay on the server, and there is
+'   nothing for anyone to install except an SSH client they already have.
+'
+' HOW DOES IT WORK? (the ELI5 version)
+'   A DBasic TUI only ever does two simple things:
+'       * it reads keystrokes coming IN, and
+'       * it draws the screen by sending characters OUT.
+'   Those two streams are exactly what a terminal sends down a wire. So
+'   termserve acts like a telephone operator:
+'       1. Someone calls in over SSH.
+'       2. termserve checks their ID at the door (a password or an SSH key).
+'       3. termserve gives the TermApp a pretend terminal (a "PTY") to talk to.
+'       4. It relays the call: your keystrokes go to the app, the app's
+'          screen paint comes back to you — copied back and forth, live.
+'       5. When you make your window bigger, it tells the app so it repaints.
+'
+' THE DOOR IS ALWAYS LOCKED
+'   Because a TermApp runs on the server, we NEVER let just anyone in.
+'   termserve refuses to even start unless you have set up at least one way to
+'   prove who you are:
+'       * an authorized_keys file (a list of allowed SSH public keys), and/or
+'       * a password (set in the TERMSERVE_PASSWORD environment variable).
+'   No key list and no password?  termserve prints instructions and exits.
+'
+' USAGE
+'   1. Allow some SSH keys (recommended):
+'        cp ~/.ssh/id_ed25519.pub  authorized_keys
+'      and/or set a password:
+'        export TERMSERVE_PASSWORD='choose-a-good-one'
+'   2. Start the server, pointing it at any compiled DBasic TUI:
+'        termserve  ./demo/hello_tui
+'   3. Connect from anywhere:
+'        ssh -p 2222 your-server
+'
+'   Environment knobs:
+'        TERMSERVE_ADDR             listen address        (default ":2222")
+'        TERMSERVE_AUTHORIZED_KEYS  path to key list      (default "authorized_keys")
+'        TERMSERVE_PASSWORD         enable password login (default: off)
+'
+' REMEMBER: a TermApp's files, audio, and sub-programs all happen ON THE
+' SERVER, not on the visitor's machine. See README.md and
+' docs/REMOTE_SERVING.md for the full picture.
+' =========================================================================
+
+IMPORT "github.com/charmbracelet/wish" AS wish
+IMPORT "github.com/charmbracelet/ssh" AS ssh
+IMPORT "github.com/charmbracelet/wish/activeterm" AS activeterm
+IMPORT "github.com/charmbracelet/wish/logging" AS logging
+IMPORT "github.com/creack/pty" AS pty
+IMPORT "crypto/subtle"
+IMPORT "io"
+IMPORT "os"
+IMPORT "os/exec" AS osexec
+IMPORT "fmt"
+
+' -------------------------------------------------------------------------
+' Settings, filled in by Main() from the command line and environment.
+' -------------------------------------------------------------------------
+
+DIM gTargetBin AS STRING = ""        ' the TermApp binary we serve
+DIM gTargetArgs AS []STRING          ' extra arguments for that TermApp
+DIM gPassword AS STRING = ""         ' the login password ("" = disabled)
+
+' -------------------------------------------------------------------------
+' passwordCheck — the doorman's password test.
+'
+' We compare with subtle.ConstantTimeCompare instead of "=" so that the
+' check always takes the same amount of time. That stops a sneaky attacker
+' from guessing the password one letter at a time by measuring how long the
+' answer takes. (ConstantTimeCompare returns 1 when the two match.)
+' -------------------------------------------------------------------------
+
+FUNCTION passwordCheck(ctx AS ssh.Context, password AS STRING) AS BOOLEAN
+    RETURN subtle.ConstantTimeCompare(Encode(password), Encode(gPassword)) = 1
+END FUNCTION
+
+' -------------------------------------------------------------------------
+' applySize — tell the pretend terminal (PTY) how big the visitor's window
+' is, so the TermApp repaints at the right number of rows and columns.
+' pty.Winsize wants uint16 numbers, so Uint16() converts them.
+' -------------------------------------------------------------------------
+
+SUB applySize(f AS POINTER TO os.File, cols AS INTEGER, rows AS INTEGER)
+    DIM ws AS pty.Winsize
+    ws.Rows = Uint16(rows)
+    ws.Cols = Uint16(cols)
+    pty.Setsize(f, @ws)
+END SUB
+
+' -------------------------------------------------------------------------
+' pipeInput — copy everything the visitor types INTO the TermApp's PTY.
+' Runs in the background (SPAWN); io.Copy keeps going until they hang up.
+' -------------------------------------------------------------------------
+
+SUB pipeInput(f AS POINTER TO os.File, s AS ssh.Session)
+    io.Copy(f, s)
+END SUB
+
+' -------------------------------------------------------------------------
+' watchResize — when the visitor resizes their window, pass the new size on.
+'
+' s.Pty() hands back a receive-only channel of window sizes — written
+' `RECEIVE CHAN OF ssh.Window` in DBasic. We take sizes off it with the
+' comma-ok RECEIVE; "ok" turns FALSE when the visitor disconnects and the
+' channel closes, which ends the loop.
+' -------------------------------------------------------------------------
+
+SUB watchResize(f AS POINTER TO os.File, winCh AS RECEIVE CHAN OF ssh.Window)
+    DIM win AS ssh.Window
+    DIM ok AS BOOLEAN = TRUE
+    WHILE ok
+        RECEIVE win, ok FROM winCh
+        IF ok THEN
+            applySize(f, win.Width, win.Height)
+        END IF
+    WEND
+END SUB
+
+' -------------------------------------------------------------------------
+' serveSession — everything that happens for ONE visitor: give the TermApp
+' a PTY, start it, and relay the call until they leave.
+' -------------------------------------------------------------------------
+
+SUB serveSession(s AS ssh.Session)
+    ' A real interactive terminal is required. (The activeterm door-check
+    ' already turns away non-terminal logins; this is a friendly backup.)
+    DIM ptyReq AS ssh.Pty
+    DIM winCh AS RECEIVE CHAN OF ssh.Window
+    DIM okPty AS BOOLEAN
+    ptyReq, winCh, okPty = s.Pty()
+    IF NOT okPty THEN
+        fmt.Fprintln(s, "termserve: please connect with an interactive terminal.")
+        s.Exit(1)
+        RETURN
+    END IF
+
+    ' Build the command line: the TermApp plus any extra arguments.
+    DIM cmd AS POINTER TO osexec.Cmd = osexec.Command(gTargetBin)
+    DIM ai AS INTEGER
+    FOR ai = 0 TO LEN(gTargetArgs) - 1
+        cmd.Args = APPEND(cmd.Args, gTargetArgs[ai])
+    NEXT ai
+    ' Inherit the server's environment and hand the app the visitor's TERM
+    ' so it uses the right colors and key codes.
+    cmd.Env = APPEND(os.Environ(), "TERM=" + ptyReq.Term)
+
+    ' Start the TermApp attached to a fresh pretend terminal (PTY).
+    DIM f AS POINTER TO os.File
+    DIM err AS ERROR
+    f, err = pty.Start(cmd)
+    IF err <> NIL THEN
+        fmt.Fprintln(s, "termserve: could not start the app:", err.Error())
+        s.Exit(1)
+        RETURN
+    END IF
+
+    ' Match the PTY to the visitor's window, then keep it in sync.
+    applySize(f, ptyReq.Window.Width, ptyReq.Window.Height)
+    SPAWN watchResize(f, winCh)
+
+    ' Relay the "phone call": keystrokes in (background), screen out (here).
+    ' The foreground copy returns when the TermApp quits (the PTY reaches
+    ' end-of-file), which is our cue to hang up.
+    SPAWN pipeInput(f, s)
+    io.Copy(s, f)
+
+    ' Clean up: reap the app, close the PTY, end the session.
+    cmd.Wait()
+    f.Close()
+    s.Exit(0)
+END SUB
+
+' -------------------------------------------------------------------------
+' appMiddleware — plug serveSession into wish as the thing each visitor
+' reaches. wish wraps it with the logging and activeterm helpers.
+' (The parameter is named nextH because NEXT is a reserved keyword.)
+' -------------------------------------------------------------------------
+
+FUNCTION appMiddleware(nextH AS ssh.Handler) AS ssh.Handler
+    RETURN SUB(s AS ssh.Session)
+        serveSession(s)
+    END SUB
+END FUNCTION
+
+' -------------------------------------------------------------------------
+' Main — read settings, LOCK THE DOOR, and start serving.
+' -------------------------------------------------------------------------
+
+SUB Main()
+    ' Which TermApp are we serving?
+    DIM argv AS []STRING = os.Args
+    IF LEN(argv) < 2 THEN
+        fmt.Fprintln(os.Stderr, "usage: termserve <app-binary> [app-args...]")
+        os.Exit(2)
+    END IF
+    gTargetBin = argv[1]
+    DIM gi AS INTEGER
+    FOR gi = 2 TO LEN(argv) - 1
+        gTargetArgs = APPEND(gTargetArgs, argv[gi])
+    NEXT gi
+
+    ' Where to listen, and where the settings live.
+    DIM addr AS STRING = os.Getenv("TERMSERVE_ADDR")
+    IF addr = "" THEN addr = ":2222"
+
+    DIM keysPath AS STRING = os.Getenv("TERMSERVE_AUTHORIZED_KEYS")
+    IF keysPath = "" THEN keysPath = "authorized_keys"
+
+    gPassword = os.Getenv("TERMSERVE_PASSWORD")
+
+    ' --- Lock the door -----------------------------------------------------
+    ' Decide which ways of proving identity are switched on.
+    DIM haveKeys AS BOOLEAN = FileExists(keysPath)
+    DIM havePassword AS BOOLEAN = gPassword <> ""
+
+    ' If NEITHER is set up, refuse to run. A TermApp runs on the server, so
+    ' an unlocked door would let anyone run programs here. Not on our watch.
+    IF NOT haveKeys AND NOT havePassword THEN
+        fmt.Fprintln(os.Stderr, "termserve: refusing to start with no way to log in.")
+        fmt.Fprintln(os.Stderr, "  Set up at least one of these first:")
+        fmt.Fprintln(os.Stderr, "    * SSH keys:  put allowed public keys in '" + keysPath + "'")
+        fmt.Fprintln(os.Stderr, "                 (e.g.  cp ~/.ssh/id_ed25519.pub " + keysPath + ")")
+        fmt.Fprintln(os.Stderr, "    * Password:  export TERMSERVE_PASSWORD='choose-a-good-one'")
+        os.Exit(1)
+    END IF
+
+    ' --- Build the server options -----------------------------------------
+    ' Start with the always-on options, then APPEND whichever door checks we
+    ' turned on, and hand the whole list to NewServer with `opts...`.
+    DIM opts AS []ssh.Option
+    opts = APPEND(opts, wish.WithAddress(addr))
+    opts = APPEND(opts, wish.WithHostKeyPath(".termserve_host_key"))
+    opts = APPEND(opts, wish.WithMiddleware(appMiddleware, activeterm.Middleware(), logging.Middleware()))
+    IF haveKeys THEN
+        opts = APPEND(opts, wish.WithAuthorizedKeys(keysPath))
+    END IF
+    IF havePassword THEN
+        opts = APPEND(opts, wish.WithPasswordAuth(passwordCheck))
+    END IF
+
+    DIM srv AS POINTER TO ssh.Server
+    DIM err AS ERROR
+    srv, err = wish.NewServer(opts...)
+    IF err <> NIL THEN
+        fmt.Fprintln(os.Stderr, "termserve: cannot create server:", err.Error())
+        os.Exit(1)
+    END IF
+
+    ' --- Say hello and serve ----------------------------------------------
+    fmt.Println("termserve: serving TermApp", gTargetBin, "on", addr)
+    DIM how AS STRING = ""
+    IF haveKeys THEN how = how + " ssh-key"
+    IF havePassword THEN how = how + " password"
+    fmt.Println("termserve: logins allowed via:" + how)
+
+    err = srv.ListenAndServe()
+    IF err <> NIL THEN
+        fmt.Fprintln(os.Stderr, "termserve:", err.Error())
+        os.Exit(1)
+    END IF
+END SUB

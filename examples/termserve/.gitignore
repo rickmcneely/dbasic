@@ -1,0 +1,13 @@
+# Compiled binaries (rebuild from .dbas as needed)
+termserve
+demo/hello_tui
+
+# Runtime artifacts produced when serving
+.termserve_host_key
+termserve_proof.txt
+
+# Never commit credentials: the allowed-keys list or any keypairs
+authorized_keys
+id_ed25519*
+id_rsa*
+*.pub

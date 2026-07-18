@@ -1,0 +1,73 @@
+' =========================================================================
+' hello_tui — a tiny DBasic TermApp used to demonstrate termserve.
+' =========================================================================
+'
+' A "TermApp" is just an ordinary DBasic TUI that we host on a server with
+' termserve. This one renders a banner plus the live terminal size, and writes
+' a small proof file on startup.
+'
+' Here's the important lesson: when termserve hosts this app, that proof file
+' is written on the SERVER — not on the visitor's computer. A TermApp's
+' files, audio, and sub-programs all happen where the app RUNS. Press q or
+' Ctrl+C to quit.
+' =========================================================================
+
+IMPORT "github.com/charmbracelet/bubbletea" AS tea
+IMPORT "github.com/charmbracelet/lipgloss" AS lipgloss
+IMPORT "fmt"
+IMPORT "os"
+IMPORT "strconv"
+
+TYPE DemoModel IMPLEMENTS tea.Model
+    DIM Width AS INTEGER
+    DIM Height AS INTEGER
+END TYPE
+
+FUNCTION (m AS DemoModel) Init() AS tea.Cmd
+    ' Prove server-side I/O: this file lands wherever the app RUNS.
+    os.WriteFile("termserve_proof.txt", Encode("hello_tui started"), 0644)
+    RETURN NIL
+END FUNCTION
+
+FUNCTION (m AS DemoModel) Update(msg AS tea.Msg) AS (tea.Model, tea.Cmd)
+    DIM sizeMsg AS tea.WindowSizeMsg
+    DIM sizeOk AS BOOLEAN
+    sizeMsg, sizeOk = msg.(tea.WindowSizeMsg)
+    IF sizeOk THEN
+        m.Width = sizeMsg.Width
+        m.Height = sizeMsg.Height
+        RETURN m, NIL
+    END IF
+
+    DIM keyMsg AS tea.KeyMsg
+    DIM keyOk AS BOOLEAN
+    keyMsg, keyOk = msg.(tea.KeyMsg)
+    IF keyOk THEN
+        DIM key AS STRING = keyMsg.String()
+        IF key = "q" OR key = "ctrl+c" THEN
+            RETURN m, tea.Quit
+        END IF
+    END IF
+    RETURN m, NIL
+END FUNCTION
+
+FUNCTION (m AS DemoModel) View() AS STRING
+    DIM box AS lipgloss.Style = lipgloss.NewStyle(). _
+        Border(lipgloss.RoundedBorder()). _
+        Padding(1, 3). _
+        Foreground(lipgloss.Color("#7dcfff"))
+    DIM size AS STRING = strconv.Itoa(m.Width) + " x " + strconv.Itoa(m.Height)
+    DIM body AS STRING = "TERMSERVE DEMO" + Chr(10) + "terminal: " + size + Chr(10) + "press q to quit"
+    RETURN box.Render(body)
+END FUNCTION
+
+SUB Main()
+    DIM m AS DemoModel
+    DIM prog AS POINTER TO tea.Program = tea.NewProgram(m, tea.WithAltScreen())
+    DIM err AS ERROR
+    _, err = prog.Run()
+    IF err <> NIL THEN
+        fmt.Fprintln(os.Stderr, "hello_tui:", err.Error())
+        os.Exit(1)
+    END IF
+END SUB

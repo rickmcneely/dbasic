@@ -176,7 +176,7 @@ All examples are commented for beginning BASIC programmers. Tutorial progression
 12. `channels.dbas` - Channels ELI5: SEND/RECEIVE + `<-` operator, directional channels, pipeline & worker-pool
 13. `new_features.dbas` - Slices, APPEND, struct literals
 
-Project examples: `gorillas/` (terminal game), `contacts/` (SQLite app), `edit/` (DOS editor clone), `tictactoe/` (web server), `curl_example/` (HTTP client), `pacman/` (Ebitengine game with audio/multiplayer), `keen3/` (Ebitengine platformer)
+Project examples: `gorillas/` (terminal game), `contacts/` (SQLite app), `edit/` (DOS editor clone), `tictactoe/` (web server), `curl_example/` (HTTP client), `pacman/` (Ebitengine game with audio/multiplayer), `keen3/` (Ebitengine platformer), `termserve/` (**TermApp** host — serves any DBasic TUI over authenticated SSH, written in DBasic; see `docs/REMOTE_SERVING.md`)
 
 ## Ebitengine Game Pattern
 
