@@ -110,6 +110,13 @@ func (l *Lexer) NextToken() Token {
 			ch := l.ch
 			l.readChar()
 			tok = Token{Type: TOKEN_LTE, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column}
+		} else if l.peekChar() == '-' {
+			// Channel receive operator `<-`. As in Go, the two characters
+			// are tokenized together whenever adjacent, so a comparison
+			// against a negative value needs a space: `x < -5`.
+			ch := l.ch
+			l.readChar()
+			tok = Token{Type: TOKEN_LARROW, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column}
 		} else {
 			tok = l.newToken(TOKEN_LT, l.ch)
 		}
@@ -145,7 +152,15 @@ func (l *Lexer) NextToken() Token {
 			tok.Literal = l.readNumber()
 			return tok
 		}
-		tok = l.newToken(TOKEN_DOT, l.ch)
+		// `...` variadic spread: three dots in a row.
+		if l.peekChar() == '.' && l.readPosition+1 < len(l.input) && l.input[l.readPosition+1] == '.' {
+			startCol := l.column
+			l.readChar() // move onto the 2nd dot
+			l.readChar() // move onto the 3rd dot
+			tok = Token{Type: TOKEN_ELLIPSIS, Literal: "...", Line: l.line, Column: startCol}
+		} else {
+			tok = l.newToken(TOKEN_DOT, l.ch)
+		}
 	case '"':
 		tok.Type = TOKEN_STRING
 		tok.Literal = l.readString()

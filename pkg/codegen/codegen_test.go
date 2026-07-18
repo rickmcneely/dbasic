@@ -520,3 +520,75 @@ END SUB`
 		t.Errorf("expected goto, got:\n%s", code)
 	}
 }
+
+func TestGenerateDirectionalChannelTypes(t *testing.T) {
+	input := `SUB recvOnly(ch AS RECEIVE CHAN OF INTEGER)
+END SUB
+
+SUB sendOnly(ch AS SEND CHAN OF INTEGER)
+END SUB
+
+SUB both(ch AS CHAN OF INTEGER)
+END SUB`
+
+	code := compile(input)
+
+	for _, want := range []string{"ch <-chan int", "ch chan<- int", "ch chan int"} {
+		if !strings.Contains(code, want) {
+			t.Errorf("expected %q, got:\n%s", want, code)
+		}
+	}
+}
+
+func TestGenerateCommaOkReceive(t *testing.T) {
+	input := `SUB Main()
+    DIM ch AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 1)
+    DIM v AS INTEGER
+    DIM ok AS BOOLEAN = TRUE
+    RECEIVE v, ok FROM ch
+END SUB`
+
+	code := compile(input)
+
+	if !strings.Contains(code, "v, ok = <-ch") {
+		t.Errorf("expected comma-ok receive 'v, ok = <-ch', got:\n%s", code)
+	}
+}
+
+func TestGenerateVariadicSpread(t *testing.T) {
+	input := `IMPORT "fmt"
+SUB Main()
+    DIM xs AS []STRING
+    xs = APPEND(xs, "a")
+    fmt.Println(xs...)
+    fmt.Println("prefix", xs...)
+END SUB`
+
+	code := compile(input)
+
+	if !strings.Contains(code, "fmt.Println(xs...)") {
+		t.Errorf("expected 'fmt.Println(xs...)', got:\n%s", code)
+	}
+	if !strings.Contains(code, `fmt.Println("prefix", xs...)`) {
+		t.Errorf("expected prefix + spread, got:\n%s", code)
+	}
+}
+
+func TestGenerateReceiveOperator(t *testing.T) {
+	input := `SUB Main()
+    DIM ch AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 2)
+    DIM a AS INTEGER
+    DIM ok AS BOOLEAN
+    a = <-ch
+    a, ok = <-ch
+END SUB`
+
+	code := compile(input)
+
+	if !strings.Contains(code, "a = <-ch") {
+		t.Errorf("expected receive operator 'a = <-ch', got:\n%s", code)
+	}
+	if !strings.Contains(code, "a, ok = <-ch") {
+		t.Errorf("expected comma-ok receive operator 'a, ok = <-ch', got:\n%s", code)
+	}
+}

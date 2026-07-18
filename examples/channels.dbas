@@ -1,0 +1,272 @@
+' =========================================================================
+' channels.dbas — Channels, explained like you're five.
+' =========================================================================
+'
+' WHAT IS A CHANNEL?
+'   Imagine a plastic tube between two friends. One friend drops a note
+'   into their end of the tube; the other friend takes it out their end.
+'   A CHANNEL is that tube — a safe way for two parts of your program that
+'   run AT THE SAME TIME to hand things to each other.
+'
+'   Two golden rules of the tube:
+'     * If you try to TAKE a note but the tube is empty, you WAIT until a
+'       note shows up. (You are not allowed to grab nothing.)
+'     * If the tube is "full" and you try to DROP a note, you WAIT until
+'       someone makes room by taking one.
+'   This waiting is the magic: it keeps the two friends in step without
+'   any messy "are you ready yet? are you ready yet?" checking.
+'
+' RUNNING AT THE SAME TIME (SPAWN)
+'   SPAWN Helper(...) hires a helper who starts working RIGHT AWAY while
+'   your main program keeps going. The helper and the tube are how the
+'   real work gets shared.
+'
+' TWO WAYS TO TALK TO A TUBE
+'   DBasic gives you a wordy BASIC style AND a short Go style. Pick either.
+'     * Put a note IN:   SEND note TO tube
+'     * Take a note OUT:  RECEIVE note FROM tube      ' wordy BASIC style
+'                    or:  note = <-tube               ' short Go style
+'   (Both "take" lines do exactly the same thing.)
+'
+' This file walks through five tiny demos. Run it with:
+'     dbasic run channels.dbas
+' =========================================================================
+
+IMPORT "fmt"
+
+' -------------------------------------------------------------------------
+' DEMO 1 — A tube you fill, then empty (no helper yet).
+'
+' MAKE_CHAN(TYPE, size) builds a tube. The size is how many notes it can
+' hold before a SEND has to wait. Here size = 3, so we can drop 3 notes
+' without anyone taking them yet.
+' -------------------------------------------------------------------------
+
+SUB DemoBucket()
+    PRINT "DEMO 1: fill the tube, then empty it"
+
+    ' A tube that carries STRINGs and can hold up to 3 waiting notes.
+    DIM tube AS CHAN OF STRING = MAKE_CHAN(STRING, 3)
+
+    ' Drop three notes in. There is room for 3, so nobody waits.
+    SEND "apple" TO tube
+    SEND "banana" TO tube
+    SEND "cherry" TO tube
+
+    ' Take them back out, in the SAME order they went in (first in, first out).
+    DIM fruit AS STRING
+    RECEIVE fruit FROM tube
+    PRINT "  took out: "; fruit
+    RECEIVE fruit FROM tube
+    PRINT "  took out: "; fruit
+    RECEIVE fruit FROM tube
+    PRINT "  took out: "; fruit
+    PRINT ""
+END SUB
+
+' -------------------------------------------------------------------------
+' DEMO 2 — A helper that hands numbers to us one at a time.
+'
+' We hire a helper with SPAWN. The helper SENDs the numbers 1..5 into the
+' tube and then CLOSES it. Closing is like taping a "ALL DONE — no more
+' notes coming" sign on the tube.
+'
+' How do we know the helper is finished? When we take from a CLOSED and
+' empty tube, DBasic hands us a little TRUE/FALSE flag called "ok". While
+' notes are still coming, ok is TRUE. Once the sign is up and the tube is
+' empty, ok turns FALSE — our signal to stop.
+' -------------------------------------------------------------------------
+
+SUB Counter(tube AS SEND CHAN OF INTEGER)
+    ' Notice the type: SEND CHAN OF INTEGER. That is a ONE-WAY tube — this
+    ' helper is only ALLOWED to put notes IN, never take them out. It is a
+    ' safety sign, so we can't mix ourselves up.
+    DIM i AS INTEGER
+    FOR i = 1 TO 5
+        SEND i TO tube
+    NEXT i
+    Close(tube)             ' put up the "all done" sign
+END SUB
+
+SUB DemoUntilClosed()
+    PRINT "DEMO 2: keep taking until the helper says 'all done'"
+
+    DIM tube AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 0)
+    SPAWN Counter(tube)     ' hire the helper; it starts sending right away
+
+    DIM n AS INTEGER
+    DIM ok AS BOOLEAN = TRUE ' ok = "is there still stuff coming?"
+    DIM total AS INTEGER = 0
+
+    WHILE ok
+        ' The wordy BASIC way to take a note AND check the "all done" sign:
+        RECEIVE n, ok FROM tube
+        IF ok THEN
+            PRINT "  got: "; n
+            total = total + n
+        END IF
+    WEND
+
+    PRINT "  the helper is done. total = "; total
+    PRINT ""
+END SUB
+
+' -------------------------------------------------------------------------
+' DEMO 3 — The exact same idea, written the short Go way.
+'
+' `<-tube` means "take one out of the tube". You can use it right in an
+' assignment. With two names on the left, you also get the "all done" flag:
+'     value      = <-tube      ' just take a note
+'     value, ok  = <-tube      ' take a note AND the all-done flag
+' -------------------------------------------------------------------------
+
+SUB DemoArrowStyle()
+    PRINT "DEMO 3: same thing, but with the short  <-  arrow"
+
+    DIM tube AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 0)
+    SPAWN Counter(tube)
+
+    DIM n AS INTEGER
+    DIM ok AS BOOLEAN = TRUE
+    DIM total AS INTEGER = 0
+
+    WHILE ok
+        n, ok = <-tube      ' the short arrow way — identical to DEMO 2
+        IF ok THEN
+            total = total + n
+        END IF
+    WEND
+
+    PRINT "  same total, arrow style = "; total
+    PRINT ""
+END SUB
+
+' -------------------------------------------------------------------------
+' DEMO 4 — An assembly line (a "pipeline").
+'
+' Real power: chain helpers together with tubes. Here:
+'     Generator  --tube1-->  Squarer  --tube2-->  (us)
+'
+'   * Generator drops 1..5 into tube1, then closes tube1.
+'   * Squarer takes each number out of tube1, multiplies it by itself,
+'     drops the answer into tube2, and closes tube2 when tube1 runs dry.
+'   * We read the finished answers out of tube2.
+'
+' Each helper does one small job. The tubes carry the work between them,
+' and everyone runs at the same time.
+' -------------------------------------------------------------------------
+
+SUB Generator(outBox AS SEND CHAN OF INTEGER)
+    DIM i AS INTEGER
+    FOR i = 1 TO 5
+        SEND i TO outBox
+    NEXT i
+    Close(outBox)
+END SUB
+
+SUB Squarer(inBox AS RECEIVE CHAN OF INTEGER, outBox AS SEND CHAN OF INTEGER)
+    ' inBox is a take-only tube; outBox is a put-only tube.
+    DIM n AS INTEGER
+    DIM ok AS BOOLEAN = TRUE
+    WHILE ok
+        n, ok = <-inBox
+        IF ok THEN
+            SEND n * n TO outBox
+        END IF
+    WEND
+    Close(outBox)           ' no more numbers to square — pass the sign along
+END SUB
+
+SUB DemoPipeline()
+    PRINT "DEMO 4: an assembly line (numbers in, squares out)"
+
+    DIM tube1 AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 0)
+    DIM tube2 AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 0)
+
+    ' Hire both helpers. They connect to each other through tube1.
+    SPAWN Generator(tube1)
+    SPAWN Squarer(tube1, tube2)
+
+    ' Read the final answers as they come off the end of the line.
+    DIM answer AS INTEGER
+    DIM ok AS BOOLEAN = TRUE
+    WHILE ok
+        answer, ok = <-tube2
+        IF ok THEN
+            PRINT "  square: "; answer
+        END IF
+    WEND
+    PRINT ""
+END SUB
+
+' -------------------------------------------------------------------------
+' DEMO 5 — Many helpers sharing one pile of work (a "worker pool").
+'
+' Sometimes you have a big pile of jobs and want several helpers to chew
+' through it together. Put every job in a "jobs" tube; every helper takes
+' jobs from it and drops finished work in a "results" tube. Any free
+' helper grabs the next job — like several cashiers serving one line.
+'
+' (We do not care WHICH helper does WHICH job, so we add the results up.
+' That way the printed total is the same every run, even though the
+' helpers race each other.)
+' -------------------------------------------------------------------------
+
+SUB Worker(jobs AS RECEIVE CHAN OF INTEGER, results AS SEND CHAN OF INTEGER)
+    DIM job AS INTEGER
+    DIM ok AS BOOLEAN = TRUE
+    WHILE ok
+        job, ok = <-jobs
+        IF ok THEN
+            SEND job * 2 TO results     ' "do the work": double it
+        END IF
+    WEND
+END SUB
+
+SUB DemoWorkerPool()
+    PRINT "DEMO 5: three helpers sharing one pile of jobs"
+
+    DIM jobs AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 10)
+    DIM results AS CHAN OF INTEGER = MAKE_CHAN(INTEGER, 10)
+
+    ' Hire three helpers. They all take from the SAME jobs tube.
+    DIM w AS INTEGER
+    FOR w = 1 TO 3
+        SPAWN Worker(jobs, results)
+    NEXT w
+
+    ' Hand out 6 jobs, then close the jobs tube so the helpers know to stop.
+    DIM j AS INTEGER
+    FOR j = 1 TO 6
+        SEND j TO jobs
+    NEXT j
+    Close(jobs)
+
+    ' Collect exactly 6 answers back (one per job we sent).
+    DIM total AS INTEGER = 0
+    DIM r AS INTEGER
+    DIM got AS INTEGER
+    FOR got = 1 TO 6
+        r = <-results               ' just take a note; no flag needed here
+        total = total + r
+    NEXT got
+
+    PRINT "  all jobs done. total of doubled jobs = "; total
+    PRINT "  (1+2+3+4+5+6 = 21, doubled = 42)"
+    PRINT ""
+END SUB
+
+' -------------------------------------------------------------------------
+' Main — run the five demos in order.
+' -------------------------------------------------------------------------
+
+SUB Main()
+    PRINT "=== DBasic Channels, ELI5 ==="
+    PRINT ""
+    DemoBucket()
+    DemoUntilClosed()
+    DemoArrowStyle()
+    DemoPipeline()
+    DemoWorkerPool()
+    PRINT "That's channels! Tubes between helpers that run at the same time."
+END SUB

@@ -37,6 +37,7 @@ const (
 	TOKEN_LTE        // <=
 	TOKEN_GTE        // >=
 	TOKEN_ARROW      // ->
+	TOKEN_LARROW     // <-  (channel receive operator)
 
 	// Delimiters
 	TOKEN_LPAREN     // (
@@ -49,6 +50,7 @@ const (
 	TOKEN_COLON      // :
 	TOKEN_SEMICOLON  // ;
 	TOKEN_DOT        // .
+	TOKEN_ELLIPSIS   // ...  (variadic spread)
 
 	// Keywords - Declarations
 	TOKEN_DIM
@@ -176,6 +178,7 @@ var tokenNames = map[TokenType]string{
 	TOKEN_LTE:         "<=",
 	TOKEN_GTE:         ">=",
 	TOKEN_ARROW:       "->",
+	TOKEN_LARROW:      "<-",
 	TOKEN_LPAREN:      "(",
 	TOKEN_RPAREN:      ")",
 	TOKEN_LBRACKET:    "[",
@@ -186,6 +189,7 @@ var tokenNames = map[TokenType]string{
 	TOKEN_COLON:       ":",
 	TOKEN_SEMICOLON:   ";",
 	TOKEN_DOT:         ".",
+	TOKEN_ELLIPSIS:    "...",
 	TOKEN_DIM:         "DIM",
 	TOKEN_AS:          "AS",
 	TOKEN_LET:         "LET",

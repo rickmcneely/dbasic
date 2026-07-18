@@ -131,6 +131,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(lexer.TOKEN_NOT, p.parsePrefixExpression)
 	p.registerPrefix(lexer.TOKEN_AT, p.parseAddressOf)
 	p.registerPrefix(lexer.TOKEN_CARET, p.parseDereference)
+	p.registerPrefix(lexer.TOKEN_LARROW, p.parseReceiveExpression)
 	p.registerPrefix(lexer.TOKEN_MAKE_CHAN, p.parseMakeChan)
 	p.registerPrefix(lexer.TOKEN_FUNCTION, p.parseFunctionLiteral)
 	p.registerPrefix(lexer.TOKEN_SUB, p.parseFunctionLiteral)
@@ -725,6 +726,23 @@ func (p *Parser) parseTypeSpec() *TypeSpec {
 		p.nextToken()
 		spec.ElementType = p.parseTypeSpec()
 	case lexer.TOKEN_CHAN:
+		spec.IsChannel = true
+		if !p.expectPeek(lexer.TOKEN_OF) {
+			return nil
+		}
+		p.nextToken()
+		spec.ElementType = p.parseTypeSpec()
+	case lexer.TOKEN_RECEIVE, lexer.TOKEN_SEND:
+		// Directional channel: `RECEIVE CHAN OF T` (<-chan T) or
+		// `SEND CHAN OF T` (chan<- T).
+		if p.curToken.Type == lexer.TOKEN_RECEIVE {
+			spec.ChanDir = ChanRecv
+		} else {
+			spec.ChanDir = ChanSend
+		}
+		if !p.expectPeek(lexer.TOKEN_CHAN) {
+			return nil
+		}
 		spec.IsChannel = true
 		if !p.expectPeek(lexer.TOKEN_OF) {
 			return nil
@@ -1571,6 +1589,13 @@ func (p *Parser) parseReceiveStatement() *ReceiveStatement {
 	p.nextToken()
 	stmt.Variable = p.parseExpression(LOWEST)
 
+	// Optional comma-ok target: `RECEIVE v, ok FROM ch`.
+	if p.peekTokenIs(lexer.TOKEN_COMMA) {
+		p.nextToken() // consume ','
+		p.nextToken() // move to the ok target
+		stmt.OkVar = p.parseExpression(LOWEST)
+	}
+
 	if !p.expectPeek(lexer.TOKEN_FROM) {
 		return nil
 	}
@@ -1579,6 +1604,16 @@ func (p *Parser) parseReceiveStatement() *ReceiveStatement {
 	stmt.Channel = p.parseExpression(LOWEST)
 
 	return stmt
+}
+
+// parseReceiveExpression parses the channel-receive operator `<-ch` as an
+// expression. Binds at PREFIX precedence, so `<-ch + 1` is `(<-ch) + 1` and
+// `<-obj.field` receives from `obj.field`.
+func (p *Parser) parseReceiveExpression() Expression {
+	expr := &ReceiveExpression{Token: p.curToken}
+	p.nextToken()
+	expr.Channel = p.parseExpression(PREFIX)
+	return expr
 }
 
 func (p *Parser) parseAssignmentOrExpression() Statement {
@@ -1992,17 +2027,31 @@ func (p *Parser) parseExpressionList(end lexer.TokenType) []Expression {
 
 	p.nextToken()
 	list = append(list, p.parseExpression(LOWEST))
+	list = p.wrapTrailingSpread(list)
 
 	for p.peekTokenIs(lexer.TOKEN_COMMA) {
 		p.nextToken()
 		p.nextToken()
 		list = append(list, p.parseExpression(LOWEST))
+		list = p.wrapTrailingSpread(list)
 	}
 
 	if !p.expectPeek(end) {
 		return nil
 	}
 
+	return list
+}
+
+// wrapTrailingSpread rewrites the just-parsed final element `xs` into a
+// SpreadExpression when it is immediately followed by `...` (variadic
+// spread, e.g. `f(a, xs...)`).
+func (p *Parser) wrapTrailingSpread(list []Expression) []Expression {
+	if p.peekTokenIs(lexer.TOKEN_ELLIPSIS) {
+		p.nextToken() // consume '...'
+		i := len(list) - 1
+		list[i] = &SpreadExpression{Token: p.curToken, Value: list[i]}
+	}
 	return list
 }
 

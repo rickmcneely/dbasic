@@ -309,17 +309,20 @@ func separator(prev, curr lexer.Token, havePrev, prevAfterDot bool) string {
 		return ""
 	}
 
-	// No space before these tokens.
+	// No space before these tokens. TOKEN_ELLIPSIS is the `...` variadic
+	// spread, which hugs the slice it follows (`xs...`).
 	switch curr.Type {
 	case lexer.TOKEN_RPAREN, lexer.TOKEN_RBRACKET, lexer.TOKEN_RBRACE,
-		lexer.TOKEN_COMMA, lexer.TOKEN_SEMICOLON, lexer.TOKEN_DOT, lexer.TOKEN_COLON:
+		lexer.TOKEN_COMMA, lexer.TOKEN_SEMICOLON, lexer.TOKEN_DOT, lexer.TOKEN_COLON,
+		lexer.TOKEN_ELLIPSIS:
 		return ""
 	}
 
-	// No space after these tokens.
+	// No space after these tokens. TOKEN_LARROW is the `<-` receive
+	// operator, which hugs its channel operand (like unary `@`).
 	switch prev.Type {
 	case lexer.TOKEN_LPAREN, lexer.TOKEN_LBRACKET, lexer.TOKEN_LBRACE,
-		lexer.TOKEN_DOT, lexer.TOKEN_AT:
+		lexer.TOKEN_DOT, lexer.TOKEN_AT, lexer.TOKEN_LARROW:
 		return ""
 	}
 

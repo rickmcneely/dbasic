@@ -128,6 +128,10 @@ These are non-obvious behaviors that cause build failures. Always follow these r
 
 24. **`INCLUDE` is confined to the project directory.** The preprocessor (`pkg/preprocessor`) rejects INCLUDE targets that escape the directory of the top-level `.dbas` file — absolute paths and `../` traversal both fail with "escapes the project directory". This is a path-traversal guard so `check`/`fmt`/`doc`/`emit` on an untrusted file can't read arbitrary files. All in-tree examples (DBtui, `examples/include`) use only in-project relative includes, so they're unaffected. The `--allow-external-includes` build/check flag (wired via `pp.SetAllowExternal`) opts out. The security posture of the whole toolchain is documented in the README's "Security / Trust Model" section.
 
+25. **Directional channels, `<-ch` operator, and comma-ok RECEIVE.** `CHAN OF T` is bidirectional (`chan T`); prefix with `RECEIVE`/`SEND` for `RECEIVE CHAN OF T` (`<-chan T`) and `SEND CHAN OF T` (`chan<- T`). Naming the direction is required to capture a Go API that returns a directional channel — a bidirectional `CHAN OF T` variable is *not* assignable from a `<-chan T` (Go rejects it), and multi-assign emits `=` (no `:=` inference), so the receiving variable must be pre-declared with the right direction: `DIM winCh AS RECEIVE CHAN OF ssh.Window`. Receiving has two spellings: the `RECEIVE v FROM ch` / `RECEIVE v, ok FROM ch` statements, and the `<-ch` operator expression (`v = <-ch`, `v, ok = <-ch`, `foo(<-ch)`, `(<-ch) + 1`). The comma-ok flag goes FALSE once the channel is closed and drained. Lexer note: `<-` is tokenized whenever the `<` and `-` are adjacent (as in Go), so a comparison against a negative needs a space — write `x < -5`, not `x<-5`. See `examples/termserve/termserve.dbas` (`watchResize`) for real interop use.
+
+26. **Variadic spread `xs...`.** Follow the final argument of a call with `...` to spread a slice into a variadic parameter, exactly like Go: `fmt.Println(xs...)`, `wish.NewServer(opts...)`. Only the last argument may be spread. This is the way to forward a runtime-built argument list (e.g. conditionally `APPEND`-ed options) to a variadic Go function. Note: `[]ANY{...}` composite literals are *not* accepted (the `ANY` keyword isn't a valid slice-literal element type) — build `[]ANY` slices with `DIM xs AS []ANY` + `APPEND` instead.
+
 ## VDBTerm (examples/vdbterm/)
 
 The IDE itself, written in DBasic. Multi-file project using INCLUDE directives:
@@ -169,7 +173,8 @@ All examples are commented for beginning BASIC programmers. Tutorial progression
 9. `errors.dbas` - Error handling, WrapError
 10. `json.dbas` / `json_advanced.dbas` - JSON operations
 11. `goroutines.dbas` - SPAWN, channels, SEND/RECEIVE
-12. `new_features.dbas` - Slices, APPEND, struct literals
+12. `channels.dbas` - Channels ELI5: SEND/RECEIVE + `<-` operator, directional channels, pipeline & worker-pool
+13. `new_features.dbas` - Slices, APPEND, struct literals
 
 Project examples: `gorillas/` (terminal game), `contacts/` (SQLite app), `edit/` (DOS editor clone), `tictactoe/` (web server), `curl_example/` (HTTP client), `pacman/` (Ebitengine game with audio/multiplayer), `keen3/` (Ebitengine platformer)
 

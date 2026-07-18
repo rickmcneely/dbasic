@@ -46,6 +46,65 @@ func TestNextToken_Operators(t *testing.T) {
 	}
 }
 
+func TestNextToken_ReceiveArrow(t *testing.T) {
+	// `<-` (adjacent) is the receive operator; `< -` (spaced) is a
+	// comparison against a negative value. Matches Go's tokenization.
+	input := `<-ch x < -5`
+
+	tests := []struct {
+		expectedType    TokenType
+		expectedLiteral string
+	}{
+		{TOKEN_LARROW, "<-"},
+		{TOKEN_IDENT, "ch"},
+		{TOKEN_IDENT, "x"},
+		{TOKEN_LT, "<"},
+		{TOKEN_MINUS, "-"},
+		{TOKEN_INT, "5"},
+		{TOKEN_EOF, ""},
+	}
+
+	l := New(input)
+	for i, tt := range tests {
+		tok := l.NextToken()
+		if tok.Type != tt.expectedType {
+			t.Errorf("tests[%d] - tokentype wrong. expected=%q, got=%q", i, tt.expectedType, tok.Type)
+		}
+		if tok.Literal != tt.expectedLiteral {
+			t.Errorf("tests[%d] - literal wrong. expected=%q, got=%q", i, tt.expectedLiteral, tok.Literal)
+		}
+	}
+}
+
+func TestNextToken_Ellipsis(t *testing.T) {
+	// `...` is one token; a lone `.` and a leading-dot float stay distinct.
+	input := `xs... a.b .5`
+
+	tests := []struct {
+		expectedType    TokenType
+		expectedLiteral string
+	}{
+		{TOKEN_IDENT, "xs"},
+		{TOKEN_ELLIPSIS, "..."},
+		{TOKEN_IDENT, "a"},
+		{TOKEN_DOT, "."},
+		{TOKEN_IDENT, "b"},
+		{TOKEN_FLOAT, ".5"},
+		{TOKEN_EOF, ""},
+	}
+
+	l := New(input)
+	for i, tt := range tests {
+		tok := l.NextToken()
+		if tok.Type != tt.expectedType {
+			t.Errorf("tests[%d] - tokentype wrong. expected=%q, got=%q", i, tt.expectedType, tok.Type)
+		}
+		if tok.Literal != tt.expectedLiteral {
+			t.Errorf("tests[%d] - literal wrong. expected=%q, got=%q", i, tt.expectedLiteral, tok.Literal)
+		}
+	}
+}
+
 func TestNextToken_Delimiters(t *testing.T) {
 	input := `( ) [ ] { } , : ; .`
 

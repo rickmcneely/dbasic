@@ -2142,6 +2142,11 @@ func (g *Generator) generateSend(stmt *parser.SendStatement) {
 }
 
 func (g *Generator) generateReceive(stmt *parser.ReceiveStatement) {
+	if stmt.OkVar != nil {
+		g.writeLine(fmt.Sprintf("%s, %s = <-%s",
+			g.exprToGo(stmt.Variable), g.exprToGo(stmt.OkVar), g.exprToGo(stmt.Channel)))
+		return
+	}
 	g.writeLine(fmt.Sprintf("%s = <-%s", g.exprToGo(stmt.Variable), g.exprToGo(stmt.Channel)))
 }
 
@@ -2218,6 +2223,8 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 		return fmt.Sprintf("make(chan %s)", chanType)
 	case *parser.ReceiveExpression:
 		return fmt.Sprintf("<-%s", g.exprToGo(e.Channel))
+	case *parser.SpreadExpression:
+		return g.exprToGo(e.Value) + "..."
 	case *parser.TypeAssertionExpression:
 		targetType := g.typeSpecToGo(e.TargetType)
 		return fmt.Sprintf("%s.(%s)", g.exprToGo(e.Value), targetType)
@@ -2562,6 +2569,12 @@ func (g *Generator) typeSpecToGo(spec *parser.TypeSpec) string {
 	}
 
 	if spec.IsChannel {
+		switch spec.ChanDir {
+		case parser.ChanRecv:
+			return "<-chan " + g.typeSpecToGo(spec.ElementType)
+		case parser.ChanSend:
+			return "chan<- " + g.typeSpecToGo(spec.ElementType)
+		}
 		return "chan " + g.typeSpecToGo(spec.ElementType)
 	}
 

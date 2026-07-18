@@ -102,6 +102,8 @@ REM REM is recognized when followed by whitespace or end of line
 | `ERROR` | Error type | `error` |
 | `POINTER TO T` | Pointer to type T | `*T` |
 | `CHAN OF T` | Channel of type T | `chan T` |
+| `RECEIVE CHAN OF T` | Receive-only channel | `<-chan T` |
+| `SEND CHAN OF T` | Send-only channel | `chan<- T` |
 | `[]T` | Slice/dynamic array | `[]T` |
 | `MAP OF K TO V` | Lookup table from key K to value V | `map[K]V` |
 
@@ -579,6 +581,30 @@ Anonymous `FUNCTION` literals require an explicit return type after the
 parameter list (same syntax as named functions). Anonymous `SUB`
 literals omit the return-type clause.
 
+### Variadic Spread (`xs...`)
+
+Follow a slice argument with `...` to spread its elements into a variadic
+parameter — the same as Go's `f(xs...)`. It may only appear on the final
+argument of a call, and the spread value must be a slice whose element type
+matches the variadic parameter.
+
+```basic
+IMPORT "fmt"
+
+SUB Main()
+    DIM parts AS []ANY
+    parts = APPEND(parts, "score")
+    parts = APPEND(parts, 42)
+
+    fmt.Println(parts...)             ' -> fmt.Println(parts...)
+    fmt.Println("result:", parts...)  ' prefix args are fine before the spread
+END SUB
+```
+
+This is what lets you build an argument list at runtime (conditionally
+`APPEND`-ing options, say) and then hand the whole slice to a variadic Go
+function.
+
 ### DECLARE (Forward References)
 
 `DECLARE SUB Name(params)` and `DECLARE FUNCTION Name(params) AS T` are accepted as no-ops. DBasic auto-resolves forward references, so the syntax is supported only for QB compatibility.
@@ -1048,8 +1074,49 @@ SEND 42 TO ch
 DIM value AS INTEGER
 RECEIVE value FROM ch
 
+' Receive with a comma-ok flag: ok is FALSE once the channel is closed
+' and drained. Use this to loop until a producer closes the channel.
+DIM ok AS BOOLEAN
+RECEIVE value, ok FROM ch
+
+' The `<-ch` operator is the expression form of a receive. It works
+' anywhere an expression is allowed, and supports the comma-ok pattern
+' in a multiple assignment:
+value = <-ch
+value, ok = <-ch
+DIM doubled AS INTEGER = (<-ch) * 2
+
 ' Close channel
 Close(ch)
+```
+
+> Lexing note: `<-` is read as the receive operator whenever the `<` and `-`
+> are adjacent (as in Go), so comparing against a negative literal needs a
+> space: write `x < -5`, not `x<-5`.
+
+#### Directional channels
+
+`CHAN OF T` is bidirectional. Prefix it with `RECEIVE` or `SEND` to get a
+receive-only (`<-chan T`) or send-only (`chan<- T`) channel. This matters for
+interop with Go APIs that hand back a directional channel — a bidirectional
+`CHAN OF T` value is *not* assignable to a `<-chan T` slot, so you must name the
+direction to capture such a return.
+
+```basic
+' Consumer takes a receive-only channel; producer takes a send-only one.
+SUB Consume(ch AS RECEIVE CHAN OF INTEGER)
+    DIM v AS INTEGER
+    DIM ok AS BOOLEAN = TRUE
+    WHILE ok
+        RECEIVE v, ok FROM ch
+        IF ok THEN PRINT v
+    WEND
+END SUB
+
+SUB Produce(ch AS SEND CHAN OF INTEGER)
+    SEND 1 TO ch
+    Close(ch)
+END SUB
 ```
 
 ### Channel Example
@@ -1073,7 +1140,7 @@ SUB Main()
     DIM value AS INTEGER
     DIM ok AS BOOLEAN = TRUE
     WHILE ok
-        value, ok = <-ch
+        RECEIVE value, ok FROM ch
         IF ok THEN
             fmt.Printf("Received: %d\n", value)
         ENDIF

@@ -46,12 +46,24 @@ func (p *Program) String() string {
 	return sb.String()
 }
 
+// Channel direction for a CHAN OF type. A bare `CHAN OF T` is
+// bidirectional; `RECEIVE CHAN OF T` is receive-only (Go `<-chan T`) and
+// `SEND CHAN OF T` is send-only (Go `chan<- T`). These matter for interop
+// with Go APIs that hand back directional channels (e.g. a window-size
+// channel typed `<-chan Window`).
+const (
+	ChanBoth = iota // CHAN OF T        -> chan T
+	ChanRecv        // RECEIVE CHAN OF T -> <-chan T
+	ChanSend        // SEND CHAN OF T    -> chan<- T
+)
+
 // TypeSpec represents a type specification
 type TypeSpec struct {
 	Token       lexer.Token // The type token
 	Name        string      // Base type name (INTEGER, STRING, etc.)
 	IsPointer   bool        // POINTER TO X
 	IsChannel   bool        // CHAN OF X
+	ChanDir     int         // Channel direction (ChanBoth/ChanRecv/ChanSend)
 	ElementType *TypeSpec   // For POINTER TO and CHAN OF (also map value type when IsMap)
 	IsArray     bool        // Array type
 	ArraySize   Expression  // Array size expression (can be nil for dynamic)
@@ -65,6 +77,12 @@ func (t *TypeSpec) String() string {
 		return "POINTER TO " + t.ElementType.String()
 	}
 	if t.IsChannel {
+		switch t.ChanDir {
+		case ChanRecv:
+			return "RECEIVE CHAN OF " + t.ElementType.String()
+		case ChanSend:
+			return "SEND CHAN OF " + t.ElementType.String()
+		}
 		return "CHAN OF " + t.ElementType.String()
 	}
 	if t.IsMap {
@@ -845,17 +863,24 @@ func (ss *SendStatement) String() string {
 	return "SEND " + ss.Value.String() + " TO " + ss.Channel.String()
 }
 
-// ReceiveStatement represents a RECEIVE ... FROM ... statement
+// ReceiveStatement represents a RECEIVE ... FROM ... statement. The
+// optional second target (`RECEIVE v, ok FROM ch`) captures the
+// comma-ok flag, which is false once the channel is closed and drained.
 type ReceiveStatement struct {
 	Token    lexer.Token
 	Variable Expression
+	OkVar    Expression // optional; the ", ok" comma-ok target
 	Channel  Expression
 }
 
 func (rs *ReceiveStatement) statementNode()       {}
 func (rs *ReceiveStatement) TokenLiteral() string { return rs.Token.Literal }
 func (rs *ReceiveStatement) String() string {
-	return "RECEIVE " + rs.Variable.String() + " FROM " + rs.Channel.String()
+	lhs := rs.Variable.String()
+	if rs.OkVar != nil {
+		lhs += ", " + rs.OkVar.String()
+	}
+	return "RECEIVE " + lhs + " FROM " + rs.Channel.String()
 }
 
 // ExpressionStatement wraps an expression as a statement
@@ -1145,6 +1170,18 @@ func (mc *MakeChanExpression) String() string {
 	}
 	return "MAKE_CHAN(" + mc.ChannelType.String() + ")"
 }
+
+// SpreadExpression represents a variadic spread argument in a call:
+// `f(a, xs...)`. It wraps the slice expression being spread into the
+// callee's variadic parameter (Go `f(a, xs...)`).
+type SpreadExpression struct {
+	Token lexer.Token // the '...' token
+	Value Expression  // the slice being spread
+}
+
+func (se *SpreadExpression) expressionNode()      {}
+func (se *SpreadExpression) TokenLiteral() string { return se.Token.Literal }
+func (se *SpreadExpression) String() string       { return se.Value.String() + "..." }
 
 // ReceiveExpression represents receiving from a channel as an expression
 type ReceiveExpression struct {

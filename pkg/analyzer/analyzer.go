@@ -658,6 +658,29 @@ func (a *Analyzer) analyzeMultiAssignmentStatement(stmt *parser.MultiAssignmentS
 		return
 	}
 
+	// Comma-ok channel receive: value, ok = <-ch
+	if recv, ok := stmt.Value.(*parser.ReceiveExpression); ok {
+		if len(stmt.Targets) != 2 {
+			a.error(stmt.Token.Line, "comma-ok receive requires exactly 2 targets (value, ok)")
+			return
+		}
+		chanType := a.analyzeExpression(recv.Channel)
+		if chanType.Kind != TypeChannel {
+			a.error(stmt.Token.Line, "cannot receive from non-channel type")
+			return
+		}
+		valType := a.analyzeExpression(stmt.Targets[0])
+		if !valType.IsCompatibleWith(chanType.ElementType) {
+			a.error(stmt.Token.Line, "cannot receive %s into %s",
+				chanType.ElementType.String(), valType.String())
+		}
+		okType := a.analyzeExpression(stmt.Targets[1])
+		if !okType.IsCompatibleWith(BooleanType) {
+			a.error(stmt.Token.Line, "comma-ok receive flag must be BOOLEAN, got %s", okType.String())
+		}
+		return
+	}
+
 	// Get the types of the right-hand side (should be a function call)
 	call, ok := stmt.Value.(*parser.CallExpression)
 	if !ok {
@@ -1062,6 +1085,14 @@ func (a *Analyzer) analyzeReceiveStatement(stmt *parser.ReceiveStatement) {
 		a.error(stmt.Token.Line, "cannot receive %s from channel of %s",
 			chanType.ElementType.String(), varType.String())
 	}
+
+	// The optional comma-ok target must be a boolean-compatible slot.
+	if stmt.OkVar != nil {
+		okType := a.analyzeExpression(stmt.OkVar)
+		if !okType.IsCompatibleWith(BooleanType) {
+			a.error(stmt.Token.Line, "RECEIVE comma-ok target must be BOOLEAN, got %s", okType.String())
+		}
+	}
 }
 
 func (a *Analyzer) analyzeBlockStatement(block *parser.BlockStatement) {
@@ -1125,6 +1156,14 @@ func (a *Analyzer) analyzeExpression(expr parser.Expression) *Type {
 			return AnyType
 		}
 		return chanType.ElementType
+	case *parser.SpreadExpression:
+		// The spread's type is the element type of the slice being spread;
+		// callers that care about variadic forwarding treat it transparently.
+		sliceType := a.analyzeExpression(e.Value)
+		if sliceType != nil && sliceType.Kind == TypeArray {
+			return sliceType.ElementType
+		}
+		return sliceType
 	case *parser.TypeAssertionExpression:
 		// Analyze the value being asserted
 		a.analyzeExpression(e.Value)
