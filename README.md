@@ -395,9 +395,14 @@ The `examples/` directory contains sample programs:
 ### Application Examples
 - `edit/` - MS-DOS EDIT clone using Bubble Tea (TUI)
 - `contacts/` - Win32 GUI contacts app using Walk
-- `tictactoe/` - Web server tic-tac-toe game with cookies
 - `curl_example/` - HTTP client demo with CurlGet/CurlPost
 - `vdbterm/` - Visual Basic-style IDE for terminal UI apps
+
+### Games (`examples/games/`)
+- `mines/` - Minesweeper, a faithful clone of the Windows classic (Ebitengine)
+- `pacman/` - PacMan with audio, ghosts and 2-player modes (Ebitengine)
+- `gorillas/` - The QBasic artillery game, in the terminal
+- `tictactoe/` - Web server tic-tac-toe game with cookies
 
 Run an example:
 

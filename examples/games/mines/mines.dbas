@@ -1,0 +1,2901 @@
+' =============================================================================
+' MINESWEEPER - a faithful clone of the classic Windows "Minefield"
+' =============================================================================
+'
+' Written in DBasic, drawn with Ebitengine.
+'
+' WHAT THIS PROGRAM IS
+'   This is the game that shipped with Windows for twenty years: a grid of
+'   covered squares, some of which hide mines. Uncover every square that is
+'   NOT a mine and you win. Uncover a mine and the game is over.
+'
+'   Everything the original did, this does:
+'     * Beginner / Intermediate / Expert / Custom board sizes
+'     * A mine counter and a seconds timer, both as red 7-segment LEDs
+'     * The smiley-face reset button (it goes "ooh" while you click, wears
+'       sunglasses when you win, and dies when you lose)
+'     * Left click uncovers, right click flags, right click again marks "?"
+'     * "Chording": press BOTH buttons on an uncovered number and, if you
+'       have flagged exactly that many neighbours, all the other neighbours
+'       are uncovered at once
+'     * The first square you click is never a mine
+'     * A real drop-down menu bar with Game and Help menus
+'     * Permanent high-score tables, one per difficulty, saved to disk
+'     * Sound effects (switchable from the Game menu)
+'
+' HOW THE PROGRAM IS ORGANISED (read in this order)
+'   1. CONSTANTS      - sizes, colours and "magic numbers" given names
+'   2. TYPES          - the shapes of our data (the Game, a menu item, ...)
+'   3. SPRITES        - every picture in the game, drawn once at start-up
+'   4. SOUND          - square-wave beeps generated as raw audio samples
+'   5. HIGH SCORES    - loading and saving the score file
+'   6. BOARD LOGIC    - laying mines, uncovering squares, winning, losing
+'   7. INPUT          - mouse, keyboard, menus and dialog boxes
+'   8. DRAWING        - painting the board, the header and the dialogs
+'   9. MAIN           - starts everything up
+'
+' HOW A GAME PROGRAM WORKS (the big picture)
+'   Ebitengine calls two of our routines sixty times a second:
+'     Update()  - look at the mouse and keyboard, change the game state
+'     Draw()    - paint the current game state onto the screen
+'   Nothing else happens in between. That is the whole game loop.
+'
+' CONTROLS
+'   Left click .............. uncover a square
+'   Right click ............. flag / question-mark / clear a square
+'   Both buttons (or middle)  chord: uncover the neighbours of a number
+'   Click the smiley ........ start a new game
+'   F2 ...................... start a new game
+'   F1 ...................... help
+'   Esc ..................... close a menu or a dialog box
+' =============================================================================
+
+
+' =============================================================================
+' A FEW WORDS ABOUT THE CODE ITSELF, IF YOU ARE NEW TO THIS
+' =============================================================================
+'
+' Everything below is built out of about eight ideas. Once you know these,
+' the whole program reads like English.
+'
+'   DIM x AS INTEGER
+'       Make a box called x that can hold a whole number. "DIM" is just
+'       BASIC's way of saying "I would like a box, please." A box always has
+'       a type, which is the kind of thing it is allowed to hold: INTEGER for
+'       whole numbers, STRING for text, BOOLEAN for yes/no.
+'
+'   CONST CELL AS INTEGER = 16
+'       The same thing, except the value can never change. We use these for
+'       numbers that would otherwise be mysterious. "CELL" tells you what 16
+'       means; a bare 16 sprinkled through the code tells you nothing.
+'
+'   DIM xs AS []INTEGER
+'       A LIST of whole numbers, as long as we like. xs[0] is the first one
+'       (computers start counting at nought, not one). Len(xs) is how many
+'       there are. APPEND(xs, 5) puts another one on the end.
+'
+'   TYPE Game ... END TYPE
+'       A shape for our own kind of box, made by gluing several boxes
+'       together. Once we have said what a Game looks like, "DIM g AS Game"
+'       makes one, and g.Rows reaches inside it for the part called Rows.
+'
+'   POINTER TO Game
+'       Not the game itself, but a note saying WHERE the game is - like a
+'       house number instead of the house. This matters: if you hand someone
+'       a copy of the house they can redecorate it and you will never see the
+'       change, but if you hand them the address they are working on the real
+'       thing. Routines that need to CHANGE the game always take a pointer.
+'
+'   SUB (g AS POINTER TO Game) Reveal(at AS INTEGER)
+'       A routine that belongs to the Game, so it is written as g.Reveal(5)
+'       rather than Reveal(g, 5). Read the bit in brackets at the front as
+'       "given a game, called g, ...". A SUB does something; a FUNCTION does
+'       something AND hands an answer back.
+'
+'   MAP OF STRING TO POINTER TO ebiten.Image
+'       A lookup table. You put things in under a label and fetch them back
+'       out by the same label, like a coat check.
+'
+'   IMPORT "..." AS name
+'       Borrow somebody else's code and call it "name" from now on.
+'
+' One last thing you will see everywhere: Sng(x). Ebitengine's drawing
+' routines want their numbers in a slightly different flavour from the whole
+' numbers we count squares in, and Sng() converts between the two. It does
+' not change the value, only the flavour.
+'
+' =============================================================================
+
+
+' ======================== IMPORTS ========================
+' These pull in code other people wrote so we do not have to write it.
+
+' Ebitengine: opens the window, runs the game loop, draws images.
+IMPORT "github.com/hajimehoshi/ebiten/v2" AS ebiten
+
+' vector: draws filled rectangles, circles and lines.
+IMPORT "github.com/hajimehoshi/ebiten/v2/vector" AS vector
+
+' ebitenutil: a quick way to draw text.
+IMPORT "github.com/hajimehoshi/ebiten/v2/ebitenutil" AS ebitenutil
+
+' inpututil: tells us the moment a key or button is pressed or released,
+' as opposed to whether it is being held down right now.
+IMPORT "github.com/hajimehoshi/ebiten/v2/inpututil" AS inpututil
+
+' audio: plays our sound effects.
+IMPORT "github.com/hajimehoshi/ebiten/v2/audio" AS audio
+
+' color: lets us say "this shade of grey" as a number of red, green and blue.
+IMPORT "image/color" AS color
+
+' strings: strings.NewReader turns generated sound data into something the
+' audio system can read.
+IMPORT "strings" AS strings
+
+' strconv: turns text like "16" into the number 16.
+IMPORT "strconv" AS strconv
+
+' fmt: prints messages to the terminal if something goes wrong.
+IMPORT "fmt" AS fmt
+
+' os and filepath: used to find the player's home folder so the high score
+' table can be kept somewhere permanent.
+IMPORT "os" AS os
+IMPORT "path/filepath" AS filepath
+
+' time: used to date-stamp a high score.
+IMPORT "time" AS time
+
+
+' ======================== 1. CONSTANTS ========================
+
+' --- Sizes, in pixels ---
+
+' One square of the minefield is 16x16 pixels, exactly like the original.
+CONST CELL AS INTEGER = 16
+
+' The chiselled 3D frames around the header and the minefield are 3px thick.
+CONST FRAME AS INTEGER = 3
+
+' The plain grey breathing space between those frames.
+CONST GAP AS INTEGER = 6
+
+' The raised border drawn around the whole window.
+CONST OUTER AS INTEGER = 3
+
+' Height of the menu bar strip along the top.
+CONST MENUH AS INTEGER = 20
+
+' Height of the header panel that holds the counter, face and timer.
+CONST HDRH AS INTEGER = 33
+
+' A single LED digit is 13 wide and 23 tall; three of them make a display.
+CONST LEDW AS INTEGER = 13
+CONST LEDH AS INTEGER = 23
+
+' The smiley-face button is a 24x24 square.
+CONST FACEW AS INTEGER = 24
+
+' Every character of our text font is 6 pixels wide and 16 tall.
+CONST CHW AS INTEGER = 6
+CONST CHH AS INTEGER = 16
+
+' --- What is in a square (the "state" of a cell) ---
+CONST ST_COVERED AS INTEGER = 0    ' untouched
+CONST ST_REVEALED AS INTEGER = 1   ' uncovered
+CONST ST_FLAG AS INTEGER = 2       ' player planted a flag here
+CONST ST_QUERY AS INTEGER = 3      ' player marked it with a question mark
+
+' --- The four difficulty levels ---
+CONST LV_BEGINNER AS INTEGER = 0
+CONST LV_INTER AS INTEGER = 1
+CONST LV_EXPERT AS INTEGER = 2
+CONST LV_CUSTOM AS INTEGER = 3
+
+' --- Which face the smiley button is wearing ---
+CONST FACE_SMILE AS INTEGER = 0    ' just playing
+CONST FACE_OOH AS INTEGER = 1      ' the player is holding the mouse down
+CONST FACE_WIN AS INTEGER = 2      ' sunglasses
+CONST FACE_DEAD AS INTEGER = 3     ' X eyes
+
+' --- Which dialog box (if any) is on screen ---
+CONST DLG_NONE AS INTEGER = 0
+CONST DLG_CUSTOM AS INTEGER = 1    ' "Custom Field" - pick your own size
+CONST DLG_TIMES AS INTEGER = 2     ' the high score tables
+CONST DLG_NAME AS INTEGER = 3      ' "you got a high score, type your name"
+CONST DLG_ABOUT AS INTEGER = 4
+CONST DLG_HELP AS INTEGER = 5
+
+' --- Menu command numbers ---
+' Every clickable menu line has a number so that one routine can carry out
+' whatever the player picked.
+CONST MI_NONE AS INTEGER = 0
+CONST MI_NEW AS INTEGER = 1
+CONST MI_BEG AS INTEGER = 2
+CONST MI_INT AS INTEGER = 3
+CONST MI_EXP AS INTEGER = 4
+CONST MI_CUSTOM AS INTEGER = 5
+CONST MI_MARKS AS INTEGER = 6
+CONST MI_COLOR AS INTEGER = 7
+CONST MI_SOUND AS INTEGER = 8
+CONST MI_TIMES AS INTEGER = 9
+CONST MI_EXIT AS INTEGER = 10
+CONST MI_HELP AS INTEGER = 11
+CONST MI_ABOUT AS INTEGER = 12
+
+' --- Limits for a custom board, copied from the original game ---
+CONST MIN_ROWS AS INTEGER = 9
+CONST MAX_ROWS AS INTEGER = 24
+CONST MIN_COLS AS INTEGER = 9
+CONST MAX_COLS AS INTEGER = 30
+CONST MIN_MINES AS INTEGER = 10
+
+' How many names we keep in each high score table.
+CONST TOP_N AS INTEGER = 5
+
+' The timer stops counting here, just like the original three-digit display.
+CONST MAX_SECS AS INTEGER = 999
+
+
+' ======================== 2. TYPES ========================
+
+' One line of a drop-down menu.
+TYPE MenuItem
+    DIM Label AS STRING      ' the words shown, e.g. "Beginner"
+    DIM Accel AS STRING      ' shortcut text shown on the right, e.g. "F2"
+    DIM Id AS INTEGER        ' which MI_* command this line runs
+    DIM Sep AS BOOLEAN       ' TRUE if this is just a dividing line
+    DIM Checked AS BOOLEAN   ' TRUE to draw a tick next to it
+END TYPE
+
+' One line of a high score table.
+TYPE ScoreEntry
+    DIM Secs AS INTEGER      ' how many seconds the winning game took
+    DIM Who AS STRING        ' the player's name
+    DIM DateStr AS STRING    ' the day it happened, as YYYY-MM-DD
+END TYPE
+
+' Everything the game needs to know, all in one place. Ebitengine calls
+' Update() and Draw() on a pointer to this, so any routine that gets
+' "g AS POINTER TO Game" can see and change the whole game.
+TYPE Game
+    ' --- the minefield itself ---
+    DIM Rows AS INTEGER          ' how many rows of squares
+    DIM Cols AS INTEGER          ' how many columns of squares
+    DIM NMines AS INTEGER        ' how many mines are buried
+    DIM Level AS INTEGER         ' LV_BEGINNER .. LV_CUSTOM
+
+    ' Three lists, one entry per square, laid out row by row. The square at
+    ' row r and column c lives at position r * Cols + c in each list.
+    DIM Mine AS []BOOLEAN        ' TRUE if a mine is buried here
+    DIM St AS []INTEGER          ' ST_COVERED / ST_REVEALED / ST_FLAG / ST_QUERY
+    DIM Adj AS []INTEGER         ' how many of the 8 neighbours are mines
+
+    ' --- how the game is going ---
+    DIM Started AS BOOLEAN       ' TRUE once the first square has been clicked
+    DIM Over AS BOOLEAN          ' TRUE when the game has finished
+    DIM Won AS BOOLEAN           ' TRUE if it finished by winning
+    DIM BoomIdx AS INTEGER       ' which square blew up (-1 if none)
+    DIM NShown AS INTEGER        ' how many squares are uncovered so far
+    DIM NFlags AS INTEGER        ' how many flags are planted
+    DIM Secs AS INTEGER          ' the timer, in seconds
+    DIM Ticks AS INTEGER         ' counts frames so we know when a second passed
+
+    ' --- options from the Game menu ---
+    DIM UseMarks AS BOOLEAN      ' allow the "?" mark
+    DIM UseColor AS BOOLEAN      ' colour numbers, or plain black and white
+    DIM UseSound AS BOOLEAN      ' play sound effects
+
+    ' --- where things are on screen (worked out by Relayout) ---
+    DIM ScrW AS INTEGER          ' width the board itself needs, in pixels
+    DIM ScrH AS INTEGER          ' height the board itself needs
+    DIM ViewW AS INTEGER         ' width of the window (bigger if a dialog needs it)
+    DIM ViewH AS INTEGER         ' height of the window
+    DIM OX AS INTEGER            ' where the board sits if the window is bigger
+    DIM OY AS INTEGER
+    DIM GX AS INTEGER            ' left edge of the minefield
+    DIM GY AS INTEGER            ' top edge of the minefield
+    DIM HdrX AS INTEGER          ' left edge of the header panel
+    DIM HdrY AS INTEGER          ' top edge of the header panel
+    DIM Zoom AS INTEGER          ' how many real pixels per game pixel
+
+    ' --- the mouse ---
+    DIM MX AS INTEGER            ' cursor position, in game pixels
+    DIM MY AS INTEGER
+    DIM PressIdx AS INTEGER      ' square currently held down (-1 for none)
+    DIM Chording AS BOOLEAN      ' TRUE while both buttons are held
+    DIM Swallow AS BOOLEAN       ' ignore the second button coming back up
+    DIM FaceDown AS BOOLEAN      ' TRUE while the smiley button is held
+    DIM Pressing AS BOOLEAN      ' TRUE while a button is held over the field
+    DIM Face AS INTEGER          ' FACE_SMILE / FACE_OOH / FACE_WIN / FACE_DEAD
+    DIM Quit AS BOOLEAN          ' set by Game/Exit to close the window
+
+    ' --- the menu bar ---
+    DIM MenuOpen AS INTEGER      ' -1 closed, 0 = Game menu, 1 = Help menu
+    DIM MenuHot AS INTEGER       ' which line the mouse is over (-1 for none)
+    DIM MenuItems AS []MenuItem  ' the lines of the menu that is open
+    DIM MenuX AS INTEGER         ' where the drop-down is drawn
+    DIM MenuW AS INTEGER
+
+    ' --- dialog boxes ---
+    DIM Dlg AS INTEGER           ' DLG_NONE when no dialog is up
+    DIM Focus AS INTEGER         ' which text box has the cursor
+    DIM FldRows AS STRING        ' what is typed in the Custom Field boxes
+    DIM FldCols AS STRING
+    DIM FldMines AS STRING
+    DIM NameBuf AS STRING        ' what is typed in the high score name box
+    DIM NameLvl AS INTEGER       ' which table that high score belongs to
+    DIM NameRank AS INTEGER      ' the position it earned
+    DIM Blink AS INTEGER         ' counts frames so the text cursor blinks
+
+    ' --- high scores, one table per standard difficulty ---
+    DIM ScBeg AS []ScoreEntry
+    DIM ScInt AS []ScoreEntry
+    DIM ScExp AS []ScoreEntry
+    DIM ScFile AS STRING         ' full path of the file they are saved in
+
+    ' --- pictures, all drawn once when the game starts ---
+    DIM ImgCovered AS POINTER TO ebiten.Image   ' an untouched square
+    DIM ImgBlank AS POINTER TO ebiten.Image     ' an uncovered empty square
+    DIM ImgNum AS []POINTER TO ebiten.Image     ' the numbers 1 to 8
+    DIM ImgFlag AS POINTER TO ebiten.Image
+    DIM ImgQuery AS POINTER TO ebiten.Image     ' "?" on a covered square
+    DIM ImgQueryDn AS POINTER TO ebiten.Image   ' "?" on an uncovered square
+    DIM ImgMine AS POINTER TO ebiten.Image
+    DIM ImgBoom AS POINTER TO ebiten.Image      ' the mine you stepped on
+    DIM ImgWrong AS POINTER TO ebiten.Image     ' a flag that was wrong
+    DIM ImgLed AS []POINTER TO ebiten.Image     ' LED digits 0-9 and a minus
+    DIM ImgFace AS []POINTER TO ebiten.Image    ' the four smiley faces
+    DIM ImgFaceDn AS POINTER TO ebiten.Image    ' the smiley button pushed in
+
+    ' --- sound effects ---
+    DIM SndTick AS POINTER TO audio.Player      ' one per second
+    DIM SndOpen AS POINTER TO audio.Player      ' uncovering squares
+    DIM SndFlag AS POINTER TO audio.Player      ' planting a flag
+    DIM SndBoom AS POINTER TO audio.Player      ' you lose
+    DIM SndWin AS POINTER TO audio.Player       ' you win
+END TYPE
+
+
+' Pictures of text we have already drawn, kept so we never draw the same
+' words twice. A map declared out here like this is ready to use straight
+' away; one declared inside a TYPE would have to be created by hand first.
+DIM GTxt AS MAP OF STRING TO POINTER TO ebiten.Image
+
+' The one and only audio context. Ebitengine allows exactly one per program,
+' so we make it in Main and keep it here where everything can reach it.
+DIM GAudio AS POINTER TO audio.Context
+
+
+' ======================== 3. SPRITES (all the pictures) ========================
+'
+' Think of these as rubber stamps. Carving a stamp is slow, but once it is
+' carved you can bang out hundreds of copies in no time. So we carve every
+' picture the game needs ONCE, when it starts, and after that drawing a
+' square is just "stamp picture number 3 here".
+'
+' An Expert board has 480 squares and gets repainted sixty times a second.
+' That is nearly 29,000 squares a second. Carving each one from scratch
+' every time would bring the game to its knees; stamping them does not.
+
+' --- The colour palette of Windows 3.1, which is what the original used ---
+DIM CGray AS color.RGBA = color.RGBA{R: 192, G: 192, B: 192, A: 255}
+DIM CWhite AS color.RGBA = color.RGBA{R: 255, G: 255, B: 255, A: 255}
+DIM CDark AS color.RGBA = color.RGBA{R: 128, G: 128, B: 128, A: 255}
+DIM CBlack AS color.RGBA = color.RGBA{R: 0, G: 0, B: 0, A: 255}
+DIM CRed AS color.RGBA = color.RGBA{R: 255, G: 0, B: 0, A: 255}
+DIM CNavy AS color.RGBA = color.RGBA{R: 0, G: 0, B: 128, A: 255}
+DIM CYellow AS color.RGBA = color.RGBA{R: 255, G: 255, B: 0, A: 255}
+
+' The eight number colours, in order: 1 is blue, 2 is green, 3 is red and
+' so on. These are the exact colours the original game used.
+DIM GNumClr AS []color.RGBA = []color.RGBA{ _
+    color.RGBA{R: 0, G: 0, B: 255, A: 255}, _
+    color.RGBA{R: 0, G: 128, B: 0, A: 255}, _
+    color.RGBA{R: 255, G: 0, B: 0, A: 255}, _
+    color.RGBA{R: 0, G: 0, B: 128, A: 255}, _
+    color.RGBA{R: 128, G: 0, B: 0, A: 255}, _
+    color.RGBA{R: 0, G: 128, B: 128, A: 255}, _
+    color.RGBA{R: 0, G: 0, B: 0, A: 255}, _
+    color.RGBA{R: 128, G: 128, B: 128, A: 255}}
+
+
+' Rect paints a solid block of colour. Every picture in this game is made
+' of nothing but solid blocks, so this is our one and only paintbrush.
+SUB Rect(dst AS POINTER TO ebiten.Image, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER, clr AS color.RGBA)
+    vector.DrawFilledRect(dst, Sng(x), Sng(y), Sng(w), Sng(h), clr, FALSE)
+END SUB
+
+
+' Bevel draws the chiselled 3D edge that Windows used everywhere.
+'
+' HOW THE TRICK WORKS
+'   Your eyes decide whether something sticks out or goes in by looking at
+'   where the light is. Pretend a lamp is shining from the top left of the
+'   screen. A button that sticks OUT would catch the light along its top and
+'   left edges, and cast a shadow along its bottom and right ones. So: paint
+'   those two edges white and the other two dark grey, and a flat rectangle
+'   of pixels turns into a button you want to press. Swap the two and the
+'   same rectangle looks like a dent.
+'
+'   raised = TRUE  : light on the top and left  -> sticks OUT
+'   raised = FALSE : light on the bottom and right -> pressed IN
+SUB Bevel(dst AS POINTER TO ebiten.Image, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER, t AS INTEGER, raised AS BOOLEAN)
+    DIM hi AS color.RGBA = CWhite
+    DIM lo AS color.RGBA = CDark
+    IF NOT raised THEN
+        hi = CDark
+        lo = CWhite
+    ENDIF
+    Rect(dst, x, y, w, t, hi)                  ' top edge
+    Rect(dst, x, y, t, h, hi)                  ' left edge
+    Rect(dst, x, y + h - t, w, t, lo)          ' bottom edge
+    Rect(dst, x + w - t, y, t, h, lo)          ' right edge
+END SUB
+
+
+' GlyphRows hands back the little picture of a character, drawn as text.
+' A "#" means "paint a pixel here" and a "." means "leave it alone".
+' Each glyph is 6 pixels wide and 9 tall - big and bold, like the original.
+'   1 to 8  = the neighbour-count digits
+'   9       = a question mark
+FUNCTION GlyphRows(n AS INTEGER) AS []STRING
+    SELECT CASE n
+        CASE 1
+            RETURN []STRING{"..##..", ".###..", "..##..", "..##..", "..##..", "..##..", "..##..", "..##..", "######"}
+        CASE 2
+            RETURN []STRING{".####.", "##..##", "....##", "....##", "...##.", "..##..", ".##...", "##....", "######"}
+        CASE 3
+            RETURN []STRING{".####.", "##..##", "....##", "...##.", "..###.", "....##", "....##", "##..##", ".####."}
+        CASE 4
+            RETURN []STRING{"...##.", "..###.", ".####.", "##.##.", "##.##.", "######", "...##.", "...##.", "...##."}
+        CASE 5
+            RETURN []STRING{"######", "##....", "##....", "#####.", "....##", "....##", "....##", "##..##", ".####."}
+        CASE 6
+            RETURN []STRING{"..###.", ".##...", "##....", "##....", "#####.", "##..##", "##..##", "##..##", ".####."}
+        CASE 7
+            RETURN []STRING{"######", "....##", "....##", "...##.", "...##.", "..##..", "..##..", ".##...", ".##..."}
+        CASE 8
+            RETURN []STRING{".####.", "##..##", "##..##", "##..##", ".####.", "##..##", "##..##", "##..##", ".####."}
+        CASE 9
+            RETURN []STRING{".####.", "##..##", "....##", "...##.", "..##..", "..##..", "......", "..##..", "..##.."}
+    END SELECT
+    RETURN []STRING{}
+END FUNCTION
+
+
+' DrawGlyph stamps one of those little character pictures onto an image.
+SUB DrawGlyph(dst AS POINTER TO ebiten.Image, n AS INTEGER, px AS INTEGER, py AS INTEGER, clr AS color.RGBA)
+    DIM rows AS []STRING = GlyphRows(n)
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    FOR r = 0 TO Len(rows) - 1
+        FOR c = 0 TO Len(rows[r]) - 1
+            IF Mid(rows[r], c + 1, 1) = "#" THEN
+                Rect(dst, px + c, py + r, 1, 1, clr)
+            ENDIF
+        NEXT
+    NEXT
+END SUB
+
+
+' --- The two basic squares ---
+
+' A square nobody has touched: a raised grey button.
+FUNCTION MakeCovered() AS POINTER TO ebiten.Image
+    DIM img AS POINTER TO ebiten.Image = ebiten.NewImage(CELL, CELL)
+    Rect(img, 0, 0, CELL, CELL, CGray)
+    Bevel(img, 0, 0, CELL, CELL, 2, TRUE)
+    RETURN img
+END FUNCTION
+
+' An uncovered square: flat grey with a thin dark line along the top and
+' left. Those lines are what make the field look like graph paper.
+FUNCTION MakeBlank() AS POINTER TO ebiten.Image
+    DIM img AS POINTER TO ebiten.Image = ebiten.NewImage(CELL, CELL)
+    Rect(img, 0, 0, CELL, CELL, CGray)
+    Rect(img, 0, 0, CELL, 1, CDark)
+    Rect(img, 0, 0, 1, CELL, CDark)
+    RETURN img
+END FUNCTION
+
+
+' --- The bits and pieces drawn on top of a square ---
+
+' PaintMine draws the classic spiky sea-mine: a round black body with four
+' spikes, and a white glint in the top left so it looks shiny.
+SUB PaintMine(img AS POINTER TO ebiten.Image)
+    ' The two long spikes, one across and one down.
+    Rect(img, 7, 2, 2, 12, CBlack)
+    Rect(img, 2, 7, 12, 2, CBlack)
+    ' The four short diagonal spikes, drawn one pixel at a time.
+    Rect(img, 3, 3, 1, 1, CBlack)
+    Rect(img, 4, 4, 1, 1, CBlack)
+    Rect(img, 12, 12, 1, 1, CBlack)
+    Rect(img, 11, 11, 1, 1, CBlack)
+    Rect(img, 12, 3, 1, 1, CBlack)
+    Rect(img, 11, 4, 1, 1, CBlack)
+    Rect(img, 3, 12, 1, 1, CBlack)
+    Rect(img, 4, 11, 1, 1, CBlack)
+    ' The round body.
+    vector.DrawFilledCircle(img, Sng(8), Sng(8), Sng(4.5), CBlack, FALSE)
+    ' The glint, up in the top left where the light would catch it.
+    Rect(img, 5, 5, 2, 2, CWhite)
+END SUB
+
+' PaintFlag draws the little red pennant on its black pole and stand.
+SUB PaintFlag(img AS POINTER TO ebiten.Image, colour AS BOOLEAN)
+    DIM fc AS color.RGBA = CRed
+    IF NOT colour THEN
+        fc = CBlack
+    ENDIF
+    ' The pennant: a triangle pointing left, widest in the middle.
+    Rect(img, 7, 3, 1, 1, fc)
+    Rect(img, 6, 4, 2, 1, fc)
+    Rect(img, 5, 5, 3, 1, fc)
+    Rect(img, 4, 6, 4, 1, fc)
+    Rect(img, 5, 7, 3, 1, fc)
+    Rect(img, 6, 8, 2, 1, fc)
+    Rect(img, 7, 9, 1, 1, fc)
+    ' The pole and the two-step stand at the bottom.
+    Rect(img, 8, 3, 1, 8, CBlack)
+    Rect(img, 6, 11, 5, 1, CBlack)
+    Rect(img, 5, 12, 7, 1, CBlack)
+END SUB
+
+' PaintCross draws the red X that marks a flag you got wrong.
+SUB PaintCross(img AS POINTER TO ebiten.Image)
+    DIM i AS INTEGER
+    FOR i = 0 TO 9
+        Rect(img, 3 + i, 3 + i, 2, 1, CRed)
+        Rect(img, 12 - i, 3 + i, 2, 1, CRed)
+    NEXT
+END SUB
+
+
+' --- The red LED digits of the counter and the timer ---
+'
+' A 7-segment display is seven little bars arranged like a figure 8:
+'
+'        aaaa
+'       f    b
+'       f    b
+'        gggg
+'       e    c
+'       e    c
+'        dddd
+'
+' To show a digit we simply light up the right combination of bars.
+
+' LedSegs says which bars are lit for one digit. The answer is seven
+' characters, one per bar in the order a b c d e f g; "1" means lit.
+FUNCTION LedSegs(d AS INTEGER) AS STRING
+    SELECT CASE d
+        CASE 0
+            RETURN "1111110"
+        CASE 1
+            RETURN "0110000"
+        CASE 2
+            RETURN "1101101"
+        CASE 3
+            RETURN "1111001"
+        CASE 4
+            RETURN "0110011"
+        CASE 5
+            RETURN "1011011"
+        CASE 6
+            RETURN "1011111"
+        CASE 7
+            RETURN "1110000"
+        CASE 8
+            RETURN "1111111"
+        CASE 9
+            RETURN "1111011"
+    END SELECT
+    RETURN "0000001"      ' anything else shows a minus sign (bar g only)
+END FUNCTION
+
+' MakeLed builds the picture of one glowing digit on a black background.
+FUNCTION MakeLed(d AS INTEGER, colour AS BOOLEAN) AS POINTER TO ebiten.Image
+    DIM img AS POINTER TO ebiten.Image = ebiten.NewImage(LEDW, LEDH)
+    img.Fill(CBlack)
+    DIM on AS color.RGBA = CRed
+    IF NOT colour THEN
+        on = CWhite
+    ENDIF
+    DIM s AS STRING = LedSegs(d)
+    ' The bars stop one pixel short of each edge so that neighbouring
+    ' digits do not run into one another - without that gap, a "1" next
+    ' to a "0" looks like one solid blob.
+    IF Mid(s, 1, 1) = "1" THEN Rect(img, 3, 0, 7, 3, on)      ' a - top
+    IF Mid(s, 2, 1) = "1" THEN Rect(img, 9, 3, 3, 8, on)      ' b - top right
+    IF Mid(s, 3, 1) = "1" THEN Rect(img, 9, 13, 3, 7, on)     ' c - bottom right
+    IF Mid(s, 4, 1) = "1" THEN Rect(img, 3, 20, 7, 3, on)     ' d - bottom
+    IF Mid(s, 5, 1) = "1" THEN Rect(img, 1, 13, 3, 7, on)     ' e - bottom left
+    IF Mid(s, 6, 1) = "1" THEN Rect(img, 1, 3, 3, 8, on)      ' f - top left
+    IF Mid(s, 7, 1) = "1" THEN Rect(img, 3, 10, 7, 3, on)     ' g - middle
+    RETURN img
+END FUNCTION
+
+
+' --- The smiley face button ---
+
+' MakeFace builds one of the four faces on its raised grey button.
+'   which = FACE_SMILE / FACE_OOH / FACE_WIN / FACE_DEAD
+FUNCTION MakeFace(which AS INTEGER, pressed AS BOOLEAN) AS POINTER TO ebiten.Image
+    DIM img AS POINTER TO ebiten.Image = ebiten.NewImage(FACEW, FACEW)
+    Rect(img, 0, 0, FACEW, FACEW, CGray)
+    IF pressed THEN
+        ' A pushed-in button: sunken edge and the face nudged down-right.
+        Bevel(img, 0, 0, FACEW, FACEW, 2, FALSE)
+    ELSE
+        Bevel(img, 0, 0, FACEW, FACEW, 2, TRUE)
+    ENDIF
+
+    ' The yellow head: a circle with a black outline.
+    DIM cx AS INTEGER = 12
+    DIM cy AS INTEGER = 12
+    IF pressed THEN
+        cx = 13
+        cy = 13
+    ENDIF
+    vector.DrawFilledCircle(img, Sng(cx), Sng(cy), Sng(8), CBlack, FALSE)
+    vector.DrawFilledCircle(img, Sng(cx), Sng(cy), Sng(6.8), CYellow, FALSE)
+
+    DIM lx AS INTEGER = cx - 4      ' left eye
+    DIM rx AS INTEGER = cx + 2      ' right eye
+    DIM ey AS INTEGER = cy - 4      ' eye height
+
+    SELECT CASE which
+        CASE FACE_WIN
+            ' Sunglasses: two dark lenses joined by a bridge.
+            Rect(img, cx - 6, ey, 5, 3, CBlack)
+            Rect(img, cx + 1, ey, 5, 3, CBlack)
+            Rect(img, cx - 1, ey + 1, 2, 1, CBlack)
+            ' A wide grin.
+            Rect(img, cx - 2, cy + 4, 4, 1, CBlack)
+            Rect(img, cx - 3, cy + 3, 1, 1, CBlack)
+            Rect(img, cx + 2, cy + 3, 1, 1, CBlack)
+        CASE FACE_DEAD
+            ' Two X-shaped eyes.
+            DIM i AS INTEGER
+            FOR i = 0 TO 3
+                Rect(img, lx + i, ey + i, 1, 1, CBlack)
+                Rect(img, lx + 3 - i, ey + i, 1, 1, CBlack)
+                Rect(img, rx + i, ey + i, 1, 1, CBlack)
+                Rect(img, rx + 3 - i, ey + i, 1, 1, CBlack)
+            NEXT
+            ' An upside-down mouth.
+            Rect(img, cx - 2, cy + 3, 4, 1, CBlack)
+            Rect(img, cx - 3, cy + 4, 1, 1, CBlack)
+            Rect(img, cx + 2, cy + 4, 1, 1, CBlack)
+        CASE FACE_OOH
+            ' Round staring eyes and a small "o" of a mouth.
+            Rect(img, lx + 1, ey, 2, 3, CBlack)
+            Rect(img, rx + 1, ey, 2, 3, CBlack)
+            Rect(img, cx - 2, cy + 2, 4, 4, CBlack)
+            Rect(img, cx - 1, cy + 3, 2, 2, CYellow)
+        CASE ELSE
+            ' The plain happy face.
+            Rect(img, lx + 1, ey, 2, 3, CBlack)
+            Rect(img, rx + 1, ey, 2, 3, CBlack)
+            Rect(img, cx - 2, cy + 4, 4, 1, CBlack)
+            Rect(img, cx - 3, cy + 3, 1, 1, CBlack)
+            Rect(img, cx + 2, cy + 3, 1, 1, CBlack)
+    END SELECT
+    RETURN img
+END FUNCTION
+
+
+' MakeSprites draws every picture the game will ever need. It is called
+' once at start-up, and again if the player switches the Color option,
+' because that changes what some of the pictures look like.
+SUB (g AS POINTER TO Game) MakeSprites()
+    g.ImgCovered = MakeCovered()
+    g.ImgBlank = MakeBlank()
+
+    ' The numbers 1 to 8, each on a blank square in its own colour.
+    DIM nums AS []POINTER TO ebiten.Image
+    DIM n AS INTEGER
+    FOR n = 1 TO 8
+        DIM img AS POINTER TO ebiten.Image = MakeBlank()
+        DIM clr AS color.RGBA = GNumClr[n - 1]
+        IF NOT g.UseColor THEN
+            clr = CBlack
+        ENDIF
+        DrawGlyph(img, n, 5, 4, clr)
+        APPEND(nums, img)
+    NEXT
+    g.ImgNum = nums
+
+    ' A flag on a covered square.
+    g.ImgFlag = MakeCovered()
+    PaintFlag(g.ImgFlag, g.UseColor)
+
+    ' A question mark, both on a covered square and on an uncovered one
+    ' (the second is what you see while you hold the mouse down on it).
+    g.ImgQuery = MakeCovered()
+    DrawGlyph(g.ImgQuery, 9, 5, 4, CBlack)
+    g.ImgQueryDn = MakeBlank()
+    DrawGlyph(g.ImgQueryDn, 9, 5, 4, CBlack)
+
+    ' A mine sitting quietly on an uncovered square.
+    g.ImgMine = MakeBlank()
+    PaintMine(g.ImgMine)
+
+    ' The mine you actually stepped on: same thing on a red square.
+    g.ImgBoom = MakeBlank()
+    DIM boomBg AS color.RGBA = CRed
+    IF NOT g.UseColor THEN
+        boomBg = CDark
+    ENDIF
+    Rect(g.ImgBoom, 1, 1, CELL - 1, CELL - 1, boomBg)
+    PaintMine(g.ImgBoom)
+
+    ' A flag that turned out to be wrong: the mine with a red X over it.
+    g.ImgWrong = MakeBlank()
+    PaintMine(g.ImgWrong)
+    PaintCross(g.ImgWrong)
+
+    ' The eleven LED digits: 0 to 9, plus a minus sign at position 10.
+    DIM leds AS []POINTER TO ebiten.Image
+    DIM d AS INTEGER
+    FOR d = 0 TO 10
+        APPEND(leds, MakeLed(d, g.UseColor))
+    NEXT
+    g.ImgLed = leds
+
+    ' The four faces, plus the "button pushed in" version.
+    DIM faces AS []POINTER TO ebiten.Image
+    DIM f AS INTEGER
+    FOR f = 0 TO 3
+        APPEND(faces, MakeFace(f, FALSE))
+    NEXT
+    g.ImgFace = faces
+    g.ImgFaceDn = MakeFace(FACE_SMILE, TRUE)
+END SUB
+
+
+' ======================== 4. SOUND ========================
+'
+' The game ships with no sound files. Instead we MAKE the sounds, sample by
+' sample, when the program starts.
+'
+' HOW DIGITAL SOUND WORKS
+'   Sound is air wobbling. A loudspeaker wobbles the air by pushing its cone
+'   out and pulling it back in, and it does whatever a list of numbers tells
+'   it to: a big number means "push right out", a big negative number means
+'   "pull right in", nought means "stay put".
+'
+'   The list is read at a fixed speed - 44100 numbers a second, which is
+'   quick enough that your ear hears a smooth sound rather than 44100 tiny
+'   nudges. Write out "out, out, out... in, in, in..." so that the cone
+'   changes direction 440 times a second, and you hear the note A.
+'
+'   Flipping straight from full out to full in, with nothing in between, is
+'   called a SQUARE WAVE. It is the harshest, buzziest sound there is, and
+'   it is exactly what games sounded like before sound cards - which makes
+'   it perfect here.
+'
+'   Each number takes two bytes, and we need two of them (left and right ear),
+'   so every sample becomes four characters in the string we build.
+
+CONST RATE AS INTEGER = 44100     ' samples per second
+
+' PcmSample turns one loudness number into the four characters that the
+' audio system expects: low byte, high byte, twice (once per ear).
+FUNCTION PcmSample(v AS INTEGER) AS STRING
+    DIM uv AS INTEGER = v
+    IF uv < 0 THEN
+        uv = uv + 65536           ' negative numbers wrap round, as bytes do
+    ENDIF
+    ' MOD is the remainder after dividing. 700 MOD 256 is 188, because 700
+    ' is two lots of 256 with 188 left over. Splitting a number into "how
+    ' many 256s" and "what is left over" is how you chop it into two bytes.
+    DIM lo AS INTEGER = uv MOD 256
+    DIM hi AS INTEGER = uv / 256
+    RETURN Chr(lo) & Chr(hi) & Chr(lo) & Chr(hi)
+END FUNCTION
+
+' MakeTone builds a plain beep that fades out towards the end.
+'   freq  = pitch in cycles per second (440 is the note A)
+'   durMs = how long it lasts, in thousandths of a second
+'   vol   = how loud, up to about 20000
+FUNCTION MakeTone(freq AS INTEGER, durMs AS INTEGER, vol AS INTEGER) AS STRING
+    DIM samples AS INTEGER = RATE * durMs / 1000
+    DIM period AS INTEGER = RATE / freq
+    IF period < 2 THEN
+        period = 2
+    ENDIF
+    DIM half AS INTEGER = period / 2
+    DIM sb AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO samples - 1
+        DIM v AS INTEGER = vol
+        IF (i MOD period) >= half THEN
+            v = -vol
+        ENDIF
+        v = v * (samples - i) / samples        ' fade out so it does not click
+        APPEND(sb, PcmSample(v))
+    NEXT
+    RETURN strings.Join(sb, "")
+END FUNCTION
+
+' MakeChirp is the same idea, but the pitch slides from one note to another.
+FUNCTION MakeChirp(f0 AS INTEGER, f1 AS INTEGER, durMs AS INTEGER, vol AS INTEGER) AS STRING
+    DIM samples AS INTEGER = RATE * durMs / 1000
+    DIM sb AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO samples - 1
+        DIM freq AS INTEGER = f0 + (f1 - f0) * i / samples
+        IF freq < 20 THEN
+            freq = 20
+        ENDIF
+        DIM period AS INTEGER = RATE / freq
+        IF period < 2 THEN
+            period = 2
+        ENDIF
+        DIM v AS INTEGER = vol
+        IF (i MOD period) >= (period / 2) THEN
+            v = -vol
+        ENDIF
+        v = v * (samples - i) / samples
+        APPEND(sb, PcmSample(v))
+    NEXT
+    RETURN strings.Join(sb, "")
+END FUNCTION
+
+' MakeBang builds the explosion: random noise (which is what a bang is)
+' that dies away quickly, with a low rumble mixed underneath it.
+FUNCTION MakeBang(durMs AS INTEGER, vol AS INTEGER) AS STRING
+    DIM samples AS INTEGER = RATE * durMs / 1000
+    DIM sb AS []STRING
+    DIM hold AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO samples - 1
+        ' Pick a new random value every few samples. Changing it slowly
+        ' makes a deep roar; changing it fast makes a thin hiss.
+        IF (i MOD 6) = 0 THEN
+            hold = RndInt(2 * vol) - vol
+        ENDIF
+        DIM rumble AS INTEGER = vol / 3
+        IF (i MOD 800) >= 400 THEN
+            rumble = -rumble
+        ENDIF
+        DIM v AS INTEGER = (hold + rumble) * (samples - i) / samples
+        APPEND(sb, PcmSample(v))
+    NEXT
+    RETURN strings.Join(sb, "")
+END FUNCTION
+
+' MakePlayer hands a lump of sound data to Ebitengine and gets back
+' something we can call .Play() on.
+FUNCTION MakePlayer(data AS STRING) AS POINTER TO audio.Player
+    IF GAudio = NIL THEN
+        RETURN NIL
+    ENDIF
+    DIM reader AS POINTER TO strings.Reader = strings.NewReader(data)
+    DIM player AS POINTER TO audio.Player
+    DIM err AS ERROR
+    player, err = GAudio.NewPlayer(reader)
+    IF err <> NIL THEN
+        fmt.Println("Sound unavailable:", err)
+        RETURN NIL
+    ENDIF
+    RETURN player
+END FUNCTION
+
+' InitSounds makes all five of the game's sound effects.
+SUB (g AS POINTER TO Game) InitSounds()
+    ' A soft low click every time squares are uncovered.
+    g.SndOpen = MakePlayer(MakeTone(180, 25, 2200))
+    ' A crisper, higher click for planting or removing a flag.
+    g.SndFlag = MakePlayer(MakeTone(900, 20, 2000))
+    ' A quiet tick, once a second, while the clock runs.
+    g.SndTick = MakePlayer(MakeTone(1400, 12, 1200))
+    ' The explosion.
+    g.SndBoom = MakePlayer(MakeBang(600, 9000))
+    ' A cheerful rising fanfare for winning.
+    g.SndWin = MakePlayer(MakeChirp(392, 784, 140, 4000) & MakeChirp(523, 1046, 140, 4000) & MakeChirp(659, 1318, 320, 4000))
+END SUB
+
+' Play starts a sound from the beginning - but only if the player has left
+' the Sound option switched on in the Game menu.
+SUB (g AS POINTER TO Game) Play(snd AS POINTER TO audio.Player)
+    IF NOT g.UseSound THEN
+        RETURN
+    ENDIF
+    IF snd = NIL THEN
+        RETURN
+    ENDIF
+    snd.Rewind()
+    snd.Play()
+END SUB
+
+
+' ======================== 5. HIGH SCORES ========================
+'
+' The original game remembered one best time per difficulty. We keep a full
+' table of the best five, with the player's name and the date, and we store
+' it in the player's home folder so it survives for good - it does not matter
+' which folder the game is started from, and deleting the game does not lose
+' the scores.
+'
+' The file is ordinary text, so you can open it in any editor:
+'
+'     # DBasic Minesweeper high scores
+'     beginner=12|Rick|2026-08-22
+'     expert=214|Rick|2026-08-19
+'
+' Custom boards are deliberately NOT recorded: you could make a 9x9 board
+' with one mine and "win" in a second, which would not be much of a record.
+
+' ScoreFile works out where to keep the score file.
+FUNCTION ScoreFile() AS STRING
+    DIM home AS STRING
+    DIM err AS ERROR
+    home, err = os.UserHomeDir()
+    IF err <> NIL OR home = "" THEN
+        RETURN "minesweeper.ini"        ' fall back to the current folder
+    ENDIF
+    RETURN filepath.Join(home, ".dbasic-minesweeper.ini")
+END FUNCTION
+
+' LevelKey is the short word used for a difficulty inside the score file.
+FUNCTION LevelKey(lvl AS INTEGER) AS STRING
+    SELECT CASE lvl
+        CASE LV_BEGINNER
+            RETURN "beginner"
+        CASE LV_INTER
+            RETURN "intermediate"
+        CASE LV_EXPERT
+            RETURN "expert"
+    END SELECT
+    RETURN "custom"
+END FUNCTION
+
+' LevelName is the same thing spelled out for the player to read.
+FUNCTION LevelName(lvl AS INTEGER) AS STRING
+    SELECT CASE lvl
+        CASE LV_BEGINNER
+            RETURN "Beginner"
+        CASE LV_INTER
+            RETURN "Intermediate"
+        CASE LV_EXPERT
+            RETURN "Expert"
+    END SELECT
+    RETURN "Custom"
+END FUNCTION
+
+' ScoresFor hands back the table belonging to one difficulty.
+FUNCTION (g AS POINTER TO Game) ScoresFor(lvl AS INTEGER) AS []ScoreEntry
+    SELECT CASE lvl
+        CASE LV_BEGINNER
+            RETURN g.ScBeg
+        CASE LV_INTER
+            RETURN g.ScInt
+        CASE LV_EXPERT
+            RETURN g.ScExp
+    END SELECT
+    DIM empty AS []ScoreEntry
+    RETURN empty
+END FUNCTION
+
+' SetScoresFor replaces the table belonging to one difficulty.
+SUB (g AS POINTER TO Game) SetScoresFor(lvl AS INTEGER, list AS []ScoreEntry)
+    SELECT CASE lvl
+        CASE LV_BEGINNER
+            g.ScBeg = list
+        CASE LV_INTER
+            g.ScInt = list
+        CASE LV_EXPERT
+            g.ScExp = list
+    END SELECT
+END SUB
+
+' LoadScores reads the score file back in. A missing or damaged file simply
+' means "no scores yet" - the game never refuses to start over a bad file.
+SUB (g AS POINTER TO Game) LoadScores()
+    ' Work out the file name once. Leaving it alone if it is already set
+    ' means a test can point the game at a scratch file instead.
+    IF g.ScFile = "" THEN
+        g.ScFile = ScoreFile()
+    ENDIF
+    DIM beg AS []ScoreEntry
+    DIM med AS []ScoreEntry
+    DIM exp AS []ScoreEntry
+    g.ScBeg = beg
+    g.ScInt = med
+    g.ScExp = exp
+
+    IF NOT FileExists(g.ScFile) THEN
+        RETURN
+    ENDIF
+
+    DIM text AS STRING = ReadFile(g.ScFile)
+    DIM lines AS []STRING = strings.Split(text, Chr(10))
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(lines) - 1
+        DIM line AS STRING = Trim(lines[i])
+        DIM eq AS INTEGER = Instr(line, "=")
+        ' Skip blank lines, comments, and anything without a "=" in it.
+        IF line <> "" AND Left(line, 1) <> "#" AND eq >= 2 THEN
+            ' Split "beginner=12|Rick|2026-08-22" into a key and a value.
+            DIM key AS STRING = LCase(Trim(Left(line, eq - 1)))
+            DIM rest AS STRING = Trim(Mid(line, eq + 1, Len(line) - eq))
+            DIM parts AS []STRING = strings.Split(rest, "|")
+            IF key = "marks" OR key = "color" OR key = "sound" THEN
+                ' The three Game-menu options live in the same file.
+                DIM on AS BOOLEAN = (Trim(rest) = "1")
+                IF key = "marks" THEN
+                    g.UseMarks = on
+                ELSEIF key = "color" THEN
+                    g.UseColor = on
+                ELSE
+                    g.UseSound = on
+                ENDIF
+            ELSEIF key = "level" OR key = "rows" OR key = "cols" OR key = "mines" THEN
+                ' ...and so does the board you were playing last time.
+                DIM nv AS INTEGER = Int(Val(Trim(rest)))
+                IF key = "level" THEN
+                    g.Level = nv
+                ELSEIF key = "rows" THEN
+                    g.Rows = nv
+                ELSEIF key = "cols" THEN
+                    g.Cols = nv
+                ELSE
+                    g.NMines = nv
+                ENDIF
+            ELSEIF Len(parts) >= 2 THEN
+                DIM secs AS INTEGER
+                DIM cerr AS ERROR
+                secs, cerr = strconv.Atoi(Trim(parts[0]))
+                IF cerr = NIL THEN
+                    DIM e AS ScoreEntry
+                    e.Secs = secs
+                    e.Who = Trim(parts[1])
+                    e.DateStr = ""
+                    IF Len(parts) >= 3 THEN
+                        e.DateStr = Trim(parts[2])
+                    ENDIF
+                    SELECT CASE key
+                        CASE "beginner"
+                            g.ScBeg = APPEND(g.ScBeg, e)
+                        CASE "intermediate"
+                            g.ScInt = APPEND(g.ScInt, e)
+                        CASE "expert"
+                            g.ScExp = APPEND(g.ScExp, e)
+                    END SELECT
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT
+END SUB
+
+' OnOff turns TRUE and FALSE into the "1" and "0" stored in the file.
+FUNCTION OnOff(b AS BOOLEAN) AS STRING
+    IF b THEN
+        RETURN "1"
+    ENDIF
+    RETURN "0"
+END FUNCTION
+
+' SaveScores writes the three tables (and the menu options) back out to disk.
+SUB (g AS POINTER TO Game) SaveScores()
+    DIM sb AS []STRING
+    APPEND(sb, "# DBasic Minesweeper high scores")
+    APPEND(sb, "# level=seconds|name|date")
+    APPEND(sb, "marks=" & OnOff(g.UseMarks))
+    APPEND(sb, "color=" & OnOff(g.UseColor))
+    APPEND(sb, "sound=" & OnOff(g.UseSound))
+    APPEND(sb, "level=" & Str(g.Level))
+    APPEND(sb, "rows=" & Str(g.Rows))
+    APPEND(sb, "cols=" & Str(g.Cols))
+    APPEND(sb, "mines=" & Str(g.NMines))
+    DIM lvl AS INTEGER
+    FOR lvl = LV_BEGINNER TO LV_EXPERT
+        DIM list AS []ScoreEntry = g.ScoresFor(lvl)
+        DIM i AS INTEGER
+        FOR i = 0 TO Len(list) - 1
+            APPEND(sb, LevelKey(lvl) & "=" & Str(list[i].Secs) & "|" & list[i].Who & "|" & list[i].DateStr)
+        NEXT
+    NEXT
+    WriteFile(g.ScFile, strings.Join(sb, Chr(10)) & Chr(10))
+END SUB
+
+' ScoreRank asks "if I finished this level in this many seconds, where would
+' I come in the table?"
+'
+' The table is already sorted with the fastest time at the top, so we walk
+' down it from the top and stop at the first time we beat - that is the slot
+' we would push into, and everybody below shuffles down one. If we never
+' beat anybody but there is still a spare row, we go on the end. If we beat
+' nobody and the table is full, we did not make it: the answer is -1.
+FUNCTION (g AS POINTER TO Game) ScoreRank(lvl AS INTEGER, secs AS INTEGER) AS INTEGER
+    ' Custom boards are not ranked.
+    IF lvl = LV_CUSTOM THEN
+        RETURN -1
+    ENDIF
+    DIM list AS []ScoreEntry = g.ScoresFor(lvl)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(list) - 1
+        IF secs < list[i].Secs THEN
+            RETURN i
+        ENDIF
+    NEXT
+    ' Not faster than anyone, but there may still be a free slot.
+    IF Len(list) < TOP_N THEN
+        RETURN Len(list)
+    ENDIF
+    RETURN -1
+END FUNCTION
+
+' InsertScore slots a new entry into a table at the given position and
+' throws away anything that falls off the bottom.
+SUB (g AS POINTER TO Game) InsertScore(lvl AS INTEGER, rank AS INTEGER, e AS ScoreEntry)
+    DIM old AS []ScoreEntry = g.ScoresFor(lvl)
+    DIM fresh AS []ScoreEntry
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(old) - 1
+        IF i = rank THEN
+            APPEND(fresh, e)
+        ENDIF
+        APPEND(fresh, old[i])
+    NEXT
+    ' If the new time goes on the end, the loop above never added it.
+    IF rank >= Len(old) THEN
+        APPEND(fresh, e)
+    ENDIF
+    ' Keep only the best few.
+    IF Len(fresh) > TOP_N THEN
+        fresh = fresh[0:TOP_N]
+    ENDIF
+    g.SetScoresFor(lvl, fresh)
+    g.SaveScores()
+END SUB
+
+' ResetScores empties all three tables (the Best Times dialog offers this).
+SUB (g AS POINTER TO Game) ResetScores()
+    DIM beg AS []ScoreEntry
+    DIM med AS []ScoreEntry
+    DIM exp AS []ScoreEntry
+    g.ScBeg = beg
+    g.ScInt = med
+    g.ScExp = exp
+    g.SaveScores()
+END SUB
+
+
+' ======================== 6. THE MINEFIELD ========================
+'
+' The board is stored as three plain lists, one entry per square, running
+' left to right and then top to bottom. The square in row r, column c is at
+' position r * Cols + c. Storing a grid as a single flat list like this is
+' an old trick and it keeps the code much simpler than a grid of grids.
+
+' WHY r * g.Cols + c?
+'
+' A list is one long line of boxes. A board is a rectangle. To store the
+' rectangle in the line we simply read the board the way you read a page:
+' all of row 0, then all of row 1, and so on.
+'
+' So to find row 3, column 2 on a 9-wide board: skip three whole rows, which
+' is 3 x 9 = 27 boxes, then count 2 more along. Box 29. That is all the sum
+' r * g.Cols + c is doing - "skip that many whole rows, then count across".
+'
+' Going the other way, from a box number back to a row and column:
+'     row    = box / g.Cols        how many whole rows fit in front of it
+'     column = box MOD g.Cols      what is left over after those rows
+'
+' You will see all three of these sums written out in full below rather than
+' tucked away in a function, because once you have read this note the
+' arithmetic tells you more than a name would.
+
+' Relayout works out where everything sits on screen for the current board
+' size, and resizes the window to match. It is called whenever the player
+' picks a different difficulty.
+SUB (g AS POINTER TO Game) Relayout()
+    DIM innerW AS INTEGER = g.Cols * CELL
+    ' How big the board needs the window to be. Working down the picture:
+    ' the menu bar, the raised outer border, a grey gap, the sunken frame,
+    ' the header, another gap and frame, the squares, and the border again.
+    g.ScrW = innerW + 2 * (OUTER + GAP + FRAME)
+    g.ScrH = MENUH + OUTER + GAP + FRAME + HDRH + FRAME + GAP + FRAME + g.Rows * CELL + FRAME + GAP + OUTER
+    g.UpdateView()
+END SUB
+
+' PlaceMines scatters the mines at random over the whole board.
+'
+' It works like dealing cards blindfolded: point at a square at random, and
+' if there is already a mine there, point again. Keep going until you have
+' put down as many as you meant to. Because we only ever count a square when
+' it was empty, two mines can never end up stacked on top of one another.
+'
+' (On a board that is nearly all mines this does a lot of pointing at
+' squares that are already taken - but "nearly all mines" only happens if
+' somebody types a silly number into the Custom box, and even then it
+' finishes in the blink of an eye.)
+SUB (g AS POINTER TO Game) PlaceMines()
+    DIM total AS INTEGER = g.Rows * g.Cols
+    DIM placed AS INTEGER = 0
+    WHILE placed < g.NMines
+        DIM at AS INTEGER = RndInt(total)
+        IF NOT g.Mine[at] THEN
+            g.Mine[at] = TRUE
+            placed = placed + 1
+        ENDIF
+    WEND
+END SUB
+
+' ComputeAdj fills in, for every square, how many of its eight neighbours
+' hold a mine. That number is what gets printed on the square when you
+' uncover it.
+SUB (g AS POINTER TO Game) ComputeAdj()
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    FOR r = 0 TO g.Rows - 1
+        FOR c = 0 TO g.Cols - 1
+            DIM n AS INTEGER = 0
+            DIM dr AS INTEGER
+            DIM dc AS INTEGER
+            FOR dr = -1 TO 1
+                FOR dc = -1 TO 1
+                    DIM rr AS INTEGER = r + dr
+                    DIM cc AS INTEGER = c + dc
+                    ' Stay inside the board, and do not count ourselves.
+                    IF rr >= 0 AND rr < g.Rows AND cc >= 0 AND cc < g.Cols THEN
+                        IF NOT (dr = 0 AND dc = 0) THEN
+                            IF g.Mine[rr * g.Cols + cc] THEN
+                                n = n + 1
+                            ENDIF
+                        ENDIF
+                    ENDIF
+                NEXT
+            NEXT
+            g.Adj[r * g.Cols + c] = n
+        NEXT
+    NEXT
+END SUB
+
+' NewBoard throws away the old game and deals a brand new one.
+SUB (g AS POINTER TO Game) NewBoard(rows AS INTEGER, cols AS INTEGER, mines AS INTEGER, lvl AS INTEGER)
+    g.Rows = rows
+    g.Cols = cols
+    g.NMines = mines
+    g.Level = lvl
+
+    ' Fresh, empty lists - one entry per square. REDIM is BASIC for "make
+    ' this list exactly that long", and the new entries all start out as
+    ' nought, or FALSE, which is precisely what an untouched board is.
+    DIM total AS INTEGER = rows * cols
+    DIM mineList AS []BOOLEAN
+    DIM stList AS []INTEGER
+    DIM adjList AS []INTEGER
+    REDIM mineList(total) AS BOOLEAN
+    REDIM stList(total) AS INTEGER
+    REDIM adjList(total) AS INTEGER
+    g.Mine = mineList
+    g.St = stList
+    g.Adj = adjList
+
+    g.Started = FALSE
+    g.Over = FALSE
+    g.Won = FALSE
+    g.BoomIdx = -1
+    g.NShown = 0
+    g.NFlags = 0
+    g.Secs = 0
+    g.Ticks = 0
+    g.Face = FACE_SMILE
+    g.PressIdx = -1
+    g.Chording = FALSE
+    g.Swallow = FALSE
+    g.FaceDown = FALSE
+
+    g.PlaceMines()
+    g.ComputeAdj()
+    g.Relayout()
+END SUB
+
+' StartLevel deals a new board at one of the three standard difficulties.
+SUB (g AS POINTER TO Game) StartLevel(lvl AS INTEGER)
+    SELECT CASE lvl
+        CASE LV_BEGINNER
+            g.NewBoard(9, 9, 10, LV_BEGINNER)
+        CASE LV_INTER
+            g.NewBoard(16, 16, 40, LV_INTER)
+        CASE ELSE
+            g.NewBoard(16, 30, 99, LV_EXPERT)
+    END SELECT
+    g.SaveScores()          ' remember this choice for next time
+END SUB
+
+' BeginPlay runs on the very first square the player uncovers.
+'
+' Losing on your very first click would be miserable, so the game cheats -
+' and it cheats in a wonderfully lazy way that the original invented. It
+' does not think carefully about where to put the mines; it lays them out at
+' random like always, and then, if your first click lands on one, it just
+' picks that mine up and drops it on the first free square counting from the
+' top left corner. Moving a mine changes the neighbour counts, so those all
+' have to be worked out again afterwards.
+'
+' A side effect is that Minesweeper boards have very slightly more mines
+' near the top left than anywhere else. We have kept the quirk.
+SUB (g AS POINTER TO Game) BeginPlay(at AS INTEGER)
+    g.Started = TRUE
+    g.Secs = 1              ' the clock shows 001 the moment you start
+    g.Ticks = 0
+
+    IF g.Mine[at] THEN
+        DIM i AS INTEGER
+        FOR i = 0 TO g.Rows * g.Cols - 1
+            IF NOT g.Mine[i] AND i <> at THEN
+                g.Mine[i] = TRUE
+                g.Mine[at] = FALSE
+                EXIT FOR
+            ENDIF
+        NEXT
+        g.ComputeAdj()      ' the counts all change when a mine moves
+    ENDIF
+END SUB
+
+' Lose ends the game: the mine that was stepped on is drawn on a red
+' background and every other mine is uncovered, exactly as the original did.
+SUB (g AS POINTER TO Game) Lose(at AS INTEGER)
+    g.Over = TRUE
+    g.Won = FALSE
+    g.BoomIdx = at
+    g.Face = FACE_DEAD
+    g.Play(g.SndBoom)
+END SUB
+
+' Win ends the game the happy way. Any mine you had not got round to
+' flagging is flagged for you, so the counter finishes on zero.
+SUB (g AS POINTER TO Game) Win()
+    g.Over = TRUE
+    g.Won = TRUE
+    g.Face = FACE_WIN
+    DIM i AS INTEGER
+    FOR i = 0 TO g.Rows * g.Cols - 1
+        IF g.Mine[i] AND g.St[i] <> ST_FLAG THEN
+            g.St[i] = ST_FLAG
+        ENDIF
+    NEXT
+    g.NFlags = g.NMines
+    g.Play(g.SndWin)
+
+    ' Did that beat one of the recorded times? If so, ask for a name.
+    DIM rank AS INTEGER = g.ScoreRank(g.Level, g.Secs)
+    IF rank >= 0 THEN
+        g.NameLvl = g.Level
+        g.NameRank = rank
+        g.NameBuf = ""
+        g.Dlg = DLG_NAME
+        g.Focus = 0
+    ENDIF
+END SUB
+
+' CheckWin asks "is every square that is not a mine now uncovered?"
+SUB (g AS POINTER TO Game) CheckWin()
+    IF g.NShown = g.Rows * g.Cols - g.NMines THEN
+        g.Win()
+    ENDIF
+END SUB
+
+' Reveal uncovers one square - and, if that square turns out to have no
+' mines at all around it, its neighbours too, and their neighbours, and so
+' on. That is the satisfying cascade that clears half the board in one click.
+'
+' HOW THE CASCADE WORKS
+'   Imagine you are handed a jotter with one square written on it. You rub
+'   out the top entry, uncover that square, and if it turns out to be blank
+'   you write its eight neighbours onto the jotter. Then you do the top one
+'   again. You keep going until the jotter is empty - and by then the whole
+'   blank region has opened up, plus a ring of numbers around the edge of it.
+'
+'   The jotter is the list called "todo" below. This is called a flood fill,
+'   and it is exactly what the paint bucket in a drawing program does.
+'
+'   Why a jotter and not just "uncover my neighbours, and tell them to
+'   uncover theirs"? Because on a big empty board that would be thousands of
+'   routines all waiting on each other, and the program would fall over. A
+'   list uses the same tiny amount of memory however big the region is.
+SUB (g AS POINTER TO Game) Reveal(at AS INTEGER)
+    IF g.Over THEN
+        RETURN
+    ENDIF
+    ' Flags protect a square from being uncovered by accident.
+    IF g.St[at] = ST_REVEALED OR g.St[at] = ST_FLAG THEN
+        RETURN
+    ENDIF
+
+    IF NOT g.Started THEN
+        g.BeginPlay(at)
+    ENDIF
+
+    IF g.Mine[at] THEN
+        g.St[at] = ST_REVEALED
+        g.Lose(at)
+        RETURN
+    ENDIF
+
+    DIM todo AS []INTEGER
+    APPEND(todo, at)
+    WHILE Len(todo) > 0
+        ' Take the last square off the to-do list.
+        DIM cur AS INTEGER = todo[Len(todo) - 1]
+        todo = todo[0:Len(todo) - 1]
+
+        ' It may already have been dealt with, or be flagged.
+        IF g.St[cur] <> ST_REVEALED AND g.St[cur] <> ST_FLAG THEN
+            g.St[cur] = ST_REVEALED
+            g.NShown = g.NShown + 1
+
+            ' A blank square (no mines nearby) opens up its neighbours.
+            IF g.Adj[cur] = 0 THEN
+                DIM r AS INTEGER = cur / g.Cols
+                DIM c AS INTEGER = cur MOD g.Cols
+                DIM dr AS INTEGER
+                DIM dc AS INTEGER
+                FOR dr = -1 TO 1
+                    FOR dc = -1 TO 1
+                        DIM rr AS INTEGER = r + dr
+                        DIM cc AS INTEGER = c + dc
+                        IF rr >= 0 AND rr < g.Rows AND cc >= 0 AND cc < g.Cols THEN
+                            DIM ni AS INTEGER = rr * g.Cols + cc
+                            IF g.St[ni] <> ST_REVEALED AND g.St[ni] <> ST_FLAG THEN
+                                APPEND(todo, ni)
+                            ENDIF
+                        ENDIF
+                    NEXT
+                NEXT
+            ENDIF
+        ENDIF
+    WEND
+
+    g.Play(g.SndOpen)
+    g.CheckWin()
+END SUB
+
+' Chord is the expert's shortcut. Press both mouse buttons on an uncovered
+' number and, if you have already planted exactly that many flags around it,
+' every other neighbour is uncovered in one go.
+'
+' It is a gamble: if one of those flags is in the wrong place you will
+' uncover a mine and lose. The original game worked the same way.
+SUB (g AS POINTER TO Game) Chord(at AS INTEGER)
+    IF g.Over OR NOT g.Started THEN
+        RETURN
+    ENDIF
+    IF g.St[at] <> ST_REVEALED OR g.Adj[at] = 0 THEN
+        RETURN
+    ENDIF
+
+    DIM r AS INTEGER = at / g.Cols
+    DIM c AS INTEGER = at MOD g.Cols
+    DIM flags AS INTEGER = 0
+    DIM dr AS INTEGER
+    DIM dc AS INTEGER
+
+    ' First count the flags around it.
+    FOR dr = -1 TO 1
+        FOR dc = -1 TO 1
+            DIM rr AS INTEGER = r + dr
+            DIM cc AS INTEGER = c + dc
+            IF rr >= 0 AND rr < g.Rows AND cc >= 0 AND cc < g.Cols THEN
+                IF g.St[rr * g.Cols + cc] = ST_FLAG THEN
+                    flags = flags + 1
+                ENDIF
+            ENDIF
+        NEXT
+    NEXT
+
+    ' Only go ahead if the count is exactly right.
+    IF flags <> g.Adj[at] THEN
+        RETURN
+    ENDIF
+
+    FOR dr = -1 TO 1
+        FOR dc = -1 TO 1
+            DIM rr2 AS INTEGER = r + dr
+            DIM cc2 AS INTEGER = c + dc
+            IF rr2 >= 0 AND rr2 < g.Rows AND cc2 >= 0 AND cc2 < g.Cols THEN
+                DIM ni AS INTEGER = rr2 * g.Cols + cc2
+                IF g.St[ni] = ST_COVERED OR g.St[ni] = ST_QUERY THEN
+                    g.Reveal(ni)
+                ENDIF
+            ENDIF
+        NEXT
+    NEXT
+END SUB
+
+' Mark is what the right mouse button does: it cycles a square round a
+' little loop of markings, like clicking a pen.
+'
+'     nothing  ->  flag  ->  question mark  ->  nothing  ->  ...
+'
+' The flag means "I am sure there is a mine here" and protects the square
+' from being uncovered by accident. The question mark means "I think there
+' might be" and protects nothing - you can still click it open.
+'
+' With the Marks option switched off the middle step is skipped, so it is
+' just flag, no flag, flag, no flag. That is how most people play.
+SUB (g AS POINTER TO Game) Mark(at AS INTEGER)
+    IF g.Over THEN
+        RETURN
+    ENDIF
+    SELECT CASE g.St[at]
+        CASE ST_COVERED
+            g.St[at] = ST_FLAG
+            g.NFlags = g.NFlags + 1
+            g.Play(g.SndFlag)
+        CASE ST_FLAG
+            g.NFlags = g.NFlags - 1
+            IF g.UseMarks THEN
+                g.St[at] = ST_QUERY
+            ELSE
+                g.St[at] = ST_COVERED
+            ENDIF
+            g.Play(g.SndFlag)
+        CASE ST_QUERY
+            g.St[at] = ST_COVERED
+            g.Play(g.SndFlag)
+    END SELECT
+END SUB
+
+
+' ======================== 7. MENUS AND INPUT ========================
+
+' --- Menu geometry ---
+' These say how big the drop-down menus are. Everything is worked out from
+' the character size so nothing has to be measured by hand.
+CONST ITEMH AS INTEGER = 16      ' height of one menu line
+CONST SEPH AS INTEGER = 6        ' height of a dividing line
+CONST LABELX AS INTEGER = 22     ' how far in the words start (room for a tick)
+CONST PADR AS INTEGER = 16       ' blank space kept on the right
+
+' MkItem builds an ordinary menu line.
+FUNCTION MkItem(label AS STRING, accel AS STRING, id AS INTEGER, checked AS BOOLEAN) AS MenuItem
+    DIM m AS MenuItem
+    m.Label = label
+    m.Accel = accel
+    m.Id = id
+    m.Sep = FALSE
+    m.Checked = checked
+    RETURN m
+END FUNCTION
+
+' MkSep builds a dividing line.
+FUNCTION MkSep() AS MenuItem
+    DIM m AS MenuItem
+    m.Sep = TRUE
+    m.Id = MI_NONE
+    RETURN m
+END FUNCTION
+
+' TitleW is how wide a menu bar heading is.
+FUNCTION TitleW(label AS STRING) AS INTEGER
+    RETURN Len(label) * CHW + 12
+END FUNCTION
+
+' TitleX is where a menu bar heading starts. There are only two of them.
+FUNCTION TitleX(i AS INTEGER) AS INTEGER
+    IF i = 0 THEN
+        RETURN 2
+    ENDIF
+    RETURN 2 + TitleW("Game")
+END FUNCTION
+
+' DropH is the total height of the drop-down that is open.
+FUNCTION DropH(g AS POINTER TO Game) AS INTEGER
+    DIM h AS INTEGER = 2 * FRAME
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.MenuItems) - 1
+        IF g.MenuItems[i].Sep THEN
+            h = h + SEPH
+        ELSE
+            h = h + ITEMH
+        ENDIF
+    NEXT
+    RETURN h
+END FUNCTION
+
+' ItemY is how far down the drop-down the given line starts.
+FUNCTION ItemY(g AS POINTER TO Game, n AS INTEGER) AS INTEGER
+    DIM y AS INTEGER = MENUH + FRAME
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        IF g.MenuItems[i].Sep THEN
+            y = y + SEPH
+        ELSE
+            y = y + ITEMH
+        ENDIF
+    NEXT
+    RETURN y
+END FUNCTION
+
+' MenuHit says which menu line the mouse is over, or -1 for none.
+FUNCTION MenuHit(g AS POINTER TO Game, mx AS INTEGER, my AS INTEGER) AS INTEGER
+    IF mx < g.MenuX OR mx >= g.MenuX + g.MenuW THEN
+        RETURN -1
+    ENDIF
+    DIM y AS INTEGER = MENUH + FRAME
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.MenuItems) - 1
+        DIM h AS INTEGER = ITEMH
+        IF g.MenuItems[i].Sep THEN
+            h = SEPH
+        ENDIF
+        IF my >= y AND my < y + h AND NOT g.MenuItems[i].Sep THEN
+            RETURN i
+        ENDIF
+        y = y + h
+    NEXT
+    RETURN -1
+END FUNCTION
+
+' OpenMenu drops down one of the two menus. The lines are built fresh every
+' time so that the ticks next to Beginner, Marks, Sound and so on always
+' show what is actually switched on right now.
+SUB (g AS POINTER TO Game) OpenMenu(which AS INTEGER)
+    DIM items AS []MenuItem
+    IF which = 0 THEN
+        APPEND(items, MkItem("New", "F2", MI_NEW, FALSE))
+        APPEND(items, MkSep())
+        APPEND(items, MkItem("Beginner", "", MI_BEG, g.Level = LV_BEGINNER))
+        APPEND(items, MkItem("Intermediate", "", MI_INT, g.Level = LV_INTER))
+        APPEND(items, MkItem("Expert", "", MI_EXP, g.Level = LV_EXPERT))
+        APPEND(items, MkItem("Custom...", "", MI_CUSTOM, g.Level = LV_CUSTOM))
+        APPEND(items, MkSep())
+        APPEND(items, MkItem("Marks (?)", "", MI_MARKS, g.UseMarks))
+        APPEND(items, MkItem("Color", "", MI_COLOR, g.UseColor))
+        APPEND(items, MkItem("Sound", "", MI_SOUND, g.UseSound))
+        APPEND(items, MkSep())
+        APPEND(items, MkItem("Best Times...", "", MI_TIMES, FALSE))
+        APPEND(items, MkSep())
+        APPEND(items, MkItem("Exit", "", MI_EXIT, FALSE))
+    ELSE
+        APPEND(items, MkItem("Contents", "F1", MI_HELP, FALSE))
+        APPEND(items, MkItem("How to play", "", MI_HELP, FALSE))
+        APPEND(items, MkSep())
+        APPEND(items, MkItem("About Minesweeper...", "", MI_ABOUT, FALSE))
+    ENDIF
+    g.MenuItems = items
+    g.MenuOpen = which
+    g.MenuHot = -1
+    g.MenuX = TitleX(which)
+
+    ' Make the drop-down wide enough for its longest line.
+    DIM w AS INTEGER = 100
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(items) - 1
+        DIM need AS INTEGER = LABELX + Len(items[i].Label) * CHW + PADR
+        IF items[i].Accel <> "" THEN
+            need = need + Len(items[i].Accel) * CHW + 12
+        ENDIF
+        IF need > w THEN
+            w = need
+        ENDIF
+    NEXT
+    g.MenuW = w
+END SUB
+
+' CloseMenu puts the drop-down away.
+SUB (g AS POINTER TO Game) CloseMenu()
+    g.MenuOpen = -1
+    g.MenuHot = -1
+END SUB
+
+' Restart deals a new board of the same size as the one being played.
+SUB (g AS POINTER TO Game) Restart()
+    g.NewBoard(g.Rows, g.Cols, g.NMines, g.Level)
+END SUB
+
+' DoCommand carries out whatever the player picked from a menu.
+SUB (g AS POINTER TO Game) DoCommand(id AS INTEGER)
+    SELECT CASE id
+        CASE MI_NEW
+            g.Restart()
+        CASE MI_BEG
+            g.StartLevel(LV_BEGINNER)
+        CASE MI_INT
+            g.StartLevel(LV_INTER)
+        CASE MI_EXP
+            g.StartLevel(LV_EXPERT)
+        CASE MI_CUSTOM
+            ' Fill the boxes with the board we are playing now.
+            g.FldRows = Str(g.Rows)
+            g.FldCols = Str(g.Cols)
+            g.FldMines = Str(g.NMines)
+            g.Dlg = DLG_CUSTOM
+            g.Focus = 0
+        CASE MI_MARKS
+            g.UseMarks = NOT g.UseMarks
+            ' Switching marks off clears any question marks already placed.
+            IF NOT g.UseMarks THEN
+                DIM i AS INTEGER
+                FOR i = 0 TO g.Rows * g.Cols - 1
+                    IF g.St[i] = ST_QUERY THEN
+                        g.St[i] = ST_COVERED
+                    ENDIF
+                NEXT
+            ENDIF
+            g.SaveScores()
+        CASE MI_COLOR
+            g.UseColor = NOT g.UseColor
+            g.MakeSprites()          ' the pictures change colour with it
+            g.SaveScores()
+        CASE MI_SOUND
+            g.UseSound = NOT g.UseSound
+            g.SaveScores()
+        CASE MI_TIMES
+            g.Dlg = DLG_TIMES
+        CASE MI_HELP
+            g.Dlg = DLG_HELP
+        CASE MI_ABOUT
+            g.Dlg = DLG_ABOUT
+        CASE MI_EXIT
+            g.Quit = TRUE
+    END SELECT
+END SUB
+
+' --- Typing ---
+'
+' A keyboard does not hand us letters, it hands us KEYS. Key number 12 is
+' not the letter "L", it is "the twelfth key", and it is up to us to decide
+' what that means. So we keep two lists side by side: the keys we care
+' about, and the character each one stands for. Looking up key number 12 in
+' the first list tells us where to look in the second.
+
+DIM GKeyList AS []ebiten.Key = []ebiten.Key{ _
+    ebiten.Key0, ebiten.Key1, ebiten.Key2, ebiten.Key3, ebiten.Key4, _
+    ebiten.Key5, ebiten.Key6, ebiten.Key7, ebiten.Key8, ebiten.Key9, _
+    ebiten.KeyA, ebiten.KeyB, ebiten.KeyC, ebiten.KeyD, ebiten.KeyE, _
+    ebiten.KeyF, ebiten.KeyG, ebiten.KeyH, ebiten.KeyI, ebiten.KeyJ, _
+    ebiten.KeyK, ebiten.KeyL, ebiten.KeyM, ebiten.KeyN, ebiten.KeyO, _
+    ebiten.KeyP, ebiten.KeyQ, ebiten.KeyR, ebiten.KeyS, ebiten.KeyT, _
+    ebiten.KeyU, ebiten.KeyV, ebiten.KeyW, ebiten.KeyX, ebiten.KeyY, _
+    ebiten.KeyZ, ebiten.KeySpace, ebiten.KeyMinus, ebiten.KeyPeriod}
+
+' The character each key in the list above stands for.
+CONST KEYCHARS AS STRING = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ -."
+
+' KeyChar turns a key into the character it types, or "" if it is not one
+' of the keys we accept.
+FUNCTION KeyChar(k AS ebiten.Key) AS STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(GKeyList) - 1
+        IF GKeyList[i] = k THEN
+            RETURN Mid(KEYCHARS, i + 1, 1)
+        ENDIF
+    NEXT
+    RETURN ""
+END FUNCTION
+
+' ShiftHeld says whether either Shift key is down, so we know whether the
+' player wants a capital letter.
+FUNCTION ShiftHeld() AS BOOLEAN
+    IF ebiten.IsKeyPressed(ebiten.KeyShiftLeft) THEN
+        RETURN TRUE
+    ENDIF
+    RETURN ebiten.IsKeyPressed(ebiten.KeyShiftRight)
+END FUNCTION
+
+' TypedInto adds whatever was just typed onto the end of a piece of text.
+'   digitsOnly = TRUE for the Custom Field boxes, which only take numbers
+'   maxLen     = how many characters will fit in the box
+FUNCTION TypedInto(s AS STRING, digitsOnly AS BOOLEAN, maxLen AS INTEGER) AS STRING
+    DIM out AS STRING = s
+
+    ' Backspace rubs out the last character.
+    IF inpututil.IsKeyJustPressed(ebiten.KeyBackspace) THEN
+        IF Len(out) > 0 THEN
+            out = Left(out, Len(out) - 1)
+        ENDIF
+    ENDIF
+
+    DIM keys AS []ebiten.Key
+    keys = inpututil.AppendJustPressedKeys(keys)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(keys) - 1
+        DIM ch AS STRING = KeyChar(keys[i])
+        IF ch <> "" AND Len(out) < maxLen THEN
+            IF digitsOnly THEN
+                ' Only 0 to 9 get through.
+                IF ch >= "0" AND ch <= "9" THEN
+                    out = out & ch
+                ENDIF
+            ELSE
+                ' Letters come out lower case unless Shift is held.
+                IF NOT ShiftHeld() AND ch >= "A" AND ch <= "Z" THEN
+                    ch = LCase(ch)
+                ENDIF
+                out = out & ch
+            ENDIF
+        ENDIF
+    NEXT
+    RETURN out
+END FUNCTION
+
+
+' --- Dialog box geometry ---
+'
+' Every dialog is a grey panel floating in the middle of the window with a
+' blue title bar and one or two buttons along the bottom. These little
+' functions say exactly where everything goes, and both the drawing code
+' and the clicking code use them, so the two can never disagree.
+
+CONST TITLEH AS INTEGER = 18     ' height of a dialog's blue title bar
+CONST BTNW AS INTEGER = 80       ' a push button
+CONST BTNH AS INTEGER = 20
+CONST FLDW AS INTEGER = 52       ' a box you type numbers into
+CONST FLDH AS INTEGER = 18
+
+FUNCTION DlgW(g AS POINTER TO Game) AS INTEGER
+    SELECT CASE g.Dlg
+        CASE DLG_CUSTOM
+            RETURN 262
+        CASE DLG_TIMES
+            RETURN 376
+        CASE DLG_NAME
+            RETURN 304
+        CASE DLG_ABOUT
+            RETURN 288
+        CASE DLG_HELP
+            RETURN 392
+    END SELECT
+    RETURN 200
+END FUNCTION
+
+FUNCTION DlgHt(g AS POINTER TO Game) AS INTEGER
+    SELECT CASE g.Dlg
+        CASE DLG_CUSTOM
+            RETURN 148
+        CASE DLG_TIMES
+            RETURN 208
+        CASE DLG_NAME
+            RETURN 148
+        CASE DLG_ABOUT
+            RETURN 184
+        CASE DLG_HELP
+            RETURN 322
+    END SELECT
+    RETURN 120
+END FUNCTION
+
+FUNCTION DlgX(g AS POINTER TO Game) AS INTEGER
+    RETURN (g.ViewW - DlgW(g)) / 2
+END FUNCTION
+
+FUNCTION DlgY(g AS POINTER TO Game) AS INTEGER
+    RETURN (g.ViewH - DlgHt(g)) / 2
+END FUNCTION
+
+' BtnX places the buttons along the bottom, counting from the right:
+' button 0 is the rightmost, button 1 sits to its left, and so on.
+FUNCTION BtnX(g AS POINTER TO Game, n AS INTEGER) AS INTEGER
+    RETURN DlgX(g) + DlgW(g) - 10 - (n + 1) * BTNW - n * 8
+END FUNCTION
+
+FUNCTION BtnY(g AS POINTER TO Game) AS INTEGER
+    RETURN DlgY(g) + DlgHt(g) - 10 - BTNH
+END FUNCTION
+
+' FldX and FldY place the three number boxes in the Custom Field dialog.
+FUNCTION FldX(g AS POINTER TO Game) AS INTEGER
+    RETURN DlgX(g) + 86
+END FUNCTION
+
+FUNCTION FldY(g AS POINTER TO Game, n AS INTEGER) AS INTEGER
+    RETURN DlgY(g) + TITLEH + 12 + n * 26
+END FUNCTION
+
+' HitRect answers the question every mouse click asks: is this point inside
+' that rectangle?
+FUNCTION HitRect(mx AS INTEGER, my AS INTEGER, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER) AS BOOLEAN
+    IF mx < x OR mx >= x + w THEN
+        RETURN FALSE
+    ENDIF
+    IF my < y OR my >= y + h THEN
+        RETURN FALSE
+    ENDIF
+    RETURN TRUE
+END FUNCTION
+
+' --- Where the header bits are ---
+
+FUNCTION FaceX(g AS POINTER TO Game) AS INTEGER
+    RETURN g.HdrX + (g.Cols * CELL) / 2 - FACEW / 2
+END FUNCTION
+
+FUNCTION FaceY(g AS POINTER TO Game) AS INTEGER
+    RETURN g.HdrY + (HDRH - FACEW) / 2
+END FUNCTION
+
+' CellAt says which square the mouse is over, or -1 if it is not over the
+' minefield at all.
+FUNCTION CellAt(g AS POINTER TO Game, x AS INTEGER, y AS INTEGER) AS INTEGER
+    IF x < g.GX OR x >= g.GX + g.Cols * CELL THEN
+        RETURN -1
+    ENDIF
+    IF y < g.GY OR y >= g.GY + g.Rows * CELL THEN
+        RETURN -1
+    ENDIF
+    DIM c AS INTEGER = (x - g.GX) / CELL
+    DIM r AS INTEGER = (y - g.GY) / CELL
+    RETURN r * g.Cols + c
+END FUNCTION
+
+' TitleHit says which menu bar heading the mouse is over, or -1.
+FUNCTION TitleHit(mx AS INTEGER, my AS INTEGER) AS INTEGER
+    IF my < 0 OR my >= MENUH THEN
+        RETURN -1
+    ENDIF
+    DIM i AS INTEGER
+    FOR i = 0 TO 1
+        DIM label AS STRING = "Game"
+        IF i = 1 THEN
+            label = "Help"
+        ENDIF
+        IF mx >= TitleX(i) AND mx < TitleX(i) + TitleW(label) THEN
+            RETURN i
+        ENDIF
+    NEXT
+    RETURN -1
+END FUNCTION
+
+' UpdateView keeps the window the right size.
+'
+' Normally the window is exactly as big as the board. But a Beginner board
+' is tiny - 168 pixels across - and something like the Best Times table
+' simply will not fit inside it. Real Windows got away with this because a
+' dialog is its own separate window that can hang over the edge of the one
+' underneath. We only have the one window, so instead it grows for as long
+' as the dialog is up and shrinks back the moment it closes.
+SUB (g AS POINTER TO Game) UpdateView()
+    DIM w AS INTEGER = g.ScrW
+    DIM h AS INTEGER = g.ScrH
+    IF g.Dlg <> DLG_NONE THEN
+        DIM needW AS INTEGER = DlgW(g) + 16
+        DIM needH AS INTEGER = DlgHt(g) + 16 + MENUH
+        IF needW > w THEN
+            w = needW
+        ENDIF
+        IF needH > h THEN
+            h = needH
+        ENDIF
+    ENDIF
+
+    ' If the window ended up bigger than the board, put the board in the
+    ' middle of it rather than leaving it stranded in the top left corner.
+    g.OX = (w - g.ScrW) / 2
+    g.OY = (h - g.ScrH) / 2
+
+    ' Everything on the board is positioned relative to those offsets, so
+    ' this is the one place that needs to know about them.
+    g.HdrX = g.OX + OUTER + GAP + FRAME
+    g.HdrY = g.OY + MENUH + OUTER + GAP + FRAME
+    g.GX = g.OX + OUTER + GAP + FRAME
+    g.GY = g.HdrY + HDRH + FRAME + GAP + FRAME
+
+    IF w <> g.ViewW OR h <> g.ViewH THEN
+        g.ViewW = w
+        g.ViewH = h
+        ebiten.SetWindowSize(w * g.Zoom, h * g.Zoom)
+    ENDIF
+END SUB
+
+' ApplyCustom reads the three boxes in the Custom Field dialog and starts a
+' board that size. Silly numbers are quietly pulled back into range, which
+' is what the original did too.
+SUB (g AS POINTER TO Game) ApplyCustom()
+    DIM rows AS INTEGER = Int(Val(g.FldRows))
+    DIM cols AS INTEGER = Int(Val(g.FldCols))
+    DIM mines AS INTEGER = Int(Val(g.FldMines))
+
+    IF rows < MIN_ROWS THEN
+        rows = MIN_ROWS
+    ENDIF
+    IF rows > MAX_ROWS THEN
+        rows = MAX_ROWS
+    ENDIF
+    IF cols < MIN_COLS THEN
+        cols = MIN_COLS
+    ENDIF
+    IF cols > MAX_COLS THEN
+        cols = MAX_COLS
+    ENDIF
+
+    ' There must always be somewhere safe to click, so the original never
+    ' let you have more mines than (height - 1) x (width - 1).
+    DIM most AS INTEGER = (rows - 1) * (cols - 1)
+    IF mines < MIN_MINES THEN
+        mines = MIN_MINES
+    ENDIF
+    IF mines > most THEN
+        mines = most
+    ENDIF
+
+    g.Dlg = DLG_NONE
+    g.NewBoard(rows, cols, mines, LV_CUSTOM)
+    g.SaveScores()          ' remember this board for next time
+END SUB
+
+' AcceptName files the high score the player has just typed a name for.
+SUB (g AS POINTER TO Game) AcceptName()
+    DIM nm AS STRING = Trim(g.NameBuf)
+    IF nm = "" THEN
+        nm = "Anonymous"
+    ENDIF
+    DIM e AS ScoreEntry
+    e.Secs = g.Secs
+    e.Who = nm
+    e.DateStr = time.Now().Format("2006-01-02")
+    g.InsertScore(g.NameLvl, g.NameRank, e)
+    g.Dlg = DLG_TIMES        ' then show the table, as the original did
+END SUB
+
+' UpdateDialog handles the mouse and keyboard while a dialog box is up.
+'
+' While a dialog is on screen nothing else in the game listens to you at
+' all - clicking the minefield behind it does nothing. Programmers call
+' that a MODAL dialog, and the way we get it is almost embarrassingly
+' simple: Update calls this routine and then stops, so the code that would
+' have handled the board never runs.
+SUB (g AS POINTER TO Game) UpdateDialog()
+    DIM clicked AS BOOLEAN = inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft)
+    DIM esc AS BOOLEAN = inpututil.IsKeyJustPressed(ebiten.KeyEscape)
+    DIM enter AS BOOLEAN = inpututil.IsKeyJustPressed(ebiten.KeyEnter) OR inpututil.IsKeyJustPressed(ebiten.KeyNumpadEnter)
+
+    ' Is the mouse on the rightmost button, or the one beside it?
+    DIM hitB0 AS BOOLEAN = clicked AND HitRect(g.MX, g.MY, BtnX(g, 0), BtnY(g), BTNW, BTNH)
+    DIM hitB1 AS BOOLEAN = clicked AND HitRect(g.MX, g.MY, BtnX(g, 1), BtnY(g), BTNW, BTNH)
+
+    SELECT CASE g.Dlg
+        CASE DLG_CUSTOM
+            ' Tab steps from one box to the next.
+            IF inpututil.IsKeyJustPressed(ebiten.KeyTab) THEN
+                g.Focus = (g.Focus + 1) MOD 3
+            ENDIF
+            ' Clicking a box puts the cursor in it.
+            IF clicked THEN
+                DIM n AS INTEGER
+                FOR n = 0 TO 2
+                    IF HitRect(g.MX, g.MY, FldX(g), FldY(g, n), FLDW, FLDH) THEN
+                        g.Focus = n
+                    ENDIF
+                NEXT
+            ENDIF
+            ' Anything typed goes into whichever box has the cursor.
+            IF g.Focus = 0 THEN
+                g.FldRows = TypedInto(g.FldRows, TRUE, 3)
+            ELSEIF g.Focus = 1 THEN
+                g.FldCols = TypedInto(g.FldCols, TRUE, 3)
+            ELSE
+                g.FldMines = TypedInto(g.FldMines, TRUE, 3)
+            ENDIF
+
+            IF enter OR hitB1 THEN
+                g.ApplyCustom()
+            ELSEIF esc OR hitB0 THEN
+                g.Dlg = DLG_NONE
+            ENDIF
+
+        CASE DLG_NAME
+            g.NameBuf = TypedInto(g.NameBuf, FALSE, 18)
+            IF enter OR esc OR hitB0 THEN
+                g.AcceptName()
+            ENDIF
+
+        CASE DLG_TIMES
+            IF hitB1 THEN
+                g.ResetScores()
+            ELSEIF enter OR esc OR hitB0 THEN
+                g.Dlg = DLG_NONE
+            ENDIF
+
+        CASE ELSE
+            ' About and Help both just have an OK button.
+            IF enter OR esc OR hitB0 THEN
+                g.Dlg = DLG_NONE
+            ENDIF
+    END SELECT
+END SUB
+
+' UpdateMenu handles the mouse while a drop-down menu is open.
+SUB (g AS POINTER TO Game) UpdateMenu()
+    IF inpututil.IsKeyJustPressed(ebiten.KeyEscape) THEN
+        g.CloseMenu()
+        RETURN
+    ENDIF
+
+    ' Highlight whatever line the mouse is resting on.
+    DIM hot AS INTEGER = MenuHit(g, g.MX, g.MY)
+    g.MenuHot = hot
+
+    ' Sliding along the menu bar with a menu open switches to the other one,
+    ' just like a real Windows menu bar.
+    DIM t AS INTEGER = TitleHit(g.MX, g.MY)
+    IF t >= 0 AND t <> g.MenuOpen THEN
+        g.OpenMenu(t)
+        RETURN
+    ENDIF
+
+    DIM press AS BOOLEAN = inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft)
+    DIM release AS BOOLEAN = inpututil.IsMouseButtonJustReleased(ebiten.MouseButtonLeft)
+
+    IF press OR release THEN
+        IF hot >= 0 THEN
+            ' Picking a line closes the menu and runs the command.
+            DIM id AS INTEGER = g.MenuItems[hot].Id
+            g.CloseMenu()
+            g.DoCommand(id)
+        ELSEIF press THEN
+            IF t = g.MenuOpen THEN
+                g.CloseMenu()          ' clicking the heading again closes it
+            ELSE
+                g.CloseMenu()          ' clicking anywhere else closes it too
+            ENDIF
+        ENDIF
+    ENDIF
+END SUB
+
+' UpdateMouse is where the actual game is played: the menu bar, the smiley
+' button and the minefield.
+'
+' The trickiest part is that the buttons do not do their work when they go
+' DOWN, they do it when they come back UP - so you can press on a square,
+' change your mind, slide off it and let go safely. That is how the original
+' behaved and it is worth keeping.
+SUB (g AS POINTER TO Game) UpdateMouse()
+    DIM over AS INTEGER = CellAt(g, g.MX, g.MY)
+    DIM onFace AS BOOLEAN = HitRect(g.MX, g.MY, FaceX(g), FaceY(g), FACEW, FACEW)
+
+    ' There are two different questions you can ask about a mouse button,
+    ' and telling them apart is the whole secret of handling clicks:
+    '   IsMouseButtonPressed      - is it down RIGHT NOW? (true for as long
+    '                               as the player holds it, so sixty times a
+    '                               second while they think about it)
+    '   IsMouseButtonJustPressed  - did it go down THIS INSTANT? (true for
+    '                               one single frame, then never again until
+    '                               they let go and press it once more)
+    ' Use the first for "is the player still holding this square down", and
+    ' the second for "the player has just done something".
+    DIM lDown AS BOOLEAN = ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft)
+    DIM rDown AS BOOLEAN = ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight)
+    DIM mDown AS BOOLEAN = ebiten.IsMouseButtonPressed(ebiten.MouseButtonMiddle)
+
+    DIM lPress AS BOOLEAN = inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft)
+    DIM rPress AS BOOLEAN = inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight)
+    DIM mPress AS BOOLEAN = inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonMiddle)
+
+    DIM lUp AS BOOLEAN = inpututil.IsMouseButtonJustReleased(ebiten.MouseButtonLeft)
+    DIM rUp AS BOOLEAN = inpututil.IsMouseButtonJustReleased(ebiten.MouseButtonRight)
+    DIM mUp AS BOOLEAN = inpututil.IsMouseButtonJustReleased(ebiten.MouseButtonMiddle)
+
+    ' --- Buttons going down ---
+    IF lPress THEN
+        IF g.MY < MENUH THEN
+            DIM t AS INTEGER = TitleHit(g.MX, g.MY)
+            IF t >= 0 THEN
+                g.OpenMenu(t)
+                RETURN
+            ENDIF
+        ELSEIF onFace THEN
+            g.FaceDown = TRUE
+        ELSEIF over >= 0 AND NOT g.Over THEN
+            g.Pressing = TRUE
+            g.PressIdx = over
+            IF rDown THEN
+                g.Chording = TRUE      ' right was already held: this is a chord
+            ENDIF
+        ENDIF
+    ENDIF
+
+    IF rPress AND over >= 0 AND NOT g.Over THEN
+        IF lDown THEN
+            g.Chording = TRUE          ' left was already held: this is a chord
+            g.Pressing = TRUE
+            g.PressIdx = over
+        ELSE
+            g.Mark(over)               ' a plain right click flags straight away
+        ENDIF
+    ENDIF
+
+    IF mPress AND over >= 0 AND NOT g.Over THEN
+        g.Chording = TRUE              ' the middle button chords on its own
+        g.Pressing = TRUE
+        g.PressIdx = over
+    ENDIF
+
+    ' --- Dragging: the square being held follows the mouse ---
+    IF g.Pressing THEN
+        IF lDown OR mDown OR (g.Chording AND rDown) THEN
+            g.PressIdx = over          ' becomes -1 if dragged off the board
+        ENDIF
+    ENDIF
+
+    ' --- Buttons coming back up ---
+    IF lUp OR rUp OR mUp THEN
+        IF g.FaceDown AND lUp THEN
+            g.FaceDown = FALSE
+            IF onFace THEN
+                g.Restart()
+            ENDIF
+        ELSEIF g.Swallow THEN
+            ' A chord needs two buttons, so the player has to let go of two
+            ' buttons - but the chord should only happen once. The first
+            ' release does the work and then sets Swallow, which means
+            ' "ignore the next release, I have already dealt with it". We
+            ' clear it again once the player's hand is completely off.
+            IF NOT lDown AND NOT rDown AND NOT mDown THEN
+                g.Swallow = FALSE
+            ENDIF
+        ELSEIF g.Chording THEN
+            IF g.PressIdx >= 0 THEN
+                g.Chord(g.PressIdx)
+            ENDIF
+            g.Chording = FALSE
+            g.Pressing = FALSE
+            g.PressIdx = -1
+            ' If the other button is still held, ignore its release later.
+            IF lDown OR rDown OR mDown THEN
+                g.Swallow = TRUE
+            ENDIF
+        ELSEIF lUp AND g.Pressing THEN
+            IF g.PressIdx >= 0 THEN
+                g.Reveal(g.PressIdx)
+            ENDIF
+            g.Pressing = FALSE
+            g.PressIdx = -1
+        ENDIF
+    ENDIF
+
+    ' --- Which face is the smiley wearing? ---
+    IF g.Over THEN
+        IF g.Won THEN
+            g.Face = FACE_WIN
+        ELSE
+            g.Face = FACE_DEAD
+        ENDIF
+    ELSEIF g.Pressing THEN
+        g.Face = FACE_OOH
+    ELSE
+        g.Face = FACE_SMILE
+    ENDIF
+END SUB
+
+' Update is one of the two routines Ebitengine calls sixty times a second.
+' It looks at the mouse and keyboard and moves the game on; it never draws
+' anything.
+'
+' Keeping "think" and "paint" in separate routines is a rule worth sticking
+' to. It means there is exactly one place to look when the game does the
+' wrong thing (here) and exactly one place to look when it looks wrong
+' (Draw). Mix the two together and you will spend your evenings wondering
+' why the score went up twice.
+FUNCTION (g AS POINTER TO Game) Update() AS ERROR
+    IF g.Quit THEN
+        RETURN ebiten.Termination      ' this is how a game asks to close
+    ENDIF
+
+    DIM cx AS INTEGER
+    DIM cy AS INTEGER
+    cx, cy = ebiten.CursorPosition()
+    g.MX = cx
+    g.MY = cy
+    g.Blink = g.Blink + 1
+    g.UpdateView()
+
+    ' --- The clock ---
+    ' Update runs sixty times a second, so sixty of them is one second.
+    IF g.Started AND NOT g.Over THEN
+        g.Ticks = g.Ticks + 1
+        IF g.Ticks >= 60 THEN
+            g.Ticks = 0
+            IF g.Secs < MAX_SECS THEN
+                g.Secs = g.Secs + 1
+                g.Play(g.SndTick)
+            ENDIF
+        ENDIF
+    ENDIF
+
+    ' A dialog box swallows everything while it is open.
+    IF g.Dlg <> DLG_NONE THEN
+        g.UpdateDialog()
+        RETURN NIL
+    ENDIF
+
+    ' Keyboard shortcuts, the same two the original had.
+    IF inpututil.IsKeyJustPressed(ebiten.KeyF2) THEN
+        g.Restart()
+    ENDIF
+    IF inpututil.IsKeyJustPressed(ebiten.KeyF1) THEN
+        g.Dlg = DLG_HELP
+        RETURN NIL
+    ENDIF
+
+    IF g.MenuOpen >= 0 THEN
+        g.UpdateMenu()
+        RETURN NIL
+    ENDIF
+
+    g.UpdateMouse()
+    RETURN NIL
+END FUNCTION
+
+
+' ======================== 8. DRAWING ========================
+
+' Blit stamps one of our ready-made pictures onto the screen.
+SUB Blit(dst AS POINTER TO ebiten.Image, img AS POINTER TO ebiten.Image, x AS INTEGER, y AS INTEGER)
+    IF img = NIL THEN
+        RETURN
+    ENDIF
+    DIM op AS ebiten.DrawImageOptions
+    op.GeoM.Translate(Dbl(x), Dbl(y))
+    dst.DrawImage(img, @op)
+END SUB
+
+' TextImg draws a piece of text into its own little image and remembers it.
+' Asking for the same words again hands back the picture we made last time
+' instead of drawing it all over again.
+'
+' THE SHADOW PROBLEM
+'   The lettering we borrow is meant to be readable on top of ANYTHING - a
+'   screenshot, a game world, whatever - so every letter comes with a black
+'   shadow baked into it, sitting one pixel down and to the right.
+'
+'   That is a fine idea for debugging text floating over a picture. It is a
+'   terrible idea here. We want plain black words on flat grey panels, and
+'   we get our colours by tinting the whole letter as we stamp it down - so
+'   the shadow gets tinted too, and instead of one crisp letter you see the
+'   letter plus a smudged copy of itself half a pixel away. Small text turns
+'   to mush.
+'
+'   So we rub the shadow out. Draw the words once, read the picture back a
+'   pixel at a time, and make every dark pixel completely see-through. The
+'   letters themselves are pure white, so telling the two apart is easy:
+'   bright pixel, keep it; dark pixel, it is shadow, throw it away.
+'
+'   This only ever happens once per phrase, the first time it appears on
+'   screen. After that the cleaned-up picture is reused.
+FUNCTION TextImg(g AS POINTER TO Game, s AS STRING) AS POINTER TO ebiten.Image
+    DIM cached AS POINTER TO ebiten.Image = GTxt[s]
+    IF cached <> NIL THEN
+        RETURN cached
+    ENDIF
+
+    DIM w AS INTEGER = Len(s) * CHW
+
+    ' Draw the words once into a scratch picture. The lettering routine
+    ' nudges everything one pixel to the right, so we ask for -1 to undo it.
+    DIM scratch AS POINTER TO ebiten.Image = ebiten.NewImage(w, CHH)
+    ebitenutil.DebugPrintAt(scratch, s, -1, 0)
+
+    ' Fetch the picture back as a long list of numbers, four per pixel:
+    ' how red it is, how green, how blue, and how solid ("alpha").
+    DIM npix AS INTEGER = w * CHH * 4
+    DIM buf AS BYTES = MakeBytes(npix)
+    scratch.ReadPixels(buf)
+
+    ' Walk the list four numbers at a time. If the pixel is dark it is part
+    ' of the shadow, so set its solidity to nothing and it vanishes.
+    DIM i AS INTEGER
+    FOR i = 0 TO npix - 4 STEP 4
+        IF buf[i] < 128 THEN
+            buf[i + 3] = 0
+        ENDIF
+    NEXT
+
+    DIM img AS POINTER TO ebiten.Image = ebiten.NewImage(w, CHH)
+    img.WritePixels(buf)
+    GTxt[s] = img
+    RETURN img
+END FUNCTION
+
+' DrawText paints some words on the screen in whatever colour we ask for.
+'
+' The lettering only comes in white, so to get black text - or red, or
+' anything else - we tint the picture on its way to the screen, the way you
+' would hold a coloured gel in front of a torch. (TextImg above has already
+' scrubbed the shadow off, so what we are tinting is one clean letter.)
+'
+' Tinting multiplies each colour: white is "full brightness" and black is
+' "no brightness", so white times black is black. And because only the
+' brightness is touched, the see-through parts around each letter stay
+' see-through, and the words sit neatly on whatever is behind them.
+SUB DrawText(g AS POINTER TO Game, dst AS POINTER TO ebiten.Image, s AS STRING, x AS INTEGER, y AS INTEGER, clr AS color.RGBA)
+    IF s = "" THEN
+        RETURN
+    ENDIF
+    DIM img AS POINTER TO ebiten.Image = TextImg(g, s)
+    DIM op AS ebiten.DrawImageOptions
+    op.GeoM.Translate(Dbl(x), Dbl(y))
+    op.ColorScale.ScaleWithColor(clr)
+    dst.DrawImage(img, @op)
+END SUB
+
+' TextW is how many pixels wide a piece of text will be.
+FUNCTION TextW(s AS STRING) AS INTEGER
+    RETURN Len(s) * CHW
+END FUNCTION
+
+' --- The header: mine counter, smiley, clock ---
+
+' DrawLed paints a three-digit red display showing the given number.
+' Numbers below zero show a minus sign, which happens when you plant more
+' flags than there are mines.
+SUB DrawLed(g AS POINTER TO Game, dst AS POINTER TO ebiten.Image, value AS INTEGER, x AS INTEGER, y AS INTEGER)
+    ' A thin black surround, then the three digits.
+    Rect(dst, x - 1, y - 1, 3 * LEDW + 2, LEDH + 2, CBlack)
+
+    DIM v AS INTEGER = value
+    DIM neg AS BOOLEAN = FALSE
+    IF v < 0 THEN
+        neg = TRUE
+        v = -v
+    ENDIF
+    IF neg AND v > 99 THEN
+        v = 99
+    ENDIF
+    IF v > 999 THEN
+        v = 999
+    ENDIF
+
+    ' Pull the three digits apart. For 142: 142/100 is 1 (whole numbers
+    ' throw the remainder away), (142/10) MOD 10 is 14 with the 1 chopped
+    ' off, giving 4, and 142 MOD 10 is the 2 left over at the end.
+    DIM d0 AS INTEGER = v / 100
+    DIM d1 AS INTEGER = (v / 10) MOD 10
+    DIM d2 AS INTEGER = v MOD 10
+    IF neg THEN
+        d0 = 10                    ' picture number 10 is the minus sign
+    ENDIF
+
+    Blit(dst, g.ImgLed[d0], x, y)
+    Blit(dst, g.ImgLed[d1], x + LEDW, y)
+    Blit(dst, g.ImgLed[d2], x + 2 * LEDW, y)
+END SUB
+
+SUB (g AS POINTER TO Game) DrawHeader(screen AS POINTER TO ebiten.Image)
+    DIM innerW AS INTEGER = g.Cols * CELL
+    Rect(screen, g.HdrX, g.HdrY, innerW, HDRH, CGray)
+
+    DIM ledY AS INTEGER = g.HdrY + (HDRH - LEDH) / 2
+
+    ' On the left, how many mines are left to find: the number buried,
+    ' less the number of flags planted. It is only the player's own count,
+    ' so it goes wrong if you flag the wrong squares - as it should.
+    DrawLed(g, screen, g.NMines - g.NFlags, g.HdrX + 6, ledY)
+
+    ' On the right, the clock.
+    DrawLed(g, screen, g.Secs, g.HdrX + innerW - 6 - 3 * LEDW, ledY)
+
+    ' In the middle, the smiley button.
+    DIM fx AS INTEGER = FaceX(g)
+    DIM fy AS INTEGER = FaceY(g)
+    DIM onFace AS BOOLEAN = HitRect(g.MX, g.MY, fx, fy, FACEW, FACEW)
+    IF g.FaceDown AND onFace THEN
+        Blit(screen, g.ImgFaceDn, fx, fy)
+    ELSE
+        Blit(screen, g.ImgFace[g.Face], fx, fy)
+    ENDIF
+END SUB
+
+' --- The minefield ---
+
+' IsPressed says whether a square should be drawn pushed in. That is either
+' the one square the player is holding down, or - during a chord - that
+' square and all eight of its neighbours.
+FUNCTION IsPressed(g AS POINTER TO Game, i AS INTEGER) AS BOOLEAN
+    IF g.PressIdx < 0 OR g.Over THEN
+        RETURN FALSE
+    ENDIF
+    IF NOT g.Chording THEN
+        RETURN i = g.PressIdx
+    ENDIF
+    DIM r0 AS INTEGER = g.PressIdx / g.Cols
+    DIM c0 AS INTEGER = g.PressIdx MOD g.Cols
+    DIM r AS INTEGER = i / g.Cols
+    DIM c AS INTEGER = i MOD g.Cols
+    IF r < r0 - 1 OR r > r0 + 1 THEN
+        RETURN FALSE
+    ENDIF
+    IF c < c0 - 1 OR c > c0 + 1 THEN
+        RETURN FALSE
+    ENDIF
+    RETURN TRUE
+END FUNCTION
+
+SUB (g AS POINTER TO Game) DrawField(screen AS POINTER TO ebiten.Image)
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    FOR r = 0 TO g.Rows - 1
+        FOR c = 0 TO g.Cols - 1
+            DIM i AS INTEGER = r * g.Cols + c
+            DIM px AS INTEGER = g.GX + c * CELL
+            DIM py AS INTEGER = g.GY + r * CELL
+            DIM img AS POINTER TO ebiten.Image = g.ImgCovered
+
+            IF g.Over AND NOT g.Won THEN
+                ' The game is lost, so everything is laid bare.
+                IF g.Mine[i] THEN
+                    IF i = g.BoomIdx THEN
+                        img = g.ImgBoom          ' the one you stepped on
+                    ELSEIF g.St[i] = ST_FLAG THEN
+                        img = g.ImgFlag          ' you had this one right
+                    ELSE
+                        img = g.ImgMine
+                    ENDIF
+                ELSE
+                    IF g.St[i] = ST_FLAG THEN
+                        img = g.ImgWrong         ' a flag where there was no mine
+                    ELSEIF g.St[i] = ST_REVEALED THEN
+                        IF g.Adj[i] = 0 THEN
+                            img = g.ImgBlank
+                        ELSE
+                            img = g.ImgNum[g.Adj[i] - 1]
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ELSE
+                SELECT CASE g.St[i]
+                    CASE ST_FLAG
+                        img = g.ImgFlag
+                    CASE ST_QUERY
+                        IF IsPressed(g, i) THEN
+                            img = g.ImgQueryDn
+                        ELSE
+                            img = g.ImgQuery
+                        ENDIF
+                    CASE ST_REVEALED
+                        IF g.Adj[i] = 0 THEN
+                            img = g.ImgBlank
+                        ELSE
+                            img = g.ImgNum[g.Adj[i] - 1]
+                        ENDIF
+                    CASE ELSE
+                        ' Covered. Held down means it is drawn already open.
+                        IF IsPressed(g, i) THEN
+                            img = g.ImgBlank
+                        ENDIF
+                END SELECT
+            ENDIF
+
+            Blit(screen, img, px, py)
+        NEXT
+    NEXT
+END SUB
+
+' --- The menu bar and its drop-downs ---
+
+' DrawTick paints the small check mark shown beside a switched-on option.
+SUB DrawTick(dst AS POINTER TO ebiten.Image, x AS INTEGER, y AS INTEGER, clr AS color.RGBA)
+    Rect(dst, x, y + 3, 2, 3, clr)
+    Rect(dst, x + 1, y + 5, 2, 2, clr)
+    Rect(dst, x + 2, y + 4, 2, 2, clr)
+    Rect(dst, x + 3, y + 2, 2, 2, clr)
+    Rect(dst, x + 4, y + 1, 2, 2, clr)
+    Rect(dst, x + 5, y, 2, 2, clr)
+END SUB
+
+SUB (g AS POINTER TO Game) DrawMenuBar(screen AS POINTER TO ebiten.Image)
+    Rect(screen, 0, 0, g.ViewW, MENUH, CGray)
+    DIM i AS INTEGER
+    FOR i = 0 TO 1
+        DIM label AS STRING = "Game"
+        IF i = 1 THEN
+            label = "Help"
+        ENDIF
+        DIM x AS INTEGER = TitleX(i)
+        DIM w AS INTEGER = TitleW(label)
+        DIM fg AS color.RGBA = CBlack
+        IF g.MenuOpen = i THEN
+            ' The heading of an open menu is highlighted.
+            Rect(screen, x, 1, w, MENUH - 2, CNavy)
+            fg = CWhite
+        ENDIF
+        DrawText(g, screen, label, x + 6, 2, fg)
+        ' Underline the first letter, the way Windows marks the shortcut key.
+        Rect(screen, x + 6, 15, CHW - 1, 1, fg)
+    NEXT
+END SUB
+
+SUB (g AS POINTER TO Game) DrawMenu(screen AS POINTER TO ebiten.Image)
+    DIM x AS INTEGER = g.MenuX
+    DIM y AS INTEGER = MENUH
+    DIM w AS INTEGER = g.MenuW
+    DIM h AS INTEGER = DropH(g)
+
+    Rect(screen, x, y, w, h, CGray)
+    Bevel(screen, x, y, w, h, 2, TRUE)
+
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.MenuItems) - 1
+        DIM iy AS INTEGER = ItemY(g, i)
+        IF g.MenuItems[i].Sep THEN
+            ' A dividing line: one dark groove with a white highlight below.
+            Rect(screen, x + 4, iy + 2, w - 8, 1, CDark)
+            Rect(screen, x + 4, iy + 3, w - 8, 1, CWhite)
+        ELSE
+            DIM fg AS color.RGBA = CBlack
+            IF i = g.MenuHot THEN
+                Rect(screen, x + FRAME, iy, w - 2 * FRAME, ITEMH, CNavy)
+                fg = CWhite
+            ENDIF
+            IF g.MenuItems[i].Checked THEN
+                DrawTick(screen, x + 7, iy + 4, fg)
+            ENDIF
+            DrawText(g, screen, g.MenuItems[i].Label, x + LABELX, iy, fg)
+            IF g.MenuItems[i].Accel <> "" THEN
+                DrawText(g, screen, g.MenuItems[i].Accel, x + w - 10 - TextW(g.MenuItems[i].Accel), iy, fg)
+            ENDIF
+        ENDIF
+    NEXT
+END SUB
+
+' --- Dialog boxes ---
+
+' DrawButton paints one of the grey push buttons.
+SUB DrawButton(g AS POINTER TO Game, dst AS POINTER TO ebiten.Image, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER, label AS STRING)
+    Rect(dst, x, y, w, h, CGray)
+    ' A thin black outline, then the raised edge inside it.
+    Rect(dst, x, y, w, 1, CBlack)
+    Rect(dst, x, y + h - 1, w, 1, CBlack)
+    Rect(dst, x, y, 1, h, CBlack)
+    Rect(dst, x + w - 1, y, 1, h, CBlack)
+    Bevel(dst, x + 1, y + 1, w - 2, h - 2, 2, TRUE)
+    DrawText(g, dst, label, x + (w - TextW(label)) / 2, y + (h - CHH) / 2 + 1, CBlack)
+END SUB
+
+' DrawField3D paints one of the white boxes you type into.
+SUB DrawField3D(g AS POINTER TO Game, dst AS POINTER TO ebiten.Image, x AS INTEGER, y AS INTEGER, w AS INTEGER, h AS INTEGER, text AS STRING, active AS BOOLEAN)
+    Rect(dst, x, y, w, h, CWhite)
+    Bevel(dst, x, y, w, h, 1, FALSE)
+    DrawText(g, dst, text, x + 3, y + 1, CBlack)
+    ' A blinking text cursor, but only in the box you are typing into.
+    IF active AND (g.Blink MOD 60) < 30 THEN
+        Rect(dst, x + 3 + TextW(text), y + 3, 1, h - 6, CBlack)
+    ENDIF
+END SUB
+
+' DrawLines paints a stack of text lines one under the other.
+SUB DrawLines(g AS POINTER TO Game, dst AS POINTER TO ebiten.Image, lines AS []STRING, x AS INTEGER, y AS INTEGER, lineH AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(lines) - 1
+        DrawText(g, dst, lines[i], x, y + i * lineH, CBlack)
+    NEXT
+END SUB
+
+' DlgTitle is the wording along the top of each dialog.
+FUNCTION DlgTitle(which AS INTEGER) AS STRING
+    SELECT CASE which
+        CASE DLG_CUSTOM
+            RETURN "Custom Field"
+        CASE DLG_TIMES
+            RETURN "Fastest Mine Sweepers"
+        CASE DLG_NAME
+            RETURN "Congratulations"
+        CASE DLG_ABOUT
+            RETURN "About Minesweeper"
+        CASE DLG_HELP
+            RETURN "How To Play"
+    END SELECT
+    RETURN ""
+END FUNCTION
+
+SUB (g AS POINTER TO Game) DrawDialog(screen AS POINTER TO ebiten.Image)
+    DIM x AS INTEGER = DlgX(g)
+    DIM y AS INTEGER = DlgY(g)
+    DIM w AS INTEGER = DlgW(g)
+    DIM h AS INTEGER = DlgHt(g)
+
+    ' The panel: a black outline, a grey face and a raised edge.
+    Rect(screen, x - 1, y - 1, w + 2, h + 2, CBlack)
+    Rect(screen, x, y, w, h, CGray)
+    Bevel(screen, x, y, w, h, 2, TRUE)
+
+    ' The blue title bar.
+    Rect(screen, x + 3, y + 3, w - 6, TITLEH, CNavy)
+    DrawText(g, screen, DlgTitle(g.Dlg), x + 7, y + 4, CWhite)
+
+    DIM top AS INTEGER = y + 3 + TITLEH
+
+    SELECT CASE g.Dlg
+        CASE DLG_CUSTOM
+            DrawText(g, screen, "Height:", x + 14, FldY(g, 0) + 1, CBlack)
+            DrawText(g, screen, "Width:", x + 14, FldY(g, 1) + 1, CBlack)
+            DrawText(g, screen, "Mines:", x + 14, FldY(g, 2) + 1, CBlack)
+            DrawField3D(g, screen, FldX(g), FldY(g, 0), FLDW, FLDH, g.FldRows, g.Focus = 0)
+            DrawField3D(g, screen, FldX(g), FldY(g, 1), FLDW, FLDH, g.FldCols, g.Focus = 1)
+            DrawField3D(g, screen, FldX(g), FldY(g, 2), FLDW, FLDH, g.FldMines, g.Focus = 2)
+            DrawButton(g, screen, BtnX(g, 1), BtnY(g), BTNW, BTNH, "OK")
+            DrawButton(g, screen, BtnX(g, 0), BtnY(g), BTNW, BTNH, "Cancel")
+
+        CASE DLG_TIMES
+            ' Three columns side by side, one per difficulty.
+            DIM lvl AS INTEGER
+            FOR lvl = LV_BEGINNER TO LV_EXPERT
+                DIM cx AS INTEGER = x + 12 + lvl * 120
+                DrawText(g, screen, LevelName(lvl), cx, top + 6, CNavy)
+                Rect(screen, cx, top + 22, 112, 1, CDark)
+                DIM list AS []ScoreEntry = g.ScoresFor(lvl)
+                DIM n AS INTEGER
+                FOR n = 0 TO TOP_N - 1
+                    DIM ly AS INTEGER = top + 28 + n * 16
+                    IF n < Len(list) THEN
+                        DIM who AS STRING = list[n].Who
+                        IF Len(who) > 10 THEN
+                            who = Left(who, 10)
+                        ENDIF
+                        DrawText(g, screen, Str(n + 1) & ". " & who, cx, ly, CBlack)
+                        DIM secs AS STRING = Str(list[n].Secs)
+                        DrawText(g, screen, secs, cx + 112 - TextW(secs), ly, CBlack)
+                    ELSE
+                        DrawText(g, screen, Str(n + 1) & ". ---", cx, ly, CDark)
+                    ENDIF
+                NEXT
+            NEXT
+            DrawText(g, screen, "Times are in seconds. Custom boards are not recorded.", x + 12, top + 120, CDark)
+            DrawButton(g, screen, BtnX(g, 1), BtnY(g), BTNW, BTNH, "Reset")
+            DrawButton(g, screen, BtnX(g, 0), BtnY(g), BTNW, BTNH, "OK")
+
+        CASE DLG_NAME
+            DIM msg AS []STRING
+            APPEND(msg, "You have one of the fastest times")
+            APPEND(msg, "for " & LevelName(g.NameLvl) & " level - " & Str(g.Secs) & " seconds.")
+            APPEND(msg, "Please enter your name:")
+            DrawLines(g, screen, msg, x + 14, top + 8, 15)
+            DrawField3D(g, screen, x + 14, top + 58, w - 28, FLDH, g.NameBuf, TRUE)
+            DrawButton(g, screen, BtnX(g, 0), BtnY(g), BTNW, BTNH, "OK")
+
+        CASE DLG_ABOUT
+            DIM ab AS []STRING
+            APPEND(ab, "Minesweeper")
+            APPEND(ab, "")
+            APPEND(ab, "A clone of the Windows classic,")
+            APPEND(ab, "written in DBasic and drawn with")
+            APPEND(ab, "Ebitengine.")
+            APPEND(ab, "")
+            APPEND(ab, "High scores are kept in:")
+            ' A long home folder would run off the edge, so show the tail end.
+            DIM where AS STRING = g.ScFile
+            IF Len(where) > 40 THEN
+                where = "..." & Right(where, 37)
+            ENDIF
+            APPEND(ab, where)
+            DrawLines(g, screen, ab, x + 14, top + 8, 14)
+            DrawButton(g, screen, BtnX(g, 0), BtnY(g), BTNW, BTNH, "OK")
+
+        CASE ELSE
+            DIM hp AS []STRING
+            APPEND(hp, "The field hides mines. Uncover every square")
+            APPEND(hp, "that is NOT a mine and you win.")
+            APPEND(hp, "")
+            APPEND(hp, "Left click ......... uncover a square")
+            APPEND(hp, "Right click ........ flag a mine, then mark")
+            APPEND(hp, "                     it '?', then clear it")
+            APPEND(hp, "Both buttons ....... uncover the neighbours of")
+            APPEND(hp, "  (or middle)        a number, once you have")
+            APPEND(hp, "                     flagged that many of them")
+            APPEND(hp, "Smiley face ........ start a new game")
+            APPEND(hp, "F2 ................. start a new game")
+            APPEND(hp, "")
+            APPEND(hp, "A number says how many of the eight squares")
+            APPEND(hp, "around it hold a mine. A blank square has")
+            APPEND(hp, "none, so its neighbours open up for free.")
+            APPEND(hp, "")
+            APPEND(hp, "The left display counts the mines you have")
+            APPEND(hp, "not flagged yet. The right one is a clock.")
+            APPEND(hp, "Your first click is always safe.")
+            DrawLines(g, screen, hp, x + 14, top + 8, 13)
+            DrawButton(g, screen, BtnX(g, 0), BtnY(g), BTNW, BTNH, "OK")
+    END SELECT
+END SUB
+
+' Draw is the other routine Ebitengine calls sixty times a second. It paints
+' the whole window from scratch every time, and it never changes the state
+' of the game - all the thinking happened in Update.
+SUB (g AS POINTER TO Game) Draw(screen AS POINTER TO ebiten.Image)
+    screen.Fill(CGray)
+
+    g.DrawMenuBar(screen)
+
+    ' The raised border around the whole playing area.
+    Bevel(screen, g.OX, g.OY + MENUH, g.ScrW, g.ScrH - MENUH, OUTER, TRUE)
+
+    ' The header panel sits in a sunken frame...
+    Bevel(screen, g.HdrX - FRAME, g.HdrY - FRAME, g.Cols * CELL + 2 * FRAME, HDRH + 2 * FRAME, FRAME, FALSE)
+    g.DrawHeader(screen)
+
+    ' ...and so does the minefield.
+    Bevel(screen, g.GX - FRAME, g.GY - FRAME, g.Cols * CELL + 2 * FRAME, g.Rows * CELL + 2 * FRAME, FRAME, FALSE)
+    g.DrawField(screen)
+
+    ' Menus and dialogs go on top of everything else.
+    IF g.MenuOpen >= 0 THEN
+        g.DrawMenu(screen)
+    ENDIF
+    IF g.Dlg <> DLG_NONE THEN
+        g.DrawDialog(screen)
+    ENDIF
+END SUB
+
+' Layout tells Ebitengine how big the game's picture is, in game pixels.
+'
+' This is a lovely arrangement. We draw a small picture - a Beginner board
+' is only 168 pixels across, the same as the original game in 1990 - and
+' Ebitengine blows it up to fill the window for us. So every measurement in
+' this whole program is in original-sized pixels, and the Zoom setting costs
+' us exactly nothing: no sums to double, nothing to remember. Change Zoom
+' and the same picture simply arrives bigger.
+FUNCTION (g AS POINTER TO Game) Layout(ow AS INTEGER, oh AS INTEGER) AS (INTEGER, INTEGER)
+    RETURN g.ViewW, g.ViewH
+END FUNCTION
+
+
+' ======================== 9. MAIN ========================
+'
+' Every DBasic program starts here.
+
+SUB Main()
+    ' The random number generator seeds itself differently on every run, so
+    ' the mines land somewhere new each time without us doing anything.
+
+    ' Ebitengine allows exactly one audio context per program, so this is it.
+    GAudio = audio.NewContext(RATE)
+
+    DIM g AS Game
+
+    ' --- Settings before anything is loaded from disk ---
+    g.Zoom = 2                    ' everything drawn twice as big as the original
+    g.UseMarks = TRUE
+    g.UseColor = TRUE
+    g.UseSound = TRUE
+    g.MenuOpen = -1
+    g.MenuHot = -1
+    g.Dlg = DLG_NONE
+    g.PressIdx = -1
+    g.BoomIdx = -1
+    g.Level = LV_BEGINNER
+
+    ' The window is drawn at 1 pixel per original pixel and then blown up by
+    ' Zoom. Pass a number on the command line to change that, for example
+    ' "mines 3" for a really big board or "mines 1" for the original size.
+    DIM args AS []STRING = os.Args
+    IF Len(args) > 1 THEN
+        DIM z AS INTEGER = Int(Val(args[1]))
+        IF z >= 1 AND z <= 6 THEN
+            g.Zoom = z
+        ENDIF
+    ENDIF
+
+    ' Read the high scores, the menu options and the board we played last
+    ' time. A first run simply finds nothing and keeps the defaults above.
+    g.LoadScores()
+
+    ' Draw all the artwork and generate all the sounds.
+    g.MakeSprites()
+    g.InitSounds()
+
+    ' Deal the first board: whatever was being played last time, if it looked
+    ' sensible, otherwise Beginner.
+    IF g.Rows >= MIN_ROWS AND g.Rows <= MAX_ROWS AND g.Cols >= MIN_COLS AND g.Cols <= MAX_COLS AND g.NMines >= 1 AND g.NMines < g.Rows * g.Cols THEN
+        g.NewBoard(g.Rows, g.Cols, g.NMines, g.Level)
+    ELSE
+        g.StartLevel(LV_BEGINNER)
+    ENDIF
+
+    ebiten.SetWindowTitle("Minesweeper")
+    ebiten.SetTPS(60)
+
+    ' RunGame hands control over to Ebitengine, which from now on calls our
+    ' Update, Draw and Layout routines until the window is closed.
+    DIM err AS ERROR = ebiten.RunGame(@g)
+    IF err <> NIL THEN
+        fmt.Println("Minesweeper stopped:", err)
+    ENDIF
+END SUB

@@ -3,11 +3,17 @@
 /dbasic-lsp
 /edit
 examples/*/edit
-examples/*/gorillas
+examples/*/gorillas/gorillas
 examples/edit/edit
 examples/edit/edit_dbas
 examples/edit/main
-examples/gorillas/gorillas
+examples/games/gorillas/gorillas
+examples/games/mines/mines
+examples/games/mines/mines.exe
+examples/games/pacman/pacman
+examples/games/pacman/pacman.exe
+examples/games/tictactoe/tictactoe
+examples/games/*/main.go
 examples/hello
 examples/vdbterm/test_codegen
 examples/vdbterm/test_codegen_output
@@ -102,3 +108,6 @@ examples/DBtui/examples/StarWord/dist/*.zip
 examples/DBtui/examples/StarWord/dist/*.pdf
 examples/DBtui/examples/StarWord/untitled.*
 examples/DBtui/examples/StarWord/myTest.WSu
+
+# Minesweeper score file if it ever falls back to the current folder
+minesweeper.ini

@@ -86,13 +86,13 @@ http.SetCookie(w, @cookie)
 
 ```bash
 # From DBasic root directory
-./dbasic build examples/tictactoe/tictactoe.dbas
+./dbasic build examples/games/tictactoe/tictactoe.dbas
 
 # Move executable to example directory
-mv tictactoe examples/tictactoe/
+mv tictactoe examples/games/tictactoe/
 
 # Run the server
-cd examples/tictactoe
+cd examples/games/tictactoe
 ./tictactoe
 ```
 

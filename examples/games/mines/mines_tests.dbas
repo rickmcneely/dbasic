@@ -1,0 +1,349 @@
+' =============================================================================
+' TESTS FOR MINESWEEPER
+' =============================================================================
+'
+' This file is not a program on its own. run_tests.sh glues it onto the end
+' of mines.dbas (with mines.dbas's own Main chopped off) and builds the
+' result, so these tests can reach straight into the game's own routines.
+'
+'     ./run_tests.sh
+'
+' Nothing here opens a window, so it runs fine over SSH or in CI. The tests
+' write one scratch file into the system temp folder and delete it again;
+' they never touch your real high score table.
+' =============================================================================
+
+DIM GFails AS INTEGER = 0
+
+SUB Check(what AS STRING, ok AS BOOLEAN)
+    IF ok THEN
+        fmt.Println("  PASS  " & what)
+    ELSE
+        fmt.Println("  FAIL  " & what)
+        GFails = GFails + 1
+    ENDIF
+END SUB
+
+' Count how many mines are on the board.
+FUNCTION CountMines(g AS POINTER TO Game) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO g.Rows * g.Cols - 1
+        IF g.Mine[i] THEN
+            n = n + 1
+        ENDIF
+    NEXT
+    RETURN n
+END FUNCTION
+
+' Count how many squares are uncovered.
+FUNCTION CountShown(g AS POINTER TO Game) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO g.Rows * g.Cols - 1
+        IF g.St[i] = ST_REVEALED THEN
+            n = n + 1
+        ENDIF
+    NEXT
+    RETURN n
+END FUNCTION
+
+' Check every square's neighbour count against a fresh count.
+FUNCTION AdjIsRight(g AS POINTER TO Game) AS BOOLEAN
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    FOR r = 0 TO g.Rows - 1
+        FOR c = 0 TO g.Cols - 1
+            DIM want AS INTEGER = 0
+            DIM dr AS INTEGER
+            DIM dc AS INTEGER
+            FOR dr = -1 TO 1
+                FOR dc = -1 TO 1
+                    DIM rr AS INTEGER = r + dr
+                    DIM cc AS INTEGER = c + dc
+                    IF rr >= 0 AND rr < g.Rows AND cc >= 0 AND cc < g.Cols THEN
+                        IF NOT (dr = 0 AND dc = 0) THEN
+                            IF g.Mine[rr * g.Cols + cc] THEN
+                                want = want + 1
+                            ENDIF
+                        ENDIF
+                    ENDIF
+                NEXT
+            NEXT
+            IF g.Adj[r * g.Cols + c] <> want THEN
+                RETURN FALSE
+            ENDIF
+        NEXT
+    NEXT
+    RETURN TRUE
+END FUNCTION
+
+' Wipe the board and lay mines exactly where we say, for repeatable tests.
+SUB SetMines(g AS POINTER TO Game, spots AS []INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO g.Rows * g.Cols - 1
+        g.Mine[i] = FALSE
+        g.St[i] = ST_COVERED
+    NEXT
+    FOR i = 0 TO Len(spots) - 1
+        g.Mine[spots[i]] = TRUE
+    NEXT
+    g.NMines = Len(spots)
+    g.NShown = 0
+    g.NFlags = 0
+    g.Over = FALSE
+    g.Won = FALSE
+    g.Started = TRUE
+    g.ComputeAdj()
+END SUB
+
+SUB Main()
+    DIM g AS Game
+    g.Zoom = 1
+    g.UseMarks = TRUE
+    g.UseColor = TRUE
+    g.UseSound = FALSE
+    g.MenuOpen = -1
+    g.Dlg = DLG_NONE
+    g.PressIdx = -1
+    g.ScFile = filepath.Join(os.TempDir(), "dbasic-mines-test-scores.ini")
+
+    fmt.Println("--- board setup ---")
+    g.StartLevel(LV_BEGINNER)
+    Check("beginner is 9x9", g.Rows = 9 AND g.Cols = 9)
+    Check("beginner has 10 mines", g.NMines = 10)
+    DIM placed AS INTEGER = CountMines(@g)
+    Check("exactly 10 mines were laid (no duplicates)", placed = 10)
+    Check("neighbour counts are right", AdjIsRight(@g))
+    Check("window is 168 x 233 for beginner", g.ScrW = 168 AND g.ScrH = 233)
+
+    g.StartLevel(LV_INTER)
+    Check("intermediate is 16x16 / 40", g.Rows = 16 AND g.Cols = 16 AND g.NMines = 40)
+    DIM p2 AS INTEGER = CountMines(@g)
+    Check("40 mines laid", p2 = 40)
+
+    g.StartLevel(LV_EXPERT)
+    Check("expert is 16x30 / 99", g.Rows = 16 AND g.Cols = 30 AND g.NMines = 99)
+    DIM p3 AS INTEGER = CountMines(@g)
+    Check("99 mines laid", p3 = 99)
+    Check("expert neighbour counts are right", AdjIsRight(@g))
+
+    fmt.Println("--- the first click is always safe ---")
+    DIM lost AS INTEGER = 0
+    DIM trial AS INTEGER
+    FOR trial = 0 TO 299
+        g.NewBoard(9, 9, 70, LV_CUSTOM)     ' 70 of 81 squares mined
+        g.Reveal(0)                          ' always click the top left
+        IF g.Over THEN
+            lost = lost + 1
+        ENDIF
+    NEXT
+    Check("300 opening clicks on a nearly full board, none fatal", lost = 0)
+
+    g.NewBoard(9, 9, 70, LV_CUSTOM)
+    g.Reveal(40)
+    Check("counts still right after a mine was moved", AdjIsRight(@g))
+    Check("clock starts at 1 on the first click", g.Secs = 1)
+
+    fmt.Println("--- uncovering ---")
+    g.NewBoard(9, 9, 1, LV_CUSTOM)
+    DIM one AS []INTEGER
+    APPEND(one, 0)                           ' single mine in the top left
+    SetMines(@g, one)
+    g.Reveal(80)                             ' click the far corner
+    DIM shown AS INTEGER = CountShown(@g)
+    Check("the cascade opens all 80 safe squares", shown = 80)
+    Check("that wins the game", g.Won AND g.Over)
+    Check("winning flags the last mine", g.St[0] = ST_FLAG AND g.NFlags = 1)
+
+    ' A mine in the middle stops the cascade at the numbers around it.
+    g.NewBoard(9, 9, 1, LV_CUSTOM)
+    DIM mid AS []INTEGER
+    APPEND(mid, 40)
+    SetMines(@g, mid)
+    g.Reveal(0)
+    DIM shown2 AS INTEGER = CountShown(@g)
+    Check("a middle mine leaves exactly itself covered", shown2 = 80)
+
+    fmt.Println("--- stepping on a mine ---")
+    g.NewBoard(9, 9, 3, LV_CUSTOM)
+    DIM three AS []INTEGER
+    APPEND(three, 10)
+    APPEND(three, 20)
+    APPEND(three, 30)
+    SetMines(@g, three)
+    g.Reveal(10)
+    Check("the game is over", g.Over)
+    Check("it was not a win", NOT g.Won)
+    Check("the square that blew up is remembered", g.BoomIdx = 10)
+    g.Reveal(50)
+    Check("clicks after losing do nothing", g.St[50] = ST_COVERED)
+
+    fmt.Println("--- flags and question marks ---")
+    g.NewBoard(9, 9, 3, LV_CUSTOM)
+    SetMines(@g, three)
+    g.UseMarks = TRUE
+    g.Mark(5)
+    Check("first right click plants a flag", g.St[5] = ST_FLAG AND g.NFlags = 1)
+    g.Mark(5)
+    Check("second gives a question mark", g.St[5] = ST_QUERY AND g.NFlags = 0)
+    g.Mark(5)
+    Check("third clears it", g.St[5] = ST_COVERED)
+    g.UseMarks = FALSE
+    g.Mark(5)
+    g.Mark(5)
+    Check("with marks off it goes flag then clear", g.St[5] = ST_COVERED AND g.NFlags = 0)
+    g.UseMarks = TRUE
+    g.Mark(10)
+    g.Reveal(10)
+    Check("a flagged mine cannot be clicked open", NOT g.Over)
+
+    fmt.Println("--- chording ---")
+    ' Mine at 10 only. Square 0 is a "1", so flagging 10 and chording 0
+    ' should open 0's other neighbours: 1, 9 and 11 stays covered? no - 1, 9.
+    g.NewBoard(9, 9, 1, LV_CUSTOM)
+    DIM at10 AS []INTEGER
+    APPEND(at10, 10)
+    SetMines(@g, at10)
+    g.St[0] = ST_REVEALED
+    g.NShown = 1
+    g.Chord(0)
+    Check("chording without enough flags does nothing", CountShown(@g) = 1)
+    g.Mark(10)
+    g.Chord(0)
+    Check("chording with the right flag opens the neighbours", CountShown(@g) > 1)
+    Check("the flagged mine stays covered", g.St[10] = ST_FLAG)
+
+    ' Chording on a wrong flag loses the game, as it should.
+    g.NewBoard(9, 9, 1, LV_CUSTOM)
+    SetMines(@g, at10)
+    g.St[0] = ST_REVEALED
+    g.NShown = 1
+    g.Mark(1)                                ' flag the wrong square
+    g.Chord(0)
+    Check("chording on a wrong flag blows up", g.Over AND NOT g.Won)
+
+    fmt.Println("--- custom board limits ---")
+    g.FldRows = "3"
+    g.FldCols = "999"
+    g.FldMines = "99999"
+    g.ApplyCustom()
+    Check("height pulled up to 9", g.Rows = MIN_ROWS)
+    Check("width pulled down to 30", g.Cols = MAX_COLS)
+    Check("mines capped at (h-1)*(w-1)", g.NMines = (MIN_ROWS - 1) * (MAX_COLS - 1))
+    DIM p4 AS INTEGER = CountMines(@g)
+    Check("that many mines really were laid", p4 = g.NMines)
+
+    fmt.Println("--- high scores ---")
+    os.Remove(g.ScFile)
+    g.ResetScores()
+    DIM r1 AS INTEGER = g.ScoreRank(LV_BEGINNER, 40)
+    Check("any time gets into an empty table", r1 = 0)
+    DIM e1 AS ScoreEntry
+    e1.Secs = 40
+    e1.Who = "Rick"
+    e1.DateStr = "2026-08-22"
+    g.InsertScore(LV_BEGINNER, 0, e1)
+    DIM r2 AS INTEGER = g.ScoreRank(LV_BEGINNER, 20)
+    Check("a faster time takes first place", r2 = 0)
+    DIM r3 AS INTEGER = g.ScoreRank(LV_BEGINNER, 90)
+    Check("a slower time goes second while there is room", r3 = 1)
+
+    ' Fill the table right up and check it stays at five.
+    DIM k AS INTEGER
+    FOR k = 1 TO 6
+        DIM ek AS ScoreEntry
+        ek.Secs = k
+        ek.Who = "P" & Str(k)
+        ek.DateStr = "2026-08-22"
+        DIM rk AS INTEGER = g.ScoreRank(LV_BEGINNER, ek.Secs)
+        IF rk >= 0 THEN
+            g.InsertScore(LV_BEGINNER, rk, ek)
+        ENDIF
+    NEXT
+    DIM tbl AS []ScoreEntry = g.ScoresFor(LV_BEGINNER)
+    Check("the table never grows past five", Len(tbl) = TOP_N)
+    Check("it is sorted fastest first", tbl[0].Secs = 1 AND tbl[1].Secs = 2)
+    DIM rBad AS INTEGER = g.ScoreRank(LV_BEGINNER, 500)
+    Check("a slow time cannot get into a full table", rBad = -1)
+    DIM rCustom AS INTEGER = g.ScoreRank(LV_CUSTOM, 1)
+    Check("custom boards are never recorded", rCustom = -1)
+
+    ' Save, forget everything, load it back.
+    g.UseSound = FALSE
+    g.UseMarks = FALSE
+    g.SaveScores()
+    DIM h AS Game
+    h.ScFile = g.ScFile
+    h.UseSound = TRUE
+    h.UseMarks = TRUE
+    h.LoadScores()
+    DIM tbl2 AS []ScoreEntry = h.ScoresFor(LV_BEGINNER)
+    Check("scores survive a save and load", Len(tbl2) = TOP_N AND tbl2[0].Secs = 1)
+    Check("the names come back too", tbl2[0].Who = "P1")
+    Check("menu options are remembered", h.UseSound = FALSE AND h.UseMarks = FALSE)
+    Check("so is the last board", h.Rows = g.Rows AND h.Cols = g.Cols)
+
+    fmt.Println("--- clicking maps to the right square ---")
+    g.StartLevel(LV_BEGINNER)
+    DIM c0 AS INTEGER = CellAt(@g, g.GX, g.GY)
+    Check("the top left pixel is square 0", c0 = 0)
+    DIM c1 AS INTEGER = CellAt(@g, g.GX + CELL, g.GY)
+    Check("one cell to the right is square 1", c1 = 1)
+    DIM c2 AS INTEGER = CellAt(@g, g.GX + CELL + 7, g.GY + 9)
+    Check("anywhere inside that cell is still square 1", c2 = 1)
+    DIM c3 AS INTEGER = CellAt(@g, g.GX, g.GY + CELL)
+    Check("one cell down is square 9", c3 = 9)
+    DIM c4 AS INTEGER = CellAt(@g, g.GX + 8 * CELL + 15, g.GY + 8 * CELL + 15)
+    Check("the bottom right pixel is square 80", c4 = 80)
+    DIM c5 AS INTEGER = CellAt(@g, g.GX - 1, g.GY)
+    Check("just left of the board is nothing", c5 = -1)
+    DIM c6 AS INTEGER = CellAt(@g, g.GX, g.GY - 1)
+    Check("just above the board is nothing", c6 = -1)
+    DIM c7 AS INTEGER = CellAt(@g, g.GX + 9 * CELL, g.GY)
+    Check("just right of the board is nothing", c7 = -1)
+    DIM c8 AS INTEGER = CellAt(@g, g.GX, g.GY + 9 * CELL)
+    Check("just below the board is nothing", c8 = -1)
+
+    ' The smiley must sit inside the header, centred.
+    DIM fx AS INTEGER = FaceX(@g)
+    DIM fy AS INTEGER = FaceY(@g)
+    Check("the smiley is inside the header panel", fx >= g.HdrX AND fx + FACEW <= g.HdrX + g.Cols * CELL AND fy >= g.HdrY AND fy + FACEW <= g.HdrY + HDRH)
+    DIM faceMid AS INTEGER = fx + FACEW / 2
+    DIM hdrMid AS INTEGER = g.HdrX + (g.Cols * CELL) / 2
+    Check("and it is centred", faceMid = hdrMid)
+
+    fmt.Println("--- menus ---")
+    DIM t0 AS INTEGER = TitleHit(TitleX(0) + 2, 5)
+    Check("clicking the Game heading finds menu 0", t0 = 0)
+    DIM t1 AS INTEGER = TitleHit(TitleX(1) + 2, 5)
+    Check("clicking the Help heading finds menu 1", t1 = 1)
+    DIM t2 AS INTEGER = TitleHit(TitleX(1) + 2, MENUH + 4)
+    Check("below the menu bar finds nothing", t2 = -1)
+
+    g.OpenMenu(0)
+    DIM h0 AS INTEGER = MenuHit(@g, g.MenuX + 10, ItemY(@g, 0) + 4)
+    Check("the first line of the Game menu is New", h0 = 0 AND g.MenuItems[0].Id = MI_NEW)
+    DIM hsep AS INTEGER = MenuHit(@g, g.MenuX + 10, ItemY(@g, 1) + 2)
+    Check("a dividing line cannot be picked", hsep = -1)
+    DIM hbeg AS INTEGER = MenuHit(@g, g.MenuX + 10, ItemY(@g, 2) + 4)
+    Check("the Beginner line is where it is drawn", hbeg = 2 AND g.MenuItems[2].Id = MI_BEG)
+    DIM hoff AS INTEGER = MenuHit(@g, g.MenuX + g.MenuW + 5, ItemY(@g, 2) + 4)
+    Check("outside the drop-down finds nothing", hoff = -1)
+    DIM tall AS INTEGER = DropH(@g)
+    DIM lastY AS INTEGER = ItemY(@g, Len(g.MenuItems) - 1)
+    Check("the drop-down is tall enough for every line", tall >= lastY - MENUH + ITEMH)
+    g.CloseMenu()
+    Check("closing the menu really closes it", g.MenuOpen = -1)
+
+    ' Tidy the scratch file away. It has to be last, because several of the
+    ' tests above start a new board, and starting a board saves the file.
+    os.Remove(g.ScFile)
+
+    fmt.Println("")
+    IF GFails = 0 THEN
+        fmt.Println("ALL TESTS PASSED")
+    ELSE
+        fmt.Println(GFails, "TEST(S) FAILED")
+    ENDIF
+END SUB
