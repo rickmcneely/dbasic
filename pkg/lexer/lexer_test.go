@@ -458,3 +458,52 @@ line three`
 		t.Errorf("expected empty string for line 4")
 	}
 }
+
+// A token that ends at end-of-line belongs to the line it was written on.
+// The line counter must advance when the reader steps OFF a newline, not
+// when it lands on one -- otherwise a bare RETURN, CONTINUE, WEND and so on
+// is reported one line too far down, which leaks into error messages and
+// into the //line directives the code generator emits.
+func TestTokenAtEndOfLineKeepsItsLine(t *testing.T) {
+	input := "SUB Main()\nRETURN\nEND SUB"
+
+	l := New(input)
+	for {
+		tok := l.NextToken()
+		if tok.Type == TOKEN_EOF {
+			t.Fatal("never saw the RETURN token")
+		}
+		if tok.Type == TOKEN_RETURN {
+			if tok.Line != 2 {
+				t.Errorf("RETURN is on line 2, reported line %d", tok.Line)
+			}
+			return
+		}
+	}
+}
+
+// Moving the line increment must not shift the column counter: the same
+// text in the same place on two different lines has to report the same
+// column. (Note identifiers report the column just past their last
+// character, which is long-standing behaviour and not what this checks.)
+func TestColumnsConsistentAcrossLines(t *testing.T) {
+	// The same two-character identifier at the start of each line.
+	l := New("ab\nab")
+
+	first := l.NextToken()
+	if first.Line != 1 {
+		t.Fatalf("first token on line %d, want 1", first.Line)
+	}
+
+	tok := l.NextToken()
+	for tok.Type == TOKEN_NEWLINE {
+		tok = l.NextToken()
+	}
+	if tok.Line != 2 {
+		t.Fatalf("second token on line %d, want 2", tok.Line)
+	}
+	if tok.Column != first.Column {
+		t.Errorf("same text at the same offset reported column %d on line 1 but %d on line 2",
+			first.Column, tok.Column)
+	}
+}

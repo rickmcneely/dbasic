@@ -41,8 +41,24 @@ func (l *Lexer) GetSource() string {
 	return l.input
 }
 
-// readChar reads the next character and advances the position
+// readChar reads the next character and advances the position.
+//
+// The line counter advances when we step OFF a newline, not when we land on
+// one. That distinction matters: a newline belongs to the line it ends, so
+// checking the character we are leaving keeps a token that finishes at
+// end-of-line -- a bare RETURN, CONTINUE, WEND, ENDIF and so on -- reported
+// on the line it was actually written on. Checking the character we arrive
+// at (which is what this used to do) reported every such token one line too
+// far down, which showed up in error messages, in the //line directives the
+// code generator emits, and therefore in the debugger.
 func (l *Lexer) readChar() {
+	if l.ch == '\n' {
+		l.line++
+		l.column = 1 // the character about to be read is first on the new line
+	} else {
+		l.column++
+	}
+
 	if l.readPosition >= len(l.input) {
 		l.ch = 0 // EOF
 	} else {
@@ -50,13 +66,6 @@ func (l *Lexer) readChar() {
 	}
 	l.position = l.readPosition
 	l.readPosition++
-
-	if l.ch == '\n' {
-		l.line++
-		l.column = 0
-	} else {
-		l.column++
-	}
 }
 
 // peekChar returns the next character without advancing the position

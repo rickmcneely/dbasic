@@ -704,3 +704,75 @@ LOOP UNTIL p >= 10`))
 		t.Errorf("expected the UNTIL condition to be inverted, got:\n%s", code)
 	}
 }
+
+// --- deterministic output ---------------------------------------------
+//
+// Ranging over a Go map is deliberately randomised, so any emitter that
+// walked one directly produced different code on every build. That made
+// generated output impossible to diff or use as a golden file.
+
+func TestGenerateIsDeterministic(t *testing.T) {
+	input := `IMPORT "strings" AS strings
+IMPORT "fmt" AS fmt
+IMPORT "os" AS os
+IMPORT "sort" AS sort
+
+TYPE Point
+    DIM X AS INTEGER
+    DIM Y AS INTEGER
+    DIM Label AS STRING
+END TYPE
+
+SUB Demo()
+    DIM p AS Point = Point{X: 1, Y: 2, Label: "origin"}
+    DIM s AS STRING = Left("abc", 2)
+    fmt.Println(p, s, strings.ToUpper(s), os.Args, sort.SearchInts)
+END SUB`
+
+	first := compile(input)
+	for i := 0; i < 25; i++ {
+		if got := compile(input); got != first {
+			t.Fatalf("run %d differs from the first run:\n%s", i+2, got)
+		}
+	}
+}
+
+// Struct literal fields keep the order the programmer wrote, which is both
+// stable and far easier to read back than alphabetical.
+func TestStructLiteralKeepsSourceOrder(t *testing.T) {
+	code := compile(`TYPE RGBA
+    DIM R AS INTEGER
+    DIM G AS INTEGER
+    DIM B AS INTEGER
+    DIM A AS INTEGER
+END TYPE
+
+SUB Demo()
+    DIM c AS RGBA = RGBA{R: 192, G: 128, B: 64, A: 255}
+END SUB`)
+
+	if !strings.Contains(code, "RGBA{R: 192, G: 128, B: 64, A: 255}") {
+		t.Errorf("struct literal did not keep source order, got:\n%s", code)
+	}
+}
+
+// Imports come out sorted by path -- stable, and the order gofmt wants.
+func TestImportsAreSorted(t *testing.T) {
+	code := compile(`IMPORT "strings" AS strings
+IMPORT "fmt" AS fmt
+IMPORT "errors" AS errors
+
+SUB Demo()
+    fmt.Println(strings.ToUpper("x"), errors.New("boom"))
+END SUB`)
+
+	iErrors := strings.Index(code, `"errors"`)
+	iFmt := strings.Index(code, `"fmt"`)
+	iStrings := strings.Index(code, `"strings"`)
+	if iErrors < 0 || iFmt < 0 || iStrings < 0 {
+		t.Fatalf("expected all three imports, got:\n%s", code)
+	}
+	if !(iErrors < iFmt && iFmt < iStrings) {
+		t.Errorf("imports are not sorted by path, got:\n%s", code)
+	}
+}

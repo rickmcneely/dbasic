@@ -1847,6 +1847,9 @@ func (p *Parser) parseStructLiteral(typeName *Identifier) Expression {
 
 		p.nextToken() // move to value
 		p.skipNewlines()
+		if _, dup := lit.Fields[fieldName]; !dup {
+			lit.Order = append(lit.Order, fieldName)
+		}
 		lit.Fields[fieldName] = p.parseExpression(LOWEST)
 
 		// Skip newlines after value (in peek position)
@@ -1941,6 +1944,9 @@ func (p *Parser) parseJSONLiteral() Expression {
 
 		p.nextToken()
 		value := p.parseExpression(LOWEST)
+		if _, dup := lit.Pairs[key]; !dup {
+			lit.Order = append(lit.Order, key)
+		}
 		lit.Pairs[key] = value
 
 		if p.peekTokenIs(lexer.TOKEN_COMMA) {

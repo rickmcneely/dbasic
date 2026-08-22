@@ -1015,6 +1015,11 @@ func (nl *NilLiteral) String() string       { return "NIL" }
 type JSONLiteral struct {
 	Token lexer.Token
 	Pairs map[string]Expression
+	// Keys in the order they were written. Ranging over a Go map is
+	// deliberately randomised, so emitting from Pairs alone would produce
+	// different output on every run; this keeps the generated code stable
+	// and in the order the programmer wrote.
+	Order []string
 }
 
 func (jl *JSONLiteral) expressionNode()      {}
@@ -1048,6 +1053,8 @@ type StructLiteral struct {
 	Token    lexer.Token
 	TypeName string                // The struct type name
 	Fields   map[string]Expression // field: value pairs
+	// Field names in the order they were written; see JSONLiteral.Order.
+	Order []string
 }
 
 func (sl *StructLiteral) expressionNode()      {}

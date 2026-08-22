@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zditech/dbasic/pkg/analyzer"
@@ -1049,7 +1050,14 @@ func (g *Generator) generateRuntimeFunctions() {
 	}
 
 	g.writeLine("// Runtime helper functions")
+	// Sorted, because ranging over a map is randomised and the generated
+	// Go would otherwise differ from one build to the next.
+	names := make([]string, 0, len(g.runtimeFuncs))
 	for funcName := range g.runtimeFuncs {
+		names = append(names, funcName)
+	}
+	sort.Strings(names)
+	for _, funcName := range names {
 		if def, ok := runtimeFuncDefs[funcName]; ok {
 			g.writeLine("")
 			// Write each line of the function definition
@@ -1069,8 +1077,15 @@ func (g *Generator) generateImports() {
 
 	g.writeLine("import (")
 	g.indent++
-	for path, alias := range g.imports {
-		if alias != "" {
+	// Sorted by import path: stable across builds, and the order gofmt
+	// would put them in anyway.
+	paths := make([]string, 0, len(g.imports))
+	for path := range g.imports {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		if alias := g.imports[path]; alias != "" {
 			g.writeLine(fmt.Sprintf(`%s "%s"`, alias, path))
 		} else {
 			g.writeLine(fmt.Sprintf(`"%s"`, path))
@@ -2467,14 +2482,31 @@ func (g *Generator) exprToGo(expr parser.Expression) string {
 	}
 }
 
+// literalKeyOrder returns the keys of a literal in the order they were
+// written. Older trees (or any built without the parser filling Order in)
+// fall back to alphabetical order, which is at least stable -- what must
+// never happen is ranging the map directly, because Go randomises that and
+// the generated code would change on every build.
+func literalKeyOrder(order []string, m map[string]parser.Expression) []string {
+	if len(order) == len(m) {
+		return order
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (g *Generator) jsonLiteralToGo(lit *parser.JSONLiteral) string {
 	if len(lit.Pairs) == 0 {
 		return "map[string]interface{}{}"
 	}
 
 	var pairs []string
-	for k, v := range lit.Pairs {
-		pairs = append(pairs, fmt.Sprintf("%q: %s", k, g.exprToGo(v)))
+	for _, k := range literalKeyOrder(lit.Order, lit.Pairs) {
+		pairs = append(pairs, fmt.Sprintf("%q: %s", k, g.exprToGo(lit.Pairs[k])))
 	}
 	return fmt.Sprintf("map[string]interface{}{%s}", strings.Join(pairs, ", "))
 }
@@ -2537,10 +2569,10 @@ func (g *Generator) structLiteralToGo(lit *parser.StructLiteral) string {
 	}
 
 	var pairs []string
-	for k, v := range lit.Fields {
+	for _, k := range literalKeyOrder(lit.Order, lit.Fields) {
 		// Convert field name to Go identifier (capitalize first letter)
 		goFieldName := g.toGoIdent(k)
-		pairs = append(pairs, fmt.Sprintf("%s: %s", goFieldName, g.exprToGo(v)))
+		pairs = append(pairs, fmt.Sprintf("%s: %s", goFieldName, g.exprToGo(lit.Fields[k])))
 	}
 	return fmt.Sprintf("%s{%s}", typeName, strings.Join(pairs, ", "))
 }
