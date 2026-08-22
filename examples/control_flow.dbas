@@ -239,6 +239,85 @@ SUB Main()
     END SELECT
     ' END SELECT marks the end of the SELECT CASE block.
 
+    ' =========================================================
+    ' EXIT and CONTINUE: Changing your mind mid-loop
+    ' =========================================================
+    ' Sometimes you want to bail out of a loop early, or skip
+    ' the rest of one pass and get on with the next. That is
+    ' what these two words are for:
+    '
+    '   EXIT     -- stop the loop altogether and carry on below
+    '   CONTINUE -- abandon THIS pass, jump straight to the next
+    '
+    ' Both act on the loop they are written in. If you have one
+    ' loop inside another, they affect the inner one.
+    '
+    ' You may write the kind of loop after them (EXIT FOR,
+    ' CONTINUE WHILE, and so on). It changes nothing -- it is
+    ' just there so a reader can see what you meant.
+    PRINT ""
+    PRINT "=== EXIT and CONTINUE ==="
+
+    ' Print the odd numbers, and give up once we pass 7.
+    ' CONTINUE FOR skips the even ones: when i is 2, we never
+    ' reach the PRINT, we go straight back to the top with i = 3.
+    ' Output:
+    '   Odd: 1
+    '   Odd: 3
+    '   Odd: 5
+    '   Odd: 7
+    '   Stopped at 9
+    FOR i = 1 TO 100
+        IF i MOD 2 = 0 THEN
+            CONTINUE FOR
+        ENDIF
+
+        IF i > 7 THEN
+            PRINT "Stopped at "; i
+            EXIT FOR
+        ENDIF
+
+        PRINT "Odd: "; i
+    NEXT
+
+    ' They work inside SELECT CASE too.
+    ' Output:
+    '   Grade 2
+    '   Grade 3
+    PRINT ""
+    FOR i = 1 TO 5
+        SELECT CASE i
+        CASE 1
+            ' Nothing to report for 1, so skip the printing.
+            CONTINUE FOR
+        CASE 4
+            ' Seen enough.
+            EXIT FOR
+        CASE ELSE
+            PRINT "Grade "; i
+        END SELECT
+    NEXT
+
+    ' A warning about WHILE and DO loops. A FOR loop counts up
+    ' for you, but in these you must do the counting yourself --
+    ' so make sure the counting happens BEFORE the CONTINUE, or
+    ' nothing will ever change and the loop will run forever.
+    ' Output:
+    '   Tick 1
+    '   Tick 3
+    '   Tick 5
+    PRINT ""
+    counter = 0
+    WHILE counter < 5
+        counter = counter + 1        ' count first...
+
+        IF counter MOD 2 = 0 THEN
+            CONTINUE WHILE           ' ...then it is safe to skip
+        ENDIF
+
+        PRINT "Tick "; counter
+    WEND
+
     PRINT ""
     PRINT "Control flow demo complete!"
 END SUB

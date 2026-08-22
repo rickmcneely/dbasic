@@ -183,6 +183,18 @@ CASE 6, 7
 CASE ELSE
     PRINT "Weekday"
 END SELECT
+
+' EXIT leaves a loop; CONTINUE skips to the next pass.
+' Both act on the innermost loop, and naming the loop kind is optional.
+FOR i = 1 TO 100
+    IF i MOD 3 = 0 THEN
+        CONTINUE FOR
+    ENDIF
+    IF i > 50 THEN
+        EXIT FOR
+    ENDIF
+    PRINT i
+NEXT
 ```
 
 ### Functions and Subroutines

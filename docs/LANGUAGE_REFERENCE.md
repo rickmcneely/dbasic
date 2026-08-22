@@ -13,7 +13,7 @@ DBasic is a modern BASIC dialect that compiles to Go. It combines familiar BASIC
 3. [Data Types](#data-types)
 4. [Variables and Constants](#variables-and-constants) — DIM, REDIM, STATIC, SHARED, OPTION, reserved-word relaxation
 5. [Operators](#operators)
-6. [Control Flow](#control-flow) — IF/SELECT CASE/FOR/WHILE/DO, single-line IF, WITH
+6. [Control Flow](#control-flow) — IF/SELECT CASE/FOR/WHILE/DO, EXIT/CONTINUE, single-line IF, WITH
 7. [Functions and Subroutines](#functions-and-subroutines) — SUB, FUNCTION, DECLARE, CALL, lambdas
 8. [User-Defined Types](#user-defined-types)
 9. [Arrays and Slices](#arrays-and-slices)
@@ -186,7 +186,7 @@ END SUB
 
 ### Reserved Words as Identifiers
 
-`STEP`, `BYTES`, `STRING`, and `TYPE` may be used as variable, parameter, field, or sub/function names. They retain their keyword meaning in syntactic positions (e.g. `FOR i = 1 TO 10 STEP 2`).
+`STEP`, `BYTES`, `STRING`, `TYPE`, and `CONTINUE` may be used as variable, parameter, field, or sub/function names. They retain their keyword meaning in syntactic positions (e.g. `FOR i = 1 TO 10 STEP 2`, or `CONTINUE FOR` at the start of a statement).
 
 ```basic
 DIM TYPE AS INTEGER = 99       ' a variable named TYPE
@@ -360,6 +360,14 @@ FOR i = 1 TO 100
         EXIT FOR
     ENDIF
 NEXT
+
+' Skip to the next iteration
+FOR i = 1 TO 100
+    IF i MOD 2 = 0 THEN
+        CONTINUE FOR
+    ENDIF
+    PRINT i          ' odd numbers only
+NEXT
 ```
 
 ### WHILE Loop
@@ -374,6 +382,16 @@ WHILE TRUE
     IF done THEN
         EXIT WHILE
     ENDIF
+WEND
+
+' Skip to the next iteration. Take care that whatever moves the loop
+' along happens BEFORE the CONTINUE, or the condition never changes.
+WHILE i < 10
+    i = i + 1
+    IF skip(i) THEN
+        CONTINUE WHILE
+    ENDIF
+    PRINT i
 WEND
 ```
 
@@ -419,6 +437,75 @@ SELECT CASE expression
         ' default case
 END SELECT
 ```
+
+### EXIT and CONTINUE
+
+Both act on the **innermost** enclosing loop. Naming the loop kind
+(`FOR` / `WHILE` / `DO`) is optional and purely documentation — `CONTINUE`
+on its own means exactly the same as `CONTINUE FOR` inside a FOR loop.
+
+| Statement | Effect |
+|-----------|--------|
+| `EXIT FOR` / `EXIT WHILE` / `EXIT DO` | Leave the loop altogether |
+| `CONTINUE` / `CONTINUE FOR` / `CONTINUE WHILE` / `CONTINUE DO` | Abandon the rest of this pass and start the next one |
+| `EXIT SUB` / `EXIT FUNCTION` | Return from the routine |
+
+```basic
+FOR i = 1 TO 100
+    IF i MOD 3 = 0 THEN
+        CONTINUE FOR       ' skip multiples of three
+    ENDIF
+    IF i > 50 THEN
+        EXIT FOR           ' and stop altogether past fifty
+    ENDIF
+    PRINT i
+NEXT
+```
+
+Both work inside `SELECT CASE`:
+
+```basic
+FOR i = 1 TO 10
+    SELECT CASE grade(i)
+        CASE 0
+            CONTINUE FOR
+        CASE 9
+            EXIT FOR
+        CASE ELSE
+            PRINT i
+    END SELECT
+NEXT
+```
+
+`CONTINUE` is only legal inside a loop. Writing it anywhere else — including
+in a lambda that happens to sit inside a loop, since the lambda is its own
+routine — is reported as an error:
+
+```
+semantic error at line 12: CONTINUE is only allowed inside a FOR, WHILE or DO loop
+```
+
+**One thing to watch in a post-test loop.** `DO ... LOOP WHILE` normally lets
+its condition refer to a variable declared inside the loop body. A body
+containing `CONTINUE` is compiled differently so that the test still runs
+after a `CONTINUE`, and in that form the condition is evaluated outside the
+body. Declare the variable before the `DO` if you need both:
+
+```basic
+DIM line AS STRING            ' declared outside, so LOOP WHILE can see it
+DO
+    line = nextLine()
+    IF line = "" THEN
+        CONTINUE DO
+    ENDIF
+    process(line)
+LOOP WHILE line <> "EOF"
+```
+
+`CONTINUE` is a **contextual** keyword: it only has this meaning at the start
+of a statement, standing alone or followed by `FOR`, `WHILE` or `DO`. A
+program that already uses `CONTINUE` as a variable or field name keeps
+working.
 
 ### GOTO (Use Sparingly)
 
@@ -1594,7 +1681,7 @@ pid, err = ShellStart("python -m http.server 8080")
 `INTEGER`, `LONG`, `SINGLE`, `DOUBLE`, `STRING`, `BOOLEAN`, `BYTES`, `BSTRING`, `JSON`, `POINTER`, `CHAN`, `MAP`, `ANY`, `ERROR`
 
 ### Control Flow Keywords
-`IF`, `THEN`, `ELSE`, `ELSEIF`, `ENDIF`, `FOR`, `TO`, `STEP`, `NEXT`, `WHILE`, `WEND`, `DO`, `LOOP`, `UNTIL`, `EXIT`, `SELECT`, `CASE`, `END`, `GOTO`, `RETURN`, `DEFER`, `WITH`
+`IF`, `THEN`, `ELSE`, `ELSEIF`, `ENDIF`, `FOR`, `TO`, `STEP`, `NEXT`, `WHILE`, `WEND`, `DO`, `LOOP`, `UNTIL`, `EXIT`, `CONTINUE`, `SELECT`, `CASE`, `END`, `GOTO`, `RETURN`, `DEFER`, `WITH`
 
 ### Function Keywords
 `SUB`, `FUNCTION`, `BYREF`, `BYVAL`, `DECLARE`, `CALL`

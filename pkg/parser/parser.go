@@ -117,6 +117,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(lexer.TOKEN_BYTES, p.parseIdentifier)
 	p.registerPrefix(lexer.TOKEN_STRING_TYPE, p.parseIdentifier)
 	p.registerPrefix(lexer.TOKEN_TYPE, p.parseIdentifier)
+	p.registerPrefix(lexer.TOKEN_CONTINUE, p.parseIdentifier)
 	p.registerPrefix(lexer.TOKEN_INT, p.parseIntegerLiteral)
 	p.registerPrefix(lexer.TOKEN_FLOAT, p.parseFloatLiteral)
 	p.registerPrefix(lexer.TOKEN_STRING, p.parseStringLiteral)
@@ -343,6 +344,18 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseReturnStatement()
 	case lexer.TOKEN_EXIT:
 		return p.parseExitStatement()
+	case lexer.TOKEN_CONTINUE:
+		// CONTINUE is a contextual keyword. It only means "skip to the next
+		// iteration" when it stands alone or is followed by the loop kind
+		// (CONTINUE FOR / WHILE / DO). Anywhere else -- `CONTINUE = 5`,
+		// `CONTINUE.Reset()`, `CONTINUE(x)` -- it is an ordinary identifier,
+		// so programs that already use CONTINUE as a name keep working.
+		if p.peekTokenIs(lexer.TOKEN_FOR) || p.peekTokenIs(lexer.TOKEN_WHILE) ||
+			p.peekTokenIs(lexer.TOKEN_DO) || p.peekTokenIs(lexer.TOKEN_NEWLINE) ||
+			p.peekTokenIs(lexer.TOKEN_EOF) {
+			return p.parseContinueStatement()
+		}
+		return p.parseAssignmentOrExpression()
 	case lexer.TOKEN_GOTO:
 		return p.parseGotoStatement()
 	case lexer.TOKEN_SPAWN:
@@ -1405,6 +1418,21 @@ func (p *Parser) parseExitStatement() *ExitStatement {
 	return stmt
 }
 
+// parseContinueStatement parses `CONTINUE`, optionally followed by the kind
+// of loop it belongs to. Like EXIT, the kind is documentation only -- CONTINUE
+// always applies to the innermost enclosing loop.
+func (p *Parser) parseContinueStatement() *ContinueStatement {
+	stmt := &ContinueStatement{Token: p.curToken}
+
+	switch p.peekToken.Type {
+	case lexer.TOKEN_FOR, lexer.TOKEN_WHILE, lexer.TOKEN_DO:
+		p.nextToken()
+		stmt.LoopType = strings.ToUpper(p.curToken.Literal)
+	}
+
+	return stmt
+}
+
 func (p *Parser) parseGotoStatement() *GotoStatement {
 	stmt := &GotoStatement{Token: p.curToken}
 
@@ -2271,7 +2299,8 @@ func (p *Parser) isIdentLike(t lexer.TokenType) bool {
 	switch t {
 	case lexer.TOKEN_IDENT,
 		lexer.TOKEN_STEP, lexer.TOKEN_BYTES,
-		lexer.TOKEN_STRING_TYPE, lexer.TOKEN_TYPE:
+		lexer.TOKEN_STRING_TYPE, lexer.TOKEN_TYPE,
+		lexer.TOKEN_CONTINUE:
 		return true
 	}
 	return false
@@ -2300,6 +2329,7 @@ func (p *Parser) isKeywordToken(t lexer.TokenType) bool {
 		lexer.TOKEN_RETURN, lexer.TOKEN_SELECT, lexer.TOKEN_CASE,
 		lexer.TOKEN_SUB, lexer.TOKEN_FUNCTION, lexer.TOKEN_DIM,
 		lexer.TOKEN_PRINT, lexer.TOKEN_INPUT, lexer.TOKEN_EXIT,
+		lexer.TOKEN_CONTINUE,
 		lexer.TOKEN_IMPORT, lexer.TOKEN_AS, lexer.TOKEN_TO, lexer.TOKEN_STEP,
 		lexer.TOKEN_BYTES, lexer.TOKEN_ERROR_TYPE, lexer.TOKEN_JSON,
 		lexer.TOKEN_BSTRING, lexer.TOKEN_ANY, lexer.TOKEN_POINTER,

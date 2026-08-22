@@ -105,6 +105,7 @@ const (
 	TOKEN_LOOP
 	TOKEN_UNTIL
 	TOKEN_EXIT
+	TOKEN_CONTINUE
 	TOKEN_SELECT
 	TOKEN_CASE
 	TOKEN_END
@@ -238,6 +239,7 @@ var tokenNames = map[TokenType]string{
 	TOKEN_LOOP:        "LOOP",
 	TOKEN_UNTIL:       "UNTIL",
 	TOKEN_EXIT:        "EXIT",
+	TOKEN_CONTINUE:    "CONTINUE",
 	TOKEN_SELECT:      "SELECT",
 	TOKEN_CASE:        "CASE",
 	TOKEN_END:         "END",
@@ -321,6 +323,7 @@ var Keywords = map[string]TokenType{
 	"LOOP":      TOKEN_LOOP,
 	"UNTIL":     TOKEN_UNTIL,
 	"EXIT":      TOKEN_EXIT,
+	"CONTINUE":  TOKEN_CONTINUE,
 	"SELECT":    TOKEN_SELECT,
 	"CASE":      TOKEN_CASE,
 	"GOTO":      TOKEN_GOTO,

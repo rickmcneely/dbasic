@@ -21,6 +21,10 @@ type Analyzer struct {
 	// SUB (zero return types) from top-level code (no enclosing function).
 	currentReturnTypes []*Type
 	inFunctionBody     bool
+
+	// How many loops enclose the statement being analysed. CONTINUE is only
+	// legal inside a loop, and this is how we know.
+	loopDepth int
 }
 
 // New creates a new Analyzer
@@ -534,6 +538,10 @@ func (a *Analyzer) analyzeStatement(stmt parser.Statement) {
 		a.analyzeReturnStatement(s)
 	case *parser.ExitStatement:
 		// Valid exit types are checked by parser
+	case *parser.ContinueStatement:
+		if a.loopDepth == 0 {
+			a.error(s.Token.Line, "CONTINUE is only allowed inside a FOR, WHILE or DO loop")
+		}
 	case *parser.GotoStatement:
 		// Label resolution is done later
 	case *parser.LabelStatement:
@@ -797,7 +805,9 @@ func (a *Analyzer) analyzeForStatement(stmt *parser.ForStatement) {
 		}
 	}
 
+	a.loopDepth++
 	a.analyzeBlockStatement(stmt.Body)
+	a.loopDepth--
 }
 
 func (a *Analyzer) analyzeWhileStatement(stmt *parser.WhileStatement) {
@@ -807,7 +817,9 @@ func (a *Analyzer) analyzeWhileStatement(stmt *parser.WhileStatement) {
 	}
 
 	a.symbols.EnterScope("while")
+	a.loopDepth++
 	a.analyzeBlockStatement(stmt.Body)
+	a.loopDepth--
 	a.symbols.ExitScope()
 }
 
@@ -820,7 +832,9 @@ func (a *Analyzer) analyzeDoLoopStatement(stmt *parser.DoLoopStatement) {
 	}
 
 	a.symbols.EnterScope("do")
+	a.loopDepth++
 	a.analyzeBlockStatement(stmt.Body)
+	a.loopDepth--
 	a.symbols.ExitScope()
 }
 
@@ -1021,11 +1035,15 @@ func (a *Analyzer) analyzeReturnStatement(stmt *parser.ReturnStatement) {
 // withReturnTypes runs body with the given enclosing-function return
 // signature active, restoring the previous one afterward (so nested
 // function literals don't clobber the outer function's signature).
+//
+// Loop nesting is reset here too. A lambda written inside a loop is a
+// separate function, so a CONTINUE in its body has no loop to continue -
+// without this reset it would look legal and then fail to compile.
 func (a *Analyzer) withReturnTypes(rets []*Type, body func()) {
-	prevRets, prevIn := a.currentReturnTypes, a.inFunctionBody
-	a.currentReturnTypes, a.inFunctionBody = rets, true
+	prevRets, prevIn, prevLoop := a.currentReturnTypes, a.inFunctionBody, a.loopDepth
+	a.currentReturnTypes, a.inFunctionBody, a.loopDepth = rets, true, 0
 	body()
-	a.currentReturnTypes, a.inFunctionBody = prevRets, prevIn
+	a.currentReturnTypes, a.inFunctionBody, a.loopDepth = prevRets, prevIn, prevLoop
 }
 
 func (a *Analyzer) analyzeLabelStatement(stmt *parser.LabelStatement) {

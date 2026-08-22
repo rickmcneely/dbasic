@@ -352,6 +352,43 @@ DO
 LOOP
 ```
 
+### CONTINUE Statement
+
+`CONTINUE` abandons the rest of the current pass through a loop and starts
+the next one. Like `EXIT`, it acts on the innermost enclosing loop, and
+naming the loop kind is optional.
+
+```basic
+FOR i = 1 TO 100
+    IF i MOD 2 = 0 THEN
+        CONTINUE FOR       ' skip the even numbers
+    ENDIF
+    PRINT i
+NEXT
+
+' In a WHILE loop, make sure whatever advances the loop happens before
+' the CONTINUE, or the condition never changes.
+WHILE i < 10
+    i = i + 1
+    IF skip(i) THEN
+        CONTINUE WHILE
+    ENDIF
+    PRINT i
+WEND
+
+DO
+    n = n + 1
+    IF n MOD 3 = 0 THEN
+        CONTINUE DO
+    ENDIF
+    total = total + n
+LOOP WHILE n < 100
+```
+
+`CONTINUE` is only legal inside a loop. It is a contextual keyword, so a
+program that already uses `CONTINUE` as a name keeps working. See the full
+reference in `LANGUAGE_REFERENCE.md` for the details.
+
 ### GOTO Statement
 
 ```basic
@@ -965,17 +1002,17 @@ Reserved keywords in DBasic:
 
 ```
 AND       APPEND    AS        BOOLEAN   BSTRING   BYREF
-BYVAL     BYTES     CAP       CASE      CHAN      CHANNEL
-CLOSE     CONST     COPY      DELETE    DIM       DO
-DOUBLE    ELSE      ELSEIF    END       ENDIF     EXIT
-FALSE     FOR       FROM      FUNCTION  GOSUB     GOTO
-IF        IMPORT    INCLUDE   INPUT     INTEGER   JSON
-LEN       LET       LONG      LOOP      MAKE      MAKE_CHAN
-MOD       NEW       NEXT      NIL       NOT       OF
-OR        POINTER   PRINT     RECEIVE   RETURN    SELECT
-SEND      SINGLE    SPAWN     STEP      STRING    SUB
-THEN      TO        TRUE      TYPE      UNTIL     WEND
-WHILE     XOR
+BYTES     BYVAL     CAP       CASE      CHAN      CHANNEL
+CLOSE     CONST     CONTINUE  COPY      DELETE    DIM
+DO        DOUBLE    ELSE      ELSEIF    END       ENDIF
+EXIT      FALSE     FOR       FROM      FUNCTION  GOSUB
+GOTO      IF        IMPORT    INCLUDE   INPUT     INTEGER
+JSON      LEN       LET       LONG      LOOP      MAKE
+MAKE_CHAN MOD       NEW       NEXT      NIL       NOT
+OF        OR        POINTER   PRINT     RECEIVE   RETURN
+SELECT    SEND      SINGLE    SPAWN     STEP      STRING
+SUB       THEN      TO        TRUE      TYPE      UNTIL
+WEND      WHILE     XOR
 ```
 
 ---

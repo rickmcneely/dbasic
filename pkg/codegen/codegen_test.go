@@ -592,3 +592,115 @@ END SUB`
 		t.Errorf("expected comma-ok receive operator 'a, ok = <-ch', got:\n%s", code)
 	}
 }
+
+// --- CONTINUE, and the loop-target bugs it exposed ------------------------
+
+// inSub wraps statements in a SUB, because only declarations are emitted at
+// top level -- executable statements have to live inside a routine.
+func inSub(body string) string {
+	return "SUB Demo()\n" + body + "\nEND SUB"
+}
+
+func TestGenerateContinue(t *testing.T) {
+	code := compile(inSub("DIM i AS INTEGER\nFOR i = 1 TO 3\nCONTINUE FOR\nNEXT"))
+
+	if !strings.Contains(code, "continue") {
+		t.Errorf("expected a Go continue, got:\n%s", code)
+	}
+}
+
+// Go's continue ignores switches, so CONTINUE inside SELECT CASE needs no
+// label -- but it must still be a bare continue, not a break.
+func TestGenerateContinueInsideSelect(t *testing.T) {
+	code := compile(inSub(`DIM i AS INTEGER
+FOR i = 1 TO 3
+SELECT CASE i
+CASE 2
+CONTINUE FOR
+END SELECT
+NEXT`))
+
+	if !strings.Contains(code, "continue") {
+		t.Errorf("expected a Go continue, got:\n%s", code)
+	}
+}
+
+// A bare Go `break` inside a switch leaves the SWITCH, not the loop. SELECT
+// CASE compiles to a switch, so EXIT FOR in one has to use a loop label.
+func TestGenerateExitInsideSelectUsesLabel(t *testing.T) {
+	code := compile(inSub(`DIM i AS INTEGER
+FOR i = 1 TO 3
+SELECT CASE i
+CASE 2
+EXIT FOR
+END SELECT
+NEXT`))
+
+	if !strings.Contains(code, "dbLoop1:") {
+		t.Errorf("expected a loop label, got:\n%s", code)
+	}
+	if !strings.Contains(code, "break dbLoop1") {
+		t.Errorf("expected a labelled break, got:\n%s", code)
+	}
+}
+
+// ...but a loop with no EXIT inside a switch must NOT get a label, because
+// Go rejects a label that is defined and never used.
+func TestGenerateNoLabelWhenNotNeeded(t *testing.T) {
+	code := compile(inSub(`DIM i AS INTEGER
+FOR i = 1 TO 3
+EXIT FOR
+NEXT`))
+
+	if strings.Contains(code, "dbLoop") {
+		t.Errorf("unexpected loop label on a loop that does not need one:\n%s", code)
+	}
+	if !strings.Contains(code, "break") {
+		t.Errorf("expected a plain break, got:\n%s", code)
+	}
+}
+
+// A post-test DO normally puts its test at the bottom of the body. A Go
+// `continue` would jump straight over that test and spin forever, so a body
+// containing CONTINUE switches to a three-part for whose post statement
+// re-runs the test.
+func TestGeneratePostTestDoLoopWithContinue(t *testing.T) {
+	code := compile(inSub(`DIM p AS INTEGER = 0
+DO
+p = p + 1
+CONTINUE DO
+LOOP WHILE p < 10`))
+
+	if !strings.Contains(code, "for dbAgain1 := true; dbAgain1; dbAgain1 =") {
+		t.Errorf("expected the three-part post-test form, got:\n%s", code)
+	}
+}
+
+// Without a CONTINUE the original shape is kept, so the LOOP condition may
+// still refer to variables declared inside the body.
+func TestGeneratePostTestDoLoopWithoutContinue(t *testing.T) {
+	code := compile(inSub(`DIM p AS INTEGER = 0
+DO
+p = p + 1
+LOOP WHILE p < 10`))
+
+	if strings.Contains(code, "dbAgain") {
+		t.Errorf("post-test loop without CONTINUE should keep the simple form:\n%s", code)
+	}
+	if !strings.Contains(code, "break") {
+		t.Errorf("expected the bottom-of-body break, got:\n%s", code)
+	}
+}
+
+// LOOP UNTIL is the same thing with the condition inverted.
+func TestGeneratePostTestUntilWithContinue(t *testing.T) {
+	code := compile(inSub(`DIM p AS INTEGER = 0
+DO
+p = p + 1
+CONTINUE DO
+LOOP UNTIL p >= 10`))
+
+	if !strings.Contains(code, "dbAgain1 = !(") {
+		t.Errorf("expected the UNTIL condition to be inverted, got:\n%s", code)
+	}
+}

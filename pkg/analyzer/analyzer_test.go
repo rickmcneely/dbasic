@@ -742,3 +742,63 @@ END SUB`)
 		t.Errorf("valid returns flagged a return error: %v", errs)
 	}
 }
+
+// --- CONTINUE -------------------------------------------------------------
+
+func TestAnalyzeContinueOutsideLoop(t *testing.T) {
+	program := parse("SUB Main()\nCONTINUE\nEND SUB")
+	a := New()
+	_, errors := a.Analyze(program)
+
+	if len(errors) == 0 {
+		t.Fatal("expected an error for CONTINUE outside a loop")
+	}
+	if !strings.Contains(errors[0], "CONTINUE") {
+		t.Errorf("error should mention CONTINUE, got: %v", errors[0])
+	}
+}
+
+func TestAnalyzeContinueInsideLoops(t *testing.T) {
+	inputs := []string{
+		"SUB Main()\nDIM i AS INTEGER\nFOR i = 1 TO 3\nCONTINUE FOR\nNEXT\nEND SUB",
+		"SUB Main()\nDIM b AS BOOLEAN = TRUE\nWHILE b\nCONTINUE WHILE\nWEND\nEND SUB",
+		"SUB Main()\nDIM b AS BOOLEAN = TRUE\nDO\nCONTINUE DO\nLOOP WHILE b\nEND SUB",
+	}
+	for _, in := range inputs {
+		a := New()
+		_, errors := a.Analyze(parse(in))
+		for _, e := range errors {
+			if strings.Contains(e, "CONTINUE") {
+				t.Errorf("unexpected CONTINUE error for %q: %s", in, e)
+			}
+		}
+	}
+}
+
+// A lambda is a separate function, so a CONTINUE in its body has no loop to
+// continue even when the lambda itself sits inside one.
+func TestAnalyzeContinueInsideLambdaInLoop(t *testing.T) {
+	input := `IMPORT "sort" AS sort
+SUB Main()
+DIM nums AS []INTEGER = []INTEGER{3, 1, 2}
+DIM i AS INTEGER
+FOR i = 1 TO 3
+sort.Slice(nums, FUNCTION(a AS INTEGER, b AS INTEGER) AS BOOLEAN
+CONTINUE
+END FUNCTION)
+NEXT
+END SUB`
+
+	a := New()
+	_, errors := a.Analyze(parse(input))
+
+	var got bool
+	for _, e := range errors {
+		if strings.Contains(e, "CONTINUE") {
+			got = true
+		}
+	}
+	if !got {
+		t.Errorf("expected a CONTINUE error inside a lambda, got: %v", errors)
+	}
+}

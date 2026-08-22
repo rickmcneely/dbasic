@@ -590,6 +590,25 @@ func (es *ExitStatement) statementNode()       {}
 func (es *ExitStatement) TokenLiteral() string { return es.Token.Literal }
 func (es *ExitStatement) String() string       { return "EXIT " + es.ExitType }
 
+// ContinueStatement represents a CONTINUE statement, which skips the rest of
+// the current loop iteration and goes straight on to the next one.
+//
+// The loop kind (CONTINUE FOR / WHILE / DO) is optional and, as with EXIT,
+// purely documentation: CONTINUE always affects the innermost enclosing loop.
+type ContinueStatement struct {
+	Token    lexer.Token
+	LoopType string // FOR, WHILE, DO, or "" when written bare
+}
+
+func (cs *ContinueStatement) statementNode()       {}
+func (cs *ContinueStatement) TokenLiteral() string { return cs.Token.Literal }
+func (cs *ContinueStatement) String() string {
+	if cs.LoopType == "" {
+		return "CONTINUE"
+	}
+	return "CONTINUE " + cs.LoopType
+}
+
 // SubStatement represents a SUB definition
 type SubStatement struct {
 	Token  lexer.Token

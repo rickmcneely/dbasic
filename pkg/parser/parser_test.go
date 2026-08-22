@@ -772,3 +772,80 @@ func checkParserErrors(t *testing.T, p *Parser) {
 	}
 	t.FailNow()
 }
+
+// --- CONTINUE -------------------------------------------------------------
+
+func TestParseContinueStatement(t *testing.T) {
+	tests := []struct {
+		input    string
+		loopType string
+	}{
+		{"FOR i = 1 TO 3\nCONTINUE\nNEXT", ""},
+		{"FOR i = 1 TO 3\nCONTINUE FOR\nNEXT", "FOR"},
+		{"WHILE x\nCONTINUE WHILE\nWEND", "WHILE"},
+		{"DO\nCONTINUE DO\nLOOP WHILE x", "DO"},
+	}
+
+	for _, tt := range tests {
+		l := lexer.New(tt.input)
+		p := New(l)
+		program := p.ParseProgram()
+		checkParserErrors(t, p)
+
+		var found *ContinueStatement
+		walkForContinue(program, &found)
+		if found == nil {
+			t.Fatalf("no CONTINUE statement parsed from %q", tt.input)
+		}
+		if found.LoopType != tt.loopType {
+			t.Errorf("%q: LoopType = %q, want %q", tt.input, found.LoopType, tt.loopType)
+		}
+	}
+}
+
+// walkForContinue finds the first ContinueStatement anywhere in the tree.
+func walkForContinue(node Node, out **ContinueStatement) {
+	if *out != nil {
+		return
+	}
+	switch n := node.(type) {
+	case *Program:
+		for _, s := range n.Statements {
+			walkForContinue(s, out)
+		}
+	case *BlockStatement:
+		if n == nil {
+			return
+		}
+		for _, s := range n.Statements {
+			walkForContinue(s, out)
+		}
+	case *ContinueStatement:
+		*out = n
+	case *ForStatement:
+		walkForContinue(n.Body, out)
+	case *WhileStatement:
+		walkForContinue(n.Body, out)
+	case *DoLoopStatement:
+		walkForContinue(n.Body, out)
+	}
+}
+
+// CONTINUE is a contextual keyword: outside the "CONTINUE [FOR|WHILE|DO]"
+// shape it must still work as an ordinary name, so existing programs that
+// use it as a variable keep compiling.
+func TestContinueUsableAsIdentifier(t *testing.T) {
+	input := `DIM CONTINUE AS INTEGER = 7
+CONTINUE = CONTINUE + 1`
+
+	l := lexer.New(input)
+	p := New(l)
+	program := p.ParseProgram()
+	checkParserErrors(t, p)
+
+	var found *ContinueStatement
+	walkForContinue(program, &found)
+	if found != nil {
+		t.Errorf("CONTINUE used as a name was parsed as a CONTINUE statement")
+	}
+}

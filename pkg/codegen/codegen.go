@@ -28,6 +28,15 @@ type Generator struct {
 	optionBase      int                          // OPTION BASE setting (0 default; if 1, indices are emitted as `idx-1`)
 	testMode        bool                         // When set, emit a test-runner main() instead of calling Main()
 	testNames       []string                     // Names of TestXxx subs to invoke when testMode is true
+
+	// Loop bookkeeping, so EXIT and CONTINUE reach the right statement.
+	// loopLabels holds one entry per enclosing loop ("" when the loop was
+	// emitted without a label); switchDepth counts SELECT CASE nesting
+	// within the innermost loop; switchDepths saves that count per loop.
+	loopLabels   []string
+	switchDepth  int
+	switchDepths []int
+	loopSeq      int
 }
 
 // SetTestMode enables test-runner output: instead of calling Main(),
@@ -1365,6 +1374,8 @@ func stmtLine(stmt parser.Statement) int {
 		return s.Token.Line
 	case *parser.ExitStatement:
 		return s.Token.Line
+	case *parser.ContinueStatement:
+		return s.Token.Line
 	case *parser.GotoStatement:
 		return s.Token.Line
 	case *parser.LabelStatement:
@@ -1428,6 +1439,8 @@ func (g *Generator) generateStatement(stmt parser.Statement) {
 		g.generateReturn(s)
 	case *parser.ExitStatement:
 		g.generateExit(s)
+	case *parser.ContinueStatement:
+		g.generateContinue(s)
 	case *parser.GotoStatement:
 		g.generateGoto(s)
 	case *parser.LabelStatement:
@@ -1899,12 +1912,14 @@ func (g *Generator) generateFor(stmt *parser.ForStatement) {
 		})
 	}
 
+	g.beginLoop(stmt.Body)
 	g.writeLine(fmt.Sprintf("for %s = %s; %s %s %s; %s += %s {",
 		varName, start, varName, comparison, end, varName, step))
 	g.indent++
 	g.generateBlockStatement(stmt.Body)
 	g.indent--
 	g.writeLine("}")
+	g.popLoop()
 }
 
 // isNegativeStep checks if the step expression evaluates to a negative
@@ -1975,14 +1990,19 @@ func constFoldInt(e parser.Expression) (int64, bool) {
 }
 
 func (g *Generator) generateWhile(stmt *parser.WhileStatement) {
+	g.beginLoop(stmt.Body)
 	g.writeLine(fmt.Sprintf("for %s {", g.exprToGo(stmt.Condition)))
 	g.indent++
 	g.generateBlockStatement(stmt.Body)
 	g.indent--
 	g.writeLine("}")
+	g.popLoop()
 }
 
 func (g *Generator) generateDoLoop(stmt *parser.DoLoopStatement) {
+	g.beginLoop(stmt.Body)
+	defer g.popLoop()
+
 	if stmt.Condition == nil {
 		// Infinite loop
 		g.writeLine("for {")
@@ -2003,24 +2023,63 @@ func (g *Generator) generateDoLoop(stmt *parser.DoLoopStatement) {
 		g.generateBlockStatement(stmt.Body)
 		g.indent--
 		g.writeLine("}")
-	} else {
-		// Post-condition - use for loop with break
-		g.writeLine("for {")
+		return
+	}
+
+	// --- Post-condition (DO ... LOOP WHILE/UNTIL) ---
+	//
+	// The natural shape is a `for {}` with the test at the bottom of the
+	// body. That is what we emit, and it has one virtue worth keeping: the
+	// test sits inside the body's block, so a condition may refer to a
+	// variable DIMmed inside the loop.
+	//
+	// But Go's `continue` jumps straight past the bottom of the body to the
+	// top of the loop, which would skip that test and spin forever. So when
+	// the body contains a CONTINUE we switch to a three-part for loop and
+	// put the test in the post statement, which `continue` DOES run.
+	//
+	// The trade-off of that second form is the mirror of the first: the post
+	// statement lives outside the body's block, so a LOOP WHILE condition
+	// cannot refer to a variable declared inside the loop. Declare it just
+	// before the DO if you need both.
+	cond := g.exprToGo(stmt.Condition)
+
+	if bodyHasContinue(stmt.Body) {
+		keepGoing := cond
+		if !stmt.IsWhile {
+			keepGoing = "!(" + cond + ")" // LOOP UNTIL x == carry on while NOT x
+		}
+		g.loopSeq++
+		again := fmt.Sprintf("dbAgain%d", g.loopSeq)
+		// Starts true so the body always runs at least once, then the post
+		// statement re-tests it after every iteration -- including after a
+		// CONTINUE.
+		g.writeLine(fmt.Sprintf("for %s := true; %s; %s = %s {", again, again, again, keepGoing))
 		g.indent++
 		g.generateBlockStatement(stmt.Body)
-		cond := g.exprToGo(stmt.Condition)
-		if stmt.IsWhile {
-			g.writeLine(fmt.Sprintf("if !(%s) { break }", cond))
-		} else {
-			g.writeLine(fmt.Sprintf("if %s { break }", cond))
-		}
 		g.indent--
 		g.writeLine("}")
+		return
 	}
+
+	g.writeLine("for {")
+	g.indent++
+	g.generateBlockStatement(stmt.Body)
+	if stmt.IsWhile {
+		g.writeLine(fmt.Sprintf("if !(%s) { break }", cond))
+	} else {
+		g.writeLine(fmt.Sprintf("if %s { break }", cond))
+	}
+	g.indent--
+	g.writeLine("}")
 }
 
 func (g *Generator) generateSelect(stmt *parser.SelectStatement) {
 	testExpr := g.exprToGo(stmt.TestExpr)
+	// SELECT CASE becomes a Go switch, which swallows a bare `break`.
+	// Track that so EXIT inside here knows to use the loop's label.
+	g.switchDepth++
+	defer func() { g.switchDepth-- }()
 	g.writeLine(fmt.Sprintf("switch %s {", testExpr))
 
 	for _, caseClause := range stmt.Cases {
@@ -2062,10 +2121,185 @@ func (g *Generator) generateExit(stmt *parser.ExitStatement) {
 	// EXIT SUB, EXIT FUNCTION become return
 	switch strings.ToUpper(stmt.ExitType) {
 	case "FOR", "WHILE", "DO":
+		// A bare `break` inside a Go switch breaks the SWITCH, not the loop.
+		// SELECT CASE compiles to a switch, so when the EXIT sits inside one
+		// we have to name the loop we mean. enclosingLoopLabel gives us the
+		// label the loop was emitted with, or "" when a plain break is right.
+		if label := g.enclosingLoopLabel(); label != "" {
+			g.writeLine("break " + label)
+			return
+		}
 		g.writeLine("break")
 	case "SUB", "FUNCTION":
 		g.writeLine("return")
 	}
+}
+
+// generateContinue emits Go's `continue`.
+//
+// Unlike `break`, Go's `continue` only ever binds to a for loop -- switches
+// and selects are invisible to it -- so this never needs a label.
+func (g *Generator) generateContinue(stmt *parser.ContinueStatement) {
+	g.writeLine("continue")
+}
+
+// --- loop bookkeeping -------------------------------------------------
+//
+// Two things need to know how loops nest:
+//
+//   * EXIT inside a SELECT CASE has to say WHICH loop it is leaving, because
+//     Go's bare `break` would only leave the switch. That means the loop must
+//     have been emitted with a label -- and we have to know that before we
+//     write the `for` line, so loopNeedsLabel scans the body first.
+//   * A post-test DO loop is emitted differently when it contains a CONTINUE
+//     (see generateDoLoop).
+
+// pushLoop starts a loop context. Passing a non-empty label records that the
+// loop was emitted with that label, so EXIT can refer to it.
+func (g *Generator) pushLoop(label string) {
+	g.loopLabels = append(g.loopLabels, label)
+	g.switchDepths = append(g.switchDepths, g.switchDepth)
+	g.switchDepth = 0
+}
+
+func (g *Generator) popLoop() {
+	g.loopLabels = g.loopLabels[:len(g.loopLabels)-1]
+	g.switchDepth = g.switchDepths[len(g.switchDepths)-1]
+	g.switchDepths = g.switchDepths[:len(g.switchDepths)-1]
+}
+
+// enclosingLoopLabel returns the label of the innermost loop when a plain
+// `break` would be captured by a switch, and "" when a plain break is fine.
+func (g *Generator) enclosingLoopLabel() string {
+	if g.switchDepth == 0 || len(g.loopLabels) == 0 {
+		return ""
+	}
+	return g.loopLabels[len(g.loopLabels)-1]
+}
+
+// nextLoopLabel hands out a fresh, collision-proof loop label.
+func (g *Generator) nextLoopLabel() string {
+	g.loopSeq++
+	return fmt.Sprintf("dbLoop%d", g.loopSeq)
+}
+
+// beginLoop decides whether this loop needs a label, writes the label line if
+// so, and pushes the loop context. The caller must call g.popLoop() at the end.
+func (g *Generator) beginLoop(body *parser.BlockStatement) {
+	label := ""
+	if loopNeedsLabel(body, 0) {
+		label = g.nextLoopLabel()
+		// A Go label goes on its own line immediately before the statement.
+		g.writeLine(label + ":")
+	}
+	g.pushLoop(label)
+}
+
+// loopNeedsLabel reports whether a loop body contains an EXIT FOR/WHILE/DO
+// that sits inside a SELECT CASE, which is the only situation where a bare
+// Go `break` would go to the wrong place.
+//
+// switchDepth counts the SELECT CASE statements we have descended into. We
+// deliberately do NOT descend into nested loops: a break or continue inside
+// one of those belongs to it, not to us.
+func loopNeedsLabel(node parser.Node, switchDepth int) bool {
+	switch n := node.(type) {
+	case nil:
+		return false
+
+	case *parser.BlockStatement:
+		if n == nil {
+			return false
+		}
+		for _, st := range n.Statements {
+			if loopNeedsLabel(st, switchDepth) {
+				return true
+			}
+		}
+
+	case *parser.ExitStatement:
+		switch strings.ToUpper(n.ExitType) {
+		case "FOR", "WHILE", "DO":
+			return switchDepth > 0
+		}
+
+	case *parser.IfStatement:
+		if loopNeedsLabel(n.Consequence, switchDepth) {
+			return true
+		}
+		for _, elif := range n.ElseIfs {
+			if loopNeedsLabel(elif.Consequence, switchDepth) {
+				return true
+			}
+		}
+		if loopNeedsLabel(n.Alternative, switchDepth) {
+			return true
+		}
+
+	case *parser.SelectStatement:
+		for _, c := range n.Cases {
+			if loopNeedsLabel(c.Body, switchDepth+1) {
+				return true
+			}
+		}
+		if loopNeedsLabel(n.Default, switchDepth+1) {
+			return true
+		}
+
+	case *parser.WithStatement:
+		return loopNeedsLabel(n.Body, switchDepth)
+
+		// ForStatement, WhileStatement and DoLoopStatement are intentionally
+		// absent: they capture break and continue themselves.
+	}
+	return false
+}
+
+// bodyHasContinue reports whether a loop body contains a CONTINUE belonging
+// to this loop (so, again, not descending into nested loops). Switches are
+// transparent to `continue`, so unlike loopNeedsLabel we descend into them
+// without counting.
+func bodyHasContinue(node parser.Node) bool {
+	switch n := node.(type) {
+	case nil:
+		return false
+
+	case *parser.BlockStatement:
+		if n == nil {
+			return false
+		}
+		for _, st := range n.Statements {
+			if bodyHasContinue(st) {
+				return true
+			}
+		}
+
+	case *parser.ContinueStatement:
+		return true
+
+	case *parser.IfStatement:
+		if bodyHasContinue(n.Consequence) {
+			return true
+		}
+		for _, elif := range n.ElseIfs {
+			if bodyHasContinue(elif.Consequence) {
+				return true
+			}
+		}
+		return bodyHasContinue(n.Alternative)
+
+	case *parser.SelectStatement:
+		for _, c := range n.Cases {
+			if bodyHasContinue(c.Body) {
+				return true
+			}
+		}
+		return bodyHasContinue(n.Default)
+
+	case *parser.WithStatement:
+		return bodyHasContinue(n.Body)
+	}
+	return false
 }
 
 func (g *Generator) generateGoto(stmt *parser.GotoStatement) {

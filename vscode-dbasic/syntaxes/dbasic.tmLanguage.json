@@ -57,7 +57,7 @@
       "patterns": [
         {
           "name": "keyword.control.dbasic",
-          "match": "(?i)\\b(IF|THEN|ELSE|ELSEIF|ENDIF|END\\s+IF|FOR|TO|STEP|NEXT|WHILE|WEND|DO|LOOP|UNTIL|SELECT|CASE|END\\s+SELECT|GOTO|GOSUB|EXIT|RETURN|ONERR|GOFUNC)\\b"
+          "match": "(?i)\\b(IF|THEN|ELSE|ELSEIF|ENDIF|END\\s+IF|FOR|TO|STEP|NEXT|WHILE|WEND|DO|LOOP|UNTIL|SELECT|CASE|END\\s+SELECT|GOTO|GOSUB|EXIT|CONTINUE|RETURN|ONERR|GOFUNC)\\b"
         },
         {
           "name": "keyword.declaration.dbasic",
