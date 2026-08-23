@@ -1,0 +1,315 @@
+' =============================================================================
+' TESTS FOR GAGALA
+' =============================================================================
+'
+' This file is not a program on its own. run_tests.sh glues it onto the end
+' of gagala.dbas (with gagala.dbas's own Main chopped off) and builds the
+' result, so these tests can reach straight into the game's own routines.
+'
+'     ./run_tests.sh
+'
+' Nothing here opens a window, so it runs fine over SSH or in CI.
+' =============================================================================
+
+DIM GFails AS INTEGER = 0
+
+SUB Check(what AS STRING, ok AS BOOLEAN)
+    IF ok THEN
+        fmt.Println("  PASS  " & what)
+    ELSE
+        fmt.Println("  FAIL  " & what)
+        GFails = GFails + 1
+    ENDIF
+END SUB
+
+FUNCTION Near(a AS DOUBLE, b AS DOUBLE, tol AS DOUBLE) AS BOOLEAN
+    RETURN math.Abs(a - b) <= tol
+END FUNCTION
+
+' A game object with just enough set up to exercise the logic.
+FUNCTION NewTestGame() AS Game
+    DIM g AS Game
+    g.St = GS_PLAY
+    g.Sound = FALSE
+    g.BeamIdx = -1
+    g.CapBoss = -1
+    g.Lives = START_LIVES
+    g.NextExtra = EXTRA_FIRST
+    g.Alive = TRUE
+    g.Stage = 1
+    g.PX = Dbl(SCRW) / 2.0
+    g.ScFile = filepath.Join(os.TempDir(), "dbasic-gagala-test.ini")
+    RETURN g
+END FUNCTION
+
+SUB Main()
+    fmt.Println("--- the formation ---")
+    DIM bosses AS INTEGER = 0
+    DIM butters AS INTEGER = 0
+    DIM bees AS INTEGER = 0
+    DIM badCol AS INTEGER = 0
+    DIM slot AS INTEGER
+    FOR slot = 0 TO ENEMY_COUNT - 1
+        SELECT CASE SlotKind(slot)
+            CASE E_BOSS
+                bosses = bosses + 1
+            CASE E_BUTTERFLY
+                butters = butters + 1
+            CASE ELSE
+                bees = bees + 1
+        END SELECT
+        IF SlotCol(slot) < 0 OR SlotCol(slot) >= FORM_COLS THEN
+            badCol = badCol + 1
+        ENDIF
+        IF SlotRow(slot) < 0 OR SlotRow(slot) >= FORM_ROWS THEN
+            badCol = badCol + 1
+        ENDIF
+    NEXT
+    Check("4 Boss Galaga", bosses = 4)
+    Check("16 Butterflies", butters = 16)
+    Check("20 Bees", bees = 20)
+    Check("40 in total", bosses + butters + bees = ENEMY_COUNT)
+    Check("every slot is on the grid", badCol = 0)
+
+    ' No two aliens may share a slot.
+    DIM clash AS INTEGER = 0
+    DIM a AS INTEGER
+    DIM b AS INTEGER
+    FOR a = 0 TO ENEMY_COUNT - 1
+        FOR b = a + 1 TO ENEMY_COUNT - 1
+            IF SlotRow(a) = SlotRow(b) AND SlotCol(a) = SlotCol(b) THEN
+                clash = clash + 1
+            ENDIF
+        NEXT
+    NEXT
+    Check("no two share a place", clash = 0)
+
+    DIM g AS Game = NewTestGame()
+    ' The formation must sit centred on the screen.
+    DIM leftMost AS DOUBLE = SlotX(@g, 20)          ' a bee in column 0
+    DIM rightMost AS DOUBLE = SlotX(@g, 29)         ' a bee in column 9
+    Check("the formation is centred", Near((leftMost + rightMost) / 2.0, Dbl(SCRW) / 2.0, 0.5))
+    Check("and fits on the screen", leftMost > 8.0 AND rightMost < Dbl(SCRW) - 8.0)
+    Check("bosses are on the top row", Near(SlotY(@g, 0), Dbl(FORM_TOP), 0.01))
+    Check("rows are 16 apart", Near(SlotY(@g, 20) - SlotY(@g, 4), Dbl(2 * FORM_YSPACE), 0.01))
+
+    fmt.Println("--- headings and movement ---")
+    DIM e AS Enemy
+    e.X = 100.0
+    e.Y = 100.0
+    e.Spd = 2.0
+    e.Ang = 0.0
+    MoveAlong(@e)
+    Check("heading 0 flies down the screen", Near(e.X, 100.0, 0.001) AND Near(e.Y, 102.0, 0.001))
+    e.X = 100.0
+    e.Y = 100.0
+    e.Ang = 90.0
+    MoveAlong(@e)
+    Check("heading 90 flies right", Near(e.X, 102.0, 0.001) AND Near(e.Y, 100.0, 0.001))
+    e.X = 100.0
+    e.Y = 100.0
+    e.Ang = 180.0
+    MoveAlong(@e)
+    Check("heading 180 flies up", Near(e.Y, 98.0, 0.001))
+    e.X = 100.0
+    e.Y = 100.0
+    e.Ang = 270.0
+    MoveAlong(@e)
+    Check("heading 270 flies left", Near(e.X, 98.0, 0.001))
+
+    Check("AngleTo points down", Near(AngleTo(0.0, 0.0, 0.0, 10.0), 0.0, 0.001))
+    Check("AngleTo points right", Near(AngleTo(0.0, 0.0, 10.0, 0.0), 90.0, 0.001))
+    Check("AngleDiff takes the short way round", Near(AngleDiff(350.0, 10.0), 20.0, 0.001))
+    Check("...in both directions", Near(AngleDiff(10.0, 350.0), -20.0, 0.001))
+
+    fmt.Println("--- flight paths ---")
+    DIM route AS Entry = EntryPattern(0)
+    Check("an entry route has legs to fly", Len(route.Path) > 0)
+    DIM total AS INTEGER = 0
+    DIM li AS INTEGER
+    FOR li = 0 TO Len(route.Path) - 1
+        total = total + route.Path[li].Frames
+    NEXT
+    Check("and it lasts a sensible while", total > 60 AND total < 400)
+
+    ' Fly a path to the end and check StepPath reports it finished.
+    DIM p AS Enemy
+    p.Path = route.Path
+    p.Leg = 0
+    p.LegT = 0
+    p.Spd = 1.0
+    DIM steps AS INTEGER = 0
+    WHILE StepPath(@p) AND steps < 1000
+        steps = steps + 1
+    WEND
+    Check("StepPath runs out at the end of the path", steps = total)
+
+    fmt.Println("--- docking into the formation ---")
+    ' This is the bug that stopped the game working: an alien steering at
+    ' 5 degrees a frame while moving at 1.7 pixels a frame has a turning
+    ' circle about 20 pixels across, so it orbited its slot for ever and the
+    ' wave never counted as arrived. It must actually get there.
+    DIM d AS Game = NewTestGame()
+    DIM dock AS Enemy
+    dock.Slot = 25
+    dock.X = SlotX(@d, 25) + 60.0
+    dock.Y = SlotY(@d, 25) + 90.0
+    dock.Ang = 0.0
+    dock.Spd = 1.7
+    DIM frames AS INTEGER = 0
+    DIM arrived AS BOOLEAN = FALSE
+    WHILE frames < 600 AND NOT arrived
+        arrived = DockToSlot(@d, @dock)
+        frames = frames + 1
+    WEND
+    Check("an alien really does reach its slot", arrived)
+    Check("and gets there in reasonable time", frames < 400)
+    Check("and ends up in the right place", Near(dock.X, SlotX(@d, 25), 2.0) AND Near(dock.Y, SlotY(@d, 25), 2.0))
+
+    fmt.Println("--- the scoring table ---")
+    DIM sg AS Game = NewTestGame()
+    sg.NewWave()
+    ' Slot 20 is a bee, 4 a butterfly, 0 a boss.
+    sg.Foe[20].St = ES_FORM
+    Check("a bee in formation is 50", EnemyScore(@sg, 20) = SC_BEE_FORM)
+    sg.Foe[20].St = ES_DIVE
+    Check("a diving bee is 100", EnemyScore(@sg, 20) = SC_BEE_DIVE)
+    sg.Foe[4].St = ES_FORM
+    Check("a butterfly in formation is 80", EnemyScore(@sg, 4) = SC_BUT_FORM)
+    sg.Foe[4].St = ES_DIVE
+    Check("a diving butterfly is 160", EnemyScore(@sg, 4) = SC_BUT_DIVE)
+    sg.Foe[0].St = ES_FORM
+    Check("a boss in formation is 150", EnemyScore(@sg, 0) = SC_BOSS_FORM)
+    sg.Foe[0].St = ES_DIVE
+    Check("a boss diving alone is 400", EnemyScore(@sg, 0) = SC_BOSS_DIVE)
+    ' Give it escorts, which is what makes it worth so much.
+    sg.Foe[5].Boss = 0
+    sg.Foe[5].St = ES_DIVE
+    Check("a boss with one escort is 800", EnemyScore(@sg, 0) = SC_BOSS_ONE)
+    sg.Foe[6].Boss = 0
+    sg.Foe[6].St = ES_DIVE
+    Check("a boss with two escorts is 1600", EnemyScore(@sg, 0) = SC_BOSS_TWO)
+    ' A dead escort no longer counts.
+    sg.Foe[6].St = ES_GONE
+    Check("a dead escort stops counting", EnemyScore(@sg, 0) = SC_BOSS_ONE)
+
+    fmt.Println("--- spare fighters ---")
+    DIM xg AS Game = NewTestGame()
+    xg.AddScore(19999)
+    Check("no spare yet at 19,999", xg.Lives = START_LIVES)
+    xg.AddScore(1)
+    Check("a spare at 20,000", xg.Lives = START_LIVES + 1)
+    xg.AddScore(EXTRA_EVERY - 1)
+    Check("none again just before 90,000", xg.Lives = START_LIVES + 1)
+    xg.AddScore(1)
+    Check("another at 90,000", xg.Lives = START_LIVES + 2)
+    Check("the high score follows the score", xg.HiScore = xg.Score)
+
+    fmt.Println("--- the two shot rule ---")
+    DIM fg AS Game = NewTestGame()
+    fg.Fire()
+    fg.Fire()
+    Check("two shots are allowed", Len(fg.Shots) = 2)
+    fg.Fire()
+    Check("a third is refused", Len(fg.Shots) = 2)
+    ' Rescue your captured fighter and you may have twice as many.
+    fg.Dual = TRUE
+    fg.Fire()
+    Check("the dual fighter fires a pair", Len(fg.Shots) = 4)
+    fg.Fire()
+    Check("and is capped at four", Len(fg.Shots) = 4)
+    Check("every shot is counted for the statistics", fg.Fired = 4)
+
+    fmt.Println("--- challenging stages ---")
+    Check("stage 3 is a Challenging Stage", IsChallengeStage(3))
+    Check("stage 7 is too", IsChallengeStage(7))
+    Check("and 11, and 15", IsChallengeStage(11) AND IsChallengeStage(15))
+    Check("stage 1 is not", NOT IsChallengeStage(1))
+    Check("nor 2, 4, 5 or 6", NOT IsChallengeStage(2) AND NOT IsChallengeStage(4) AND NOT IsChallengeStage(5) AND NOT IsChallengeStage(6))
+    ' Nothing shoots at you during one.
+    DIM cg AS Game = NewTestGame()
+    cg.Challenge = TRUE
+    cg.DropBomb(100.0, 100.0)
+    Check("nothing shoots back in one", Len(cg.Bombs) = 0)
+    cg.Challenge = FALSE
+    cg.DropBomb(100.0, 100.0)
+    Check("but they do in an ordinary stage", Len(cg.Bombs) = 1)
+
+    fmt.Println("--- capture and rescue ---")
+    DIM kg AS Game = NewTestGame()
+    kg.NewWave()
+    kg.Foe[0].St = ES_BEAM
+    kg.Foe[0].X = 100.0
+    kg.Foe[0].Y = Dbl(BEAM_Y)
+    kg.CapturePlayer(0)
+    Check("being caught takes the fighter off you", NOT kg.Alive)
+    Check("and starts it climbing the beam", kg.CapAnim > 0)
+    Check("the fighter is not slung under the boss yet", NOT kg.Foe[0].Captive)
+    ' Run the climb out.
+    DIM t AS INTEGER
+    FOR t = 0 TO 80
+        kg.UpdateEffects()
+    NEXT
+    Check("when it arrives the boss is carrying it", kg.Foe[0].Captive)
+    Check("and it has cost you a fighter", kg.Lives = START_LIVES - 1)
+
+    ' Shooting that boss down frees the fighter.
+    kg.Alive = TRUE
+    kg.KillEnemy(0)
+    Check("shooting that boss frees your fighter", kg.RescueOn)
+    Check("the boss is no longer holding it", NOT kg.Foe[0].Captive)
+    Check("and you are no longer captured", NOT kg.Captured)
+    ' Let it fly down to you.
+    kg.PX = kg.RescueX
+    FOR t = 0 TO 400
+        kg.UpdateEffects()
+    NEXT
+    Check("it joins you as a dual fighter", kg.Dual)
+
+    fmt.Println("--- stage flags ---")
+    DIM f1 AS []INTEGER = FlagBreakdown(1)
+    Check("stage 1 is a single flag", Len(f1) = 1 AND f1[0] = 1)
+    DIM f37 AS []INTEGER = FlagBreakdown(37)
+    DIM sum37 AS INTEGER = 0
+    FOR t = 0 TO Len(f37) - 1
+        sum37 = sum37 + f37[t]
+    NEXT
+    Check("stage 37 adds up to 37", sum37 = 37)
+    Check("and uses as few flags as it can", Len(f37) = 4)
+    Check("biggest flag first", f37[0] = 30)
+    DIM f0 AS []INTEGER = FlagBreakdown(0)
+    Check("stage 0 shows nothing", Len(f0) = 0)
+
+    fmt.Println("--- a wave of forty ---")
+    DIM wg AS Game = NewTestGame()
+    wg.NewWave()
+    Check("forty aliens are dealt", Len(wg.Foe) = ENEMY_COUNT)
+    DIM waiting AS INTEGER = 0
+    DIM maxDelay AS INTEGER = 0
+    FOR t = 0 TO Len(wg.Foe) - 1
+        IF wg.Foe[t].St = ES_WAIT THEN
+            waiting = waiting + 1
+        ENDIF
+        IF wg.Foe[t].Timer > maxDelay THEN
+            maxDelay = wg.Foe[t].Timer
+        ENDIF
+    NEXT
+    Check("all forty are queued to fly in", waiting = ENEMY_COUNT)
+    Check("they are staggered, not released at once", maxDelay > 300)
+    Check("nobody has arrived yet", NOT AllArrived(@wg))
+    Check("so nothing is left to shoot at yet", NOT StageDone(@wg))
+
+    ' Wipe them out and the stage should count as done.
+    FOR t = 0 TO Len(wg.Foe) - 1
+        wg.Foe[t].St = ES_GONE
+    NEXT
+    Check("with all forty gone the stage is over", StageDone(@wg))
+    Check("and they all count as arrived", AllArrived(@wg))
+
+    fmt.Println("")
+    IF GFails = 0 THEN
+        fmt.Println("ALL TESTS PASSED")
+    ELSE
+        fmt.Println(GFails, "TEST(S) FAILED")
+    ENDIF
+END SUB

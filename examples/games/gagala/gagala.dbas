@@ -1,0 +1,2935 @@
+' =============================================================================
+' GAGALA - the 1981 Namco arcade classic, rebuilt
+' =============================================================================
+'
+' Written in DBasic, drawn with Ebitengine.
+'
+' WHAT THIS PROGRAM IS
+'   Gagala plays the game Namco released in 1981: a fighter at the bottom of
+'   a tall screen, waves of insect-like aliens that fly in along looping
+'   paths, settle into a formation, and then peel off one at a time to dive
+'   at you.
+'
+'   (The arcade one is called Galaga. That name is Namco's, so ours is
+'   Gagala -- same game, different badge.)
+'
+'   The things that make Galaga *Galaga*, all of which are here:
+'     * The screen is 224x288 - taller than it is wide, like the real
+'       cabinet - and everything is drawn at that size, then scaled up
+'     * Three layers of stars drifting down at different speeds, blinking
+'     * A 40-strong formation: 4 Boss Galaga, 16 Butterflies, 20 Bees
+'     * Enemies fly in along curving paths in groups, they do not just
+'       appear in place
+'     * The formation breathes - swaying side to side and in and out
+'     * Enemies dive at you in loops, dropping bombs
+'     * You may only have TWO shots on screen at once. This is the single
+'       rule that shapes how Galaga is played.
+'     * A Boss Galaga can drop a tractor beam and steal your fighter. Shoot
+'       that boss while it holds your fighter and you get it back - flying
+'       alongside you, firing twice as fast
+'     * Challenging Stages every four levels: 40 enemies fly through in
+'       patterns and never shoot back
+'     * The real scoring table, where a diving enemy is worth more than one
+'       sitting in formation, and a boss with two escorts is worth 1600
+'     * The end-of-game shots-fired / hits / hit-miss ratio
+'
+' HOW THE PROGRAM IS ORGANISED (read in this order)
+'   1. CONSTANTS   - screen size, colours, the numbers that define the game
+'   2. TYPES       - the shapes of our data (an enemy, a bullet, the game)
+'   3. ART         - every sprite and letter, drawn once at start-up
+'   4. SOUND       - the arcade bleeps, generated as square waves
+'   5. STARFIELD   - the drifting background
+'   6. PATHS       - the curved flight paths, and how enemies follow them
+'   7. FORMATION   - where the 40 enemies live when they are not attacking
+'   8. ENEMIES     - entering, breathing, diving, the tractor beam
+'   9. PLAYER      - moving, shooting, dying, the dual fighter
+'  10. COLLISIONS  - what hits what, and what it scores
+'  11. STAGES      - building a wave, challenging stages, between-stage flow
+'  12. DRAWING     - painting the screen
+'  13. MAIN        - starts everything up
+'
+' CONTROLS
+'   Left / Right ......... move
+'   Space or Z ........... fire
+'   1 .................... insert coin and start
+'   Esc .................. quit
+'   P .................... pause
+' =============================================================================
+
+
+' ======================== IMPORTS ========================
+
+' Ebitengine: the window, the game loop, and drawing.
+IMPORT "github.com/hajimehoshi/ebiten/v2" AS ebiten
+
+' vector: filled rectangles and circles.
+IMPORT "github.com/hajimehoshi/ebiten/v2/vector" AS vector
+
+' inpututil: tells us the exact moment a key goes down, as opposed to
+' whether it is being held.
+IMPORT "github.com/hajimehoshi/ebiten/v2/inpututil" AS inpututil
+
+' audio: plays the sound effects we generate.
+IMPORT "github.com/hajimehoshi/ebiten/v2/audio" AS audio
+
+' colour, text and numbers.
+IMPORT "image/color" AS color
+IMPORT "strings" AS strings
+IMPORT "strconv" AS strconv
+IMPORT "fmt" AS fmt
+IMPORT "math" AS math
+
+' os and filepath: to keep the high score somewhere permanent.
+IMPORT "os" AS os
+IMPORT "path/filepath" AS filepath
+
+
+' ======================== 1. CONSTANTS ========================
+
+' --- The screen ---
+' The real cabinet ran a 224x288 display turned on its side. We draw at
+' exactly that size and let Ebitengine scale it up, so every measurement
+' below is an arcade pixel.
+CONST SCRW AS INTEGER = 224
+CONST SCRH AS INTEGER = 288
+
+' Almost everything in the game sits on an 8x8 grid, as it did in 1981.
+CONST TILE AS INTEGER = 8
+
+' --- The player ---
+CONST PLAYER_Y AS INTEGER = 250      ' how far down the fighter sits
+CONST PLAYER_SPEED AS DOUBLE = 1.35  ' pixels per frame
+CONST PLAYER_MINX AS INTEGER = 16
+CONST PLAYER_MAXX AS INTEGER = 208
+CONST DUAL_GAP AS INTEGER = 16       ' spacing between the two dual fighters
+
+' THE most important number in Galaga: you may have two shots in the air at
+' once, and no more. Everything about how the game is played comes from it.
+CONST MAX_SHOTS AS INTEGER = 2
+CONST SHOT_SPEED AS DOUBLE = 4.0
+CONST BOMB_SPEED AS DOUBLE = 1.6
+
+CONST START_LIVES AS INTEGER = 3
+CONST EXTRA_FIRST AS INTEGER = 20000  ' first extra fighter
+CONST EXTRA_EVERY AS INTEGER = 70000  ' and one every this many after
+
+' --- The enemies ---
+CONST E_BEE AS INTEGER = 0        ' Zako   - the yellow/blue ones, 20 of them
+CONST E_BUTTERFLY AS INTEGER = 1  ' Goei   - the red/white ones, 16 of them
+CONST E_BOSS AS INTEGER = 2       ' Boss Galaga - the flagship, 4 of them
+
+' What an enemy is doing right now.
+CONST ES_GONE AS INTEGER = 0      ' dead, or not yet used
+CONST ES_ENTER AS INTEGER = 1     ' flying in along its entry path
+CONST ES_FORM AS INTEGER = 2      ' sitting in the formation, breathing
+CONST ES_DIVE AS INTEGER = 3      ' peeled off and attacking
+CONST ES_RETURN AS INTEGER = 4    ' flying back up to rejoin the formation
+CONST ES_BEAM AS INTEGER = 5      ' a boss hovering with its tractor beam out
+CONST ES_DYING AS INTEGER = 6     ' mid-explosion
+CONST ES_CAPTURED AS INTEGER = 7  ' a stolen fighter, riding under a boss
+CONST ES_WAIT AS INTEGER = 8      ' queued up off-screen, waiting to fly in
+
+' The formation is 10 columns by 5 rows, though not every slot is used.
+CONST FORM_COLS AS INTEGER = 10
+CONST FORM_ROWS AS INTEGER = 5
+CONST FORM_XSPACE AS INTEGER = 16
+CONST FORM_YSPACE AS INTEGER = 16
+CONST FORM_TOP AS INTEGER = 48    ' y of the top row when the formation is home
+CONST ENEMY_COUNT AS INTEGER = 40 ' 4 bosses + 16 butterflies + 20 bees
+
+' --- Scoring, straight from the arcade manual ---
+CONST SC_BEE_FORM AS INTEGER = 50
+CONST SC_BEE_DIVE AS INTEGER = 100
+CONST SC_BUT_FORM AS INTEGER = 80
+CONST SC_BUT_DIVE AS INTEGER = 160
+CONST SC_BOSS_FORM AS INTEGER = 150
+CONST SC_BOSS_DIVE AS INTEGER = 400    ' diving alone
+CONST SC_BOSS_ONE AS INTEGER = 800     ' diving with one escort
+CONST SC_BOSS_TWO AS INTEGER = 1600    ' diving with two escorts
+CONST SC_CHALLENGE AS INTEGER = 100    ' each hit in a Challenging Stage
+CONST SC_PERFECT AS INTEGER = 10000    ' all 40 in a Challenging Stage
+
+' --- Game states ---
+CONST GS_ATTRACT AS INTEGER = 0      ' the title screen, waiting for a coin
+CONST GS_START AS INTEGER = 1        ' "PLAYER 1" then "STAGE 1"
+CONST GS_READY AS INTEGER = 2        ' formation flying in
+CONST GS_PLAY AS INTEGER = 3         ' the game itself
+CONST GS_DYING AS INTEGER = 4        ' the fighter has been hit
+CONST GS_CLEAR AS INTEGER = 5        ' wave destroyed, next stage coming
+CONST GS_RESULT AS INTEGER = 6       ' Challenging Stage results
+CONST GS_OVER AS INTEGER = 7         ' GAME OVER, then the shooting stats
+
+' How long the various announcements stay on screen, in frames (60 = 1s).
+CONST T_PLAYER AS INTEGER = 110
+CONST T_STAGE AS INTEGER = 110
+CONST T_CLEAR AS INTEGER = 90
+CONST T_DYING AS INTEGER = 110
+CONST T_OVER AS INTEGER = 180
+CONST T_RESULT AS INTEGER = 240
+
+' A Challenging Stage happens on stage 3 and then every four stages after.
+CONST CHALLENGE_FIRST AS INTEGER = 3
+CONST CHALLENGE_EVERY AS INTEGER = 4
+
+
+' ======================== 2. TYPES ========================
+
+' One leg of a flight path.
+'
+' HOW THE FLIGHT PATHS WORK
+'   The arcade machine did not store a list of positions for every swoop.
+'   It stored instructions: "turn 3 degrees left every frame for 40 frames,
+'   then fly straight for 20". Follow those with a pen and you draw a loop.
+'   That is exactly what we do, and it is why the paths curve so smoothly
+'   and why a long loop costs no more memory than a short one.
+TYPE PathSeg
+    DIM Turn AS DOUBLE      ' degrees to turn each frame (+ or -)
+    DIM Frames AS INTEGER   ' how many frames to keep turning for
+END TYPE
+
+' One of the forty aliens.
+TYPE Enemy
+    DIM Kind AS INTEGER      ' E_BEE / E_BUTTERFLY / E_BOSS
+    DIM St AS INTEGER        ' ES_* - what it is doing
+    DIM X AS DOUBLE          ' where it is, in arcade pixels
+    DIM Y AS DOUBLE
+    DIM Ang AS DOUBLE        ' heading, in degrees. 0 points straight down.
+    DIM Spd AS DOUBLE        ' pixels per frame
+    DIM Slot AS INTEGER      ' which formation position it belongs to
+    DIM Hits AS INTEGER      ' a Boss Galaga survives the first hit
+    DIM Path AS []PathSeg    ' the flight it is currently following
+    DIM Leg AS INTEGER       ' which leg of that path it is on
+    DIM LegT AS INTEGER      ' how many frames it has spent on this leg
+    DIM Timer AS INTEGER     ' general purpose countdown
+    DIM Anim AS INTEGER      ' animation frame counter
+    DIM Captive AS BOOLEAN   ' TRUE if this boss is carrying your fighter
+    DIM Escorts AS INTEGER   ' escorts that dived with it, for scoring
+    DIM Shoots AS BOOLEAN    ' allowed to drop bombs on this dive
+    DIM Entry AS INTEGER     ' which entry route it flies in on
+    DIM Boss AS INTEGER      ' the boss this one is escorting, or -1
+END TYPE
+
+' A shot, whether it is yours going up or a bomb coming down.
+TYPE Shot
+    DIM Live AS BOOLEAN
+    DIM X AS DOUBLE
+    DIM Y AS DOUBLE
+    DIM VX AS DOUBLE
+    DIM VY AS DOUBLE
+END TYPE
+
+' One star in the drifting background.
+TYPE Star
+    DIM X AS DOUBLE
+    DIM Y AS DOUBLE
+    DIM Spd AS DOUBLE        ' the three layers move at different speeds
+    DIM Clr AS INTEGER       ' index into the star palette
+    DIM Blink AS INTEGER     ' where this star is in its blink cycle
+END TYPE
+
+' An explosion.
+TYPE Boom
+    DIM Live AS BOOLEAN
+    DIM X AS DOUBLE
+    DIM Y AS DOUBLE
+    DIM T AS INTEGER         ' frames since it started
+    DIM Player AS BOOLEAN    ' the fighter blows up differently to an alien
+END TYPE
+
+' The little score number that floats where an enemy died.
+TYPE Popup
+    DIM Live AS BOOLEAN
+    DIM X AS DOUBLE
+    DIM Y AS DOUBLE
+    DIM T AS INTEGER
+    DIM Pts AS INTEGER
+END TYPE
+
+' Everything the game knows, in one place.
+TYPE Game
+    ' --- overall state ---
+    DIM St AS INTEGER            ' GS_* - which part of the game we are in
+    DIM Timer AS INTEGER         ' counts down the announcements
+    DIM Frame AS INTEGER         ' frames since the program started
+    DIM Paused AS BOOLEAN
+
+    ' --- the player ---
+    DIM PX AS DOUBLE             ' fighter position
+    DIM Lives AS INTEGER
+    DIM Score AS INTEGER
+    DIM HiScore AS INTEGER
+    DIM NextExtra AS INTEGER     ' score at which the next spare fighter comes
+    DIM Dual AS BOOLEAN          ' TRUE when flying the rescued double fighter
+    DIM Alive AS BOOLEAN
+    DIM Captured AS BOOLEAN      ' your fighter is currently held by a boss
+
+    ' --- the wave ---
+    DIM Stage AS INTEGER
+    DIM Challenge AS BOOLEAN     ' is this stage a Challenging Stage?
+    DIM Foe AS []Enemy
+    DIM Entering AS INTEGER      ' how many are still flying in
+    DIM FormX AS DOUBLE          ' the formation's sway, in pixels
+    DIM FormDir AS DOUBLE
+    DIM FormSpread AS DOUBLE     ' how far the formation has breathed outward
+    DIM SpreadDir AS DOUBLE
+    DIM DiveTimer AS INTEGER     ' frames until the next attack is launched
+    DIM ChalHits AS INTEGER      ' hits scored in a Challenging Stage
+    DIM BeamIdx AS INTEGER       ' the boss currently working its beam, or -1
+    DIM Respawn AS INTEGER       ' frames until the next fighter launches
+    DIM RescueOn AS BOOLEAN      ' a freed fighter is on its way down to you
+    DIM RescueX AS DOUBLE
+    DIM RescueY AS DOUBLE
+    DIM CapAnim AS INTEGER       ' frames left of the fighter rising up the beam
+    DIM CapX AS DOUBLE           ' where it started from
+    DIM CapBoss AS INTEGER       ' the boss hauling it up
+
+    ' --- things flying about ---
+    DIM Shots AS []Shot          ' yours
+    DIM Bombs AS []Shot          ' theirs
+    DIM Booms AS []Boom
+    DIM Pops AS []Popup
+    DIM Stars AS []Star
+
+    ' --- the shooting statistics shown at the end ---
+    DIM Fired AS INTEGER
+    DIM Hit AS INTEGER
+
+    ' --- where the high score lives ---
+    DIM ScFile AS STRING
+
+    ' --- sound ---
+    DIM SndFire AS POINTER TO audio.Player
+    DIM SndBoom AS POINTER TO audio.Player
+    DIM SndDie AS POINTER TO audio.Player
+    DIM SndDive AS POINTER TO audio.Player
+    DIM SndBeam AS POINTER TO audio.Player
+    DIM SndRescue AS POINTER TO audio.Player
+    DIM SndExtra AS POINTER TO audio.Player
+    DIM SndStart AS POINTER TO audio.Player
+    DIM SndCoin AS POINTER TO audio.Player
+    DIM Sound AS BOOLEAN
+END TYPE
+
+' The one and only audio context.
+DIM GAudio AS POINTER TO audio.Context
+
+
+' ======================== 3. ART ========================
+'
+' Every picture in the game is written out as text, one character per pixel,
+' and turned into a real image once when the program starts. After that we
+' just stamp copies of those images onto the screen.
+'
+' In the picture data below:
+'     .  leave this pixel alone (see-through)
+'     W  white      R  red        Y  yellow     B  blue
+'     G  green      C  cyan       M  magenta    O  orange
+'     P  purple     K  black      D  dark blue  S  silver
+
+DIM CWhite AS color.RGBA = color.RGBA{R: 255, G: 255, B: 255, A: 255}
+DIM CRed AS color.RGBA = color.RGBA{R: 255, G: 32, B: 32, A: 255}
+DIM CYellow AS color.RGBA = color.RGBA{R: 255, G: 216, B: 0, A: 255}
+DIM CBlue AS color.RGBA = color.RGBA{R: 60, G: 120, B: 255, A: 255}
+DIM CGreen AS color.RGBA = color.RGBA{R: 32, G: 220, B: 64, A: 255}
+DIM CCyan AS color.RGBA = color.RGBA{R: 0, G: 232, B: 232, A: 255}
+DIM CMagenta AS color.RGBA = color.RGBA{R: 255, G: 96, B: 200, A: 255}
+DIM COrange AS color.RGBA = color.RGBA{R: 255, G: 144, B: 32, A: 255}
+DIM CPurple AS color.RGBA = color.RGBA{R: 176, G: 96, B: 255, A: 255}
+DIM CBlack AS color.RGBA = color.RGBA{R: 0, G: 0, B: 0, A: 255}
+DIM CDark AS color.RGBA = color.RGBA{R: 24, G: 40, B: 160, A: 255}
+DIM CSilver AS color.RGBA = color.RGBA{R: 190, G: 190, B: 200, A: 255}
+
+' PixColor turns one of those letters into a real colour.
+FUNCTION PixColor(ch AS STRING) AS color.RGBA
+    SELECT CASE ch
+        CASE "W"
+            RETURN CWhite
+        CASE "R"
+            RETURN CRed
+        CASE "Y"
+            RETURN CYellow
+        CASE "B"
+            RETURN CBlue
+        CASE "G"
+            RETURN CGreen
+        CASE "C"
+            RETURN CCyan
+        CASE "M"
+            RETURN CMagenta
+        CASE "O"
+            RETURN COrange
+        CASE "P"
+            RETURN CPurple
+        CASE "K"
+            RETURN CBlack
+        CASE "D"
+            RETURN CDark
+        CASE "S"
+            RETURN CSilver
+    END SELECT
+    RETURN CWhite
+END FUNCTION
+
+' MakeSprite turns a block of picture text into an image.
+FUNCTION MakeSprite(rows AS []STRING) AS POINTER TO ebiten.Image
+    DIM h AS INTEGER = Len(rows)
+    IF h = 0 THEN
+        RETURN ebiten.NewImage(1, 1)
+    ENDIF
+    DIM w AS INTEGER = Len(rows[0])
+    DIM img AS POINTER TO ebiten.Image = ebiten.NewImage(w, h)
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    FOR r = 0 TO h - 1
+        FOR c = 0 TO Len(rows[r]) - 1
+            DIM ch AS STRING = Mid(rows[r], c + 1, 1)
+            IF ch <> "." AND ch <> " " THEN
+                vector.DrawFilledRect(img, Sng(c), Sng(r), Sng(1), Sng(1), PixColor(ch), FALSE)
+            ENDIF
+        NEXT
+    NEXT
+    RETURN img
+END FUNCTION
+
+
+' --- The letters ---
+'
+' A 5x7 alphabet, drawn the same blocky way the arcade machine did it. The
+' glyphs are stored in white and tinted to whatever colour we need when they
+' are drawn, so one set of pictures covers every colour of text in the game.
+
+FUNCTION GlyphRows(ch AS STRING) AS []STRING
+    SELECT CASE ch
+        CASE "A"
+            RETURN []STRING{".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"}
+        CASE "B"
+            RETURN []STRING{"####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."}
+        CASE "C"
+            RETURN []STRING{".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."}
+        CASE "D"
+            RETURN []STRING{"####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."}
+        CASE "E"
+            RETURN []STRING{"#####", "#....", "#....", "###..", "#....", "#....", "#####"}
+        CASE "F"
+            RETURN []STRING{"#####", "#....", "#....", "###..", "#....", "#....", "#...."}
+        CASE "G"
+            RETURN []STRING{".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".###."}
+        CASE "H"
+            RETURN []STRING{"#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"}
+        CASE "I"
+            RETURN []STRING{".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."}
+        CASE "J"
+            RETURN []STRING{"..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."}
+        CASE "K"
+            RETURN []STRING{"#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"}
+        CASE "L"
+            RETURN []STRING{"#....", "#....", "#....", "#....", "#....", "#....", "#####"}
+        CASE "M"
+            RETURN []STRING{"#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"}
+        CASE "N"
+            RETURN []STRING{"#...#", "##..#", "#.#.#", "#.#.#", "#..##", "#...#", "#...#"}
+        CASE "O"
+            RETURN []STRING{".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."}
+        CASE "P"
+            RETURN []STRING{"####.", "#...#", "#...#", "####.", "#....", "#....", "#...."}
+        CASE "Q"
+            RETURN []STRING{".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"}
+        CASE "R"
+            RETURN []STRING{"####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"}
+        CASE "S"
+            RETURN []STRING{".####", "#....", "#....", ".###.", "....#", "....#", "####."}
+        CASE "T"
+            RETURN []STRING{"#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."}
+        CASE "U"
+            RETURN []STRING{"#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."}
+        CASE "V"
+            RETURN []STRING{"#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."}
+        CASE "W"
+            RETURN []STRING{"#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"}
+        CASE "X"
+            RETURN []STRING{"#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"}
+        CASE "Y"
+            RETURN []STRING{"#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."}
+        CASE "Z"
+            RETURN []STRING{"#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"}
+        CASE "0"
+            RETURN []STRING{".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."}
+        CASE "1"
+            RETURN []STRING{"..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."}
+        CASE "2"
+            RETURN []STRING{".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"}
+        CASE "3"
+            RETURN []STRING{"#####", "...#.", "..#..", "...#.", "....#", "#...#", ".###."}
+        CASE "4"
+            RETURN []STRING{"...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."}
+        CASE "5"
+            RETURN []STRING{"#####", "#....", "####.", "....#", "....#", "#...#", ".###."}
+        CASE "6"
+            RETURN []STRING{"..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."}
+        CASE "7"
+            RETURN []STRING{"#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."}
+        CASE "8"
+            RETURN []STRING{".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."}
+        CASE "9"
+            RETURN []STRING{".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."}
+        CASE "-"
+            RETURN []STRING{".....", ".....", ".....", "#####", ".....", ".....", "....."}
+        CASE "."
+            RETURN []STRING{".....", ".....", ".....", ".....", ".....", ".##..", ".##.."}
+        CASE ","
+            RETURN []STRING{".....", ".....", ".....", ".....", ".##..", ".##..", ".#..."}
+        CASE "!"
+            RETURN []STRING{"..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."}
+        CASE "/"
+            RETURN []STRING{"....#", "...#.", "..#..", "..#..", ".#...", "#....", "#...."}
+        CASE ":"
+            RETURN []STRING{".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."}
+        CASE "'"
+            RETURN []STRING{"..#..", "..#..", ".....", ".....", ".....", ".....", "....."}
+    END SELECT
+    RETURN []STRING{".....", ".....", ".....", ".....", ".....", ".....", "....."}
+END FUNCTION
+
+
+' --- The sprites ---
+'
+' All 16 pixels square, the size the arcade used.
+'
+' WHICH WAY THE PICTURES POINT
+'   Aliens are drawn pointing DOWN the screen, because that is the way they
+'   face while sitting in the formation, and because a heading of zero means
+'   "down" everywhere else in this program. So an alien flying on heading a
+'   is simply its picture turned by a.
+'
+'   Your fighter is the exception: it is drawn pointing UP, because that is
+'   the only way it ever faces. Draw it with NO turn at all. Turning it by
+'   180 leaves it flying nose-down, which is exactly the bug that used to be
+'   here. The one place the fighter IS turned upside down is when a Boss
+'   Galaga has captured it and is carrying it slung beneath itself.
+
+FUNCTION FighterRows() AS []STRING
+    RETURN []STRING{ _
+        "................", _
+        "................", _
+        ".......WW.......", _
+        ".......WW.......", _
+        "......WWWW......", _
+        "......WWWW......", _
+        "......WWWW......", _
+        ".....WWWWWW.....", _
+        ".....WWWWWW.....", _
+        "..R..WWWWWW..R..", _
+        "..RW.WWWWWW.WR..", _
+        ".RRWWWWWWWWWWRR.", _
+        ".RRWWWWWWWWWWRR.", _
+        ".RRWWWW..WWWWRR.", _
+        ".RR.WW....WW.RR.", _
+        "..R..........R.."}
+END FUNCTION
+
+' The Bee - "Zako" in the arcade. Twenty of them, the bottom two rows of
+' the formation. Yellow body, blue wings.
+FUNCTION BeeRows(frame AS INTEGER) AS []STRING
+    IF frame = 0 THEN
+        RETURN []STRING{ _
+            "................", _
+            "................", _
+            "..B..........B..", _
+            "...B........B...", _
+            "....BB....BB....", _
+            "....BYYYYYYB....", _
+            "...BBYYYYYYBB...", _
+            "..BB.YWYYWY.BB..", _
+            "..BB.YYYYYY.BB..", _
+            "...BB.YYYY.BB...", _
+            "....B.YYYY.B....", _
+            "......YYYY......", _
+            ".......YY.......", _
+            "................", _
+            "................", _
+            "................"}
+    ENDIF
+    RETURN []STRING{ _
+        "................", _
+        "...B........B...", _
+        "....B......B....", _
+        "....BB....BB....", _
+        ".....BYYYYB.....", _
+        "...BBYYYYYYBB...", _
+        "..BBBYYYYYYBBB..", _
+        "..BB.YWYYWY.BB..", _
+        "...B.YYYYYY.B...", _
+        "......YYYY......", _
+        "......YYYY......", _
+        ".......YY.......", _
+        "................", _
+        "................", _
+        "................", _
+        "................"}
+END FUNCTION
+
+' The Butterfly - "Goei". Sixteen of them, the middle two rows. Red body,
+' white wings.
+FUNCTION ButterflyRows(frame AS INTEGER) AS []STRING
+    IF frame = 0 THEN
+        RETURN []STRING{ _
+            "................", _
+            "..R..........R..", _
+            "...R........R...", _
+            "...RR......RR...", _
+            "..RWWR.RR.RWWR..", _
+            ".RWWWWRRRRWWWWR.", _
+            ".RWWW.RRRR.WWWR.", _
+            ".RWW..RRRR..WWR.", _
+            "..R...RWWR...R..", _
+            "......RWWR......", _
+            "......RRRR......", _
+            ".......RR.......", _
+            "................", _
+            "................", _
+            "................", _
+            "................"}
+    ENDIF
+    RETURN []STRING{ _
+        "................", _
+        "...R........R...", _
+        "....R......R....", _
+        "....RR....RR....", _
+        "...RWWR.RRWWR...", _
+        "..RWWWWRRWWWWR..", _
+        "..RWWW.RR.WWWR..", _
+        "...RW..RR..WR...", _
+        "......RWWR......", _
+        "......RWWR......", _
+        "......RRRR......", _
+        ".......RR.......", _
+        "................", _
+        "................", _
+        "................", _
+        "................"}
+END FUNCTION
+
+' The Boss Galaga - the flagship. Four of them, along the top row. It takes
+' TWO hits: the first one costs it its green and leaves it purple.
+FUNCTION BossRows(frame AS INTEGER) AS []STRING
+    IF frame = 0 THEN
+        RETURN []STRING{ _
+            "................", _
+            "..GG......GG....", _
+            "...GG....GG.....", _
+            "....GGGGGG......", _
+            "..BBGGGGGGBB....", _
+            ".BBBGGGGGGBBB...", _
+            ".BB.GGWGGWG.BB..", _
+            ".BB.GGGGGGG.BB..", _
+            "..B..GGGGGG..B..", _
+            ".....GGGGGG.....", _
+            "......GGGG......", _
+            ".......GG.......", _
+            "................", _
+            "................", _
+            "................", _
+            "................"}
+    ENDIF
+    RETURN []STRING{ _
+        "................", _
+        "...GG....GG.....", _
+        "....GG..GG......", _
+        "....GGGGGG......", _
+        "...BGGGGGGB.....", _
+        "..BBGGGGGGBB....", _
+        "..BBGGWGGWGBB...", _
+        "..BBGGGGGGGBB...", _
+        "...B.GGGGGG.B...", _
+        ".....GGGGGG.....", _
+        "......GGGG......", _
+        ".......GG.......", _
+        "................", _
+        "................", _
+        "................", _
+        "................"}
+END FUNCTION
+
+' Recolour swaps one colour letter for another everywhere in a picture. It
+' is how the damaged Boss Galaga is made: the same drawing with its green
+' turned purple, rather than a whole second set of pictures.
+FUNCTION Recolour(rows AS []STRING, fromCh AS STRING, toCh AS STRING) AS []STRING
+    DIM out AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(rows) - 1
+        out = APPEND(out, strings.ReplaceAll(rows[i], fromCh, toCh))
+    NEXT
+    RETURN out
+END FUNCTION
+
+' Your shot, and their bomb.
+FUNCTION ShotRows() AS []STRING
+    RETURN []STRING{"WW", "WW", "WW", "YY", "YY", "WW"}
+END FUNCTION
+
+FUNCTION BombRows() AS []STRING
+    RETURN []STRING{".CC.", "CWWC", "CWWC", ".CC."}
+END FUNCTION
+
+' The explosion an alien makes: a little flower that opens and fades.
+FUNCTION BoomRows(frame AS INTEGER) AS []STRING
+    SELECT CASE frame
+        CASE 0
+            RETURN []STRING{ _
+                "................", _
+                "................", _
+                "................", _
+                "................", _
+                "................", _
+                "................", _
+                ".......YY.......", _
+                "......YWWY......", _
+                "......YWWY......", _
+                ".......YY.......", _
+                "................", _
+                "................", _
+                "................", _
+                "................", _
+                "................", _
+                "................"}
+        CASE 1
+            RETURN []STRING{ _
+                "................", _
+                "................", _
+                "................", _
+                "................", _
+                ".......OO.......", _
+                "......OYYO......", _
+                ".....OYWWYO.....", _
+                "....OYWWWWYO....", _
+                "....OYWWWWYO....", _
+                ".....OYWWYO.....", _
+                "......OYYO......", _
+                ".......OO.......", _
+                "................", _
+                "................", _
+                "................", _
+                "................"}
+        CASE 2
+            RETURN []STRING{ _
+                "................", _
+                "................", _
+                ".......RR.......", _
+                "......R..R......", _
+                ".....R.OO.R.....", _
+                "....R.OYYO.R....", _
+                "...RR.YWWY.RR...", _
+                "..R..OYWWYO..R..", _
+                "..R..OYWWYO..R..", _
+                "...RR.YWWY.RR...", _
+                "....R.OYYO.R....", _
+                ".....R.OO.R.....", _
+                "......R..R......", _
+                ".......RR.......", _
+                "................", _
+                "................"}
+        CASE 3
+            RETURN []STRING{ _
+                "................", _
+                "..R..........R..", _
+                "...R...RR...R...", _
+                "....R.R..R.R....", _
+                ".....R....R.....", _
+                "....R..OO..R....", _
+                "...R..O..O..R...", _
+                "..RR.O....O.RR..", _
+                "..RR.O....O.RR..", _
+                "...R..O..O..R...", _
+                "....R..OO..R....", _
+                ".....R....R.....", _
+                "....R.R..R.R....", _
+                "...R...RR...R...", _
+                "..R..........R..", _
+                "................"}
+        CASE ELSE
+            RETURN []STRING{ _
+                ".R............R.", _
+                "................", _
+                "..R..R....R..R..", _
+                "................", _
+                "....R......R....", _
+                "................", _
+                "..R..........R..", _
+                "................", _
+                "................", _
+                "..R..........R..", _
+                "................", _
+                "....R......R....", _
+                "................", _
+                "..R..R....R..R..", _
+                "................", _
+                ".R............R."}
+    END SELECT
+END FUNCTION
+
+' Your fighter goes up in a bigger, slower ball of fire.
+FUNCTION DeathRows(frame AS INTEGER) AS []STRING
+    SELECT CASE frame
+        CASE 0
+            RETURN []STRING{ _
+                "................", _
+                "................", _
+                "................", _
+                "................", _
+                "......WWWW......", _
+                ".....WYYYYW.....", _
+                "....WYYOOYYW....", _
+                "....WYOOOOYW....", _
+                "....WYOOOOYW....", _
+                "....WYYOOYYW....", _
+                ".....WYYYYW.....", _
+                "......WWWW......", _
+                "................", _
+                "................", _
+                "................", _
+                "................"}
+        CASE 1
+            RETURN []STRING{ _
+                "................", _
+                "................", _
+                "......OOOO......", _
+                ".....OYYYYO.....", _
+                "....OYYWWYYO....", _
+                "...OYWWRRWWYO...", _
+                "..OYWRRRRRRWYO..", _
+                "..OYWRRRRRRWYO..", _
+                "..OYWRRRRRRWYO..", _
+                "..OYWRRRRRRWYO..", _
+                "...OYWWRRWWYO...", _
+                "....OYYWWYYO....", _
+                ".....OYYYYO.....", _
+                "......OOOO......", _
+                "................", _
+                "................"}
+        CASE 2
+            RETURN []STRING{ _
+                "......RRRR......", _
+                ".....R....R.....", _
+                "....R.OOOO.R....", _
+                "...R.OYYYYO.R...", _
+                "..R.OY.RR.YO.R..", _
+                ".R.OY.R..R.YO.R.", _
+                "R.OY.R....R.YO.R", _
+                "R.OY.R....R.YO.R", _
+                "R.OY.R....R.YO.R", _
+                "R.OY.R....R.YO.R", _
+                ".R.OY.R..R.YO.R.", _
+                "..R.OY.RR.YO.R..", _
+                "...R.OYYYYO.R...", _
+                "....R.OOOO.R....", _
+                ".....R....R.....", _
+                "......RRRR......"}
+        CASE ELSE
+            RETURN []STRING{ _
+                "R..R........R..R", _
+                "................", _
+                "..R....OO....R..", _
+                "....R.O..O.R....", _
+                "......O..O......", _
+                "..R..O....O..R..", _
+                ".....O....O.....", _
+                "R....O....O....R", _
+                "R....O....O....R", _
+                ".....O....O.....", _
+                "..R..O....O..R..", _
+                "......O..O......", _
+                "....R.O..O.R....", _
+                "..R....OO....R..", _
+                "................", _
+                "R..R........R..R"}
+    END SELECT
+END FUNCTION
+
+
+' --- Stage flags ---
+'
+' The arcade showed how far you had got as a row of flags along the bottom
+' right, worth 50, 30, 20, 10, 5 and 1 stage each. Reaching stage 37 meant
+' one 30, one 5 and two 1s.
+FUNCTION FlagRows(worth AS INTEGER) AS []STRING
+    SELECT CASE worth
+        CASE 50
+            RETURN []STRING{ _
+                "WPPPPPP.", "WPPPPPP.", "WPPPPPP.", "WPPPPPP.", _
+                "WPPPPPP.", "W.......", "W.......", "W.......", "W......."}
+        CASE 30
+            RETURN []STRING{ _
+                "WCCCCC..", "WCCCCC..", "WCCCCC..", "WCCCCC..", _
+                "W.......", "W.......", "W.......", "W.......", "W......."}
+        CASE 20
+            RETURN []STRING{ _
+                "WGGGGG..", "WGGGGG..", "WGGGGG..", "W.......", _
+                "W.......", "W.......", "W.......", "W.......", "W......."}
+        CASE 10
+            RETURN []STRING{ _
+                "WOOOO...", "WOOOO...", "WOOOO...", "W.......", _
+                "W.......", "W.......", "W.......", "W.......", "W......."}
+        CASE 5
+            RETURN []STRING{ _
+                "WRRR....", "WRRR....", "WRRR....", "W.......", _
+                "W.......", "W.......", "W.......", "W.......", "W......."}
+    END SELECT
+    RETURN []STRING{ _
+        "WBB.....", "WBB.....", "W.......", "W.......", _
+        "W.......", "W.......", "W.......", "W.......", "W......."}
+END FUNCTION
+
+
+' --- Every picture, made once ---
+
+DIM ImgFighter AS POINTER TO ebiten.Image
+DIM ImgBee AS []POINTER TO ebiten.Image
+DIM ImgBut AS []POINTER TO ebiten.Image
+DIM ImgBossOK AS []POINTER TO ebiten.Image
+DIM ImgBossHurt AS []POINTER TO ebiten.Image
+DIM ImgShot AS POINTER TO ebiten.Image
+DIM ImgBomb AS POINTER TO ebiten.Image
+DIM ImgBoom AS []POINTER TO ebiten.Image
+DIM ImgDeath AS []POINTER TO ebiten.Image
+DIM ImgFlag AS MAP OF INTEGER TO POINTER TO ebiten.Image
+DIM GGlyph AS MAP OF STRING TO POINTER TO ebiten.Image
+
+' How far apart letters sit. The arcade laid everything out on an 8-pixel
+' grid, so we do too; the glyphs are 5 wide, which leaves a natural gap.
+CONST CHW AS INTEGER = 8
+CONST CHH AS INTEGER = 7
+CONST GLYPHW AS INTEGER = 5
+
+SUB InitArt()
+    ImgFighter = MakeSprite(FighterRows())
+
+    ImgBee = APPEND(ImgBee, MakeSprite(BeeRows(0)))
+    ImgBee = APPEND(ImgBee, MakeSprite(BeeRows(1)))
+
+    ImgBut = APPEND(ImgBut, MakeSprite(ButterflyRows(0)))
+    ImgBut = APPEND(ImgBut, MakeSprite(ButterflyRows(1)))
+
+    ' A healthy boss is green; a damaged one is the same drawing in purple.
+    ImgBossOK = APPEND(ImgBossOK, MakeSprite(BossRows(0)))
+    ImgBossOK = APPEND(ImgBossOK, MakeSprite(BossRows(1)))
+    ImgBossHurt = APPEND(ImgBossHurt, MakeSprite(Recolour(BossRows(0), "G", "P")))
+    ImgBossHurt = APPEND(ImgBossHurt, MakeSprite(Recolour(BossRows(1), "G", "P")))
+
+    ImgShot = MakeSprite(ShotRows())
+    ImgBomb = MakeSprite(BombRows())
+
+    DIM i AS INTEGER
+    FOR i = 0 TO 4
+        ImgBoom = APPEND(ImgBoom, MakeSprite(BoomRows(i)))
+    NEXT
+    FOR i = 0 TO 3
+        ImgDeath = APPEND(ImgDeath, MakeSprite(DeathRows(i)))
+    NEXT
+
+    ImgFlag[1] = MakeSprite(FlagRows(1))
+    ImgFlag[5] = MakeSprite(FlagRows(5))
+    ImgFlag[10] = MakeSprite(FlagRows(10))
+    ImgFlag[20] = MakeSprite(FlagRows(20))
+    ImgFlag[30] = MakeSprite(FlagRows(30))
+    ImgFlag[50] = MakeSprite(FlagRows(50))
+
+    ' The alphabet, in white, ready to be tinted to any colour.
+    DIM chars AS STRING = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.,!/:'"
+    FOR i = 1 TO Len(chars)
+        DIM ch AS STRING = Mid(chars, i, 1)
+        GGlyph[ch] = MakeSprite(GlyphRows(ch))
+    NEXT
+END SUB
+
+
+' --- Putting pictures on the screen ---
+
+' Blit stamps a picture down with its TOP LEFT corner at x, y.
+SUB Blit(dst AS POINTER TO ebiten.Image, img AS POINTER TO ebiten.Image, x AS INTEGER, y AS INTEGER)
+    IF img = NIL THEN
+        RETURN
+    ENDIF
+    DIM op AS ebiten.DrawImageOptions
+    op.GeoM.Translate(Dbl(x), Dbl(y))
+    dst.DrawImage(img, @op)
+END SUB
+
+' BlitMid stamps a picture down CENTRED on x, y, turned to face along the
+' given heading. Sprites are drawn pointing down the screen, so a heading of
+' zero needs no turn at all.
+SUB BlitMid(dst AS POINTER TO ebiten.Image, img AS POINTER TO ebiten.Image, x AS DOUBLE, y AS DOUBLE, angDeg AS DOUBLE)
+    IF img = NIL THEN
+        RETURN
+    ENDIF
+    DIM w AS DOUBLE = Dbl(img.Bounds().Dx())
+    DIM h AS DOUBLE = Dbl(img.Bounds().Dy())
+    DIM op AS ebiten.DrawImageOptions
+    ' Move the middle of the picture to the origin, turn it, then move it
+    ' where it belongs. Turning has to happen around the middle or the
+    ' sprite would swing around its corner.
+    op.GeoM.Translate(-w / 2.0, -h / 2.0)
+    IF angDeg <> 0.0 THEN
+        op.GeoM.Rotate(-angDeg * math.Pi / 180.0)
+    ENDIF
+    op.GeoM.Translate(x, y)
+    dst.DrawImage(img, @op)
+END SUB
+
+' DrawChar puts one letter on the screen in the colour asked for.
+SUB DrawChar(dst AS POINTER TO ebiten.Image, ch AS STRING, x AS INTEGER, y AS INTEGER, clr AS color.RGBA)
+    DIM img AS POINTER TO ebiten.Image = GGlyph[ch]
+    IF img = NIL THEN
+        RETURN
+    ENDIF
+    DIM op AS ebiten.DrawImageOptions
+    op.GeoM.Translate(Dbl(x), Dbl(y))
+    op.ColorScale.ScaleWithColor(clr)
+    dst.DrawImage(img, @op)
+END SUB
+
+' DrawText writes a whole word or line, one letter every CHW pixels.
+SUB DrawText(dst AS POINTER TO ebiten.Image, s AS STRING, x AS INTEGER, y AS INTEGER, clr AS color.RGBA)
+    DIM up AS STRING = UCase(s)
+    DIM i AS INTEGER
+    FOR i = 1 TO Len(up)
+        DrawChar(dst, Mid(up, i, 1), x + (i - 1) * CHW, y, clr)
+    NEXT
+END SUB
+
+' TextW is how wide a piece of text will be.
+FUNCTION TextW(s AS STRING) AS INTEGER
+    RETURN Len(s) * CHW
+END FUNCTION
+
+' DrawTextMid centres a piece of text on the screen.
+SUB DrawTextMid(dst AS POINTER TO ebiten.Image, s AS STRING, y AS INTEGER, clr AS color.RGBA)
+    DrawText(dst, s, (SCRW - TextW(s)) / 2, y, clr)
+END SUB
+
+
+' ======================== 4. SOUND ========================
+'
+' No sound files: every noise in this game is built out of numbers when the
+' program starts. See the long explanation in BombSquad's source if the idea
+' of making sound out of arithmetic is new to you -- the short version is
+' that a loudspeaker just follows a list of numbers 44100 times a second,
+' and a list that flips between two values makes the harsh buzz that arcade
+' machines were built on.
+
+CONST RATE AS INTEGER = 44100
+
+FUNCTION PcmSample(v AS INTEGER) AS STRING
+    DIM uv AS INTEGER = v
+    IF uv < 0 THEN
+        uv = uv + 65536
+    ENDIF
+    DIM lo AS INTEGER = uv MOD 256
+    DIM hi AS INTEGER = uv / 256
+    RETURN Chr(lo) & Chr(hi) & Chr(lo) & Chr(hi)
+END FUNCTION
+
+' MakeTone: a plain square-wave beep that fades out.
+FUNCTION MakeTone(freq AS INTEGER, durMs AS INTEGER, vol AS INTEGER) AS STRING
+    DIM samples AS INTEGER = RATE * durMs / 1000
+    DIM period AS INTEGER = RATE / freq
+    IF period < 2 THEN
+        period = 2
+    ENDIF
+    DIM sb AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO samples - 1
+        DIM v AS INTEGER = vol
+        IF (i MOD period) >= (period / 2) THEN
+            v = -vol
+        ENDIF
+        v = v * (samples - i) / samples
+        sb = APPEND(sb, PcmSample(v))
+    NEXT
+    RETURN strings.Join(sb, "")
+END FUNCTION
+
+' MakeChirp: a beep whose pitch slides from one note to another. This is
+' the workhorse of arcade sound -- firing, diving, rescuing, all of it.
+FUNCTION MakeChirp(f0 AS INTEGER, f1 AS INTEGER, durMs AS INTEGER, vol AS INTEGER) AS STRING
+    DIM samples AS INTEGER = RATE * durMs / 1000
+    DIM sb AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO samples - 1
+        DIM freq AS INTEGER = f0 + (f1 - f0) * i / samples
+        IF freq < 20 THEN
+            freq = 20
+        ENDIF
+        DIM period AS INTEGER = RATE / freq
+        IF period < 2 THEN
+            period = 2
+        ENDIF
+        DIM v AS INTEGER = vol
+        IF (i MOD period) >= (period / 2) THEN
+            v = -vol
+        ENDIF
+        v = v * (samples - i) / samples
+        sb = APPEND(sb, PcmSample(v))
+    NEXT
+    RETURN strings.Join(sb, "")
+END FUNCTION
+
+' MakeWarble: a pitch that wobbles up and down as it plays. The diving
+' siren and the tractor beam are both this, at different speeds.
+FUNCTION MakeWarble(lo AS INTEGER, hi AS INTEGER, cycles AS INTEGER, durMs AS INTEGER, vol AS INTEGER) AS STRING
+    DIM samples AS INTEGER = RATE * durMs / 1000
+    DIM sb AS []STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO samples - 1
+        ' A sine wave decides the pitch, so it glides rather than jumps.
+        DIM phase AS DOUBLE = Dbl(i) / Dbl(samples) * Dbl(cycles) * 2.0 * math.Pi
+        DIM mix AS DOUBLE = (1.0 + math.Sin(phase)) / 2.0
+        DIM freq AS INTEGER = lo + Int(Dbl(hi - lo) * mix)
+        IF freq < 20 THEN
+            freq = 20
+        ENDIF
+        DIM period AS INTEGER = RATE / freq
+        IF period < 2 THEN
+            period = 2
+        ENDIF
+        DIM v AS INTEGER = vol
+        IF (i MOD period) >= (period / 2) THEN
+            v = -vol
+        ENDIF
+        sb = APPEND(sb, PcmSample(v))
+    NEXT
+    RETURN strings.Join(sb, "")
+END FUNCTION
+
+' MakeBang: an explosion. Random numbers are what a bang sounds like; how
+' often we pick a new one decides whether it is a hiss or a rumble.
+FUNCTION MakeBang(durMs AS INTEGER, vol AS INTEGER, coarse AS INTEGER) AS STRING
+    DIM samples AS INTEGER = RATE * durMs / 1000
+    DIM sb AS []STRING
+    DIM hold AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO samples - 1
+        IF (i MOD coarse) = 0 THEN
+            hold = RndInt(2 * vol) - vol
+        ENDIF
+        sb = APPEND(sb, PcmSample(hold * (samples - i) / samples))
+    NEXT
+    RETURN strings.Join(sb, "")
+END FUNCTION
+
+' MakePlayer hands a lump of sound to Ebitengine.
+FUNCTION MakePlayer(data AS STRING) AS POINTER TO audio.Player
+    IF GAudio = NIL THEN
+        RETURN NIL
+    ENDIF
+    DIM reader AS POINTER TO strings.Reader = strings.NewReader(data)
+    DIM p AS POINTER TO audio.Player
+    DIM err AS ERROR
+    p, err = GAudio.NewPlayer(reader)
+    IF err <> NIL THEN
+        fmt.Println("Sound unavailable:", err)
+        RETURN NIL
+    ENDIF
+    RETURN p
+END FUNCTION
+
+SUB (g AS POINTER TO Game) InitSounds()
+    ' The fighter's gun: a short downward zap.
+    g.SndFire = MakePlayer(MakeChirp(1800, 700, 60, 2600))
+    ' An alien blowing up.
+    g.SndBoom = MakePlayer(MakeBang(260, 7000, 5))
+    ' Your fighter blowing up: longer, lower, nastier.
+    g.SndDie = MakePlayer(MakeBang(700, 9000, 11) & MakeChirp(300, 60, 400, 5000))
+    ' The siren an alien makes as it peels off to dive at you.
+    g.SndDive = MakePlayer(MakeWarble(500, 1300, 6, 420, 2200))
+    ' The tractor beam: slow, ominous, unmistakable.
+    g.SndBeam = MakePlayer(MakeWarble(180, 620, 10, 1400, 3000))
+    ' Getting your captured fighter back - the happiest sound in the game.
+    g.SndRescue = MakePlayer(MakeChirp(400, 900, 120, 3200) & MakeChirp(600, 1400, 120, 3200) & MakeChirp(900, 1900, 220, 3200))
+    ' An extra fighter.
+    g.SndExtra = MakePlayer(MakeChirp(900, 1800, 90, 2800) & MakeChirp(1400, 2400, 140, 2800))
+    ' The little tune at the start of a game.
+    g.SndStart = MakePlayer(MakeTone(523, 110, 3000) & MakeTone(659, 110, 3000) & MakeTone(784, 110, 3000) & MakeTone(1046, 220, 3000))
+    ' Dropping a coin in.
+    g.SndCoin = MakePlayer(MakeTone(1200, 40, 2600) & MakeTone(1600, 70, 2600))
+END SUB
+
+' Play starts a sound over from the beginning.
+SUB (g AS POINTER TO Game) Play(snd AS POINTER TO audio.Player)
+    IF NOT g.Sound THEN
+        RETURN
+    ENDIF
+    IF snd = NIL THEN
+        RETURN
+    ENDIF
+    snd.Rewind()
+    snd.Play()
+END SUB
+
+
+' ======================== 5. THE STARFIELD ========================
+'
+' Galaga's background is not a picture, it is about sixty single pixels
+' drifting downward. They sit in three layers moving at different speeds,
+' which is the oldest trick there is for making a flat screen look deep:
+' the near ones sweep past, the far ones crawl.
+'
+' The stars also blink. Each one is given a slot in a repeating cycle, and
+' it is only drawn during part of that cycle, so the sky twinkles.
+
+CONST STAR_COUNT AS INTEGER = 64
+CONST BLINK_CYCLE AS INTEGER = 128
+
+' The colours the arcade used for stars.
+FUNCTION StarColour(n AS INTEGER) AS color.RGBA
+    SELECT CASE n MOD 6
+        CASE 0
+            RETURN CWhite
+        CASE 1
+            RETURN CRed
+        CASE 2
+            RETURN CCyan
+        CASE 3
+            RETURN CYellow
+        CASE 4
+            RETURN CBlue
+    END SELECT
+    RETURN CGreen
+END FUNCTION
+
+SUB (g AS POINTER TO Game) InitStars()
+    DIM stars AS []Star
+    DIM i AS INTEGER
+    FOR i = 0 TO STAR_COUNT - 1
+        DIM s AS Star
+        s.X = Dbl(RndInt(SCRW))
+        s.Y = Dbl(RndInt(SCRH))
+        ' Three layers, at three speeds.
+        SELECT CASE i MOD 3
+            CASE 0
+                s.Spd = 0.30
+            CASE 1
+                s.Spd = 0.55
+            CASE ELSE
+                s.Spd = 0.85
+        END SELECT
+        s.Clr = RndInt(6)
+        s.Blink = RndInt(BLINK_CYCLE)
+        stars = APPEND(stars, s)
+    NEXT
+    g.Stars = stars
+END SUB
+
+SUB (g AS POINTER TO Game) UpdateStars()
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Stars) - 1
+        g.Stars[i].Y = g.Stars[i].Y + g.Stars[i].Spd
+        ' Off the bottom? Come back in at the top somewhere else.
+        IF g.Stars[i].Y >= Dbl(SCRH) THEN
+            g.Stars[i].Y = 0.0
+            g.Stars[i].X = Dbl(RndInt(SCRW))
+            g.Stars[i].Clr = RndInt(6)
+        ENDIF
+        g.Stars[i].Blink = (g.Stars[i].Blink + 1) MOD BLINK_CYCLE
+    NEXT
+END SUB
+
+SUB (g AS POINTER TO Game) DrawStars(screen AS POINTER TO ebiten.Image)
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Stars) - 1
+        ' Each star is dark for a slice of its cycle, which makes it twinkle.
+        IF g.Stars[i].Blink < BLINK_CYCLE * 3 / 4 THEN
+            vector.DrawFilledRect(screen, Sng(g.Stars[i].X), Sng(g.Stars[i].Y), Sng(1), Sng(1), StarColour(g.Stars[i].Clr), FALSE)
+        ENDIF
+    NEXT
+END SUB
+
+
+' ======================== 6. FLIGHT PATHS ========================
+'
+' HOW AN ENEMY MOVES
+'   Every alien has a position, a heading, and a speed. Each frame it turns
+'   a little and then takes a step in whichever direction it is now facing.
+'   That is the whole of it -- there is no list of positions anywhere.
+'
+'   Headings are in degrees, and they work like this:
+'
+'            180 = up
+'             |
+'      270 ---+--- 90        0 = down, towards the player
+'             |
+'             0
+'
+'   which is what MoveAlong does with them: sin gives the sideways part of
+'   a step and cos gives the up-and-down part.
+'
+'   A path is a list of "turn this much per frame, for this many frames".
+'   Turn steadily and you draw an arc; turn steadily for long enough and you
+'   draw a loop. Every swoop in Galaga is made this way.
+
+' Where a group of aliens comes in from, and the flight they follow.
+TYPE Entry
+    DIM X AS DOUBLE
+    DIM Y AS DOUBLE
+    DIM Ang AS DOUBLE
+    DIM Path AS []PathSeg
+END TYPE
+
+' Seg is shorthand for building one leg of a path.
+FUNCTION Seg(turn AS DOUBLE, frames AS INTEGER) AS PathSeg
+    DIM p AS PathSeg
+    p.Turn = turn
+    p.Frames = frames
+    RETURN p
+END FUNCTION
+
+' MoveAlong takes one step in the direction the alien is facing.
+SUB MoveAlong(e AS POINTER TO Enemy)
+    DIM r AS DOUBLE = e.Ang * math.Pi / 180.0
+    e.X = e.X + math.Sin(r) * e.Spd
+    e.Y = e.Y + math.Cos(r) * e.Spd
+END SUB
+
+' StepPath does the turning: it nudges the heading by whatever the current
+' leg of the path calls for, and moves on to the next leg when this one has
+' run its course. It answers TRUE while there is still path left to fly.
+FUNCTION StepPath(e AS POINTER TO Enemy) AS BOOLEAN
+    IF e.Leg >= Len(e.Path) THEN
+        RETURN FALSE
+    ENDIF
+    e.Ang = e.Ang + e.Path[e.Leg].Turn
+    e.LegT = e.LegT + 1
+    IF e.LegT >= e.Path[e.Leg].Frames THEN
+        e.Leg = e.Leg + 1
+        e.LegT = 0
+    ENDIF
+    RETURN TRUE
+END FUNCTION
+
+' AngleTo is the heading that points from one place to another, in the same
+' degrees-from-straight-down system used everywhere else.
+FUNCTION AngleTo(fromX AS DOUBLE, fromY AS DOUBLE, toX AS DOUBLE, toY AS DOUBLE) AS DOUBLE
+    RETURN math.Atan2(toX - fromX, toY - fromY) * 180.0 / math.Pi
+END FUNCTION
+
+' AngleDiff gives the shortest way round from one heading to another, as a
+' number between -180 and +180. Without this an alien wanting to turn from
+' 350 degrees to 10 would take the long way round the houses.
+FUNCTION AngleDiff(fromA AS DOUBLE, toA AS DOUBLE) AS DOUBLE
+    DIM d AS DOUBLE = toA - fromA
+    WHILE d > 180.0
+        d = d - 360.0
+    WEND
+    WHILE d < -180.0
+        d = d + 360.0
+    WEND
+    RETURN d
+END FUNCTION
+
+' SteerTowards turns an alien gradually towards a heading, never faster
+' than maxTurn degrees in one frame, so it banks rather than snapping round.
+SUB SteerTowards(e AS POINTER TO Enemy, wantAng AS DOUBLE, maxTurn AS DOUBLE)
+    DIM d AS DOUBLE = AngleDiff(e.Ang, wantAng)
+    IF d > maxTurn THEN
+        d = maxTurn
+    ENDIF
+    IF d < -maxTurn THEN
+        d = -maxTurn
+    ENDIF
+    e.Ang = e.Ang + d
+END SUB
+
+' --- The entry flights ---
+'
+' Aliens never simply appear in the formation. They stream in from off the
+' edges of the screen in files of eight, fly a long curving path, and only
+' then slot into place. These are the four routes they use, which is what
+' the arcade did too -- corners and loops, alternating side to side.
+
+FUNCTION EntryPattern(n AS INTEGER) AS Entry
+    DIM e AS Entry
+    DIM p AS []PathSeg
+    SELECT CASE n MOD 4
+        CASE 0
+            ' In from the top left, dropping and curling right into a loop.
+            e.X = 40.0
+            e.Y = -20.0
+            e.Ang = 0.0
+            p = APPEND(p, Seg(0.0, 34))      ' straight down
+            p = APPEND(p, Seg(2.6, 70))      ' a long curl to the right
+            p = APPEND(p, Seg(0.0, 18))
+            p = APPEND(p, Seg(-2.2, 50))     ' swing back the other way
+        CASE 1
+            ' The same thing mirrored, in from the top right.
+            e.X = Dbl(SCRW) - 40.0
+            e.Y = -20.0
+            e.Ang = 0.0
+            p = APPEND(p, Seg(0.0, 34))
+            p = APPEND(p, Seg(-2.6, 70))
+            p = APPEND(p, Seg(0.0, 18))
+            p = APPEND(p, Seg(2.2, 50))
+        CASE 2
+            ' Up from the bottom left, climbing in an S.
+            e.X = -20.0
+            e.Y = Dbl(SCRH) - 60.0
+            e.Ang = 90.0                      ' heading right
+            p = APPEND(p, Seg(0.0, 24))
+            p = APPEND(p, Seg(2.4, 52))       ' curve upward
+            p = APPEND(p, Seg(-1.8, 60))      ' and back
+            p = APPEND(p, Seg(0.0, 20))
+        CASE ELSE
+            ' Up from the bottom right.
+            e.X = Dbl(SCRW) + 20.0
+            e.Y = Dbl(SCRH) - 60.0
+            e.Ang = 270.0                     ' heading left
+            p = APPEND(p, Seg(0.0, 24))
+            p = APPEND(p, Seg(-2.4, 52))
+            p = APPEND(p, Seg(1.8, 60))
+            p = APPEND(p, Seg(0.0, 20))
+    END SELECT
+    e.Path = p
+    RETURN e
+END FUNCTION
+
+' --- The attack runs ---
+'
+' A dive starts with a peel-off: the alien banks hard out of the formation,
+' loops over, and comes down the screen at you. Which way it banks depends
+' on which side of the screen it is sitting on, so the formation empties
+' outwards instead of everything piling down the middle.
+
+FUNCTION DivePath(toLeft AS BOOLEAN) AS []PathSeg
+    DIM p AS []PathSeg
+    DIM way AS DOUBLE = 1.0
+    IF toLeft THEN
+        way = -1.0
+    ENDIF
+    p = APPEND(p, Seg(way * 4.0, 44))     ' peel out of formation and over
+    p = APPEND(p, Seg(0.0, 16))           ' a moment of straight flight
+    p = APPEND(p, Seg(way * -3.0, 40))    ' curl back towards the middle
+    p = APPEND(p, Seg(0.0, 30))
+    RETURN p
+END FUNCTION
+
+' A Boss Galaga going hunting flies a shallower, more deliberate path: it is
+' coming down to hover over you and open its tractor beam, not to ram you.
+FUNCTION BeamApproach(toLeft AS BOOLEAN) AS []PathSeg
+    DIM p AS []PathSeg
+    DIM way AS DOUBLE = 1.0
+    IF toLeft THEN
+        way = -1.0
+    ENDIF
+    ' Just enough to swing clear of the formation. Taking up station over
+    ' the fighter is done by hand afterwards, not by the path -- see the
+    ' ES_BEAM case in UpdateEnemies for why.
+    p = APPEND(p, Seg(way * 3.0, 22))
+    p = APPEND(p, Seg(way * -3.0, 18))
+    RETURN p
+END FUNCTION
+
+
+' ======================== 7. THE FORMATION ========================
+'
+' Forty aliens, in five rows:
+'
+'         . . . B B B B . . .     row 0 -  4 Boss Galaga
+'         . U U U U U U U U .     row 1 -  8 Butterflies
+'         . U U U U U U U U .     row 2 -  8 Butterflies
+'         Z Z Z Z Z Z Z Z Z Z     row 3 - 10 Bees
+'         Z Z Z Z Z Z Z Z Z Z     row 4 - 10 Bees
+'
+' Each of the forty has a numbered slot it calls home. Slots 0-3 are the
+' bosses, 4-19 the butterflies, 20-39 the bees.
+
+FUNCTION SlotRow(slot AS INTEGER) AS INTEGER
+    IF slot < 4 THEN
+        RETURN 0
+    ENDIF
+    IF slot < 12 THEN
+        RETURN 1
+    ENDIF
+    IF slot < 20 THEN
+        RETURN 2
+    ENDIF
+    IF slot < 30 THEN
+        RETURN 3
+    ENDIF
+    RETURN 4
+END FUNCTION
+
+FUNCTION SlotCol(slot AS INTEGER) AS INTEGER
+    IF slot < 4 THEN
+        RETURN 3 + slot          ' the four bosses sit in the middle
+    ENDIF
+    IF slot < 12 THEN
+        RETURN 1 + (slot - 4)    ' butterflies stop one column short each side
+    ENDIF
+    IF slot < 20 THEN
+        RETURN 1 + (slot - 12)
+    ENDIF
+    IF slot < 30 THEN
+        RETURN slot - 20         ' bees fill the full width
+    ENDIF
+    RETURN slot - 30
+END FUNCTION
+
+FUNCTION SlotKind(slot AS INTEGER) AS INTEGER
+    IF slot < 4 THEN
+        RETURN E_BOSS
+    ENDIF
+    IF slot < 20 THEN
+        RETURN E_BUTTERFLY
+    ENDIF
+    RETURN E_BEE
+END FUNCTION
+
+' Where a slot is on screen right now, sway and breathing included.
+FUNCTION SlotX(g AS POINTER TO Game, slot AS INTEGER) AS DOUBLE
+    DIM col AS DOUBLE = Dbl(SlotCol(slot))
+    DIM middle AS DOUBLE = Dbl(FORM_COLS - 1) / 2.0
+    DIM spacing AS DOUBLE = Dbl(FORM_XSPACE) + g.FormSpread
+    RETURN Dbl(SCRW) / 2.0 + (col - middle) * spacing + g.FormX
+END FUNCTION
+
+FUNCTION SlotY(g AS POINTER TO Game, slot AS INTEGER) AS DOUBLE
+    RETURN Dbl(FORM_TOP + SlotRow(slot) * FORM_YSPACE)
+END FUNCTION
+
+' The formation is never still. It slides a few pixels left and right, and
+' at the same time breathes in and out, the columns spreading apart and
+' closing up again. Both are slow, and together they stop the block of forty
+' aliens looking like a painted backdrop.
+SUB (g AS POINTER TO Game) UpdateFormation()
+    g.FormX = g.FormX + g.FormDir
+    IF g.FormX > 8.0 THEN
+        g.FormDir = -0.18
+    ENDIF
+    IF g.FormX < -8.0 THEN
+        g.FormDir = 0.18
+    ENDIF
+
+    g.FormSpread = g.FormSpread + g.SpreadDir
+    IF g.FormSpread > 2.5 THEN
+        g.SpreadDir = -0.03
+    ENDIF
+    IF g.FormSpread < 0.0 THEN
+        g.SpreadDir = 0.03
+    ENDIF
+END SUB
+
+
+' ======================== 8. THE ENEMIES ========================
+
+' NewWave lays out a fresh set of forty and queues them to fly in.
+'
+' They arrive in five files of eight, exactly as they did in the arcade,
+' each file taking a different route in. The last file is the one with the
+' Boss Galaga in it, which is why the bosses always arrive last.
+SUB (g AS POINTER TO Game) NewWave()
+    DIM foes AS []Enemy
+    DIM slot AS INTEGER
+    FOR slot = 0 TO ENEMY_COUNT - 1
+        DIM e AS Enemy
+        e.Kind = SlotKind(slot)
+        e.Slot = slot
+        e.St = ES_WAIT
+        e.Hits = 0
+        e.Boss = -1
+        e.Spd = 1.6
+        e.X = -100.0
+        e.Y = -100.0
+        foes = APPEND(foes, e)
+    NEXT
+
+    ' Which slots fly in together, and on which route. Bees first, then the
+    ' butterflies, then the bosses with a bee escort on each wing.
+    DIM flights AS []STRING
+    flights = APPEND(flights, "20,21,22,23,24,25,26,27")
+    flights = APPEND(flights, "28,29,30,31,32,33,34,35")
+    flights = APPEND(flights, "4,5,6,7,8,9,10,11")
+    flights = APPEND(flights, "12,13,14,15,16,17,18,19")
+    flights = APPEND(flights, "0,1,2,3,36,37,38,39")
+
+    DIM f AS INTEGER
+    FOR f = 0 TO Len(flights) - 1
+        DIM parts AS []STRING = strings.Split(flights[f], ",")
+        DIM i AS INTEGER
+        FOR i = 0 TO Len(parts) - 1
+            DIM n AS INTEGER
+            DIM err AS ERROR
+            n, err = strconv.Atoi(parts[i])
+            IF err <> NIL THEN
+                CONTINUE FOR
+            ENDIF
+            ' Stagger them so they arrive in single file, not in a clump.
+            foes[n].Timer = 40 + f * 96 + i * 11
+            foes[n].Entry = f
+        NEXT
+    NEXT
+
+    g.Foe = foes
+    g.Entering = ENEMY_COUNT
+    g.FormX = 0.0
+    g.FormDir = 0.18
+    g.FormSpread = 0.0
+    g.SpreadDir = 0.03
+    g.DiveTimer = 180
+END SUB
+
+' CountIn says how many aliens are still alive, and how many of those are
+' sitting in the formation ready to be sent on an attack.
+FUNCTION LiveCount(g AS POINTER TO Game) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Foe) - 1
+        IF g.Foe[i].St <> ES_GONE THEN
+            n = n + 1
+        ENDIF
+    NEXT
+    RETURN n
+END FUNCTION
+
+FUNCTION FormedCount(g AS POINTER TO Game) AS INTEGER
+    DIM n AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Foe) - 1
+        IF g.Foe[i].St = ES_FORM THEN
+            n = n + 1
+        ENDIF
+    NEXT
+    RETURN n
+END FUNCTION
+
+' Boom adds an explosion at a place.
+SUB (g AS POINTER TO Game) AddBoom(x AS DOUBLE, y AS DOUBLE, isPlayer AS BOOLEAN)
+    DIM b AS Boom
+    b.Live = TRUE
+    b.X = x
+    b.Y = y
+    b.T = 0
+    b.Player = isPlayer
+    g.Booms = APPEND(g.Booms, b)
+END SUB
+
+' AddPop shows the score an enemy was worth, floating where it died.
+SUB (g AS POINTER TO Game) AddPop(x AS DOUBLE, y AS DOUBLE, pts AS INTEGER)
+    DIM p AS Popup
+    p.Live = TRUE
+    p.X = x
+    p.Y = y
+    p.T = 0
+    p.Pts = pts
+    g.Pops = APPEND(g.Pops, p)
+END SUB
+
+' DropBomb sends a bomb from an alien roughly towards where you are.
+SUB (g AS POINTER TO Game) DropBomb(x AS DOUBLE, y AS DOUBLE)
+    ' Challenging Stage aliens never shoot back.
+    IF g.Challenge THEN
+        RETURN
+    ENDIF
+    DIM b AS Shot
+    b.Live = TRUE
+    b.X = x
+    b.Y = y
+    ' Aim at the fighter, but not perfectly -- a perfectly aimed shot every
+    ' time would be unplayable.
+    DIM aim AS DOUBLE = AngleTo(x, y, g.PX + Dbl(RndInt(24) - 12), Dbl(PLAYER_Y))
+    DIM r AS DOUBLE = aim * math.Pi / 180.0
+    b.VX = math.Sin(r) * BOMB_SPEED
+    b.VY = math.Cos(r) * BOMB_SPEED
+    IF b.VY < 0.4 THEN
+        b.VY = 0.4                ' always make some downward progress
+    ENDIF
+    g.Bombs = APPEND(g.Bombs, b)
+END SUB
+
+
+' --- How long each part of the tractor beam takes, in frames ---
+CONST BEAM_HOVER AS INTEGER = 96    ' settling into position above you
+CONST BEAM_OPEN AS INTEGER = 34     ' the cone growing downward
+CONST BEAM_HOLD AS INTEGER = 96     ' fully open, and dangerous
+CONST BEAM_SHUT AS INTEGER = 26     ' shrinking away again
+CONST BEAM_Y AS INTEGER = 120       ' how far down the boss comes to do it
+CONST BEAM_WIDTH AS INTEGER = 30    ' how wide the cone gets at its bottom
+
+' BeamLength is how far the cone reaches below the boss right now, which is
+' also how the drawing code knows what to paint.
+FUNCTION BeamLength(e AS POINTER TO Enemy) AS DOUBLE
+    DIM t AS INTEGER = e.Timer - BEAM_HOVER
+    IF t <= 0 THEN
+        RETURN 0.0
+    ENDIF
+    DIM full AS DOUBLE = Dbl(PLAYER_Y + 10) - e.Y
+    IF t < BEAM_OPEN THEN
+        RETURN full * Dbl(t) / Dbl(BEAM_OPEN)
+    ENDIF
+    IF t < BEAM_OPEN + BEAM_HOLD THEN
+        RETURN full
+    ENDIF
+    DIM shut AS INTEGER = t - BEAM_OPEN - BEAM_HOLD
+    IF shut < BEAM_SHUT THEN
+        RETURN full * Dbl(BEAM_SHUT - shut) / Dbl(BEAM_SHUT)
+    ENDIF
+    RETURN 0.0
+END FUNCTION
+
+' DockToSlot brings an alien home to its place in the formation.
+'
+' Steering alone cannot do this. An alien turning at five degrees a frame
+' while moving at nearly two pixels a frame has a turning circle about
+' twenty pixels across, so it can circle its own slot for ever and never
+' arrive -- which is exactly what it did until this was written. So once it
+' is close, it stops flying and starts docking: easing straight into the
+' slot while straightening up. It answers TRUE when it has arrived.
+FUNCTION DockToSlot(g AS POINTER TO Game, e AS POINTER TO Enemy) AS BOOLEAN
+    DIM wx AS DOUBLE = SlotX(g, e.Slot)
+    DIM wy AS DOUBLE = SlotY(g, e.Slot)
+    DIM dx AS DOUBLE = wx - e.X
+    DIM dy AS DOUBLE = wy - e.Y
+    DIM dist AS DOUBLE = math.Sqrt(dx * dx + dy * dy)
+
+    IF dist < 26.0 THEN
+        ' Close enough to dock: glide in and straighten out.
+        e.X = e.X + dx * 0.16
+        e.Y = e.Y + dy * 0.16
+        e.Ang = e.Ang + AngleDiff(e.Ang, 0.0) * 0.16
+        RETURN dist < 1.5
+    ENDIF
+
+    ' Still a way off: fly towards it.
+    SteerTowards(e, AngleTo(e.X, e.Y, wx, wy), 5.0)
+    MoveAlong(e)
+    RETURN FALSE
+END FUNCTION
+
+' AllArrived asks whether the whole wave has finished flying in. Counting
+' arrivals with a tally went wrong the moment one was shot on the way in,
+' so we simply look.
+FUNCTION AllArrived(g AS POINTER TO Game) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Foe) - 1
+        IF g.Foe[i].St = ES_WAIT OR g.Foe[i].St = ES_ENTER THEN
+            RETURN FALSE
+        ENDIF
+    NEXT
+    RETURN TRUE
+END FUNCTION
+
+' UpdateEnemies runs every alien through whatever it is currently doing.
+' This is the biggest routine in the game, and it is really just one long
+' answer to the question "what does an alien in this state do next?".
+SUB (g AS POINTER TO Game) UpdateEnemies()
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Foe) - 1
+        DIM e AS POINTER TO Enemy = @g.Foe[i]
+        e.Anim = e.Anim + 1
+
+        SELECT CASE e.St
+            CASE ES_WAIT
+                ' Waiting off-screen for its turn to fly in.
+                e.Timer = e.Timer - 1
+                IF e.Timer <= 0 THEN
+                    DIM route AS Entry = EntryPattern(e.Entry)
+                    e.X = route.X
+                    e.Y = route.Y
+                    e.Ang = route.Ang
+                    e.Path = route.Path
+                    e.Leg = 0
+                    e.LegT = 0
+                    e.Spd = 1.9
+                    e.St = ES_ENTER
+                ENDIF
+
+            CASE ES_ENTER
+                ' Flying the entry route. Once the route runs out, steer for
+                ' the slot in the formation and slide into it.
+                IF StepPath(e) OR g.Challenge THEN
+                    MoveAlong(e)
+                ELSE
+                    ' The route is flown; slot into the formation.
+                    IF DockToSlot(g, e) THEN
+                        e.St = ES_FORM
+                        e.Ang = 0.0
+                        g.Entering = g.Entering - 1
+                    ENDIF
+                ENDIF
+                ' A Challenging Stage has no formation to join: they simply
+                ' fly their pattern and leave.
+                IF g.Challenge AND (e.Y > Dbl(SCRH) + 24.0 OR e.Y < -60.0) THEN
+                    e.St = ES_GONE
+                    g.Entering = g.Entering - 1
+                ENDIF
+
+            CASE ES_FORM
+                ' Sitting in the formation, riding the sway.
+                e.X = SlotX(g, e.Slot)
+                e.Y = SlotY(g, e.Slot)
+                e.Ang = 0.0
+
+            CASE ES_DIVE
+                IF NOT StepPath(e) THEN
+                    ' Out of scripted path: chase the fighter loosely.
+                    SteerTowards(e, AngleTo(e.X, e.Y, g.PX, Dbl(PLAYER_Y)), 1.6)
+                ENDIF
+                MoveAlong(e)
+                ' Drop the occasional bomb on the way down.
+                IF e.Shoots AND e.Y > 30.0 AND e.Y < Dbl(PLAYER_Y) - 20.0 THEN
+                    IF RndInt(64) = 0 THEN
+                        g.DropBomb(e.X, e.Y + 8.0)
+                    ENDIF
+                ENDIF
+                ' Off the bottom: come back round from the top.
+                IF e.Y > Dbl(SCRH) + 20.0 THEN
+                    IF g.Challenge THEN
+                        e.St = ES_GONE
+                    ELSE
+                        e.Y = -20.0
+                        e.X = SlotX(g, e.Slot)
+                        e.Ang = 0.0
+                        e.St = ES_RETURN
+                    ENDIF
+                ENDIF
+                ' Or off the side, which the wide loops can manage.
+                IF e.X < -40.0 OR e.X > Dbl(SCRW) + 40.0 THEN
+                    IF g.Challenge THEN
+                        e.St = ES_GONE
+                    ENDIF
+                ENDIF
+
+            CASE ES_RETURN
+                ' Coming back down from the top to rejoin the formation.
+                IF DockToSlot(g, e) THEN
+                    e.St = ES_FORM
+                    e.Ang = 0.0
+                    e.Boss = -1
+                ENDIF
+
+            CASE ES_BEAM
+                ' The tractor beam run, in four parts: come down and hover,
+                ' open the cone, hold it open, then shut it and go home.
+                e.Timer = e.Timer + 1
+                IF e.Timer < BEAM_HOVER THEN
+                    IF StepPath(e) THEN
+                        MoveAlong(e)
+                    ELSE
+                        ' Take up station directly above the fighter.
+                        '
+                        ' Steering towards it does not work: a boss banking
+                        ' at a few degrees a frame has a turning circle far
+                        ' wider than the screen is tall, so it sails past
+                        ' and circles for ever. Easing straight to the spot
+                        ' gets it there, and looks like a machine coming to
+                        ' a deliberate stop -- which is what it is.
+                        e.X = e.X + (g.PX - e.X) * 0.06
+                        e.Y = e.Y + (Dbl(BEAM_Y) - e.Y) * 0.06
+                        e.Ang = e.Ang + AngleDiff(e.Ang, 0.0) * 0.12
+                    ENDIF
+                ELSE
+                    e.Ang = 0.0
+                    ' While the beam is open the boss hangs still.
+                    DIM ln AS DOUBLE = BeamLength(e)
+                    IF ln > 0.0 AND NOT g.Captured AND g.Alive THEN
+                        ' Caught? The cone widens as it goes down, so being
+                        ' near the middle at the bottom is what catches you.
+                        DIM halfW AS DOUBLE = Dbl(BEAM_WIDTH) / 2.0
+                        IF e.Y + ln > Dbl(PLAYER_Y) - 6.0 THEN
+                            IF math.Abs(g.PX - e.X) < halfW THEN
+                                g.CapturePlayer(i)
+                            ENDIF
+                        ENDIF
+                    ENDIF
+                    IF e.Timer > BEAM_HOVER + BEAM_OPEN + BEAM_HOLD + BEAM_SHUT THEN
+                        g.BeamIdx = -1
+                        e.St = ES_RETURN
+                    ENDIF
+                ENDIF
+
+            CASE ES_DYING
+                e.Timer = e.Timer + 1
+                IF e.Timer > 24 THEN
+                    e.St = ES_GONE
+                ENDIF
+        END SELECT
+    NEXT
+END SUB
+
+
+' --- Sending aliens out to attack ---
+'
+' Every so often the formation sends someone. Most of the time that is a
+' bee or a butterfly making a dive; now and then it is a Boss Galaga going
+' out to try to steal your fighter, and when a boss goes it takes escorts,
+' which is what makes it worth so much more to shoot down.
+SUB (g AS POINTER TO Game) LaunchAttack()
+    ' Nobody attacks during a Challenging Stage, and nobody leaves the
+    ' formation until the whole wave has finished flying in.
+    IF g.Challenge OR NOT g.Alive THEN
+        RETURN
+    ENDIF
+    IF NOT AllArrived(g) THEN
+        RETURN
+    ENDIF
+
+    ' Gather everyone available to be sent.
+    DIM bosses AS []INTEGER
+    DIM others AS []INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Foe) - 1
+        IF g.Foe[i].St <> ES_FORM THEN
+            CONTINUE FOR
+        ENDIF
+        IF g.Foe[i].Kind = E_BOSS THEN
+            bosses = APPEND(bosses, i)
+        ELSE
+            others = APPEND(others, i)
+        ENDIF
+    NEXT
+
+    ' A boss beam run, if one is free and nothing else is beaming. They get
+    ' bolder as the stages go by.
+    DIM beamChance AS INTEGER = 5
+    IF g.Stage >= 4 THEN
+        beamChance = 3
+    ENDIF
+    IF Len(bosses) > 0 AND g.BeamIdx < 0 AND NOT g.Captured AND RndInt(beamChance) = 0 THEN
+        DIM bi AS INTEGER = bosses[RndInt(Len(bosses))]
+        DIM toLeft AS BOOLEAN = g.Foe[bi].X > Dbl(SCRW) / 2.0
+        g.Foe[bi].Path = BeamApproach(toLeft)
+        g.Foe[bi].Leg = 0
+        g.Foe[bi].LegT = 0
+        g.Foe[bi].Timer = 0
+        g.Foe[bi].Spd = 1.3
+        g.Foe[bi].St = ES_BEAM
+        g.Foe[bi].Escorts = 0
+        g.BeamIdx = bi
+        g.Play(g.SndBeam)
+
+        ' Two escorts peel off alongside it. Shoot the boss down while they
+        ' are still with it and it is worth 1600 instead of 400.
+        DIM taken AS INTEGER = 0
+        FOR i = 0 TO Len(others) - 1
+            IF taken >= 2 THEN
+                CONTINUE FOR
+            ENDIF
+            IF g.Foe[others[i]].Kind <> E_BUTTERFLY THEN
+                CONTINUE FOR
+            ENDIF
+            DIM oi AS INTEGER = others[i]
+            g.Foe[oi].Path = DivePath(toLeft)
+            g.Foe[oi].Leg = 0
+            g.Foe[oi].LegT = 0
+            g.Foe[oi].Spd = 1.8
+            g.Foe[oi].Shoots = TRUE
+            g.Foe[oi].Boss = bi
+            g.Foe[oi].St = ES_DIVE
+            g.Foe[bi].Escorts = g.Foe[bi].Escorts + 1
+            taken = taken + 1
+        NEXT
+        RETURN
+    ENDIF
+
+    ' Otherwise, an ordinary dive by one or two of the rank and file.
+    IF Len(others) = 0 THEN
+        RETURN
+    ENDIF
+    DIM howMany AS INTEGER = 1
+    IF g.Stage >= 3 AND RndInt(2) = 0 THEN
+        howMany = 2
+    ENDIF
+    DIM n AS INTEGER
+    FOR n = 0 TO howMany - 1
+        IF Len(others) = 0 THEN
+            CONTINUE FOR
+        ENDIF
+        DIM k AS INTEGER = others[RndInt(Len(others))]
+        IF g.Foe[k].St <> ES_FORM THEN
+            CONTINUE FOR
+        ENDIF
+        DIM leftward AS BOOLEAN = g.Foe[k].X > Dbl(SCRW) / 2.0
+        g.Foe[k].Path = DivePath(leftward)
+        g.Foe[k].Leg = 0
+        g.Foe[k].LegT = 0
+        g.Foe[k].Spd = 1.7 + Dbl(g.Stage) * 0.04
+        IF g.Foe[k].Spd > 2.8 THEN
+            g.Foe[k].Spd = 2.8
+        ENDIF
+        g.Foe[k].Shoots = TRUE
+        g.Foe[k].St = ES_DIVE
+    NEXT
+    g.Play(g.SndDive)
+END SUB
+
+' CapturePlayer is what happens when the tractor beam gets you: the boss
+' keeps your fighter, and you lose it exactly as if you had been shot.
+' Shoot that boss down later and you get the fighter back -- flying beside
+' you, firing two shots at a time. It is the only way to get a dual fighter,
+' and it is why letting yourself be caught is sometimes worth it.
+SUB (g AS POINTER TO Game) CapturePlayer(bossIdx AS INTEGER)
+    g.Captured = TRUE
+    g.Alive = FALSE
+    g.Dual = FALSE
+    g.Play(g.SndBeam)
+    ' The fighter does not simply vanish: it lifts off the bottom of the
+    ' screen and spins slowly up the beam into the boss, which is one of the
+    ' most recognisable sights in the game. The fighter is only counted as
+    ' lost, and only appears slung under the boss, once it gets there.
+    g.CapAnim = 64
+    g.CapX = g.PX
+    g.CapBoss = bossIdx
+END SUB
+
+' LoseFighter takes one off the count and starts the next one coming.
+SUB (g AS POINTER TO Game) LoseFighter()
+    g.Lives = g.Lives - 1
+    g.Alive = FALSE
+    g.Dual = FALSE
+    IF g.Lives <= 0 THEN
+        g.St = GS_OVER
+        g.Timer = T_OVER
+    ELSE
+        g.St = GS_DYING
+        g.Timer = T_DYING
+    ENDIF
+END SUB
+
+
+' ======================== 9. THE PLAYER ========================
+
+' Fire launches a shot -- or two, if you have rescued your captured fighter.
+'
+' THE TWO SHOT RULE
+'   You may not have more than two of your own shots in the air at once.
+'   This one rule is what makes Galaga a game about aim and timing rather
+'   than holding the button down, and it is why the dual fighter -- which
+'   doubles the allowance -- is worth being captured for.
+SUB (g AS POINTER TO Game) Fire()
+    DIM allowed AS INTEGER = MAX_SHOTS
+    IF g.Dual THEN
+        allowed = MAX_SHOTS * 2
+    ENDIF
+
+    DIM inAir AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Shots) - 1
+        IF g.Shots[i].Live THEN
+            inAir = inAir + 1
+        ENDIF
+    NEXT
+    IF inAir >= allowed THEN
+        RETURN
+    ENDIF
+
+    g.AddShot(g.PX)
+    IF g.Dual THEN
+        ' The two fighters fire together.
+        g.AddShot(g.PX - Dbl(DUAL_GAP))
+        g.Fired = g.Fired + 1
+    ENDIF
+    g.Fired = g.Fired + 1
+    g.Play(g.SndFire)
+END SUB
+
+SUB (g AS POINTER TO Game) AddShot(x AS DOUBLE)
+    DIM s AS Shot
+    s.Live = TRUE
+    s.X = x
+    s.Y = Dbl(PLAYER_Y) - 6.0
+    s.VX = 0.0
+    s.VY = -SHOT_SPEED
+    g.Shots = APPEND(g.Shots, s)
+END SUB
+
+SUB (g AS POINTER TO Game) UpdatePlayer()
+    ' The fighter that was shot down is on its way back.
+    IF NOT g.Alive THEN
+        RETURN
+    ENDIF
+
+    DIM left AS BOOLEAN = ebiten.IsKeyPressed(ebiten.KeyArrowLeft) OR ebiten.IsKeyPressed(ebiten.KeyA)
+    DIM right AS BOOLEAN = ebiten.IsKeyPressed(ebiten.KeyArrowRight) OR ebiten.IsKeyPressed(ebiten.KeyD)
+
+    IF left THEN
+        g.PX = g.PX - PLAYER_SPEED
+    ENDIF
+    IF right THEN
+        g.PX = g.PX + PLAYER_SPEED
+    ENDIF
+
+    ' The dual fighter is wider, so it has to stop further from the edge.
+    DIM lowX AS DOUBLE = Dbl(PLAYER_MINX)
+    IF g.Dual THEN
+        lowX = Dbl(PLAYER_MINX + DUAL_GAP)
+    ENDIF
+    IF g.PX < lowX THEN
+        g.PX = lowX
+    ENDIF
+    IF g.PX > Dbl(PLAYER_MAXX) THEN
+        g.PX = Dbl(PLAYER_MAXX)
+    ENDIF
+
+    IF inpututil.IsKeyJustPressed(ebiten.KeySpace) OR inpututil.IsKeyJustPressed(ebiten.KeyZ) THEN
+        g.Fire()
+    ENDIF
+END SUB
+
+' UpdateShots moves everything that has been fired, in both directions.
+SUB (g AS POINTER TO Game) UpdateShots()
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Shots) - 1
+        IF NOT g.Shots[i].Live THEN
+            CONTINUE FOR
+        ENDIF
+        g.Shots[i].Y = g.Shots[i].Y + g.Shots[i].VY
+        IF g.Shots[i].Y < -8.0 THEN
+            g.Shots[i].Live = FALSE
+        ENDIF
+    NEXT
+
+    FOR i = 0 TO Len(g.Bombs) - 1
+        IF NOT g.Bombs[i].Live THEN
+            CONTINUE FOR
+        ENDIF
+        g.Bombs[i].X = g.Bombs[i].X + g.Bombs[i].VX
+        g.Bombs[i].Y = g.Bombs[i].Y + g.Bombs[i].VY
+        IF g.Bombs[i].Y > Dbl(SCRH) OR g.Bombs[i].X < -8.0 OR g.Bombs[i].X > Dbl(SCRW) + 8.0 THEN
+            g.Bombs[i].Live = FALSE
+        ENDIF
+    NEXT
+
+    ' Tidy away anything that has finished, so the lists do not grow for ever.
+    DIM keep AS []Shot
+    FOR i = 0 TO Len(g.Shots) - 1
+        IF g.Shots[i].Live THEN
+            keep = APPEND(keep, g.Shots[i])
+        ENDIF
+    NEXT
+    g.Shots = keep
+
+    DIM keepB AS []Shot
+    FOR i = 0 TO Len(g.Bombs) - 1
+        IF g.Bombs[i].Live THEN
+            keepB = APPEND(keepB, g.Bombs[i])
+        ENDIF
+    NEXT
+    g.Bombs = keepB
+END SUB
+
+
+' ======================== 10. COLLISIONS ========================
+
+' Overlap is the only collision test in the game: do two boxes touch?
+FUNCTION Overlap(ax AS DOUBLE, ay AS DOUBLE, aw AS DOUBLE, ah AS DOUBLE, bx AS DOUBLE, by AS DOUBLE, bw AS DOUBLE, bh AS DOUBLE) AS BOOLEAN
+    IF ax + aw / 2.0 < bx - bw / 2.0 THEN
+        RETURN FALSE
+    ENDIF
+    IF ax - aw / 2.0 > bx + bw / 2.0 THEN
+        RETURN FALSE
+    ENDIF
+    IF ay + ah / 2.0 < by - bh / 2.0 THEN
+        RETURN FALSE
+    ENDIF
+    IF ay - ah / 2.0 > by + bh / 2.0 THEN
+        RETURN FALSE
+    ENDIF
+    RETURN TRUE
+END FUNCTION
+
+' EnemyScore is the arcade scoring table, which rewards you for shooting
+' things while they are dangerous rather than while they sit in rows:
+'
+'                       in formation      attacking
+'     Bee                     50              100
+'     Butterfly               80              160
+'     Boss Galaga            150              400
+'       ...with one escort still flying       800
+'       ...with two escorts still flying     1600
+FUNCTION EnemyScore(g AS POINTER TO Game, idx AS INTEGER) AS INTEGER
+    IF g.Challenge THEN
+        RETURN SC_CHALLENGE
+    ENDIF
+    DIM diving AS BOOLEAN = g.Foe[idx].St <> ES_FORM
+    SELECT CASE g.Foe[idx].Kind
+        CASE E_BEE
+            IF diving THEN
+                RETURN SC_BEE_DIVE
+            ENDIF
+            RETURN SC_BEE_FORM
+        CASE E_BUTTERFLY
+            IF diving THEN
+                RETURN SC_BUT_DIVE
+            ENDIF
+            RETURN SC_BUT_FORM
+    END SELECT
+
+    ' A Boss Galaga. Count the escorts still out there with it.
+    IF NOT diving THEN
+        RETURN SC_BOSS_FORM
+    ENDIF
+    DIM live AS INTEGER = 0
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Foe) - 1
+        IF g.Foe[i].Boss = idx AND g.Foe[i].St <> ES_GONE AND g.Foe[i].St <> ES_DYING THEN
+            live = live + 1
+        ENDIF
+    NEXT
+    IF live >= 2 THEN
+        RETURN SC_BOSS_TWO
+    ENDIF
+    IF live = 1 THEN
+        RETURN SC_BOSS_ONE
+    ENDIF
+    RETURN SC_BOSS_DIVE
+END FUNCTION
+
+' AddScore banks points and hands out spare fighters as they are earned.
+SUB (g AS POINTER TO Game) AddScore(pts AS INTEGER)
+    g.Score = g.Score + pts
+    IF g.Score > g.HiScore THEN
+        g.HiScore = g.Score
+    ENDIF
+    IF g.Score >= g.NextExtra THEN
+        g.Lives = g.Lives + 1
+        g.Play(g.SndExtra)
+        ' The first spare comes at 20,000, then one every 70,000 after.
+        IF g.NextExtra = EXTRA_FIRST THEN
+            g.NextExtra = EXTRA_FIRST + EXTRA_EVERY
+        ELSE
+            g.NextExtra = g.NextExtra + EXTRA_EVERY
+        ENDIF
+    ENDIF
+END SUB
+
+' KillEnemy blows one up and pays out for it.
+SUB (g AS POINTER TO Game) KillEnemy(idx AS INTEGER)
+    DIM pts AS INTEGER = EnemyScore(g, idx)
+    g.AddScore(pts)
+    g.AddBoom(g.Foe[idx].X, g.Foe[idx].Y, FALSE)
+    ' Only show the floating number for the bigger payouts, as the arcade did.
+    IF pts >= 400 THEN
+        g.AddPop(g.Foe[idx].X, g.Foe[idx].Y, pts)
+    ENDIF
+    g.Play(g.SndBoom)
+
+    ' Was this the boss holding your fighter? Then you have just freed it.
+    IF g.Foe[idx].Captive THEN
+        g.Foe[idx].Captive = FALSE
+        g.Captured = FALSE
+        g.RescueOn = TRUE
+        g.RescueX = g.Foe[idx].X
+        g.RescueY = g.Foe[idx].Y + 16.0
+        g.Play(g.SndRescue)
+    ENDIF
+
+    IF g.BeamIdx = idx THEN
+        g.BeamIdx = -1
+    ENDIF
+
+    g.Foe[idx].St = ES_DYING
+    g.Foe[idx].Timer = 0
+    g.Hit = g.Hit + 1
+    IF g.Challenge THEN
+        g.ChalHits = g.ChalHits + 1
+    ENDIF
+END SUB
+
+' CheckHits works out what has run into what this frame.
+SUB (g AS POINTER TO Game) CheckHits()
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+
+    ' --- Your shots against the aliens ---
+    FOR i = 0 TO Len(g.Shots) - 1
+        IF NOT g.Shots[i].Live THEN
+            CONTINUE FOR
+        ENDIF
+        FOR j = 0 TO Len(g.Foe) - 1
+            IF g.Foe[j].St = ES_GONE OR g.Foe[j].St = ES_DYING OR g.Foe[j].St = ES_WAIT THEN
+                CONTINUE FOR
+            ENDIF
+            IF NOT Overlap(g.Shots[i].X, g.Shots[i].Y, 3.0, 8.0, g.Foe[j].X, g.Foe[j].Y, 12.0, 12.0) THEN
+                CONTINUE FOR
+            ENDIF
+            g.Shots[i].Live = FALSE
+            ' A Boss Galaga shrugs off the first hit and turns purple.
+            IF g.Foe[j].Kind = E_BOSS AND g.Foe[j].Hits = 0 AND NOT g.Challenge THEN
+                g.Foe[j].Hits = 1
+                g.Hit = g.Hit + 1
+                g.Play(g.SndBoom)
+            ELSE
+                g.KillEnemy(j)
+            ENDIF
+            CONTINUE FOR
+        NEXT
+    NEXT
+
+    IF NOT g.Alive THEN
+        RETURN
+    ENDIF
+
+    ' --- Their bombs against you ---
+    FOR i = 0 TO Len(g.Bombs) - 1
+        IF NOT g.Bombs[i].Live THEN
+            CONTINUE FOR
+        ENDIF
+        IF g.HitsPlayer(g.Bombs[i].X, g.Bombs[i].Y, 4.0, 4.0) THEN
+            g.Bombs[i].Live = FALSE
+            g.PlayerDies()
+            RETURN
+        ENDIF
+    NEXT
+
+    ' --- Flying straight into you ---
+    FOR j = 0 TO Len(g.Foe) - 1
+        IF g.Foe[j].St <> ES_DIVE AND g.Foe[j].St <> ES_BEAM THEN
+            CONTINUE FOR
+        ENDIF
+        IF g.HitsPlayer(g.Foe[j].X, g.Foe[j].Y, 12.0, 12.0) THEN
+            g.KillEnemy(j)
+            g.PlayerDies()
+            RETURN
+        ENDIF
+    NEXT
+END SUB
+
+' HitsPlayer asks whether something has touched your fighter -- either of
+' them, if you are flying the dual.
+FUNCTION (g AS POINTER TO Game) HitsPlayer(x AS DOUBLE, y AS DOUBLE, w AS DOUBLE, h AS DOUBLE) AS BOOLEAN
+    IF Overlap(x, y, w, h, g.PX, Dbl(PLAYER_Y), 12.0, 12.0) THEN
+        RETURN TRUE
+    ENDIF
+    IF g.Dual THEN
+        RETURN Overlap(x, y, w, h, g.PX - Dbl(DUAL_GAP), Dbl(PLAYER_Y), 12.0, 12.0)
+    ENDIF
+    RETURN FALSE
+END FUNCTION
+
+SUB (g AS POINTER TO Game) PlayerDies()
+    g.AddBoom(g.PX, Dbl(PLAYER_Y), TRUE)
+    g.Play(g.SndDie)
+    g.LoseFighter()
+END SUB
+
+
+' ======================== 11. STAGES ========================
+
+' A Challenging Stage arrives on stage 3 and then every fourth stage: 7,
+' 11, 15 and so on. Forty aliens fly through in patterns, never shoot, and
+' never stop -- shoot all forty and there is a 10,000 point bonus.
+FUNCTION IsChallengeStage(stage AS INTEGER) AS BOOLEAN
+    IF stage < CHALLENGE_FIRST THEN
+        RETURN FALSE
+    ENDIF
+    RETURN ((stage - CHALLENGE_FIRST) MOD CHALLENGE_EVERY) = 0
+END FUNCTION
+
+SUB (g AS POINTER TO Game) StartGame()
+    g.Score = 0
+    g.Lives = START_LIVES
+    g.NextExtra = EXTRA_FIRST
+    g.Stage = 0
+    g.Fired = 0
+    g.Hit = 0
+    g.Dual = FALSE
+    g.Captured = FALSE
+    g.RescueOn = FALSE
+    g.BeamIdx = -1
+    g.CapAnim = 0
+    g.CapBoss = -1
+    g.PX = Dbl(SCRW) / 2.0
+    g.St = GS_START
+    g.Timer = T_PLAYER
+    g.Play(g.SndStart)
+END SUB
+
+SUB (g AS POINTER TO Game) NextStage()
+    g.Stage = g.Stage + 1
+    g.Challenge = IsChallengeStage(g.Stage)
+    g.ChalHits = 0
+    g.BeamIdx = -1
+    g.Captured = FALSE
+
+    DIM noShots AS []Shot
+    DIM noBombs AS []Shot
+    g.Shots = noShots
+    g.Bombs = noBombs
+
+    g.NewWave()
+    g.Alive = TRUE
+    g.PX = Dbl(SCRW) / 2.0
+    g.St = GS_READY
+    g.Timer = T_STAGE
+END SUB
+
+' Respawn puts the next fighter on the line after you lose one.
+SUB (g AS POINTER TO Game) Respawned()
+    g.Alive = TRUE
+    g.Dual = FALSE
+    g.PX = Dbl(SCRW) / 2.0
+    DIM noBombs AS []Shot
+    g.Bombs = noBombs
+    g.St = GS_PLAY
+END SUB
+
+' UpdateEffects keeps the explosions, the floating scores, and a freed
+' fighter making its way back down to you.
+SUB (g AS POINTER TO Game) UpdateEffects()
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Booms) - 1
+        IF g.Booms[i].Live THEN
+            g.Booms[i].T = g.Booms[i].T + 1
+            DIM life AS INTEGER = 30
+            IF g.Booms[i].Player THEN
+                life = 60
+            ENDIF
+            IF g.Booms[i].T > life THEN
+                g.Booms[i].Live = FALSE
+            ENDIF
+        ENDIF
+    NEXT
+    DIM keepB AS []Boom
+    FOR i = 0 TO Len(g.Booms) - 1
+        IF g.Booms[i].Live THEN
+            keepB = APPEND(keepB, g.Booms[i])
+        ENDIF
+    NEXT
+    g.Booms = keepB
+
+    FOR i = 0 TO Len(g.Pops) - 1
+        IF g.Pops[i].Live THEN
+            g.Pops[i].T = g.Pops[i].T + 1
+            IF g.Pops[i].T > 48 THEN
+                g.Pops[i].Live = FALSE
+            ENDIF
+        ENDIF
+    NEXT
+    DIM keepP AS []Popup
+    FOR i = 0 TO Len(g.Pops) - 1
+        IF g.Pops[i].Live THEN
+            keepP = APPEND(keepP, g.Pops[i])
+        ENDIF
+    NEXT
+    g.Pops = keepP
+
+    ' The captured fighter climbing the beam.
+    IF g.CapAnim > 0 THEN
+        g.CapAnim = g.CapAnim - 1
+        IF g.CapAnim = 0 THEN
+            IF g.CapBoss >= 0 AND g.CapBoss < Len(g.Foe) THEN
+                g.Foe[g.CapBoss].Captive = TRUE
+            ENDIF
+            g.LoseFighter()
+        ENDIF
+    ENDIF
+
+    ' A rescued fighter drifts down to join you.
+    IF g.RescueOn THEN
+        g.RescueY = g.RescueY + 1.5
+        IF g.RescueX < g.PX THEN
+            g.RescueX = g.RescueX + 0.6
+        ENDIF
+        IF g.RescueX > g.PX THEN
+            g.RescueX = g.RescueX - 0.6
+        ENDIF
+        IF g.RescueY >= Dbl(PLAYER_Y) THEN
+            g.RescueOn = FALSE
+            IF g.Alive THEN
+                ' Two fighters, side by side, twice the firepower.
+                g.Dual = TRUE
+                IF g.PX < Dbl(PLAYER_MINX + DUAL_GAP) THEN
+                    g.PX = Dbl(PLAYER_MINX + DUAL_GAP)
+                ENDIF
+            ENDIF
+        ENDIF
+    ENDIF
+END SUB
+
+' RunWorld moves everything that is not the player: the aliens, the shots,
+' the formation's sway and the explosions. It runs while the stage banner is
+' still up as well as during play, which is why the wave can be seen flying
+' in behind the words.
+SUB (g AS POINTER TO Game) RunWorld()
+    g.UpdateFormation()
+    g.UpdateEnemies()
+    g.UpdateShots()
+    g.UpdateEffects()
+END SUB
+
+' StageDone asks whether there is anything left to shoot.
+FUNCTION StageDone(g AS POINTER TO Game) AS BOOLEAN
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Foe) - 1
+        IF g.Foe[i].St <> ES_GONE THEN
+            RETURN FALSE
+        ENDIF
+    NEXT
+    RETURN TRUE
+END FUNCTION
+
+
+' ======================== 12. DRAWING ========================
+
+' ScoreText turns a number into the digits shown on the display. A score of
+' nothing shows as "00", the way the arcade did it.
+FUNCTION ScoreText(n AS INTEGER) AS STRING
+    IF n <= 0 THEN
+        RETURN "00"
+    ENDIF
+    RETURN Str(n)
+END FUNCTION
+
+' EnemyImage picks the right picture for an alien: which creature it is,
+' which wing position it is on, and -- for a Boss Galaga -- whether it has
+' already taken a hit.
+FUNCTION EnemyImage(e AS POINTER TO Enemy) AS POINTER TO ebiten.Image
+    DIM frame AS INTEGER = (e.Anim / 12) MOD 2
+    SELECT CASE e.Kind
+        CASE E_BEE
+            RETURN ImgBee[frame]
+        CASE E_BUTTERFLY
+            RETURN ImgBut[frame]
+    END SELECT
+    IF e.Hits > 0 THEN
+        RETURN ImgBossHurt[frame]
+    ENDIF
+    RETURN ImgBossOK[frame]
+END FUNCTION
+
+' DrawBeam paints the tractor beam: a cone of light widening downward, made
+' of bands that slide down it so it looks alive.
+SUB (g AS POINTER TO Game) DrawBeam(screen AS POINTER TO ebiten.Image)
+    IF g.BeamIdx < 0 THEN
+        RETURN
+    ENDIF
+    DIM e AS POINTER TO Enemy = @g.Foe[g.BeamIdx]
+    IF e.St <> ES_BEAM THEN
+        RETURN
+    ENDIF
+    DIM ln AS DOUBLE = BeamLength(e)
+    IF ln <= 1.0 THEN
+        RETURN
+    ENDIF
+
+    DIM topY AS DOUBLE = e.Y + 6.0
+    DIM row AS INTEGER
+    DIM rows AS INTEGER = Int(ln)
+    FOR row = 0 TO rows - 1
+        DIM frac AS DOUBLE = Dbl(row) / ln
+        ' The cone starts narrow at the boss and opens out as it falls.
+        DIM halfW AS DOUBLE = 3.0 + (Dbl(BEAM_WIDTH) / 2.0 - 3.0) * frac
+        ' Bands of colour sliding downward.
+        DIM band AS INTEGER = ((row + g.Frame * 2) / 6) MOD 3
+        DIM clr AS color.RGBA = CBlue
+        IF band = 1 THEN
+            clr = CCyan
+        ENDIF
+        IF band = 2 THEN
+            clr = CDark
+        ENDIF
+        vector.DrawFilledRect(screen, Sng(e.X - halfW), Sng(topY + Dbl(row)), Sng(halfW * 2.0), Sng(1), clr, FALSE)
+    NEXT
+END SUB
+
+' FlagBreakdown works out which flags to show for a stage number. They are
+' worth 50, 30, 20, 10, 5 and 1 stage each, and the arcade always used as
+' few as possible -- so stage 37 is one 30, one 5 and two 1s, not 37 ones.
+FUNCTION FlagBreakdown(stage AS INTEGER) AS []INTEGER
+    DIM worths AS []INTEGER = []INTEGER{50, 30, 20, 10, 5, 1}
+    DIM remaining AS INTEGER = stage
+    DIM flags AS []INTEGER
+    DIM w AS INTEGER
+    FOR w = 0 TO Len(worths) - 1
+        WHILE remaining >= worths[w] AND Len(flags) < 16
+            flags = APPEND(flags, worths[w])
+            remaining = remaining - worths[w]
+        WEND
+    NEXT
+    RETURN flags
+END FUNCTION
+
+SUB (g AS POINTER TO Game) DrawHud(screen AS POINTER TO ebiten.Image)
+    ' "1UP" blinks, as it always did.
+    IF (g.Frame / 16) MOD 2 = 0 OR g.St = GS_ATTRACT THEN
+        DrawText(screen, "1UP", 24, 1, CRed)
+    ENDIF
+    DrawText(screen, "HIGH SCORE", 72, 1, CRed)
+
+    DIM sc AS STRING = ScoreText(g.Score)
+    DrawText(screen, sc, 64 - TextW(sc), 9, CWhite)
+    DIM hs AS STRING = ScoreText(g.HiScore)
+    DrawText(screen, hs, 112 - TextW(hs) / 2, 9, CWhite)
+
+    ' Spare fighters along the bottom left.
+    DIM i AS INTEGER
+    DIM shown AS INTEGER = g.Lives - 1
+    IF shown > 5 THEN
+        shown = 5
+    ENDIF
+    FOR i = 0 TO shown - 1
+        Blit(screen, ImgFighter, 2 + i * 16, SCRH - 17)
+    NEXT
+
+    ' Stage flags along the bottom right, biggest first.
+    DIM flags AS []INTEGER = FlagBreakdown(g.Stage)
+    DIM fx AS INTEGER = SCRW - 2 - Len(flags) * 8
+    FOR i = 0 TO Len(flags) - 1
+        Blit(screen, ImgFlag[flags[i]], fx + i * 8, SCRH - 16)
+    NEXT
+END SUB
+
+SUB (g AS POINTER TO Game) DrawWorld(screen AS POINTER TO ebiten.Image)
+    ' The beam goes behind everything, so the boss sits on top of it.
+    g.DrawBeam(screen)
+
+    ' The aliens.
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(g.Foe) - 1
+        DIM e AS POINTER TO Enemy = @g.Foe[i]
+        IF e.St = ES_GONE OR e.St = ES_WAIT THEN
+            CONTINUE FOR
+        ENDIF
+        IF e.St = ES_DYING THEN
+            CONTINUE FOR
+        ENDIF
+        BlitMid(screen, EnemyImage(e), e.X, e.Y, e.Ang)
+        ' A boss that has taken your fighter carries it slung underneath.
+        IF e.Captive THEN
+            BlitMid(screen, ImgFighter, e.X, e.Y + 16.0, e.Ang + 180.0)
+        ENDIF
+    NEXT
+
+    ' Your fighter, or both of them.
+    IF g.Alive THEN
+        BlitMid(screen, ImgFighter, g.PX, Dbl(PLAYER_Y), 0.0)
+        IF g.Dual THEN
+            BlitMid(screen, ImgFighter, g.PX - Dbl(DUAL_GAP), Dbl(PLAYER_Y), 0.0)
+        ENDIF
+    ENDIF
+
+    ' The captured fighter spinning its way up the beam.
+    IF g.CapAnim > 0 AND g.CapBoss >= 0 AND g.CapBoss < Len(g.Foe) THEN
+        DIM frac AS DOUBLE = Dbl(64 - g.CapAnim) / 64.0
+        DIM bx AS DOUBLE = g.Foe[g.CapBoss].X
+        DIM by AS DOUBLE = g.Foe[g.CapBoss].Y + 16.0
+        DIM cx AS DOUBLE = g.CapX + (bx - g.CapX) * frac
+        DIM cy AS DOUBLE = Dbl(PLAYER_Y) + (by - Dbl(PLAYER_Y)) * frac
+        BlitMid(screen, ImgFighter, cx, cy, Dbl(g.CapAnim) * 11.0)
+    ENDIF
+
+    ' A fighter on its way back to you after a rescue.
+    IF g.RescueOn THEN
+        BlitMid(screen, ImgFighter, g.RescueX, g.RescueY, 0.0)
+    ENDIF
+
+    ' Shots and bombs.
+    FOR i = 0 TO Len(g.Shots) - 1
+        IF g.Shots[i].Live THEN
+            BlitMid(screen, ImgShot, g.Shots[i].X, g.Shots[i].Y, 0.0)
+        ENDIF
+    NEXT
+    FOR i = 0 TO Len(g.Bombs) - 1
+        IF g.Bombs[i].Live THEN
+            BlitMid(screen, ImgBomb, g.Bombs[i].X, g.Bombs[i].Y, 0.0)
+        ENDIF
+    NEXT
+
+    ' Explosions.
+    FOR i = 0 TO Len(g.Booms) - 1
+        IF NOT g.Booms[i].Live THEN
+            CONTINUE FOR
+        ENDIF
+        IF g.Booms[i].Player THEN
+            DIM df AS INTEGER = g.Booms[i].T / 15
+            IF df > 3 THEN
+                df = 3
+            ENDIF
+            BlitMid(screen, ImgDeath[df], g.Booms[i].X, g.Booms[i].Y, 0.0)
+        ELSE
+            DIM ef AS INTEGER = g.Booms[i].T / 6
+            IF ef > 4 THEN
+                ef = 4
+            ENDIF
+            BlitMid(screen, ImgBoom[ef], g.Booms[i].X, g.Booms[i].Y, 0.0)
+        ENDIF
+    NEXT
+
+    ' The score that floats up where something big died.
+    FOR i = 0 TO Len(g.Pops) - 1
+        IF g.Pops[i].Live THEN
+            DIM t AS STRING = Str(g.Pops[i].Pts)
+            DrawText(screen, t, Int(g.Pops[i].X) - TextW(t) / 2, Int(g.Pops[i].Y) - 3, CCyan)
+        ENDIF
+    NEXT
+END SUB
+
+
+' --- The screens between the shooting ---
+
+SUB (g AS POINTER TO Game) DrawAttract(screen AS POINTER TO ebiten.Image)
+    DrawTextMid(screen, "GAGALA", 56, CCyan)
+    DrawTextMid(screen, "- SCORE TABLE -", 84, CYellow)
+
+    ' The arcade showed what everything was worth, with the creatures drawn
+    ' beside their prices. The right-hand column is what they are worth
+    ' while they are attacking, which is always more.
+    Blit(screen, ImgBee[0], 48, 100)
+    DrawText(screen, "50", 76, 105, CWhite)
+    DrawText(screen, "100", 124, 105, CWhite)
+
+    Blit(screen, ImgBut[0], 48, 122)
+    DrawText(screen, "80", 76, 127, CWhite)
+    DrawText(screen, "160", 124, 127, CWhite)
+
+    Blit(screen, ImgBossOK[0], 48, 144)
+    DrawText(screen, "150", 68, 149, CWhite)
+    DrawText(screen, "400", 124, 149, CWhite)
+    DrawText(screen, "800", 124, 163, CWhite)
+    DrawText(screen, "1600", 116, 177, CWhite)
+
+    IF (g.Frame / 24) MOD 2 = 0 THEN
+        DrawTextMid(screen, "PRESS 1 TO START", 210, CWhite)
+    ENDIF
+    DrawTextMid(screen, "DBASIC EDITION", 236, CBlue)
+END SUB
+
+SUB (g AS POINTER TO Game) DrawBanner(screen AS POINTER TO ebiten.Image)
+    SELECT CASE g.St
+        CASE GS_START
+            DrawTextMid(screen, "PLAYER 1", 140, CCyan)
+        CASE GS_READY
+            IF g.Challenge THEN
+                DrawTextMid(screen, "CHALLENGING STAGE", 140, CYellow)
+            ELSE
+                DrawTextMid(screen, "STAGE " & Str(g.Stage), 140, CCyan)
+            ENDIF
+        CASE GS_RESULT
+            DrawTextMid(screen, "NUMBER OF HITS", 120, CCyan)
+            DrawTextMid(screen, Str(g.ChalHits), 140, CWhite)
+            IF g.ChalHits >= ENEMY_COUNT THEN
+                DrawTextMid(screen, "PERFECT!!", 160, CYellow)
+                DrawTextMid(screen, "SPECIAL BONUS " & Str(SC_PERFECT), 176, CYellow)
+            ENDIF
+        CASE GS_OVER
+            DrawTextMid(screen, "GAME OVER", 130, CRed)
+            ' The arcade finished by telling you how well you had shot.
+            IF g.Timer < T_OVER / 2 THEN
+                DrawTextMid(screen, "SHOTS FIRED   " & Str(g.Fired), 160, CWhite)
+                DrawTextMid(screen, "NUMBER OF HITS " & Str(g.Hit), 174, CWhite)
+                DIM ratio AS INTEGER = 0
+                IF g.Fired > 0 THEN
+                    ratio = g.Hit * 100 / g.Fired
+                ENDIF
+                DrawTextMid(screen, "HIT-MISS RATIO " & Str(ratio) & " PERCENT", 188, CYellow)
+            ENDIF
+    END SELECT
+
+    IF g.Paused THEN
+        DrawTextMid(screen, "PAUSED", 140, CWhite)
+    ENDIF
+END SUB
+
+SUB (g AS POINTER TO Game) Draw(screen AS POINTER TO ebiten.Image)
+    screen.Fill(CBlack)
+    g.DrawStars(screen)
+
+    IF g.St = GS_ATTRACT THEN
+        g.DrawAttract(screen)
+    ELSE
+        g.DrawWorld(screen)
+    ENDIF
+
+    g.DrawHud(screen)
+    g.DrawBanner(screen)
+END SUB
+
+FUNCTION (g AS POINTER TO Game) Layout(ow AS INTEGER, oh AS INTEGER) AS (INTEGER, INTEGER)
+    RETURN SCRW, SCRH
+END FUNCTION
+
+
+' --- The high score, kept between games ---
+
+FUNCTION HiScoreFile() AS STRING
+    DIM home AS STRING
+    DIM err AS ERROR
+    home, err = os.UserHomeDir()
+    IF err <> NIL OR home = "" THEN
+        RETURN "gagala.ini"
+    ENDIF
+    RETURN filepath.Join(home, ".dbasic-gagala.ini")
+END FUNCTION
+
+SUB (g AS POINTER TO Game) LoadHi()
+    IF g.ScFile = "" THEN
+        g.ScFile = HiScoreFile()
+    ENDIF
+    IF NOT FileExists(g.ScFile) THEN
+        RETURN
+    ENDIF
+    DIM lines AS []STRING = strings.Split(ReadFile(g.ScFile), Chr(10))
+    DIM i AS INTEGER
+    FOR i = 0 TO Len(lines) - 1
+        DIM line AS STRING = Trim(lines[i])
+        DIM eq AS INTEGER = Instr(line, "=")
+        IF eq < 2 THEN
+            CONTINUE FOR
+        ENDIF
+        IF LCase(Trim(Left(line, eq - 1))) = "hiscore" THEN
+            DIM v AS INTEGER
+            DIM cerr AS ERROR
+            v, cerr = strconv.Atoi(Trim(Mid(line, eq + 1, Len(line) - eq)))
+            IF cerr = NIL AND v > 0 THEN
+                g.HiScore = v
+            ENDIF
+        ENDIF
+    NEXT
+END SUB
+
+SUB (g AS POINTER TO Game) SaveHi()
+    WriteFile(g.ScFile, "# DBasic Gagala" & Chr(10) & "hiscore=" & Str(g.HiScore) & Chr(10))
+END SUB
+
+
+' ======================== THE GAME LOOP ========================
+
+FUNCTION (g AS POINTER TO Game) Update() AS ERROR
+    IF inpututil.IsKeyJustPressed(ebiten.KeyEscape) THEN
+        g.SaveHi()
+        RETURN ebiten.Termination
+    ENDIF
+
+    g.Frame = g.Frame + 1
+    g.UpdateStars()
+
+    IF inpututil.IsKeyJustPressed(ebiten.KeyP) AND g.St <> GS_ATTRACT THEN
+        g.Paused = NOT g.Paused
+    ENDIF
+    IF g.Paused THEN
+        RETURN NIL
+    ENDIF
+
+    SELECT CASE g.St
+        CASE GS_ATTRACT
+            IF inpututil.IsKeyJustPressed(ebiten.Key1) THEN
+                g.Play(g.SndCoin)
+                g.StartGame()
+            ENDIF
+
+        CASE GS_START
+            g.Timer = g.Timer - 1
+            IF g.Timer <= 0 THEN
+                g.NextStage()
+            ENDIF
+
+        CASE GS_READY
+            ' The wave flies in behind the stage banner.
+            g.RunWorld()
+            g.Timer = g.Timer - 1
+            IF g.Timer <= 0 THEN
+                g.St = GS_PLAY
+            ENDIF
+
+        CASE GS_PLAY
+            g.UpdatePlayer()
+            g.RunWorld()
+            g.CheckHits()
+
+            ' Send out the next attack when its time comes. The wait gets
+            ' shorter as the stages go by, which is the whole of Galaga's
+            ' difficulty curve.
+            g.DiveTimer = g.DiveTimer - 1
+            IF g.DiveTimer <= 0 THEN
+                g.LaunchAttack()
+                DIM wait AS INTEGER = 150 - g.Stage * 8
+                IF wait < 45 THEN
+                    wait = 45
+                ENDIF
+                g.DiveTimer = wait + RndInt(40)
+            ENDIF
+
+            IF StageDone(g) THEN
+                IF g.Challenge THEN
+                    IF g.ChalHits >= ENEMY_COUNT THEN
+                        g.AddScore(SC_PERFECT)
+                    ENDIF
+                    g.St = GS_RESULT
+                    g.Timer = T_RESULT
+                ELSE
+                    g.St = GS_CLEAR
+                    g.Timer = T_CLEAR
+                ENDIF
+            ENDIF
+
+        CASE GS_DYING
+            g.RunWorld()
+            g.Timer = g.Timer - 1
+            IF g.Timer <= 0 THEN
+                g.Respawned()
+            ENDIF
+
+        CASE GS_CLEAR
+            g.RunWorld()
+            g.Timer = g.Timer - 1
+            IF g.Timer <= 0 THEN
+                g.NextStage()
+            ENDIF
+
+        CASE GS_RESULT
+            g.Timer = g.Timer - 1
+            IF g.Timer <= 0 THEN
+                g.NextStage()
+            ENDIF
+
+        CASE GS_OVER
+            g.RunWorld()
+            g.Timer = g.Timer - 1
+            IF g.Timer <= 0 THEN
+                g.SaveHi()
+                g.St = GS_ATTRACT
+            ENDIF
+    END SELECT
+
+    RETURN NIL
+END FUNCTION
+
+
+' ======================== 13. MAIN ========================
+
+SUB Main()
+    ' One audio context per program, and this is it.
+    GAudio = audio.NewContext(RATE)
+
+    InitArt()
+
+    DIM g AS Game
+    g.St = GS_ATTRACT
+    g.Sound = TRUE
+    g.BeamIdx = -1
+    g.PX = Dbl(SCRW) / 2.0
+    g.HiScore = 20000        ' the machine shipped with a target already on it
+    g.InitStars()
+    g.InitSounds()
+    g.LoadHi()
+
+    ' There is a wave on the attract screen so the sky is never empty.
+    g.Stage = 1
+    g.NewWave()
+
+    ' Draw at the arcade's own 224x288 and let Ebitengine scale it up.
+    DIM zoom AS INTEGER = 3
+    DIM args AS []STRING = os.Args
+    IF Len(args) > 1 THEN
+        DIM z AS INTEGER = Int(Val(args[1]))
+        IF z >= 1 AND z <= 6 THEN
+            zoom = z
+        ENDIF
+    ENDIF
+
+    ebiten.SetWindowSize(SCRW * zoom, SCRH * zoom)
+    ebiten.SetWindowTitle("Gagala")
+    ebiten.SetTPS(60)
+
+    DIM err AS ERROR = ebiten.RunGame(@g)
+    IF err <> NIL THEN
+        fmt.Println("Gagala stopped:", err)
+    ENDIF
+END SUB

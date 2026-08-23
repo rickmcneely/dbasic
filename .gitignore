@@ -10,6 +10,8 @@ examples/edit/main
 examples/games/gorillas/gorillas
 examples/games/bombsquad/bombsquad
 examples/games/bombsquad/bombsquad.exe
+examples/games/gagala/gagala
+examples/games/gagala/gagala.exe
 examples/games/pacman/pacman
 examples/games/pacman/pacman.exe
 examples/games/tictactoe/tictactoe
@@ -111,3 +113,6 @@ examples/DBtui/examples/StarWord/myTest.WSu
 
 # BombSquad score file if it ever falls back to the current folder
 bombsquad.ini
+
+# Gagala high score if it ever falls back to the current folder
+gagala.ini

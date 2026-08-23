@@ -412,6 +412,7 @@ The `examples/` directory contains sample programs:
 
 ### Games (`examples/games/`)
 - `bombsquad/` - BombSquad, the Windows minesweeping classic (Ebitengine)
+- `gagala/` - Gagala, the 1981 Namco arcade shooter (Ebitengine)
 - `pacman/` - PacMan with audio, ghosts and 2-player modes (Ebitengine)
 - `gorillas/` - The QBasic artillery game, in the terminal
 - `tictactoe/` - Web server tic-tac-toe game with cookies
