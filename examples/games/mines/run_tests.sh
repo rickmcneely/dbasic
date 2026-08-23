@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run the Minesweeper tests.
+# Run the BombSquad tests.
 #
 # mines.dbas is a single self-contained program, so to test its insides we
 # take a copy with its Main chopped off, glue mines_tests.dbas on the end

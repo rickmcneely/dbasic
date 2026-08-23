@@ -1,9 +1,12 @@
-# Minesweeper
+# BombSquad
 
-A faithful clone of the Minesweeper that shipped with Windows, written in
-DBasic and drawn with [Ebitengine](https://ebitengine.org/).
+The minesweeping game that shipped with Windows for twenty years, written
+in DBasic and drawn with [Ebitengine](https://ebitengine.org/).
 
-![Minesweeper](mines.png)
+Microsoft calls theirs Minesweeper, so ours is BombSquad — same game,
+different badge.
+
+![BombSquad](mines.png)
 
 ## Build and run
 
@@ -78,7 +81,7 @@ wrong and you will uncover a mine — the original worked the same way.
 Everything is stored in one small text file you can read or edit yourself:
 
 ```
-~/.dbasic-minesweeper.ini
+~/.dbasic-bombsquad.ini
 ```
 
 - **Sound effects**, generated as square waves at start-up rather than

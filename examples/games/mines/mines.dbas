@@ -1,13 +1,16 @@
 ' =============================================================================
-' MINESWEEPER - a faithful clone of the classic Windows "Minefield"
+' BOMBSQUAD - a minesweeping game in the style of the Windows classic
 ' =============================================================================
 '
 ' Written in DBasic, drawn with Ebitengine.
 '
 ' WHAT THIS PROGRAM IS
-'   This is the game that shipped with Windows for twenty years: a grid of
-'   covered squares, some of which hide mines. Uncover every square that is
-'   NOT a mine and you win. Uncover a mine and the game is over.
+'   BombSquad plays the game that shipped with Windows for twenty years: a
+'   grid of covered squares, some of which hide mines. Uncover every square
+'   that is NOT a mine and you win. Uncover a mine and the game is over.
+'
+'   (The Windows one is called Minesweeper. That name is Microsoft's, so
+'   ours is BombSquad -- same game, different badge.)
 '
 '   Everything the original did, this does:
 '     * Beginner / Intermediate / Expert / Custom board sizes
@@ -931,7 +934,7 @@ END SUB
 '
 ' The file is ordinary text, so you can open it in any editor:
 '
-'     # DBasic Minesweeper high scores
+'     # DBasic BombSquad high scores
 '     beginner=12|Rick|2026-08-22
 '     expert=214|Rick|2026-08-19
 '
@@ -944,9 +947,9 @@ FUNCTION ScoreFile() AS STRING
     DIM err AS ERROR
     home, err = os.UserHomeDir()
     IF err <> NIL OR home = "" THEN
-        RETURN "minesweeper.ini"        ' fall back to the current folder
+        RETURN "bombsquad.ini"          ' fall back to the current folder
     ENDIF
-    RETURN filepath.Join(home, ".dbasic-minesweeper.ini")
+    RETURN filepath.Join(home, ".dbasic-bombsquad.ini")
 END FUNCTION
 
 ' LevelKey is the short word used for a difficulty inside the score file.
@@ -1091,7 +1094,7 @@ END FUNCTION
 ' SaveScores writes the three tables (and the menu options) back out to disk.
 SUB (g AS POINTER TO Game) SaveScores()
     DIM sb AS []STRING
-    APPEND(sb, "# DBasic Minesweeper high scores")
+    APPEND(sb, "# DBasic BombSquad high scores")
     APPEND(sb, "# level=seconds|name|date")
     APPEND(sb, "marks=" & OnOff(g.UseMarks))
     APPEND(sb, "color=" & OnOff(g.UseColor))
@@ -1322,7 +1325,7 @@ END SUB
 ' top left corner. Moving a mine changes the neighbour counts, so those all
 ' have to be worked out again afterwards.
 '
-' A side effect is that Minesweeper boards have very slightly more mines
+' A side effect is that boards laid this way have very slightly more mines
 ' near the top left than anywhere else. We have kept the quirk.
 SUB (g AS POINTER TO Game) BeginPlay(at AS INTEGER)
     g.Started = TRUE
@@ -1661,7 +1664,7 @@ SUB (g AS POINTER TO Game) OpenMenu(which AS INTEGER)
         APPEND(items, MkItem("Contents", "F1", MI_HELP, FALSE))
         APPEND(items, MkItem("How to play", "", MI_HELP, FALSE))
         APPEND(items, MkSep())
-        APPEND(items, MkItem("About Minesweeper...", "", MI_ABOUT, FALSE))
+        APPEND(items, MkItem("About BombSquad...", "", MI_ABOUT, FALSE))
     ENDIF
     g.MenuItems = items
     g.MenuOpen = which
@@ -2689,11 +2692,11 @@ FUNCTION DlgTitle(which AS INTEGER) AS STRING
         CASE DLG_CUSTOM
             RETURN "Custom Field"
         CASE DLG_TIMES
-            RETURN "Fastest Mine Sweepers"
+            RETURN "Fastest Bomb Squads"
         CASE DLG_NAME
             RETURN "Congratulations"
         CASE DLG_ABOUT
-            RETURN "About Minesweeper"
+            RETURN "About BombSquad"
         CASE DLG_HELP
             RETURN "How To Play"
     END SELECT
@@ -2778,11 +2781,11 @@ SUB (g AS POINTER TO Game) DrawDialog(screen AS POINTER TO ebiten.Image)
 
         CASE DLG_ABOUT
             DIM ab AS []STRING
-            APPEND(ab, "Minesweeper")
+            APPEND(ab, "BombSquad")
             APPEND(ab, "")
-            APPEND(ab, "A clone of the Windows classic,")
-            APPEND(ab, "written in DBasic and drawn with")
-            APPEND(ab, "Ebitengine.")
+            APPEND(ab, "A minesweeping game in the style")
+            APPEND(ab, "of the Windows classic, written in")
+            APPEND(ab, "DBasic and drawn with Ebitengine.")
             APPEND(ab, "")
             APPEND(ab, "High scores are kept in:")
             ' A long home folder would run off the edge, so show the tail end.
@@ -2913,13 +2916,13 @@ SUB Main()
         g.StartLevel(LV_BEGINNER)
     ENDIF
 
-    ebiten.SetWindowTitle("Minesweeper")
+    ebiten.SetWindowTitle("BombSquad")
     ebiten.SetTPS(60)
 
     ' RunGame hands control over to Ebitengine, which from now on calls our
     ' Update, Draw and Layout routines until the window is closed.
     DIM err AS ERROR = ebiten.RunGame(@g)
     IF err <> NIL THEN
-        fmt.Println("Minesweeper stopped:", err)
+        fmt.Println("BombSquad stopped:", err)
     ENDIF
 END SUB

@@ -1,5 +1,5 @@
 ' =============================================================================
-' TESTS FOR MINESWEEPER
+' TESTS FOR BOMBSQUAD
 ' =============================================================================
 '
 ' This file is not a program on its own. run_tests.sh glues it onto the end
@@ -106,7 +106,7 @@ SUB Main()
     g.MenuOpen = -1
     g.Dlg = DLG_NONE
     g.PressIdx = -1
-    g.ScFile = filepath.Join(os.TempDir(), "dbasic-mines-test-scores.ini")
+    g.ScFile = filepath.Join(os.TempDir(), "dbasic-bombsquad-test-scores.ini")
 
     fmt.Println("--- board setup ---")
     g.StartLevel(LV_BEGINNER)
