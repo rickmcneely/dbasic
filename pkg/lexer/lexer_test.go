@@ -507,3 +507,35 @@ func TestColumnsConsistentAcrossLines(t *testing.T) {
 			first.Column, tok.Column)
 	}
 }
+
+// A token reports the column it STARTS at. Names, numbers and strings are
+// read character by character, so the cursor is past them by the time the
+// token is finished; recording the column then pointed at the character
+// AFTER the token, which put the caret in error messages just past the
+// thing it was complaining about.
+func TestTokenColumnIsTokenStart(t *testing.T) {
+	//            1234567890123
+	l := New(`  total = "hi" + 42`)
+
+	tests := []struct {
+		lit string
+		col int
+	}{
+		{"total", 3},  // starts at column 3
+		{"=", 9},      // the single character at column 9
+		{"hi", 11},    // the opening quote is at column 11
+		{"+", 16},     // ...
+		{"42", 18},    //
+	}
+
+	for _, want := range tests {
+		tok := l.NextToken()
+		if tok.Literal != want.lit {
+			t.Fatalf("expected token %q, got %q", want.lit, tok.Literal)
+		}
+		if tok.Column != want.col {
+			t.Errorf("token %q: column %d, want %d (the column it starts at)",
+				want.lit, tok.Column, want.col)
+		}
+	}
+}

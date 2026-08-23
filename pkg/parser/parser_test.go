@@ -849,3 +849,62 @@ CONTINUE = CONTINUE + 1`
 		t.Errorf("CONTINUE used as a name was parsed as a CONTINUE statement")
 	}
 }
+
+// --- front-end papercuts, each with a repro that used to fail -------------
+
+// `RETURN` on its own, with a comment after it, is still a bare return.
+// The parser used to try to read the comment as the value being returned.
+func TestBareReturnWithTrailingComment(t *testing.T) {
+	input := "SUB Maybe(skip AS BOOLEAN)\nIF skip THEN\nRETURN            ' nothing to do\nENDIF\nEND SUB"
+
+	l := lexer.New(input)
+	p := New(l)
+	p.ParseProgram()
+	checkParserErrors(t, p)
+}
+
+// A package's own name is the obvious alias for it, and several package
+// names collide with DBasic keywords. `IMPORT "bytes" AS bytes` used to be
+// rejected outright.
+func TestImportAliasMayBeAKeyword(t *testing.T) {
+	for _, in := range []string{
+		`IMPORT "bytes" AS bytes`,
+		`IMPORT "strings" AS strings`,
+		`IMPORT "go/types" AS type`,
+	} {
+		l := lexer.New(in)
+		p := New(l)
+		program := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Errorf("%s: %v", in, p.Errors())
+			continue
+		}
+		if len(program.Statements) != 1 {
+			t.Errorf("%s: expected one statement, got %d", in, len(program.Statements))
+		}
+	}
+}
+
+// After a dot a reserved word can only be a member name, so every keyword
+// has to be allowed there. `filepath.Base(...)` used to fail to parse
+// because BASE -- from OPTION BASE -- was missing from a hand-written list.
+func TestKeywordsWorkAsMemberNames(t *testing.T) {
+	for _, in := range []string{
+		`x = filepath.Base(p)`,
+		`x = obj.Type()`,
+		`x = obj.String()`,
+		`x = obj.Step`,
+		`x = obj.Continue`,
+		`x = obj.Select`,
+		`x = obj.Case`,
+		`x = obj.Loop`,
+		`x = obj.Static`,
+	} {
+		l := lexer.New(in)
+		p := New(l)
+		p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Errorf("%s: %v", in, p.Errors())
+		}
+	}
+}

@@ -82,8 +82,15 @@ func (l *Lexer) NextToken() Token {
 
 	l.skipWhitespace()
 
-	tok.Line = l.line
-	tok.Column = l.column
+	// Where this token begins. Tokens made of several characters -- names,
+	// numbers, strings -- only know their extent after they have been read,
+	// by which time the cursor has moved past them. Remembering the start
+	// here means such a token reports the column it STARTS at, so an error
+	// caret points at the token rather than just past it.
+	startLine, startCol := l.line, l.column
+
+	tok.Line = startLine
+	tok.Column = startCol
 
 	switch l.ch {
 	case '=':
@@ -163,7 +170,6 @@ func (l *Lexer) NextToken() Token {
 		}
 		// `...` variadic spread: three dots in a row.
 		if l.peekChar() == '.' && l.readPosition+1 < len(l.input) && l.input[l.readPosition+1] == '.' {
-			startCol := l.column
 			l.readChar() // move onto the 2nd dot
 			l.readChar() // move onto the 3rd dot
 			tok = Token{Type: TOKEN_ELLIPSIS, Literal: "...", Line: l.line, Column: startCol}
@@ -173,8 +179,8 @@ func (l *Lexer) NextToken() Token {
 	case '"':
 		tok.Type = TOKEN_STRING
 		tok.Literal = l.readString()
-		tok.Line = l.line
-		tok.Column = l.column
+		tok.Line = startLine
+		tok.Column = startCol
 		return tok
 	case '\'':
 		// Comment - read until end of line
@@ -193,8 +199,8 @@ func (l *Lexer) NextToken() Token {
 				l.readChar() // skip B
 				tok.Type = TOKEN_BYTE_STRING
 				tok.Literal = l.readString()
-				tok.Line = l.line
-				tok.Column = l.column
+				tok.Line = startLine
+				tok.Column = startCol
 				return tok
 			}
 			tok.Literal = l.readIdentifier()
@@ -214,8 +220,8 @@ func (l *Lexer) NextToken() Token {
 				return tok
 			}
 			tok.Type = LookupIdent(strings.ToUpper(tok.Literal))
-			tok.Line = l.line
-			tok.Column = l.column
+			tok.Line = startLine
+			tok.Column = startCol
 			return tok
 		} else if isDigit(l.ch) {
 			tok.Literal = l.readNumber()
@@ -224,8 +230,8 @@ func (l *Lexer) NextToken() Token {
 			} else {
 				tok.Type = TOKEN_INT
 			}
-			tok.Line = l.line
-			tok.Column = l.column
+			tok.Line = startLine
+			tok.Column = startCol
 			return tok
 		} else {
 			tok = l.newToken(TOKEN_ILLEGAL, l.ch)

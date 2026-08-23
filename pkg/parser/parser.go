@@ -407,9 +407,15 @@ func (p *Parser) parseImportStatement() *ImportStatement {
 	stmt.Package = p.curToken.Literal
 
 	// Check for optional AS alias (only if we didn't already get blank import)
+	//
+	// The alias accepts the reserved words that are allowed as names
+	// elsewhere, so `IMPORT "bytes" AS bytes` works -- the obvious alias for
+	// a package is usually its own name, and refusing it was a nasty
+	// surprise for exactly the packages whose names we happen to use as
+	// keywords (bytes, strings).
 	if stmt.Alias == "" && p.peekTokenIs(lexer.TOKEN_AS) {
 		p.nextToken()
-		if !p.expectPeek(lexer.TOKEN_IDENT) {
+		if !p.expectPeekIdentLike() {
 			return nil
 		}
 		stmt.Alias = p.curToken.Literal
@@ -1394,7 +1400,11 @@ func (p *Parser) parseReturnStatement() *ReturnStatement {
 
 	p.nextToken()
 
-	if p.curTokenIs(lexer.TOKEN_NEWLINE) || p.curTokenIs(lexer.TOKEN_EOF) {
+	// A bare RETURN ends the statement. A trailing comment ends it too --
+	// `RETURN   ' why` is a bare return, not a return of something called
+	// "' why" -- so COMMENT has to count as end-of-statement here alongside
+	// NEWLINE and EOF.
+	if p.curTokenIs(lexer.TOKEN_NEWLINE) || p.curTokenIs(lexer.TOKEN_EOF) || p.curTokenIs(lexer.TOKEN_COMMENT) {
 		return stmt
 	}
 
@@ -2323,32 +2333,10 @@ func (p *Parser) expectPeekIdentLike() bool {
 	return false
 }
 
-// isKeywordToken returns true if the token type is a keyword that can be used as a member name
+// isKeywordToken returns true if the token type is a keyword that can be
+// used as a member name. After a dot there is no ambiguity -- a reserved
+// word can only be a name there -- so every keyword qualifies, and asking
+// the lexer means this can never fall behind the keyword list.
 func (p *Parser) isKeywordToken(t lexer.TokenType) bool {
-	switch t {
-	case lexer.TOKEN_STRING_TYPE, lexer.TOKEN_INTEGER, lexer.TOKEN_LONG,
-		lexer.TOKEN_SINGLE, lexer.TOKEN_DOUBLE, lexer.TOKEN_BOOLEAN,
-		lexer.TOKEN_TYPE, lexer.TOKEN_TRUE, lexer.TOKEN_FALSE,
-		lexer.TOKEN_NIL, lexer.TOKEN_AND, lexer.TOKEN_OR, lexer.TOKEN_NOT,
-		lexer.TOKEN_IF, lexer.TOKEN_THEN, lexer.TOKEN_ELSE, lexer.TOKEN_END,
-		lexer.TOKEN_FOR, lexer.TOKEN_NEXT, lexer.TOKEN_WHILE, lexer.TOKEN_DO,
-		lexer.TOKEN_RETURN, lexer.TOKEN_SELECT, lexer.TOKEN_CASE,
-		lexer.TOKEN_SUB, lexer.TOKEN_FUNCTION, lexer.TOKEN_DIM,
-		lexer.TOKEN_PRINT, lexer.TOKEN_INPUT, lexer.TOKEN_EXIT,
-		lexer.TOKEN_CONTINUE,
-		lexer.TOKEN_IMPORT, lexer.TOKEN_AS, lexer.TOKEN_TO, lexer.TOKEN_STEP,
-		lexer.TOKEN_BYTES, lexer.TOKEN_ERROR_TYPE, lexer.TOKEN_JSON,
-		lexer.TOKEN_BSTRING, lexer.TOKEN_ANY, lexer.TOKEN_POINTER,
-		lexer.TOKEN_CHAN, lexer.TOKEN_OF, lexer.TOKEN_FROM,
-		lexer.TOKEN_LET, lexer.TOKEN_CONST, lexer.TOKEN_GOTO,
-		lexer.TOKEN_LOOP, lexer.TOKEN_UNTIL, lexer.TOKEN_WEND,
-		lexer.TOKEN_ELSEIF, lexer.TOKEN_ENDIF, lexer.TOKEN_BYREF,
-		lexer.TOKEN_BYVAL, lexer.TOKEN_XOR, lexer.TOKEN_MOD,
-		lexer.TOKEN_EMBED, lexer.TOKEN_IMPLEMENTS, lexer.TOKEN_INCLUDE,
-		lexer.TOKEN_SPAWN, lexer.TOKEN_SEND, lexer.TOKEN_RECEIVE,
-		lexer.TOKEN_MAKE_CHAN:
-		return true
-	default:
-		return false
-	}
+	return lexer.IsKeywordToken(t)
 }

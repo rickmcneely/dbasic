@@ -313,6 +313,194 @@ func (g *Generator) collectImports() {
 
 // runtimeFuncDefs contains the Go source for runtime functions
 var runtimeFuncDefs = map[string]string{
+	"Join": `// Join glues a list of strings together with a separator between each
+func Join(parts []string, sep string) string {
+	return strings.Join(parts, sep)
+}`,
+	"AppendFile": `// AppendFile adds text to the end of a file, creating it if needed
+func AppendFile(path, content string) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(content)
+}`,
+	"Atn": `// Atn returns the arctangent in radians
+func Atn(val float64) float64 {
+	return math.Atan(val)
+}`,
+	"Atn2": `// Atn2 returns the arctangent of y/x, using the signs to find the quadrant
+func Atn2(y, x float64) float64 {
+	return math.Atan2(y, x)
+}`,
+	"Bool": `// Bool converts a value to a boolean; zero and empty are false
+func Bool(val interface{}) bool {
+	switch v := val.(type) {
+	case bool:
+		return v
+	case int:
+		return v != 0
+	case int32:
+		return v != 0
+	case int64:
+		return v != 0
+	case float64:
+		return v != 0
+	case float32:
+		return v != 0
+	case string:
+		return v != ""
+	}
+	return val != nil
+}`,
+	"Ceil": `// Ceil rounds up
+func Ceil(val float64) int64 {
+	return int64(math.Ceil(val))
+}`,
+	"Clamp": `// Clamp holds a value between a low and a high limit
+func Clamp(val, lo, hi float64) float64 {
+	if val < lo {
+		return lo
+	}
+	if val > hi {
+		return hi
+	}
+	return val
+}`,
+	"Date": `// Date returns the current date as YYYY-MM-DD
+func Date() string {
+	return time.Now().Format("2006-01-02")
+}`,
+	"Day": `// Day returns the current day of the month
+func Day() int {
+	return time.Now().Day()
+}`,
+	"DeleteFile": `// DeleteFile removes a file
+func DeleteFile(path string) {
+	os.Remove(path)
+}`,
+	"Exp": `// Exp returns e raised to the given power
+func Exp(val float64) float64 {
+	return math.Exp(val)
+}`,
+	"Fix": `// Fix truncates towards zero
+func Fix(val float64) int64 {
+	return int64(math.Trunc(val))
+}`,
+	"Floor": `// Floor rounds down
+func Floor(val float64) int64 {
+	return int64(math.Floor(val))
+}`,
+	"Hour": `// Hour returns the current hour, 0 to 23
+func Hour() int {
+	return time.Now().Hour()
+}`,
+	"LTrim": `// LTrim removes leading whitespace
+func LTrim(s string) string {
+	return strings.TrimLeft(s, " \t\r\n")
+}`,
+	"Log": `// Log returns the natural logarithm
+func Log(val float64) float64 {
+	return math.Log(val)
+}`,
+	"Log10": `// Log10 returns the base-10 logarithm
+func Log10(val float64) float64 {
+	return math.Log10(val)
+}`,
+	"Max": `// Max returns the larger of two numbers
+func Max(a, b float64) float64 {
+	return math.Max(a, b)
+}`,
+	"Min": `// Min returns the smaller of two numbers
+func Min(a, b float64) float64 {
+	return math.Min(a, b)
+}`,
+	"Minute": `// Minute returns the current minute
+func Minute() int {
+	return time.Now().Minute()
+}`,
+	"MkDir": `// MkDir creates a directory, including any parents
+func MkDir(path string) {
+	os.MkdirAll(path, 0755)
+}`,
+	"Month": `// Month returns the current month, 1 to 12
+func Month() int {
+	return int(time.Now().Month())
+}`,
+	"Now": `// Now returns the current Unix time in seconds
+func Now() int64 {
+	return time.Now().Unix()
+}`,
+	"PI": `// PI returns pi
+func PI() float64 {
+	return math.Pi
+}`,
+	"Pow": `// Pow raises x to the power y
+func Pow(x, y float64) float64 {
+	return math.Pow(x, y)
+}`,
+	"RTrim": `// RTrim removes trailing whitespace
+func RTrim(s string) string {
+	return strings.TrimRight(s, " \t\r\n")
+}`,
+	"Randomize": `// Randomize seeds the random number generator
+func Randomize(seed int64) {
+	rand.Seed(seed)
+}`,
+	"Replace": `// Replace swaps every occurrence of one substring for another
+func Replace(s, old, new string) string {
+	return strings.ReplaceAll(s, old, new)
+}`,
+	"RmDir": `// RmDir removes a directory and everything in it
+func RmDir(path string) {
+	os.RemoveAll(path)
+}`,
+	"RndRange": `// RndRange returns a random integer from min to max inclusive
+func RndRange(min, max int) int {
+	if max <= min {
+		return min
+	}
+	return min + rand.Intn(max-min+1)
+}`,
+	"Round": `// Round rounds to the nearest whole number
+func Round(val float64) int64 {
+	return int64(math.Round(val))
+}`,
+	"Second": `// Second returns the current second
+func Second() int {
+	return time.Now().Second()
+}`,
+	"Sgn": `// Sgn returns -1, 0 or 1 according to the sign
+func Sgn(val float64) int {
+	if val > 0 {
+		return 1
+	}
+	if val < 0 {
+		return -1
+	}
+	return 0
+}`,
+	"Space": `// Space returns a string of n spaces
+func Space(n int) string {
+	if n < 0 {
+		return ""
+	}
+	return strings.Repeat(" ", n)
+}`,
+	"Tan": `// Tan returns the tangent
+func Tan(val float64) float64 {
+	return math.Tan(val)
+}`,
+	"Timer": `// Timer returns seconds elapsed since midnight
+func Timer() float64 {
+	n := time.Now()
+	return float64(n.Hour()*3600+n.Minute()*60+n.Second()) + float64(n.Nanosecond())/1e9
+}`,
+	"Year": `// Year returns the current year
+func Year() int {
+	return time.Now().Year()
+}`,
 	"Int": `// Int converts to int.
 func Int(val interface{}) int {
 	switch v := val.(type) {
@@ -827,6 +1015,41 @@ func BitShr(a, b interface{}) int { return Int(a) >> uint(Int(b)) }`,
 
 // runtimeFuncImports maps runtime functions to required imports
 var runtimeFuncImports = map[string][]string{
+	"Str": {"fmt"},
+	"Join": {"strings"},
+	"AppendFile": {"os"},
+	"Atn": {"math"},
+	"Atn2": {"math"},
+	"Ceil": {"math"},
+	"Date": {"time"},
+	"Day": {"time"},
+	"DeleteFile": {"os"},
+	"Exp": {"math"},
+	"Fix": {"math"},
+	"Floor": {"math"},
+	"Hour": {"time"},
+	"LTrim": {"strings"},
+	"Log": {"math"},
+	"Log10": {"math"},
+	"Max": {"math"},
+	"Min": {"math"},
+	"Minute": {"time"},
+	"MkDir": {"os"},
+	"Month": {"time"},
+	"Now": {"time"},
+	"PI": {"math"},
+	"Pow": {"math"},
+	"RTrim": {"strings"},
+	"Randomize": {"math/rand"},
+	"Replace": {"strings"},
+	"RmDir": {"os"},
+	"RndRange": {"math/rand"},
+	"Round": {"math"},
+	"Second": {"time"},
+	"Space": {"strings"},
+	"Tan": {"math"},
+	"Timer": {"time"},
+	"Year": {"time"},
 	"Sleep":          {"time"},
 	"Sqr":            {"math"},
 	"Abs":            {"math"},

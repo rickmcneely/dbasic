@@ -776,3 +776,73 @@ END SUB`)
 		t.Errorf("imports are not sorted by path, got:\n%s", code)
 	}
 }
+
+// --- the analyzer and the code generator must agree ------------------------
+
+// Every name `dbasic check` accepts has to be a name the code generator can
+// actually emit. When these two lists drifted apart, a program using
+// Randomize, Now, Date, Replace or PI passed check and then failed the Go
+// build with "not defined" -- an error pointing at generated code for a
+// function the user was told existed.
+func TestEveryBuiltinCanBeEmitted(t *testing.T) {
+	// The ones the generator rewrites into something else rather than
+	// emitting a helper for. NewError and Errorf become the ...Func
+	// variants that carry the file and line of the call site; Printf and
+	// Sprintf become fmt.Printf and fmt.Sprintf directly.
+	emittedInline := map[string]bool{
+		"NewError": true,
+		"Errorf":   true,
+		"Printf":   true,
+		"Sprintf":  true,
+	}
+
+	var missing []string
+	for _, name := range analyzer.BuiltinNames() {
+		if emittedInline[name] {
+			continue
+		}
+		if _, ok := runtimeFuncDefs[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+
+	if len(missing) > 0 {
+		t.Errorf("these builtins pass `dbasic check` but the generator has no way to emit them,\n"+
+			"so any program using one fails `go build`: %v\n"+
+			"Add a definition to runtimeFuncDefs (and any imports it needs to\n"+
+			"runtimeFuncImports), or add it to emittedInline above if the\n"+
+			"generator rewrites it into something else.", missing)
+	}
+}
+
+// A helper that needs an import must declare it, or the generated file will
+// not compile either.
+func TestBuiltinHelperImportsAreDeclared(t *testing.T) {
+	needs := map[string]string{
+		"math.":   "math",
+		"strings.": "strings",
+		"strconv.": "strconv",
+		"time.":   "time",
+		"os.":     "os",
+		"rand.":   "math/rand",
+		"fmt.":    "fmt",
+	}
+
+	for name, def := range runtimeFuncDefs {
+		for prefix, pkg := range needs {
+			if !strings.Contains(def, prefix) {
+				continue
+			}
+			var found bool
+			for _, imp := range runtimeFuncImports[name] {
+				if imp == pkg {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("runtime helper %q uses %s but does not list %q in runtimeFuncImports",
+					name, prefix, pkg)
+			}
+		}
+	}
+}

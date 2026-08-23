@@ -57,6 +57,7 @@ func (a *Analyzer) registerBuiltins() {
 	a.addBuiltin("Asc", []*Type{StringType}, []*Type{IntegerType})
 	a.addBuiltin("Chr", []*Type{IntegerType}, []*Type{StringType})
 	a.addBuiltin("Space", []*Type{IntegerType}, []*Type{StringType})
+	a.addBuiltin("Join", []*Type{NewSliceType(StringType), StringType}, []*Type{StringType})
 
 	// Type conversion
 	a.addBuiltin("Int", []*Type{AnyType}, []*Type{IntegerType})
@@ -166,7 +167,32 @@ func (a *Analyzer) registerBuiltins() {
 	a.addBuiltin("JSONToStruct", []*Type{JSONType, AnyType}, []*Type{AnyType})
 }
 
+// builtinNames is every name registered by registerBuiltins, in the order
+// they were added. It exists so a test can walk the list and check the code
+// generator can actually emit each one -- the two lists used to drift, and
+// a program could pass `dbasic check` and then fail `go build` with
+// "Randomize is not defined".
+var builtinNames []string
+var builtinSeen = map[string]bool{}
+
+func recordBuiltinName(name string) {
+	if builtinSeen[name] {
+		return
+	}
+	builtinSeen[name] = true
+	builtinNames = append(builtinNames, name)
+}
+
+// BuiltinNames returns the names of all built-in functions the analyzer
+// accepts.
+func BuiltinNames() []string {
+	out := make([]string, len(builtinNames))
+	copy(out, builtinNames)
+	return out
+}
+
 func (a *Analyzer) addBuiltin(name string, params []*Type, returns []*Type) {
+	recordBuiltinName(name)
 	var symType *Type
 	if len(returns) > 0 {
 		symType = NewFunctionType(params, returns)
@@ -183,6 +209,7 @@ func (a *Analyzer) addBuiltin(name string, params []*Type, returns []*Type) {
 }
 
 func (a *Analyzer) addVariadicBuiltin(name string, params []*Type, returns []*Type) {
+	recordBuiltinName(name)
 	var symType *Type
 	if len(returns) > 0 {
 		symType = NewVariadicFunctionType(params, returns)
@@ -213,6 +240,12 @@ func (a *Analyzer) getSourceLine(lineNum int) string {
 
 // Analyze performs semantic analysis on the program
 func (a *Analyzer) Analyze(program *parser.Program) (*SymbolTable, []string) {
+	// A caller that ignored the parser's errors hands us nil. Report that
+	// rather than crashing: a nil program means parsing already failed, and
+	// a panic here buries the real error under a stack trace.
+	if program == nil {
+		return a.symbols, []string{"nothing to analyse: the source did not parse"}
+	}
 	a.program = program
 
 	// First pass: collect all imports (must be before type declarations)

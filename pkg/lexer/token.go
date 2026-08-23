@@ -378,6 +378,27 @@ func (t Token) String() string {
 }
 
 // LookupIdent checks if an identifier is a keyword
+// keywordTokens is the set of token types that come from a reserved word.
+// It is built from Keywords so it can never drift out of step with it.
+var keywordTokens = func() map[TokenType]bool {
+	m := make(map[TokenType]bool, len(Keywords))
+	for _, t := range Keywords {
+		m[t] = true
+	}
+	return m
+}()
+
+// IsKeywordToken reports whether a token type came from a reserved word.
+//
+// This exists so the parser can accept any keyword where a keyword cannot
+// possibly be meant -- after a dot, for instance, where `obj.Base` and
+// `obj.Type` are plainly member names and nothing else. Listing those
+// keywords by hand went stale the moment a new one was added, which is how
+// `filepath.Base` came to be unparseable.
+func IsKeywordToken(t TokenType) bool {
+	return keywordTokens[t]
+}
+
 func LookupIdent(ident string) TokenType {
 	if tok, ok := Keywords[ident]; ok {
 		return tok
