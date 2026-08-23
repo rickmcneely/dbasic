@@ -8,8 +8,8 @@ examples/edit/edit
 examples/edit/edit_dbas
 examples/edit/main
 examples/games/gorillas/gorillas
-examples/games/mines/mines
-examples/games/mines/mines.exe
+examples/games/bombsquad/bombsquad
+examples/games/bombsquad/bombsquad.exe
 examples/games/pacman/pacman
 examples/games/pacman/pacman.exe
 examples/games/tictactoe/tictactoe
@@ -109,5 +109,5 @@ examples/DBtui/examples/StarWord/dist/*.pdf
 examples/DBtui/examples/StarWord/untitled.*
 examples/DBtui/examples/StarWord/myTest.WSu
 
-# Minesweeper score file if it ever falls back to the current folder
-minesweeper.ini
+# BombSquad score file if it ever falls back to the current folder
+bombsquad.ini

@@ -182,7 +182,7 @@ All examples are commented for beginning BASIC programmers. Tutorial progression
 
 Project examples: `contacts/` (SQLite app), `edit/` (DOS editor clone), `curl_example/` (HTTP client), `termserve/` (**TermApp** host — serves any DBasic TUI over authenticated SSH, written in DBasic; see `docs/REMOTE_SERVING.md`)
 
-Games all live under `examples/games/`: `mines/` (BombSquad — a Minesweeper-style game; Ebitengine, mouse/menus/dialogs/high scores/sound), `pacman/` (Ebitengine game with audio/multiplayer), `gorillas/` (terminal game), `tictactoe/` (web server).
+Games all live under `examples/games/`: `bombsquad/` (BombSquad — a Minesweeper-style game; Ebitengine, mouse/menus/dialogs/high scores/sound), `pacman/` (Ebitengine game with audio/multiplayer), `gorillas/` (terminal game), `tictactoe/` (web server).
 
 ## Ebitengine Game Pattern
 

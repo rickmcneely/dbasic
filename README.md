@@ -411,7 +411,7 @@ The `examples/` directory contains sample programs:
 - `vdbterm/` - Visual Basic-style IDE for terminal UI apps
 
 ### Games (`examples/games/`)
-- `mines/` - BombSquad, the Windows minesweeping classic (Ebitengine)
+- `bombsquad/` - BombSquad, the Windows minesweeping classic (Ebitengine)
 - `pacman/` - PacMan with audio, ghosts and 2-player modes (Ebitengine)
 - `gorillas/` - The QBasic artillery game, in the terminal
 - `tictactoe/` - Web server tic-tac-toe game with cookies

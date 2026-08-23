@@ -6,23 +6,23 @@ in DBasic and drawn with [Ebitengine](https://ebitengine.org/).
 Microsoft calls theirs Minesweeper, so ours is BombSquad — same game,
 different badge.
 
-![BombSquad](mines.png)
+![BombSquad](bombsquad.png)
 
 ## Build and run
 
 ```bash
-cd examples/games/mines
-dbasic build mines.dbas -o mines
-./mines
+cd examples/games/bombsquad
+dbasic build bombsquad.dbas -o bombsquad
+./bombsquad
 ```
 
 The window is drawn at the original game's size — a Beginner board is only
 168 pixels across — and then scaled up. Pass a number to change the scale:
 
 ```bash
-./mines 1     # original size, tiny on a modern screen
-./mines 2     # default
-./mines 3     # big
+./bombsquad 1     # original size, tiny on a modern screen
+./bombsquad 2     # default
+./bombsquad 3     # big
 ```
 
 ## Controls
@@ -98,16 +98,16 @@ Everything is stored in one small text file you can read or edit yourself:
 click, the uncovering cascade, chording (including chording onto a wrong
 flag), the flag/question-mark cycle, the Custom Field limits, the high score
 table, the over-long-name warning, and the mapping from a mouse position to
-a square or a menu line.
-They run headlessly — no window — so they work over SSH and in CI.
+a square or a menu line. They run headlessly — no window — so they work
+over SSH and in CI.
 
-`mines_tests.dbas` is not a program on its own; `run_tests.sh` glues it onto
-a copy of `mines.dbas` with the game's own `Main` removed, so the tests can
-reach the game's internals. Nothing is written into the repository.
+`bombsquad_tests.dbas` is not a program on its own; `run_tests.sh` glues it
+onto a copy of `bombsquad.dbas` with the game's own `Main` removed, so the
+tests can reach the game's internals. Nothing is written into the repository.
 
 ## About the source
 
-`mines.dbas` is one file of about 2,900 lines, roughly a quarter of which is
+`bombsquad.dbas` is one file of about 2,900 lines, roughly a quarter of it
 comments aimed at someone who has never written a game before. It opens with
 a short primer on the handful of DBasic ideas it uses, and it is laid out in
 nine numbered sections meant to be read in order:
@@ -126,6 +126,6 @@ Things worth a look if you are learning:
   worked example of why "is the button down?" and "did the button just go
   down?" are two different questions.
 
-Note: do not run `dbasic fmt` on this file. The formatter collapses
+Note: do not run `dbasic fmt` on `bombsquad.dbas`. The formatter collapses
 indentation inside comments, which flattens the diagrams and the indented
 explanations.

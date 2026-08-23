@@ -3,7 +3,7 @@
 ' =============================================================================
 '
 ' This file is not a program on its own. run_tests.sh glues it onto the end
-' of mines.dbas (with mines.dbas's own Main chopped off) and builds the
+' of bombsquad.dbas (with its own Main chopped off) and builds the
 ' result, so these tests can reach straight into the game's own routines.
 '
 '     ./run_tests.sh
