@@ -235,8 +235,9 @@ SUB Main()
     Check("that many mines really were laid", p4 = g.NMines)
 
     fmt.Println("--- high scores ---")
+    ' This Game was never loaded from disk, so its three tables are empty.
+    ' (There is deliberately no way to empty them from inside the game.)
     os.Remove(g.ScFile)
-    g.ResetScores()
     DIM r1 AS INTEGER = g.ScoreRank(LV_BEGINNER, 40)
     Check("any time gets into an empty table", r1 = 0)
     DIM e1 AS ScoreEntry
@@ -283,6 +284,30 @@ SUB Main()
     Check("the names come back too", tbl2[0].Who = "P1")
     Check("menu options are remembered", h.UseSound = FALSE AND h.UseMarks = FALSE)
     Check("so is the last board", h.Rows = g.Rows AND h.Cols = g.Cols)
+
+    ' The Best Times table shows NAME_CHARS characters of a name, and each
+    ' column has to be wide enough for that plus the rank and the time.
+    Check("names are shown 12 characters wide", NAME_CHARS = 12)
+    DIM needed AS INTEGER = (3 + NAME_CHARS) * CHW + CHW + 3 * CHW
+    Check("a score column fits rank, name and time", SCORE_COLW >= needed)
+    Check("columns do not overlap", SCORE_COLGAP > SCORE_COLW)
+
+    fmt.Println("--- over-long high score names are flagged ---")
+    Check("a short name is fine", NameTooLong("Rick") = FALSE)
+    Check("exactly 12 characters is fine", NameTooLong("Bartholomew1") = FALSE)
+    Check("13 characters is too long", NameTooLong("Bartholomew12") = TRUE)
+    Check("trailing spaces do not count", NameTooLong("Rick        ") = FALSE)
+    Check("an empty name is fine", NameTooLong("") = FALSE)
+    ' The warning shows exactly what the table will show.
+    DIM warn AS STRING = NameWarning("Wolfeschlegelstein")
+    Check("the warning quotes the truncated name", Instr(warn, Chr(34) & "Wolfeschlege" & Chr(34)) > 0)
+    ' ...and it has to fit inside the dialog it is drawn in. Ask the game
+    ' for the real width rather than repeating the number here, so this
+    ' test cannot drift out of step with the dialog.
+    g.Dlg = DLG_NAME
+    DIM nameDlgW AS INTEGER = DlgW(@g)
+    g.Dlg = DLG_NONE
+    Check("the warning fits the dialog", TextW(warn) <= nameDlgW - 28)
 
     fmt.Println("--- clicking maps to the right square ---")
     g.StartLevel(LV_BEGINNER)

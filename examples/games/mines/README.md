@@ -65,6 +65,14 @@ wrong and you will uncover a mine — the original worked the same way.
 - **Permanent high score tables** — the best five times for each of the
   three standard difficulties, with names and dates, rather than the single
   best time the original kept. Custom boards are not recorded.
+
+  There is no "reset scores" button. A record you can wipe with one stray
+  click is not much of a record. To start over, delete the file below.
+
+  The table shows 12 characters of a name. Type a longer one and the entry
+  box says so straight away, and shows exactly what will appear, rather
+  than quietly cutting it short after you press OK. The full name is still
+  what gets saved to the file.
 - Your menu options and the board you were last playing are remembered too.
 
 Everything is stored in one small text file you can read or edit yourself:
@@ -83,10 +91,11 @@ Everything is stored in one small text file you can read or edit yourself:
 ./run_tests.sh
 ```
 
-66 checks covering mine laying, neighbour counts, the guaranteed-safe first
+75 checks covering mine laying, neighbour counts, the guaranteed-safe first
 click, the uncovering cascade, chording (including chording onto a wrong
 flag), the flag/question-mark cycle, the Custom Field limits, the high score
-table, and the mapping from a mouse position to a square or a menu line.
+table, the over-long-name warning, and the mapping from a mouse position to
+a square or a menu line.
 They run headlessly — no window — so they work over SSH and in CI.
 
 `mines_tests.dbas` is not a program on its own; `run_tests.sh` glues it onto
