@@ -802,3 +802,57 @@ END SUB`
 		t.Errorf("expected a CONTINUE error inside a lambda, got: %v", errors)
 	}
 }
+
+// --- built-ins and the programs that shadow them ---------------------------
+
+// A program may define a function with the same name as a built-in, and its
+// own wins. Without this, adding a builtin broke every existing program that
+// happened to use that name -- JoinPath/BaseName/DirName collided with
+// DBtui's own joinPath/baseName/dirName the moment they were registered.
+func TestUserFunctionShadowsBuiltin(t *testing.T) {
+	input := `FUNCTION joinPath(a AS STRING, b AS STRING) AS STRING
+RETURN a & b
+END FUNCTION
+
+SUB Main()
+DIM s AS STRING = joinPath("x", "y")
+END SUB`
+
+	a := New()
+	_, errors := a.Analyze(parse(input))
+	for _, e := range errors {
+		if strings.Contains(e, "duplicate") {
+			t.Errorf("a program should be allowed its own joinPath: %s", e)
+		}
+	}
+}
+
+// Two functions of the user's own with the same name is still an error.
+func TestDuplicateUserFunctionsStillRejected(t *testing.T) {
+	input := `SUB Twice()
+END SUB
+SUB Twice()
+END SUB`
+
+	a := New()
+	_, errors := a.Analyze(parse(input))
+
+	var found bool
+	for _, e := range errors {
+		if strings.Contains(e, "duplicate") || strings.Contains(e, "already defined") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a duplicate-definition error, got: %v", errors)
+	}
+}
+
+// A nil program means parsing already failed. Say so rather than panicking.
+func TestAnalyzeNilProgramDoesNotPanic(t *testing.T) {
+	a := New()
+	_, errors := a.Analyze(nil)
+	if len(errors) == 0 {
+		t.Error("expected an error for a nil program")
+	}
+}

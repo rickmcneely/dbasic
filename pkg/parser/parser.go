@@ -118,6 +118,11 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(lexer.TOKEN_STRING_TYPE, p.parseIdentifier)
 	p.registerPrefix(lexer.TOKEN_TYPE, p.parseIdentifier)
 	p.registerPrefix(lexer.TOKEN_CONTINUE, p.parseIdentifier)
+	// INPUT and EXIT are statements, but they are also the names of runtime
+	// functions -- Input("Name? ") and Exit(1). In an expression there is no
+	// statement to confuse them with, so they read as ordinary names there.
+	p.registerPrefix(lexer.TOKEN_INPUT, p.parseIdentifier)
+	p.registerPrefix(lexer.TOKEN_EXIT, p.parseIdentifier)
 	p.registerPrefix(lexer.TOKEN_INT, p.parseIntegerLiteral)
 	p.registerPrefix(lexer.TOKEN_FLOAT, p.parseFloatLiteral)
 	p.registerPrefix(lexer.TOKEN_STRING, p.parseStringLiteral)
@@ -312,6 +317,11 @@ func (p *Parser) parseStatement() Statement {
 	case lexer.TOKEN_PRINT:
 		return p.parsePrintStatement()
 	case lexer.TOKEN_INPUT:
+		// `INPUT name` is the statement; `Input("prompt")` is a call to the
+		// runtime function of the same name. The bracket tells them apart.
+		if p.peekTokenIs(lexer.TOKEN_LPAREN) {
+			return p.parseAssignmentOrExpression()
+		}
 		return p.parseInputStatement()
 	case lexer.TOKEN_IF:
 		return p.parseIfStatement()
@@ -343,6 +353,13 @@ func (p *Parser) parseStatement() Statement {
 	case lexer.TOKEN_RETURN:
 		return p.parseReturnStatement()
 	case lexer.TOKEN_EXIT:
+		// `EXIT FOR` is the statement; `Exit(1)` is a call to the runtime
+		// function that stops the program. Without this check `Exit(1)`
+		// parsed as an EXIT statement with a exit-type of "(" and then
+		// quietly generated nothing at all.
+		if p.peekTokenIs(lexer.TOKEN_LPAREN) {
+			return p.parseAssignmentOrExpression()
+		}
 		return p.parseExitStatement()
 	case lexer.TOKEN_CONTINUE:
 		// CONTINUE is a contextual keyword. It only means "skip to the next

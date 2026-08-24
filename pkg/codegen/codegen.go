@@ -34,6 +34,10 @@ type Generator struct {
 	// loopLabels holds one entry per enclosing loop ("" when the loop was
 	// emitted without a label); switchDepth counts SELECT CASE nesting
 	// within the innermost loop; switchDepths saves that count per loop.
+	// Top-level names the program defines itself, upper-cased. A runtime
+	// helper of the same name must not be written out alongside it.
+	userTopLevel map[string]bool
+
 	loopLabels   []string
 	switchDepth  int
 	switchDepths []int
@@ -77,6 +81,22 @@ func (g *Generator) SetTypeRegistry(types *analyzer.TypeRegistry) {
 
 // Generate generates Go source code
 func (g *Generator) Generate() string {
+	// Note what the program names for itself, so a built-in helper of the
+	// same name is not written out beside it and redeclared.
+	g.userTopLevel = map[string]bool{}
+	for _, st := range g.program.Statements {
+		switch d := st.(type) {
+		case *parser.SubStatement:
+			if d.Name != nil {
+				g.userTopLevel[strings.ToUpper(d.Name.Value)] = true
+			}
+		case *parser.FunctionStatement:
+			if d.Name != nil {
+				g.userTopLevel[strings.ToUpper(d.Name.Value)] = true
+			}
+		}
+	}
+
 	// Apply OPTION pragmas (OPTION BASE 0|1, etc.) before any other pass.
 	for _, st := range g.program.Statements {
 		if op, ok := st.(*parser.OptionStatement); ok && op.Kind == "BASE" {
@@ -196,9 +216,9 @@ func (g *Generator) scanStatementForImports(stmt parser.Statement) {
 	case *parser.MethodStatement:
 		g.scanBlockForImports(s.Body)
 	case *parser.InputStatement:
-		g.imports["bufio"] = ""
-		g.imports["os"] = ""
-		g.imports["strings"] = ""
+		// INPUT reads through the LineInput helper, which declares what it
+		// needs itself.
+		g.imports["fmt"] = ""
 	case *parser.PrintStatement:
 		g.imports["fmt"] = ""
 	}
@@ -211,9 +231,7 @@ func (g *Generator) scanBlockForImports(block *parser.BlockStatement) {
 	for _, stmt := range block.Statements {
 		switch s := stmt.(type) {
 		case *parser.InputStatement:
-			g.imports["bufio"] = ""
-			g.imports["os"] = ""
-			g.imports["strings"] = ""
+			g.imports["fmt"] = ""
 		case *parser.PrintStatement:
 			g.imports["fmt"] = ""
 		case *parser.IfStatement:
@@ -313,6 +331,151 @@ func (g *Generator) collectImports() {
 
 // runtimeFuncDefs contains the Go source for runtime functions
 var runtimeFuncDefs = map[string]string{
+	"ArrayLen": `// ArrayLen counts the entries in a list of any kind
+func ArrayLen(arr interface{}) int {
+	switch v := arr.(type) {
+	case []interface{}:
+		return len(v)
+	case []int:
+		return len(v)
+	case []int32:
+		return len(v)
+	case []int64:
+		return len(v)
+	case []float32:
+		return len(v)
+	case []float64:
+		return len(v)
+	case []string:
+		return len(v)
+	case []bool:
+		return len(v)
+	}
+	return 0
+}`,
+	"BaseName": `// BaseName is the file name at the end of a path
+func BaseName(path string) string {
+	return filepath.Base(path)
+}`,
+	"Bin": `// Bin shows a number in base 2
+func Bin(val int64) string {
+	return fmt.Sprintf("%b", val)
+}`,
+	"CopyFile": `// CopyFile copies a file, overwriting the destination
+func CopyFile(src, dst string) error {
+	source, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	dest, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dest.Close()
+	_, err = io.Copy(dest, source)
+	return err
+}`,
+	"DirExists": `// DirExists says whether a folder is there
+func DirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}`,
+	"DirName": `// DirName is the folder part of a path
+func DirName(path string) string {
+	return filepath.Dir(path)
+}`,
+	"Environ": `// Environ reads an environment variable
+func Environ(name string) string {
+	return os.Getenv(name)
+}`,
+	"Exit": `// Exit stops the program with the given status code
+func Exit(code int) {
+	os.Exit(code)
+}`,
+	"GetArgs": `// GetArgs is the command line, with the program name first
+func GetArgs() []string {
+	return os.Args
+}`,
+	"GetCwd": `// GetCwd is the folder the program is running in
+func GetCwd() string {
+	dir, _ := os.Getwd()
+	return dir
+}`,
+	"Hex": `// Hex shows a number in base 16
+func Hex(val int64) string {
+	return fmt.Sprintf("%X", val)
+}`,
+	"Input": `// Input shows a prompt and reads one line typed at the keyboard.
+// It shares LineInput's reader; see runtimeFuncDeps for why.
+func Input(prompt string) string {
+	return LineInput(prompt)
+}`,
+	"InputFloat": `// InputFloat reads a decimal number typed at the keyboard
+func InputFloat(prompt string) float64 {
+	s := Input(prompt)
+	val, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	return val
+}`,
+	"InputInt": `// InputInt reads a whole number typed at the keyboard
+func InputInt(prompt string) int64 {
+	s := Input(prompt)
+	val, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	return val
+}`,
+	"InstrRev": `// InstrRev finds the LAST occurrence of one string inside another,
+// counting from 1, or 0 if it is not there
+func InstrRev(s, substr string) int {
+	idx := strings.LastIndex(s, substr)
+	if idx == -1 {
+		return 0
+	}
+	return idx + 1
+}`,
+	"JoinPath": `// JoinPath sticks path pieces together with the right separator
+func JoinPath(parts ...string) string {
+	return filepath.Join(parts...)
+}`,
+	"ListDir": `// ListDir gives the names of everything in a folder
+func ListDir(path string) ([]string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names, nil
+}`,
+	"Oct": `// Oct shows a number in base 8
+func Oct(val int64) string {
+	return fmt.Sprintf("%o", val)
+}`,
+	"Reverse": `// Reverse turns a string back to front, counting whole characters
+func Reverse(s string) string {
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}`,
+	"SetCwd": `// SetCwd moves the program to another folder
+func SetCwd(path string) error {
+	return os.Chdir(path)
+}`,
+	"SetEnviron": `// SetEnviron sets an environment variable for this program
+func SetEnviron(name, value string) error {
+	return os.Setenv(name, value)
+}`,
+	"Split": `// Split chops a string into pieces at every separator
+func Split(s, delim string) []string {
+	return strings.Split(s, delim)
+}`,
+	"Weekday": `// Weekday is the day of the week, 0 for Sunday to 6 for Saturday
+func Weekday() int {
+	return int(time.Now().Weekday())
+}`,
 	"Join": `// Join glues a list of strings together with a separator between each
 func Join(parts []string, sep string) string {
 	return strings.Join(parts, sep)
@@ -1013,8 +1176,67 @@ func BitShl(a, b interface{}) int { return Int(a) << uint(Int(b)) }`,
 func BitShr(a, b interface{}) int { return Int(a) >> uint(Int(b)) }`,
 }
 
+// runtimeFuncDeps lists the other helpers a helper calls. Emitting a helper
+// without these would leave the generated Go referring to functions that are
+// not there.
+//
+// The Input family all share one reader. Each used to make its own, and a
+// buffered reader swallows far more than one line -- so calling Input twice,
+// or Input after LINE INPUT, quietly lost everything the first call had
+// read ahead. Routing them all through LineInput's single scanner fixes it.
+var runtimeFuncDeps = map[string][]string{
+	"Uint8":      {"Int"},
+	"Uint16":     {"Int"},
+	"Uint32":     {"Int"},
+	"Uint64":     {"Int"},
+	"BitAnd":     {"Int"},
+	"BitOr":      {"Int"},
+	"BitXor":     {"Int"},
+	"BitNot":     {"Int"},
+	"BitShl":     {"Int"},
+	"BitShr":     {"Int"},
+	"Input":      {"LineInput"},
+	"InputInt":   {"Input"},
+	"InputFloat": {"Input"},
+}
+
+// useRuntimeDeps marks everything the named helper needs, following the
+// chain as far as it goes.
+func (g *Generator) useRuntimeDeps(name string) {
+	for _, dep := range runtimeFuncDeps[name] {
+		if g.runtimeFuncs[dep] {
+			continue
+		}
+		g.runtimeFuncs[dep] = true
+		for _, imp := range runtimeFuncImports[dep] {
+			g.imports[imp] = ""
+		}
+		g.useRuntimeDeps(dep)
+	}
+}
+
 // runtimeFuncImports maps runtime functions to required imports
 var runtimeFuncImports = map[string][]string{
+	"BaseName": {"path/filepath"},
+	"Bin": {"fmt"},
+	"CopyFile": {"os", "io"},
+	"DirExists": {"os"},
+	"DirName": {"path/filepath"},
+	"Environ": {"os"},
+	"Exit": {"os"},
+	"GetArgs": {"os"},
+	"GetCwd": {"os"},
+	"Hex": {"fmt"},
+	"InputFloat": {"strconv", "strings"},
+	"InputInt": {"strconv", "strings"},
+	"InstrRev": {"strings"},
+	"JoinPath": {"path/filepath"},
+	"ListDir": {"os"},
+	"Oct": {"fmt"},
+	"SetCwd": {"os"},
+	"SetEnviron": {"os"},
+	"Split": {"strings"},
+	"Weekday": {"time"},
 	"Str": {"fmt"},
 	"Join": {"strings"},
 	"AppendFile": {"os"},
@@ -1161,6 +1383,17 @@ func (g *Generator) scanStmtExprForRuntimeFuncs(stmt parser.Statement) {
 		if s.Prompt != nil {
 			g.scanExprForRuntimeFuncs(s.Prompt)
 		}
+	case *parser.InputStatement:
+		// INPUT reads through the same helper, and this scan is what
+		// decides which helpers get written out -- marking it later, while
+		// generating the statement, is too late.
+		g.runtimeFuncs["LineInput"] = true
+		for _, imp := range runtimeFuncImports["LineInput"] {
+			g.imports[imp] = ""
+		}
+		if s.Prompt != nil {
+			g.scanExprForRuntimeFuncs(s.Prompt)
+		}
 	case *parser.PrintStatement:
 		for _, v := range s.Values {
 			g.scanExprForRuntimeFuncs(v)
@@ -1201,7 +1434,10 @@ func (g *Generator) scanExprForRuntimeFuncs(expr parser.Expression) {
 	case *parser.CallExpression:
 		// Check if this is a runtime function call
 		if ident, ok := e.Function.(*parser.Identifier); ok {
-			if _, isRuntime := runtimeFuncDefs[ident.Value]; isRuntime {
+			// A helper the program defines for itself is not a helper: leave
+			// it alone entirely, so neither its body nor its imports are
+			// dragged in.
+			if _, isRuntime := runtimeFuncDefs[ident.Value]; isRuntime && !g.userTopLevel[strings.ToUpper(ident.Value)] {
 				g.runtimeFuncs[ident.Value] = true
 				// Add required imports for this runtime function
 				if imports, ok := runtimeFuncImports[ident.Value]; ok {
@@ -1209,19 +1445,9 @@ func (g *Generator) scanExprForRuntimeFuncs(expr parser.Expression) {
 						g.imports[imp] = ""
 					}
 				}
-				// Pull in transitive runtime dependencies. Uint* + Bit*
-				// helpers call Int() internally, so Int's body has to
-				// be in the emitted runtime block too even if the user
-				// didn't call Int directly.
-				switch ident.Value {
-				case "Uint8", "Uint16", "Uint32", "Uint64",
-					"BitAnd", "BitOr", "BitXor", "BitNot",
-					"BitShl", "BitShr":
-					g.runtimeFuncs["Int"] = true
-					for _, imp := range runtimeFuncImports["Int"] {
-						g.imports[imp] = ""
-					}
-				}
+				// Pull in whatever this helper itself calls, and whatever
+				// those call, so the emitted runtime block is complete.
+				g.useRuntimeDeps(ident.Value)
 			}
 			// Check if this is a builtin function that needs imports
 			if imports, ok := builtinFuncImports[ident.Value]; ok {
@@ -1277,6 +1503,11 @@ func (g *Generator) generateRuntimeFunctions() {
 	// Go would otherwise differ from one build to the next.
 	names := make([]string, 0, len(g.runtimeFuncs))
 	for funcName := range g.runtimeFuncs {
+		// The program's own function of this name takes precedence; writing
+		// the helper too would redeclare it.
+		if g.userTopLevel[strings.ToUpper(funcName)] {
+			continue
+		}
 		names = append(names, funcName)
 	}
 	sort.Strings(names)
@@ -2082,19 +2313,23 @@ func (g *Generator) generatePrint(stmt *parser.PrintStatement) {
 }
 
 func (g *Generator) generateInput(stmt *parser.InputStatement) {
-	g.imports["bufio"] = ""
-	g.imports["os"] = ""
-	g.imports["strings"] = ""
+	// Read through LineInput's one shared reader rather than making a new
+	// one here. A buffered reader takes far more than a single line from
+	// stdin, so a second reader inherits nothing and everything the first
+	// had read ahead is lost -- INPUT followed by LINE INPUT, or by a call
+	// to Input(), used to silently skip lines.
+	g.runtimeFuncs["LineInput"] = true
+	for _, imp := range runtimeFuncImports["LineInput"] {
+		g.imports[imp] = ""
+	}
 
 	varName := g.toGoIdent(stmt.Variable.Value)
 
+	prompt := `""`
 	if stmt.Prompt != nil {
-		g.writeLine(fmt.Sprintf("fmt.Print(%s)", g.exprToGo(stmt.Prompt)))
+		prompt = g.exprToGo(stmt.Prompt)
 	}
-
-	g.writeLine("_reader := bufio.NewReader(os.Stdin)")
-	g.writeLine(fmt.Sprintf("%s, _ = _reader.ReadString('\\n')", varName))
-	g.writeLine(fmt.Sprintf("%s = strings.TrimRight(%s, \"\\r\\n\")", varName, varName))
+	g.writeLine(fmt.Sprintf("%s = LineInput(%s)", varName, prompt))
 }
 
 func (g *Generator) generateIf(stmt *parser.IfStatement) {

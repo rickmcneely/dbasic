@@ -1471,6 +1471,59 @@ DIM line AS STRING
 LINE INPUT line
 ```
 
+`Input`, `InputInt`, `InputFloat`, the `INPUT` statement and `LINE INPUT`
+all read through one shared reader, so they can be mixed freely. (They used
+to make one reader each, and a buffered reader takes far more than a single
+line from the keyboard, so mixing them quietly lost input.)
+
+### More built-ins
+
+These wrap what the runtime already provided. The ones that can fail hand
+back an `ERROR`, so they work with `ONERR`.
+
+| Function | Result |
+|----------|--------|
+| `Split(s, delim)` | `[]STRING` — chop a string at every separator |
+| `Join(parts, sep)` | `STRING` — glue a list back together |
+| `Reverse(s)` | `STRING` — back to front, counting whole characters |
+| `InstrRev(s, sub)` | `INTEGER` — position of the LAST occurrence, or 0 |
+| `Hex(n)` / `Oct(n)` / `Bin(n)` | `STRING` — base 16, 8 and 2 |
+| `ArrayLen(xs)` | `INTEGER` — length of a list of any kind |
+| `Input(prompt)` | `STRING` |
+| `InputInt(prompt)` | `LONG` |
+| `InputFloat(prompt)` | `DOUBLE` |
+| `DirExists(path)` | `BOOLEAN` |
+| `CopyFile(src, dst)` | `ERROR` |
+| `ListDir(path)` | `([]STRING, ERROR)` |
+| `GetCwd()` | `STRING` |
+| `SetCwd(path)` | `ERROR` |
+| `BaseName(path)` / `DirName(path)` | `STRING` |
+| `JoinPath(parts...)` | `STRING` — variadic |
+| `Environ(name)` | `STRING` |
+| `SetEnviron(name, value)` | `ERROR` |
+| `GetArgs()` | `[]STRING` — command line, program name first |
+| `Exit(code)` | stops the program |
+| `Weekday()` | `INTEGER` — 0 for Sunday to 6 for Saturday |
+
+```basic
+DIM names AS []STRING
+DIM err AS ERROR
+names, err = ListDir(JoinPath(GetCwd(), "data"))
+IF err <> NIL THEN
+    PRINT "cannot read that folder"
+    Exit(1)
+ENDIF
+PRINT Join(names, ", ")
+```
+
+**Your own definitions win.** A program may define a function with the same
+name as any built-in, and its own is used — so adding built-ins cannot break
+an existing program that happened to use one of these names.
+
+`Input` and `Exit` are also statement keywords. They are told apart by the
+bracket: `INPUT name` is the statement, `Input("Name? ")` is the function;
+`EXIT FOR` is the statement, `Exit(1)` is the function.
+
 ---
 
 ## HTTP Functions

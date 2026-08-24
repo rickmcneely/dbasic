@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -819,18 +820,27 @@ func TestEveryBuiltinCanBeEmitted(t *testing.T) {
 // not compile either.
 func TestBuiltinHelperImportsAreDeclared(t *testing.T) {
 	needs := map[string]string{
-		"math.":   "math",
-		"strings.": "strings",
-		"strconv.": "strconv",
-		"time.":   "time",
-		"os.":     "os",
-		"rand.":   "math/rand",
-		"fmt.":    "fmt",
+		"math.":     "math",
+		"strings.":  "strings",
+		"strconv.":  "strconv",
+		"time.":     "time",
+		"os.":       "os",
+		"rand.":     "math/rand",
+		"fmt.":      "fmt",
+		"io.":       "io",
+		"bufio.":    "bufio",
+		"filepath.": "path/filepath",
+		"reflect.":  "reflect",
+		"bytes.":    "bytes",
+		"exec.":     "os/exec",
 	}
 
 	for name, def := range runtimeFuncDefs {
 		for prefix, pkg := range needs {
-			if !strings.Contains(def, prefix) {
+			// The qualifier has to start a word: "bufio.NewReader" contains
+			// "io." but does not use the io package.
+			re := regexp.MustCompile(`(^|[^A-Za-z0-9_.])` + regexp.QuoteMeta(prefix))
+			if !re.MatchString(def) {
 				continue
 			}
 			var found bool
@@ -844,5 +854,45 @@ func TestBuiltinHelperImportsAreDeclared(t *testing.T) {
 					name, prefix, pkg)
 			}
 		}
+	}
+}
+
+// The whole Input family has to read through one shared reader. Each used to
+// build its own buffered reader, and a buffered reader takes far more than
+// one line from stdin -- so INPUT followed by LINE INPUT silently skipped
+// whatever the first had read ahead.
+func TestInputFamilySharesOneReader(t *testing.T) {
+	code := compile(inSub(`DIM a AS STRING
+DIM b AS STRING
+INPUT a
+LINE INPUT "who? ", b`))
+
+	if strings.Contains(code, "bufio.NewReader(os.Stdin)") {
+		t.Errorf("INPUT built its own reader instead of using the shared one:\n%s", code)
+	}
+	if strings.Count(code, "func LineInput(") != 1 {
+		t.Errorf("expected exactly one LineInput helper:\n%s", code)
+	}
+	if !strings.Contains(code, "LineInput(") {
+		t.Errorf("INPUT should read through LineInput:\n%s", code)
+	}
+}
+
+// A helper must not be written out beside a function of the user's own with
+// the same name, or the generated Go redeclares it.
+func TestUserFunctionSuppressesHelper(t *testing.T) {
+	code := compile(`FUNCTION JoinPath(a AS STRING, b AS STRING) AS STRING
+RETURN a & b
+END FUNCTION
+
+SUB Demo()
+DIM s AS STRING = JoinPath("x", "y")
+END SUB`)
+
+	if strings.Count(code, "func JoinPath(") != 1 {
+		t.Errorf("JoinPath is declared more than once:\n%s", code)
+	}
+	if strings.Contains(code, "filepath.Join") {
+		t.Errorf("the built-in JoinPath was emitted despite the program having its own:\n%s", code)
 	}
 }

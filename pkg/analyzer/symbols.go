@@ -29,6 +29,7 @@ type Symbol struct {
 	IsByRef    bool          // For parameters passed by reference
 	IsExported bool          // For Go package interop
 	GoName     string        // The Go identifier name (for imports)
+	Builtin    bool          // True for the language's own built-in functions
 }
 
 // Scope represents a scope in the symbol table
@@ -52,9 +53,17 @@ func NewScope(name string, parent *Scope) *Scope {
 // Define adds a symbol to the scope
 func (s *Scope) Define(sym *Symbol) error {
 	name := strings.ToUpper(sym.Name)
-	if _, exists := s.symbols[name]; exists {
-		return &SymbolError{
-			Message: "symbol already defined: " + sym.Name,
+	if existing, exists := s.symbols[name]; exists {
+		// A program of your own may define something with the same name as
+		// a built-in function, and yours wins. Without this, adding a
+		// builtin would break every existing program that happened to have
+		// a function of that name -- which is exactly what happened when
+		// JoinPath, BaseName and DirName were added and DBtui already had
+		// joinPath, baseName and dirName of its own.
+		if !existing.Builtin {
+			return &SymbolError{
+				Message: "symbol already defined: " + sym.Name,
+			}
 		}
 	}
 	sym.Scope = s

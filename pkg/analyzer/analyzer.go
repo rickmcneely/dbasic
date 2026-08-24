@@ -58,6 +58,37 @@ func (a *Analyzer) registerBuiltins() {
 	a.addBuiltin("Chr", []*Type{IntegerType}, []*Type{StringType})
 	a.addBuiltin("Space", []*Type{IntegerType}, []*Type{StringType})
 	a.addBuiltin("Join", []*Type{NewSliceType(StringType), StringType}, []*Type{StringType})
+	a.addBuiltin("Split", []*Type{StringType, StringType}, []*Type{NewSliceType(StringType)})
+	a.addBuiltin("Reverse", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("InstrRev", []*Type{StringType, StringType}, []*Type{IntegerType})
+	a.addBuiltin("Hex", []*Type{LongType}, []*Type{StringType})
+	a.addBuiltin("Oct", []*Type{LongType}, []*Type{StringType})
+	a.addBuiltin("Bin", []*Type{LongType}, []*Type{StringType})
+	a.addBuiltin("ArrayLen", []*Type{AnyType}, []*Type{IntegerType})
+
+	// Reading from the keyboard
+	a.addBuiltin("Input", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("InputInt", []*Type{StringType}, []*Type{LongType})
+	a.addBuiltin("InputFloat", []*Type{StringType}, []*Type{DoubleType})
+
+	// Files and folders. These mirror what the runtime actually does, so
+	// the ones that can fail hand back an ERROR you can check -- or leave
+	// to ONERR.
+	a.addBuiltin("DirExists", []*Type{StringType}, []*Type{BooleanType})
+	a.addBuiltin("CopyFile", []*Type{StringType, StringType}, []*Type{ErrorType})
+	a.addBuiltin("ListDir", []*Type{StringType}, []*Type{NewSliceType(StringType), ErrorType})
+	a.addBuiltin("GetCwd", []*Type{}, []*Type{StringType})
+	a.addBuiltin("SetCwd", []*Type{StringType}, []*Type{ErrorType})
+	a.addBuiltin("BaseName", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("DirName", []*Type{StringType}, []*Type{StringType})
+	a.addVariadicBuiltin("JoinPath", []*Type{StringType}, []*Type{StringType})
+
+	// The world outside the program
+	a.addBuiltin("Environ", []*Type{StringType}, []*Type{StringType})
+	a.addBuiltin("SetEnviron", []*Type{StringType, StringType}, []*Type{ErrorType})
+	a.addBuiltin("GetArgs", []*Type{}, []*Type{NewSliceType(StringType)})
+	a.addBuiltin("Exit", []*Type{IntegerType}, []*Type{})
+	a.addBuiltin("Weekday", []*Type{}, []*Type{IntegerType})
 
 	// Type conversion
 	a.addBuiltin("Int", []*Type{AnyType}, []*Type{IntegerType})
@@ -204,6 +235,7 @@ func (a *Analyzer) addBuiltin(name string, params []*Type, returns []*Type) {
 		Name: name,
 		Kind: SymFunction,
 		Type: symType,
+			Builtin: true,
 	}
 	a.symbols.DefineGlobal(sym)
 }
@@ -221,6 +253,7 @@ func (a *Analyzer) addVariadicBuiltin(name string, params []*Type, returns []*Ty
 		Name: name,
 		Kind: SymFunction,
 		Type: symType,
+			Builtin: true,
 	}
 	a.symbols.DefineGlobal(sym)
 }
