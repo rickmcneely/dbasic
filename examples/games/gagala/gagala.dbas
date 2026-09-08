@@ -2045,8 +2045,9 @@ SUB (g AS POINTER TO Game) UpdatePlayer()
         RETURN
     ENDIF
 
-    DIM left AS BOOLEAN = ebiten.IsKeyPressed(ebiten.KeyArrowLeft) OR ebiten.IsKeyPressed(ebiten.KeyA)
-    DIM right AS BOOLEAN = ebiten.IsKeyPressed(ebiten.KeyArrowRight) OR ebiten.IsKeyPressed(ebiten.KeyD)
+    ' Left and right: the cursor keys, the keypad cursor keys, or A and D.
+    DIM left AS BOOLEAN = ebiten.IsKeyPressed(ebiten.KeyArrowLeft) OR ebiten.IsKeyPressed(ebiten.KeyNumpad4) OR ebiten.IsKeyPressed(ebiten.KeyA)
+    DIM right AS BOOLEAN = ebiten.IsKeyPressed(ebiten.KeyArrowRight) OR ebiten.IsKeyPressed(ebiten.KeyNumpad6) OR ebiten.IsKeyPressed(ebiten.KeyD)
 
     IF left THEN
         g.PX = g.PX - PLAYER_SPEED

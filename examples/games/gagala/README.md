@@ -32,7 +32,7 @@ and then scaled up. Pass a number to change the scale:
 
 | Key | What it does |
 | --- | --- |
-| ← → (or A / D) | Move |
+| ← → (or keypad 4 / 6, or A / D) | Move |
 | Space or Z | Fire |
 | 1 | Insert coin and start |
 | P | Pause |
